@@ -1,0 +1,20 @@
+{
+  "id": "extract-profile-keywords",
+  "name": "Extract Profile Keywords",
+  "responsibility": "Reduce a candidate profile to the lowercase keywords worth matching against.",
+  "kind": "leaf",
+  "inputs": {
+    "profile": {
+      "type": "{ skills: string[] }"
+    }
+  },
+  "outputs": {
+    "keywords": {
+      "type": "string[]"
+    }
+  },
+  "capabilities": {},
+  "children": [],
+  "wires": [],
+  "pinnedAsLeaf": false
+}

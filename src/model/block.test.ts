@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blockSchema, functionNameOf, typeStemOf } from "./block.js";
+import { blockSchema, blockToFileShape, formatWire, functionNameOf, parseWireText, typeStemOf } from "./block.js";
 import { describeType, typesEqual } from "./types.js";
 import { t } from "./testing.js";
 
@@ -37,9 +37,15 @@ describe("blockSchema", () => {
   it("rejects port names that could not be variables", () => {
     const result = blockSchema.safeParse({
       ...minimal,
-      inputs: { "not-an-identifier": { type: { kind: "string" } } },
+      inputs: { "not-an-identifier": { type: "string" } },
     });
     expect(result.success).toBe(false);
+  });
+
+  it("explains a port type it cannot read", () => {
+    const result = blockSchema.safeParse({ ...minimal, inputs: { posting: { type: "Posting[]" } } });
+    expect(result.success).toBe(false);
+    expect(result.success === false && JSON.stringify(result.error.issues)).toContain("Unknown type");
   });
 
   it("rejects unknown fields rather than silently ignoring them", () => {
@@ -65,25 +71,40 @@ describe("blockSchema", () => {
     expect(block.children[0]).toEqual({ block: "child", mode: "once" });
   });
 
-  it("accepts a nested port type", () => {
+  it("reads a nested port type written as an expression", () => {
     const block = blockSchema.parse({
       ...minimal,
-      inputs: {
-        postings: {
-          type: {
-            kind: "array",
-            of: {
-              kind: "object",
-              fields: {
-                title: { type: { kind: "string" } },
-                salary: { type: { kind: "number" }, optional: true },
-              },
-            },
-          },
+      inputs: { postings: { type: "{ title: string; salary?: number }[]" } },
+    });
+
+    expect(block.inputs.postings!.type).toEqual({
+      kind: "array",
+      of: {
+        kind: "object",
+        fields: {
+          title: { type: { kind: "string" } },
+          salary: { type: { kind: "number" }, optional: true },
         },
       },
     });
     expect(describeType(block.inputs.postings!.type)).toBe("{ title: string; salary?: number }[]");
+  });
+
+  it("writes back exactly what it read", () => {
+    const source = {
+      ...minimal,
+      kind: "leaf",
+      inputs: { postings: { type: "{ title: string; salary?: number }[]", description: "Postings to score." } },
+      outputs: { score: { type: "number" } },
+      capabilities: {},
+      children: [],
+      wires: [],
+      pinnedAsLeaf: false,
+    };
+
+    const written = blockToFileShape(blockSchema.parse(source)) as typeof source;
+    expect(written.inputs).toEqual(source.inputs);
+    expect(written.outputs).toEqual(source.outputs);
   });
 });
 
@@ -112,5 +133,54 @@ describe("typesEqual", () => {
     const required = { kind: "object" as const, fields: { a: { type: t.string } } };
     const optional = { kind: "object" as const, fields: { a: { type: t.string, optional: true } } };
     expect(typesEqual(required, optional)).toBe(false);
+  });
+});
+
+describe("wire syntax", () => {
+  const samples = [
+    "input.sourcePath -> load-postings.path",
+    "load-postings.postings -> score-posting.posting",
+    "rank-results.ranked -> output.ranked",
+  ];
+
+  for (const sample of samples) {
+    it(`round trips ${sample}`, () => {
+      const parsed = parseWireText(sample);
+      expect(parsed.ok).toBe(true);
+      expect(parsed.ok && formatWire(parsed.wire)).toBe(sample);
+    });
+  }
+
+  it("reads a wire off a composite block file", () => {
+    const block = blockSchema.parse({
+      id: "parent",
+      name: "Parent",
+      responsibility: "Wraps a child.",
+      kind: "composite",
+      inputs: { value: { type: "number" } },
+      outputs: { doubled: { type: "number" } },
+      children: [{ block: "double" }],
+      wires: ["input.value -> double.value", "double.result -> output.doubled"],
+    });
+
+    expect(block.wires[0]).toEqual({
+      source: { from: "input", port: "value" },
+      target: { to: "block", block: "double", port: "value" },
+    });
+  });
+
+  it("rejects a wire with no arrow", () => {
+    const result = parseWireText("input.value double.value");
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toContain('must be written as "source -> destination"');
+  });
+
+  it("rejects a wire that runs out of an output", () => {
+    const result = parseWireText("output.done -> child.value");
+    expect(result.ok === false && result.error).toContain("outputs are destinations, not sources");
+  });
+
+  it("rejects an endpoint that is not a real block id", () => {
+    expect(parseWireText("Not_A_Block.value -> child.value").ok).toBe(false);
   });
 });

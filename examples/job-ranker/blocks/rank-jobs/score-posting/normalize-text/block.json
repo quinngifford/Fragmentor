@@ -1,0 +1,20 @@
+{
+  "id": "normalize-text",
+  "name": "Normalize Text",
+  "responsibility": "Flatten a posting's title, company and description into comparable lowercase tokens.",
+  "kind": "leaf",
+  "inputs": {
+    "posting": {
+      "type": "{ title: string; company: string; description: string }"
+    }
+  },
+  "outputs": {
+    "tokens": {
+      "type": "string[]"
+    }
+  },
+  "capabilities": {},
+  "children": [],
+  "wires": [],
+  "pinnedAsLeaf": false
+}

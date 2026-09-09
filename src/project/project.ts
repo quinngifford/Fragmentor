@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod/v4";
-import { blockIdPattern, blockSchema } from "../model/block.js";
+import { blockIdPattern, blockSchema, blockToFileShape } from "../model/block.js";
 import type { Block } from "../model/block.js";
 import { validateComposite } from "../model/validate.js";
 import type { Diagnostic } from "../model/validate.js";
@@ -171,12 +171,28 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
 
 export async function writeBlock(dir: string, block: Block): Promise<void> {
   await mkdir(dir, { recursive: true });
-  await writeFile(path.join(dir, BLOCK_FILE), `${JSON.stringify(block, null, 2)}\n`, "utf8");
+  await writeFile(path.join(dir, BLOCK_FILE), `${JSON.stringify(blockToFileShape(block), null, 2)}\n`, "utf8");
 }
 
 export async function writeManifest(projectDir: string, manifest: Manifest): Promise<void> {
   await mkdir(projectDir, { recursive: true });
   await writeFile(path.join(projectDir, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+/**
+ * Records an accepted decomposition: the parent becomes a composite and each
+ * child gets its own folder beneath it.
+ */
+export async function writeDecomposition(
+  projectDir: string,
+  parentPath: string,
+  parent: Block,
+  children: Block[],
+): Promise<void> {
+  await writeBlock(blockDir(projectDir, parentPath), parent);
+  for (const child of children) {
+    await writeBlock(blockDir(projectDir, `${parentPath}/${child.id}`), child);
+  }
 }
 
 /** Creates a new project directory containing a single unimplemented root block. */

@@ -1,0 +1,23 @@
+{
+  "id": "match-keywords",
+  "name": "Match Keywords",
+  "responsibility": "Count how often each profile keyword appears in the posting's tokens.",
+  "kind": "leaf",
+  "inputs": {
+    "tokens": {
+      "type": "string[]"
+    },
+    "keywords": {
+      "type": "string[]"
+    }
+  },
+  "outputs": {
+    "matches": {
+      "type": "{ keyword: string; count: number }[]"
+    }
+  },
+  "capabilities": {},
+  "children": [],
+  "wires": [],
+  "pinnedAsLeaf": false
+}

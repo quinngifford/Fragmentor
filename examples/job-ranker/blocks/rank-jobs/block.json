@@ -1,0 +1,58 @@
+{
+  "id": "rank-jobs",
+  "name": "Rank Jobs",
+  "responsibility": "Read job postings from a file and return them ordered by how well they match a candidate profile, with reasons.",
+  "kind": "composite",
+  "inputs": {
+    "sourcePath": {
+      "type": "string",
+      "description": "File holding the postings to rank."
+    },
+    "profile": {
+      "type": "{ skills: string[] }",
+      "description": "The candidate to rank against."
+    }
+  },
+  "outputs": {
+    "ranked": {
+      "type": "{ title: string; company: string; score: number; reasons: string[] }[]",
+      "description": "Best match first."
+    }
+  },
+  "capabilities": {
+    "files": {
+      "capability": "FileSystem",
+      "description": "Reads the postings file."
+    }
+  },
+  "children": [
+    {
+      "block": "load-postings",
+      "mode": "once"
+    },
+    {
+      "block": "extract-profile-keywords",
+      "mode": "once"
+    },
+    {
+      "block": "score-posting",
+      "mode": "each",
+      "eachOver": "posting"
+    },
+    {
+      "block": "rank-results",
+      "mode": "once"
+    }
+  ],
+  "wires": [
+    "input.sourcePath -> load-postings.path",
+    "input.profile -> extract-profile-keywords.profile",
+    "load-postings.postings -> score-posting.posting",
+    "extract-profile-keywords.keywords -> score-posting.keywords",
+    "load-postings.postings -> rank-results.postings",
+    "score-posting.score -> rank-results.scores",
+    "score-posting.reasons -> rank-results.reasons",
+    "rank-results.ranked -> output.ranked"
+  ],
+  "pinnedAsLeaf": false
+}

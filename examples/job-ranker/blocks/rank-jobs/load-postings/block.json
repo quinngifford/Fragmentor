@@ -1,0 +1,24 @@
+{
+  "id": "load-postings",
+  "name": "Load Postings",
+  "responsibility": "Read the postings file and parse it into structured postings.",
+  "kind": "leaf",
+  "inputs": {
+    "path": {
+      "type": "string"
+    }
+  },
+  "outputs": {
+    "postings": {
+      "type": "{ title: string; company: string; description: string }[]"
+    }
+  },
+  "capabilities": {
+    "files": {
+      "capability": "FileSystem"
+    }
+  },
+  "children": [],
+  "wires": [],
+  "pinnedAsLeaf": false
+}

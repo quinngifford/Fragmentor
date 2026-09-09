@@ -1,0 +1,9 @@
+{
+  "name": "Job Relevance Ranker",
+  "goal": "Read job postings from a local file, score each one against a candidate profile, and return them ordered from most to least relevant with a short explanation for each score.",
+  "rootBlock": "rank-jobs",
+  "granularity": {
+    "level": 3,
+    "maxDepth": 4
+  }
+}

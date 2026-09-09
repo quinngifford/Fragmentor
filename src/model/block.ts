@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
-import { identifierPattern, portTypeSchema } from "./types.js";
+import { describeType, identifierPattern } from "./types.js";
+import { tryParseType } from "./typeExpression.js";
 import type { PortType } from "./types.js";
 
 /**
@@ -82,9 +83,24 @@ const blockId = z
 
 const portName = z.string().regex(identifierPattern, "port names must be valid identifiers");
 
+/**
+ * On disk a port's type is written the way a developer writes types, e.g.
+ * `{ title: string; salary?: number }[]`. In memory it is the structured form
+ * the test bench walks to build a form. describeType and parseType are exact
+ * inverses, so the file stays readable without the structure being lossy.
+ */
+const typeExpression = z.string().transform((value, ctx): PortType => {
+  const parsed = tryParseType(value);
+  if (!parsed.ok) {
+    ctx.addIssue({ code: "custom", message: parsed.error });
+    return z.NEVER;
+  }
+  return parsed.type;
+});
+
 const portSchema = z
   .object({
-    type: portTypeSchema,
+    type: typeExpression,
     description: z.string().optional(),
   })
   .strict();
@@ -110,22 +126,87 @@ const childRefSchema = z
     message: "'eachOver' only applies to children invoked with mode 'each'",
   });
 
-const wireSourceSchema = z.discriminatedUnion("from", [
-  z.object({ from: z.literal("input"), port: portName }).strict(),
-  z.object({ from: z.literal("block"), block: blockId, port: portName }).strict(),
-]);
+/**
+ * Wires are written as `source -> destination`, where an endpoint is either
+ * `input.<port>` / `output.<port>` for the block's own ports, or
+ * `<child-id>.<port>` for one of its children. The same syntax is what the
+ * model reads and writes, so there is only one wire notation in the system.
+ */
+interface Endpoint {
+  role: "input" | "output" | "block";
+  block?: string;
+  port: string;
+}
 
-const wireTargetSchema = z.discriminatedUnion("to", [
-  z.object({ to: z.literal("block"), block: blockId, port: portName }).strict(),
-  z.object({ to: z.literal("output"), port: portName }).strict(),
-]);
+function parseEndpoint(ref: string): Endpoint | undefined {
+  const split = ref.lastIndexOf(".");
+  if (split <= 0 || split === ref.length - 1) return undefined;
 
-const wireSchema = z
-  .object({
-    source: wireSourceSchema,
-    target: wireTargetSchema,
-  })
-  .strict();
+  const head = ref.slice(0, split);
+  const port = ref.slice(split + 1);
+  if (!identifierPattern.test(port)) return undefined;
+
+  if (head === "input") return { role: "input", port };
+  if (head === "output") return { role: "output", port };
+  if (!blockIdPattern.test(head)) return undefined;
+  return { role: "block", block: head, port };
+}
+
+export function parseWireEndpoints(from: string, to: string): { ok: true; wire: Wire } | { ok: false; error: string } {
+  const source = parseEndpoint(from);
+  if (!source) {
+    return { ok: false, error: `The wire source "${from}" is not written as "input.port" or "child-id.port".` };
+  }
+  const target = parseEndpoint(to);
+  if (!target) {
+    return { ok: false, error: `The wire destination "${to}" is not written as "output.port" or "child-id.port".` };
+  }
+  if (source.role === "output") {
+    return { ok: false, error: `A wire cannot start at "${from}"; the parent's outputs are destinations, not sources.` };
+  }
+  if (target.role === "input") {
+    return { ok: false, error: `A wire cannot end at "${to}"; the parent's inputs are sources, not destinations.` };
+  }
+
+  return {
+    ok: true,
+    wire: {
+      source:
+        source.role === "input"
+          ? { from: "input", port: source.port }
+          : { from: "block", block: source.block!, port: source.port },
+      target:
+        target.role === "output"
+          ? { to: "output", port: target.port }
+          : { to: "block", block: target.block!, port: target.port },
+    },
+  };
+}
+
+export function parseWireText(text: string): { ok: true; wire: Wire } | { ok: false; error: string } {
+  const parts = text.split("->");
+  if (parts.length !== 2) {
+    return { ok: false, error: `A wire must be written as "source -> destination", but this reads "${text}".` };
+  }
+  return parseWireEndpoints(parts[0]!.trim(), parts[1]!.trim());
+}
+
+export function formatWire(wire: Wire): string {
+  const source =
+    wire.source.from === "input" ? `input.${wire.source.port}` : `${wire.source.block}.${wire.source.port}`;
+  const target =
+    wire.target.to === "output" ? `output.${wire.target.port}` : `${wire.target.block}.${wire.target.port}`;
+  return `${source} -> ${target}`;
+}
+
+const wireSchema = z.string().transform((value, ctx): Wire => {
+  const parsed = parseWireText(value);
+  if (!parsed.ok) {
+    ctx.addIssue({ code: "custom", message: parsed.error });
+    return z.NEVER;
+  }
+  return parsed.wire;
+});
 
 export const blockSchema = z
   .object({
@@ -149,6 +230,30 @@ export const blockSchema = z
     message: "a leaf block cannot declare wires",
     path: ["wires"],
   }) as unknown as z.ZodType<Block>;
+
+/** The JSON form of a block, with port types written as expressions. */
+export function blockToFileShape(block: Block): unknown {
+  const ports = (record: Record<string, Port>) =>
+    Object.fromEntries(
+      Object.entries(record).map(([name, port]) => [
+        name,
+        port.description ? { type: describeType(port.type), description: port.description } : { type: describeType(port.type) },
+      ]),
+    );
+
+  return {
+    id: block.id,
+    name: block.name,
+    responsibility: block.responsibility,
+    kind: block.kind,
+    inputs: ports(block.inputs),
+    outputs: ports(block.outputs),
+    capabilities: block.capabilities,
+    children: block.children,
+    wires: block.wires.map(formatWire),
+    pinnedAsLeaf: block.pinnedAsLeaf,
+  };
+}
 
 /** `rank-jobs` -> `rankJobs`. The block's exported function name. */
 export function functionNameOf(id: string): string {

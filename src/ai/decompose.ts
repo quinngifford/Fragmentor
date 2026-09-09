@@ -1,8 +1,8 @@
 import { z } from "zod/v4";
-import { blockSchema } from "../model/block.js";
-import type { Block, Wire, WireSource, WireTarget } from "../model/block.js";
+import { blockSchema, parseWireEndpoints } from "../model/block.js";
+import type { Block, Wire } from "../model/block.js";
 import { describeType } from "../model/types.js";
-import { tryParseType } from "../model/typeExpression.js";
+
 import { validateComposite } from "../model/validate.js";
 import type { Diagnostic } from "../model/validate.js";
 import type { Granularity } from "../project/project.js";
@@ -202,22 +202,14 @@ The hierarchy may not go deeper than ${granularity.maxDepth} levels, and this bl
 Propose the children of this block, the wiring between them, and any capabilities the parent must gain.`;
 }
 
-interface EndpointRef {
-  block?: string;
-  port: string;
-  role: "input" | "output" | "block";
-}
-
-function parseEndpoint(ref: string): EndpointRef | undefined {
-  const split = ref.lastIndexOf(".");
-  if (split <= 0 || split === ref.length - 1) return undefined;
-
-  const head = ref.slice(0, split);
-  const port = ref.slice(split + 1);
-
-  if (head === "input") return { role: "input", port };
-  if (head === "output") return { role: "output", port };
-  return { role: "block", block: head, port };
+/** Turns a schema complaint into something worth showing a person. */
+function describeChildIssue(childId: string, issue: { path: PropertyKey[]; message: string }): string {
+  const [section, port, field] = issue.path;
+  if ((section === "inputs" || section === "outputs") && typeof port === "string" && field === "type") {
+    const label = section === "inputs" ? "input" : "output";
+    return `The ${label} "${port}" of "${childId}" has a type that could not be read: ${issue.message}`;
+  }
+  return `Child "${childId}" is not valid at ${issue.path.join(".") || "(root)"}: ${issue.message}`;
 }
 
 /**
@@ -250,31 +242,16 @@ export function buildBlocksFromProposal(
     }
     seen.add(proposed.id);
 
-    const convertPorts = (
-      ports: Record<string, { type: string; description?: string }> | undefined,
-      label: string,
-    ): Block["inputs"] => {
-      const converted: Block["inputs"] = {};
-      for (const [name, port] of Object.entries(ports ?? {})) {
-        const parsed = tryParseType(port.type);
-        if (!parsed.ok) {
-          error(`The ${label} "${name}" of "${proposed.id}" has a type that could not be read: ${parsed.error}`);
-          continue;
-        }
-        converted[name] = port.description
-          ? { type: parsed.type, description: port.description }
-          : { type: parsed.type };
-      }
-      return converted;
-    };
-
+    // The proposal already writes types as expressions, which is exactly what
+    // a block file holds, so the ordinary block schema does the parsing and
+    // the checking in one pass.
     const candidate = {
       id: proposed.id,
       name: proposed.name,
       responsibility: proposed.responsibility,
       kind: "leaf" as const,
-      inputs: convertPorts(proposed.inputs, "input"),
-      outputs: convertPorts(proposed.outputs, "output"),
+      inputs: proposed.inputs ?? {},
+      outputs: proposed.outputs ?? {},
       capabilities: proposed.capabilities ?? {},
       children: [],
       wires: [],
@@ -283,9 +260,7 @@ export function buildBlocksFromProposal(
 
     const parsed = blockSchema.safeParse(candidate);
     if (!parsed.success) {
-      for (const issue of parsed.error.issues) {
-        error(`Child "${proposed.id}" is not valid at ${issue.path.join(".") || "(root)"}: ${issue.message}`);
-      }
+      for (const issue of parsed.error.issues) error(describeChildIssue(proposed.id, issue));
       continue;
     }
 
@@ -294,32 +269,12 @@ export function buildBlocksFromProposal(
 
   const wires: Wire[] = [];
   for (const proposedWire of proposal.wires) {
-    const from = parseEndpoint(proposedWire.from);
-    const to = parseEndpoint(proposedWire.to);
-
-    if (!from) {
-      error(`The wire source "${proposedWire.from}" is not written as "input.port" or "child-id.port".`);
+    const parsed = parseWireEndpoints(proposedWire.from, proposedWire.to);
+    if (!parsed.ok) {
+      error(parsed.error);
       continue;
     }
-    if (!to) {
-      error(`The wire destination "${proposedWire.to}" is not written as "output.port" or "child-id.port".`);
-      continue;
-    }
-    if (from.role === "output") {
-      error(`A wire cannot start at "${proposedWire.from}"; the parent's outputs are destinations, not sources.`);
-      continue;
-    }
-    if (to.role === "input") {
-      error(`A wire cannot end at "${proposedWire.to}"; the parent's inputs are sources, not destinations.`);
-      continue;
-    }
-
-    const source: WireSource =
-      from.role === "input" ? { from: "input", port: from.port } : { from: "block", block: from.block!, port: from.port };
-    const target: WireTarget =
-      to.role === "output" ? { to: "output", port: to.port } : { to: "block", block: to.block!, port: to.port };
-
-    wires.push({ source, target });
+    wires.push(parsed.wire);
   }
 
   const updatedParent: Block = {
