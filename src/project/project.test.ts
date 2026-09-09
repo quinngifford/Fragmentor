@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -11,7 +11,7 @@ let dir: string;
 const manifest: Manifest = {
   name: "Job Ranker",
   goal: "Rank job postings against a profile.",
-  rootBlock: "rank-jobs",
+  systems: [{ rootBlock: "rank-jobs", language: "typescript" }],
   granularity: { level: 3, maxDepth: 4 },
 };
 
@@ -44,7 +44,7 @@ async function writeSmallProject() {
     outputs: { score: { type: t.number } },
   });
 
-  await createProject(dir, manifest, root);
+  await createProject(dir, manifest, [root]);
   await writeBlock(blockDir(dir, "rank-jobs/score-posting"), child);
 }
 
@@ -54,8 +54,8 @@ describe("project round trip", () => {
     const project = await loadProject(dir);
 
     expect(project.manifest).toEqual(manifest);
-    expect(project.root.block.id).toBe("rank-jobs");
-    expect(project.root.children.map((c) => c.path)).toEqual(["rank-jobs/score-posting"]);
+    expect(project.systems[0]!.root.block.id).toBe("rank-jobs");
+    expect(project.systems[0]!.root.children.map((c) => c.path)).toEqual(["rank-jobs/score-posting"]);
     expect([...project.byPath.keys()].sort()).toEqual(["rank-jobs", "rank-jobs/score-posting"]);
   });
 
@@ -97,6 +97,62 @@ describe("project round trip", () => {
     expect(found.map((d) => d.message)).toContain(
       '"Rank Jobs" refers to a child block "missing" that does not exist.',
     );
+  });
+
+  it("ignores folders that are not blocks, so build artefacts do not break it", async () => {
+    await writeSmallProject();
+
+    // Exactly what `python -m compileall` leaves next to a generated file.
+    await mkdir(path.join(blockDir(dir, "rank-jobs/score-posting"), "__pycache__"), { recursive: true });
+    await writeFile(
+      path.join(blockDir(dir, "rank-jobs/score-posting"), "__pycache__", "block.json"),
+      "not a block at all",
+      "utf8",
+    );
+    // A directory named like a block but holding none is not one either.
+    await mkdir(path.join(blockDir(dir, "rank-jobs"), "notes"), { recursive: true });
+
+    const project = await loadProject(dir);
+    expect([...project.byPath.keys()].sort()).toEqual(["rank-jobs", "rank-jobs/score-posting"]);
+    expect(validateProject(project)).toEqual([]);
+  });
+
+  it("still reports a real block folder the diagram does not list", async () => {
+    await writeSmallProject();
+    await writeBlock(blockDir(dir, "rank-jobs/stray"), makeBlock({ id: "stray" }));
+
+    expect(validateProject(await loadProject(dir)).map((d) => d.message)).toContain(
+      'There is a folder for "stray" inside "Rank Jobs", but the diagram does not list it as a child.',
+    );
+  });
+
+  it("explains how to fix a project still using the old single-system manifest", async () => {
+    await writeSmallProject();
+    await writeFile(
+      path.join(dir, "fragmentor.json"),
+      JSON.stringify({ name: "Old", goal: "Old shape.", rootBlock: "rank-jobs" }),
+      "utf8",
+    );
+
+    await expect(loadProject(dir)).rejects.toThrow(/uses the old single-system manifest.*"language": "typescript"/s);
+  });
+
+  it("refuses two systems sharing a root block", async () => {
+    await writeSmallProject();
+    await writeFile(
+      path.join(dir, "fragmentor.json"),
+      JSON.stringify({
+        name: "Twice",
+        goal: "Same root twice.",
+        systems: [
+          { rootBlock: "rank-jobs", language: "typescript" },
+          { rootBlock: "rank-jobs", language: "python" },
+        ],
+      }),
+      "utf8",
+    );
+
+    await expect(loadProject(dir)).rejects.toThrow(/two systems cannot share a root block/);
   });
 
   it("refuses a block whose id disagrees with its folder", async () => {

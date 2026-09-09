@@ -424,3 +424,15 @@ pre.code {
 :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* A system root in the hierarchy says which language it targets. */
+.node .lang {
+  margin-left: auto;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  flex: none;
+}
+
+.node[aria-selected="true"] .lang { color: var(--signal-dim); }

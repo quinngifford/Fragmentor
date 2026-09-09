@@ -26,6 +26,8 @@ A leaf block's implementation is code. A composite block's implementation is a s
 
 Capability ports matter more than they first appear. Real software touches networks, disks, and databases, and a block model that only permits pure functions collapses immediately. Declaring effects as ports that flow down the hierarchy means any block can be run in isolation with substitutes supplied for its capabilities. This is what makes every block independently testable.
 
+Capabilities are described in the same port type language as everything else, so each target language renders them its own way rather than the model favouring one.
+
 ### Every block is a function
 
 Every block corresponds to a real, callable function in the generated code.
@@ -78,14 +80,23 @@ The interface is a visual canvas — dark, high-contrast, structural — where t
 
 If projects are ever shared, that happens through an ordinary repository holding the blocks and their code, rather than by moving the application online. Nothing in the file format should assume otherwise.
 
-## Scope
+## Systems and languages
 
-Fragmentor generates TypeScript. Port contracts are defined with runtime schemas so a single definition yields both static types and the schema the test bench needs.
+A project holds one or more systems. A system is a block hierarchy with a single target language. Systems in the same project are never connected to each other — they are separate programs, shown together because they are worked on together.
+
+The target language is a choice, not an assumption. The block model, the validator and the project format know nothing about any language; that knowledge lives in a language pack, which owns naming conventions, file names, how a port type is written, and the source of the generated contract. Adding a language means adding a pack, not editing the kernel.
+
+Port contracts are defined with runtime schemas so a single definition yields both static types and the schema the test bench needs. Which library provides that is the pack's business — zod in TypeScript, pydantic in Python.
+
+Two properties of the design limit which languages fit cleanly, and should be checked before adding a pack:
+
+- **Capabilities are passed whole.** A block needing one capability receives the parent's entire capability object, which works because TypeScript and Python are structurally typed. A nominally typed language such as Go or Java would need each call site to construct the child's capabilities explicitly, which changes the shape of generated glue.
+- **The port type language has unions.** Languages without sum types have no natural rendering for them, and a pack for such a language would need either a workaround or a restriction.
 
 Not in scope now:
 
-- generating code in languages other than TypeScript
 - importing or reverse-engineering existing codebases into blocks
+- connecting systems to each other, in the same language or across languages
 - a browser version of the application, or any hosted service
 - sharing projects between people, which would be a repository integration rather than a feature of the application
 - deploying or operating the software Fragmentor builds

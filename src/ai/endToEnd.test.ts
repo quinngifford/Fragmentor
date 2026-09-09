@@ -6,7 +6,15 @@ import { proposeDecomposition } from "./decompose.js";
 import { ScriptedModelClient } from "./modelClient.js";
 import { createProject, loadProject, validateProject, writeDecomposition } from "../project/project.js";
 import { executionOrder } from "../model/validate.js";
-import { jobRankerManifest, rankJobsProposal, rankJobsSeed, scorePostingProposal } from "../examples/jobRanker.js";
+import {
+  embedPostingsProposal,
+  embedPostingsSeed,
+  jobRankerManifest,
+  rankJobsProposal,
+  rankJobsSeed,
+  scorePostingProposal,
+} from "../examples/jobRanker.js";
+import { languageOf } from "../project/project.js";
 
 /**
  * The whole pipeline on one real example: a hand-written root block, two
@@ -26,7 +34,7 @@ afterEach(async () => {
 });
 
 async function buildJobRanker(): Promise<void> {
-  await createProject(dir, jobRankerManifest, rankJobsSeed);
+  await createProject(dir, jobRankerManifest, [rankJobsSeed, embedPostingsSeed]);
 
   const root = await proposeDecomposition({
     parent: rankJobsSeed,
@@ -52,6 +60,19 @@ async function buildJobRanker(): Promise<void> {
 
   expect(nested.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
   await writeDecomposition(dir, "rank-jobs/score-posting", nested.parent, nested.children);
+
+  // The second system in the same project, in another language.
+  const embed = await proposeDecomposition({
+    parent: embedPostingsSeed,
+    projectGoal: jobRankerManifest.goal,
+    blockPath: "embed-postings",
+    granularity: jobRankerManifest.granularity,
+    depth: 0,
+    client: new ScriptedModelClient([JSON.stringify(embedPostingsProposal)]),
+  });
+
+  expect(embed.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+  await writeDecomposition(dir, "embed-postings", embed.parent, embed.children);
 }
 
 describe("decomposing a real project end to end", () => {
@@ -62,6 +83,9 @@ describe("decomposing a real project end to end", () => {
     expect(validateProject(project)).toEqual([]);
 
     expect([...project.byPath.keys()].sort()).toEqual([
+      "embed-postings",
+      "embed-postings/clean-text",
+      "embed-postings/embed-text",
       "rank-jobs",
       "rank-jobs/extract-profile-keywords",
       "rank-jobs/load-postings",
@@ -115,6 +139,28 @@ describe("decomposing a real project end to end", () => {
       (w) => w.source.from === "block" && w.source.block === "load-postings" && w.source.port === "postings",
     );
     expect(fromPostings).toHaveLength(2);
+  });
+
+  it("keeps two systems side by side without connecting them", async () => {
+    await buildJobRanker();
+    const project = await loadProject(dir);
+
+    expect(project.systems.map((s) => [s.rootBlock, s.language])).toEqual([
+      ["rank-jobs", "typescript"],
+      ["embed-postings", "python"],
+    ]);
+
+    // A block's language follows the system it sits in.
+    expect(languageOf(project, "rank-jobs/score-posting/match-keywords")).toBe("typescript");
+    expect(languageOf(project, "embed-postings/embed-text")).toBe("python");
+
+    // Nothing crosses between them: every wire stays inside one system.
+    for (const node of project.byPath.values()) {
+      const system = node.path.split("/")[0];
+      for (const child of node.block.children) {
+        expect(`${system}/${child.block}`.startsWith(system!)).toBe(true);
+      }
+    }
   });
 
   it("flags the composite as stale-making if a child contract drifts", async () => {

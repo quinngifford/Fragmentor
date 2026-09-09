@@ -2,7 +2,7 @@
 
 ## Current focus
 
-The desktop application exists and drives the kernel for real. Next is the part that can actually run: leaf implementations, then the conformance check.
+The desktop application drives the kernel for real, and the target language is a language pack rather than an assumption. Next is the part that can actually run: leaf implementations, then the conformance check.
 
 ## Working
 
@@ -12,8 +12,9 @@ The desktop application exists and drives the kernel for real. Next is the part 
 - **Validator.** Checks wiring, arity across iterated children, capability supply, and cycles, in plain language meant to be shown in the UI.
 - **AI decomposition.** A proposal is turned into real blocks, run through the ordinary validator, and any problems are handed back to the model to correct. Tested against a scripted client including retry and give-up behaviour.
 - **Worked example.** `examples/job-ranker` is produced by the real pipeline and exercised end to end by test: seed block, two rounds of decomposition, written to disk, read back, validated.
-- **Contract generation.** Every block gets a generated `contract.ts`: a zod schema and derived type per side, plus an interface for the effects it needs. Schemas are tested by behaviour, not spelling, and the generated code typechecks under strict mode (`npm run check:examples`). `impl.ts` is scaffolded once and never overwritten.
-- **Self-hosted example.** `examples/contract-generator` is Fragmentor describing its own contract generator as blocks, and Fragmentor generates that project's contracts. 13 blocks across the two examples, 28 generated files, all compiling.
+- **Language packs.** TypeScript (zod) and Python (pydantic). The kernel holds no language knowledge; naming, file names, type rendering and generated source all come from the pack. A project holds several systems, each with its own language, unconnected to each other.
+- **Contract generation.** Every block gets a generated contract file: a zod schema and derived type per side, plus an interface for the effects it needs. Schemas are tested by behaviour, not spelling, and the generated code typechecks under strict mode (`npm run check:examples`). `impl.ts` is scaffolded once and never overwritten.
+- **Self-hosted example.** `examples/contract-generator` is Fragmentor describing its own contract generator as blocks. `examples/job-ranker` holds two systems: the ranker in TypeScript and an embedding system in Python. Generated TypeScript typechecks (`npm run check:examples`) and generated Python parses (`npm run check:examples:py`).
 - **Desktop application** (Electron). Opens a project from disk, draws its diagram, and writes changes back. Pan and zoom, draggable blocks whose positions are saved into the project's `layout.json`, bus-grouped connections, ctrl-click multi-select, per-bus colours, and a code panel that saves `impl.ts` to disk. Generated `contract.ts` is shown read-only, because it is derived from the diagram.
 - **The application checks itself.** `npm run check:app` starts the real window, opens an example, edits a block's code, saves it, restores it, and reports what was drawn — then captures a screenshot to `dist/self-check.png`. It fails the command if the interface did not draw.
 
@@ -30,6 +31,8 @@ The desktop application exists and drives the kernel for real. Next is the part 
 - **Decomposition has never run against a live model.** No API key is configured, so every decomposition so far came from a scripted client replaying an authored proposal. The pipeline is proven; the model's reliability at this task is not.
 - **Wires carry whole port values.** There is no way to take one field out of an object on a wire, worked around by having a block accept the whole object.
 - **The port type language has no recursion**, so it cannot describe its own types. The self-hosted example passes port types across block boundaries as expression strings and does the recursion inside a leaf. That works, and may be the right answer, but it is a real ceiling.
+- **Python module resolution is unsettled.** Generated Python imports `capabilities` and `contract` by bare name, which assumes something puts them on the path. Block folders are kebab-case and so are not importable as packages. This has to be decided before Python blocks can run.
+- **An optional port is not quite the same in both packs.** TypeScript renders it as an absent property; Python renders it as a field with a `None` default, which also permits an explicit null.
 - **A block cannot appear twice in one parent**, because children are identified by folder. Rendering two schemas needed one block doing both rather than the same block used twice.
 - **The restricted glue dialect is unspecified.** Conformance checking depends on it, and if it ends up so restricted that it is effectively compiler input, the compiled-graph alternative becomes the simpler design.
 - No conditional or error-handling vocabulary exists on the diagram. Branching lives inside leaves until an example proves that insufficient.

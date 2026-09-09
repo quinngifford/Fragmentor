@@ -13,6 +13,7 @@ import {
   zoomAbout,
 } from "./canvas.js";
 import { onInspectorChange, renderInspector } from "./inspector.js";
+import { PROJECT_VIEW } from "./graph.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
 
@@ -39,7 +40,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
 
 function adopt(snapshot: ProjectSnapshot): void {
   ui.snapshot = snapshot;
-  ui.view = snapshot.rootPath;
+  ui.view = snapshot.systems.length > 1 ? PROJECT_VIEW : (snapshot.systems[0]?.rootBlock ?? PROJECT_VIEW);
   ui.selection.clear();
   ui.selectedBus = null;
   ui.edits.clear();
@@ -81,7 +82,7 @@ async function reload(): Promise<void> {
     return;
   }
   ui.snapshot = result.value;
-  ui.view = result.value.blocks[view] ? view : result.value.rootPath;
+  ui.view = view === PROJECT_VIEW || result.value.blocks[view] ? view : PROJECT_VIEW;
   render();
 }
 
@@ -164,9 +165,17 @@ function renderCrumbs(): void {
   nav.replaceChildren();
   if (!ui.snapshot) return;
 
+  const snapshot = requireSnapshot();
+  const projectCrumb = el("button", "crumb", snapshot.name);
+  projectCrumb.setAttribute("aria-current", String(ui.view === PROJECT_VIEW));
+  if (ui.view !== PROJECT_VIEW) projectCrumb.addEventListener("click", () => openDiagram(PROJECT_VIEW));
+  nav.append(projectCrumb);
+
+  if (ui.view === PROJECT_VIEW) return;
+
   const parts = ui.view.split("/");
   parts.forEach((part, i) => {
-    if (i > 0) nav.append(el("span", "crumb-sep", "/"));
+    nav.append(el("span", "crumb-sep", "/"));
     const path = parts.slice(0, i + 1).join("/");
     const button = el("button", "crumb", part);
     const isCurrent = i === parts.length - 1;
@@ -192,11 +201,17 @@ function renderTree(): void {
     button.style.paddingLeft = `${8 + depth * 14}px`;
     button.append(el("span", "glyph", block.kind === "composite" ? "▣" : "▫"), el("span", "label", block.id));
 
+    // A system root says what language it is, since that is what differs.
+    if (depth === 0) {
+      const system = snapshot.systems.find((entry) => entry.rootBlock === block.id);
+      if (system) button.append(el("span", "lang", system.displayName));
+    }
+
     button.addEventListener("click", () => {
       if (block.kind === "composite") {
         openDiagram(path);
       } else {
-        ui.view = path.split("/").slice(0, -1).join("/") || snapshot.rootPath;
+        ui.view = path.split("/").slice(0, -1).join("/") || PROJECT_VIEW;
         ui.selection.clear();
         ui.selection.add(block.id);
         ui.selectedBus = null;
@@ -208,7 +223,7 @@ function renderTree(): void {
     for (const child of block.children) walk(child.path, depth + 1);
   };
 
-  walk(snapshot.rootPath, 0);
+  for (const system of snapshot.systems) walk(system.rootBlock, 0);
 }
 
 function renderStatus(): void {
@@ -223,7 +238,7 @@ function renderStatus(): void {
   const snapshot = requireSnapshot();
   const all = Object.values(snapshot.blocks);
   const composites = all.filter((b) => b.kind === "composite").length;
-  const implemented = all.filter((b) => b.sources.impl && !b.sources.impl.includes("has no implementation yet")).length;
+  const implemented = all.filter((block) => block.implemented).length;
   const graph = graphInView();
   const errors = snapshot.diagnostics.filter((d) => d.severity === "error").length;
   const warnings = snapshot.diagnostics.length - errors;
@@ -235,6 +250,7 @@ function renderStatus(): void {
   };
 
   bar.append(el("span", "project-name", snapshot.name));
+  bar.append(el("span", undefined, snapshot.systems.map((system) => `${system.rootBlock} (${system.displayName})`).join("  ")));
   bar.append(stat("blocks", all.length));
   bar.append(stat("composite", composites));
   bar.append(stat("implemented", implemented, implemented === all.length ? "good" : "warn"));

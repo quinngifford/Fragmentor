@@ -17,7 +17,10 @@ export const jobRankerManifest: Manifest = {
   name: "Job Relevance Ranker",
   goal:
     "Read job postings from a local file, score each one against a candidate profile, and return them ordered from most to least relevant with a short explanation for each score.",
-  rootBlock: "rank-jobs",
+  systems: [
+    { rootBlock: "rank-jobs", language: "typescript" },
+    { rootBlock: "embed-postings", language: "python" },
+  ],
   granularity: { level: 3, maxDepth: 4 },
 };
 
@@ -141,5 +144,67 @@ export const scorePostingProposal: Proposal = {
     { from: "match-keywords.matches", to: "compute-relevance.matches" },
     { from: "compute-relevance.score", to: "output.score" },
     { from: "compute-relevance.reasons", to: "output.reasons" },
+  ],
+};
+
+
+/**
+ * A second system in the same project, in a different language.
+ *
+ * It is not connected to the ranker and never will be: separate systems are
+ * separate programs that happen to be worked on together. Embedding is the
+ * kind of work that belongs in Python, which is the point of it being here.
+ */
+export const embedPostingsSeed: Block = {
+  id: "embed-postings",
+  name: "Embed Postings",
+  responsibility: "Turn job postings into vectors so they can be compared by similarity.",
+  kind: "leaf",
+  inputs: {
+    postings: { type: parseType("{ title: string; description: string }[]") },
+    modelName: { type: parseType("string"), description: "Which embedding model to use." },
+  },
+  outputs: {
+    vectors: { type: parseType("number[][]"), description: "One vector per posting, in the same order." },
+  },
+  capabilities: {
+    log: { capability: "Logger", description: "Reports progress through a long batch." },
+  },
+  children: [],
+  wires: [],
+  pinnedAsLeaf: false,
+};
+
+export const embedPostingsProposal: Proposal = {
+  reasoning:
+    "Cleaning a posting into embeddable text and calling the model are separate concerns with different failure modes, and both run once per posting.",
+  children: [
+    {
+      id: "clean-text",
+      name: "Clean Text",
+      responsibility: "Flatten one posting into the plain text that should be embedded.",
+      inputs: { posting: { type: "{ title: string; description: string }" } },
+      outputs: { text: { type: "string" } },
+      mode: "each",
+      eachOver: "posting",
+      likelyLeaf: true,
+    },
+    {
+      id: "embed-text",
+      name: "Embed Text",
+      responsibility: "Turn one piece of text into a vector using the named model.",
+      inputs: { text: { type: "string" }, modelName: { type: "string" } },
+      outputs: { vector: { type: "number[]" } },
+      capabilities: { log: { capability: "Logger" } },
+      mode: "each",
+      eachOver: "text",
+      likelyLeaf: true,
+    },
+  ],
+  wires: [
+    { from: "input.postings", to: "clean-text.posting" },
+    { from: "clean-text.text", to: "embed-text.text" },
+    { from: "input.modelName", to: "embed-text.modelName" },
+    { from: "embed-text.vector", to: "output.vectors" },
   ],
 };

@@ -54,9 +54,51 @@ export interface Graph {
   signals: Signal[];
 }
 
+/** The view showing every system in the project side by side. */
+export const PROJECT_VIEW = "";
+
+/**
+ * The project drawn as if it were one composite whose children are its
+ * systems. Systems are never connected, so this diagram has no wires — it
+ * exists so a project with several systems can be seen at once.
+ */
+function projectAsBlock(): SnapshotBlock {
+  const snapshot = requireSnapshot();
+
+  return {
+    path: PROJECT_VIEW,
+    id: PROJECT_VIEW,
+    name: snapshot.name,
+    responsibility: snapshot.goal,
+    kind: "composite",
+    functionName: "",
+    inputs: [],
+    outputs: [],
+    capabilities: [],
+    children: snapshot.systems.map((system) => {
+      const root = snapshot.blocks[system.rootBlock];
+      return {
+        block: system.rootBlock,
+        mode: "once" as const,
+        eachOver: null,
+        path: system.rootBlock,
+        kind: root?.kind ?? "leaf",
+        name: root?.name ?? system.rootBlock,
+        functionName: root?.functionName ?? "",
+      };
+    }),
+    order: snapshot.systems.map((system) => system.rootBlock),
+    wires: [],
+    sources: { impl: null, contract: null },
+    language: "",
+    files: { impl: "", contract: "" },
+    implemented: false,
+  };
+}
+
 export function buildGraph(view: string): Graph | null {
   const snapshot = requireSnapshot();
-  const parent = snapshot.blocks[view];
+  const parent = view === PROJECT_VIEW ? projectAsBlock() : snapshot.blocks[view];
   if (!parent || parent.children.length === 0) return null;
 
   const signals: Signal[] = parent.wires.map((wire) => ({
@@ -70,17 +112,21 @@ export function buildGraph(view: string): Graph | null {
 
   const nodes = new Map<string, GraphNode>();
 
-  nodes.set("input", {
-    key: "input",
-    label: "IN",
-    sublabel: parent.name,
-    boundary: true,
-    outputs: parent.inputs,
-    capabilities: [],
-    child: null,
-    block: null,
-    groups: [],
-  });
+  // A boundary with no ports is not worth drawing, which is what makes the
+  // project view a plain row of systems rather than an empty IN and OUT.
+  if (parent.inputs.length > 0) {
+    nodes.set("input", {
+      key: "input",
+      label: "IN",
+      sublabel: parent.name,
+      boundary: true,
+      outputs: parent.inputs,
+      capabilities: [],
+      child: null,
+      block: null,
+      groups: [],
+    });
+  }
 
   for (const child of parent.children) {
     const block = snapshot.blocks[child.path];
@@ -98,17 +144,19 @@ export function buildGraph(view: string): Graph | null {
     });
   }
 
-  nodes.set("output", {
-    key: "output",
-    label: "OUT",
-    sublabel: parent.name,
-    boundary: true,
-    outputs: [],
-    capabilities: [],
-    child: null,
-    block: null,
-    groups: [],
-  });
+  if (parent.outputs.length > 0) {
+    nodes.set("output", {
+      key: "output",
+      label: "OUT",
+      sublabel: parent.name,
+      boundary: true,
+      outputs: [],
+      capabilities: [],
+      child: null,
+      block: null,
+      groups: [],
+    });
+  }
 
   for (const signal of signals) {
     const node = nodes.get(signal.target);

@@ -137,7 +137,7 @@ function codeSection(block: SnapshotBlock): HTMLElement {
   const node = section("Code");
 
   const tabs = el("div", "code-tabs");
-  for (const [key, label] of [["impl", "impl.ts"], ["contract", "contract.ts"]] as const) {
+  for (const [key, label] of [["impl", block.files.impl], ["contract", block.files.contract]] as const) {
     const chip = el("button", "chip", label);
     chip.setAttribute("aria-pressed", String(ui.codeTab === key));
     chip.addEventListener("click", () => {
@@ -195,7 +195,7 @@ function codeSection(block: SnapshotBlock): HTMLElement {
       } else {
         block.sources.impl = editor.value;
         ui.edits.delete(block.path);
-        ui.status = { text: `Saved ${block.path}/impl.ts`, tone: "good" };
+        ui.status = { text: `Saved ${block.path}/${block.files.impl}`, tone: "good" };
       }
       notify();
     })();
@@ -236,9 +236,9 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
 
   const badges = el("div", "badges");
   const kind = el("span", `badge${block.kind === "composite" ? " composite" : ""}`, block.kind);
-  const implemented = block.sources.impl && !block.sources.impl.includes("has no implementation yet");
-  const state = el("span", "badge state", implemented ? "implemented" : "specified");
-  badges.append(kind, state);
+  const state = el("span", "badge state", block.implemented ? "implemented" : "specified");
+  const language = el("span", "badge", block.language);
+  badges.append(kind, state, language);
   head.append(badges);
 
   if (block.kind === "composite" && block.path !== ui.view) {
@@ -371,6 +371,33 @@ export function renderInspector(): void {
     }
   }
 
-  const current = requireSnapshot().blocks[ui.view];
-  if (current) blockPanel(panel, current);
+  const snapshot = requireSnapshot();
+  const current = snapshot.blocks[ui.view];
+  if (current) {
+    blockPanel(panel, current);
+    return;
+  }
+
+  // Nothing is selected and the canvas is showing the project itself.
+  const head = el("div", "insp-head");
+  head.append(el("h2", undefined, snapshot.name), el("div", "insp-id", snapshot.dir));
+  panel.append(head);
+  panel.append(el("p", "responsibility", snapshot.goal));
+
+  const systems = section("Systems");
+  const list = el("div", "ports");
+  for (const system of snapshot.systems) {
+    const root = snapshot.blocks[system.rootBlock];
+    const row = el("div", "port-row");
+    row.append(el("div", "pname", root?.name ?? system.rootBlock));
+    row.append(el("div", "ptype", system.known ? system.displayName : `${system.language} — no language pack`));
+    if (root) row.append(el("div", "pdesc", root.responsibility));
+    list.append(row);
+  }
+  systems.append(list);
+  panel.append(systems);
+
+  panel.append(
+    el("p", "bench-note", "Systems in a project are separate programs. They are shown together but never connected, which is why each can be written in its own language."),
+  );
 }

@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod/v4";
 import { blockIdPattern, blockSchema, blockToFileShape } from "../model/block.js";
@@ -12,41 +12,59 @@ import type { Diagnostic } from "../model/validate.js";
  * be annotated or cross-referenced to know where a block sits: moving a
  * folder moves the block.
  *
+ * A project holds one or more systems. A system is a block hierarchy with its
+ * own target language, and systems are not connected to each other — they are
+ * separate programs that happen to be worked on together.
+ *
  *   <project>/
  *     fragmentor.json
+ *     layout.json
  *     blocks/
- *       rank-jobs/
+ *       rank-jobs/          <- one system
  *         block.json
- *         impl.ts
  *         score-posting/
  *           block.json
- *           impl.ts
+ *       train-model/        <- another, possibly in another language
+ *         block.json
  */
 
 export interface Granularity {
   /**
    * How far the AI decomposes on its own. 1 leaves large blocks alone;
-   * 5 breaks work down to small single-purpose pieces. This is the user's
-   * tuning knob, exposed as a slider.
+   * 5 breaks work down to small single-purpose pieces.
    */
   level: 1 | 2 | 3 | 4 | 5;
-  /** A hard floor applied regardless of level, so decomposition always terminates. */
+  /** A hard floor applied regardless of level, so decomposition terminates. */
   maxDepth: number;
+}
+
+export interface SystemDeclaration {
+  /** The block id at the root of this system, which is also its folder. */
+  rootBlock: string;
+  /** The id of the language pack this system's code is written in. */
+  language: string;
 }
 
 export interface Manifest {
   name: string;
   /** What the software being built is supposed to do, in the user's words. */
   goal: string;
-  rootBlock: string;
+  systems: SystemDeclaration[];
   granularity: Granularity;
 }
+
+const systemSchema = z
+  .object({
+    rootBlock: z.string().regex(blockIdPattern),
+    language: z.string().min(1),
+  })
+  .strict();
 
 export const manifestSchema = z
   .object({
     name: z.string().min(1),
     goal: z.string().min(1),
-    rootBlock: z.string().regex(blockIdPattern),
+    systems: z.array(systemSchema).min(1, "a project needs at least one system"),
     granularity: z
       .object({
         level: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).default(3),
@@ -55,21 +73,31 @@ export const manifestSchema = z
       .strict()
       .default({ level: 3, maxDepth: 4 }),
   })
-  .strict() as unknown as z.ZodType<Manifest>;
+  .strict()
+  .refine((m) => new Set(m.systems.map((s) => s.rootBlock)).size === m.systems.length, {
+    message: "two systems cannot share a root block",
+    path: ["systems"],
+  }) as unknown as z.ZodType<Manifest>;
 
 export interface LoadedBlock {
   block: Block;
-  /** Slash-joined block ids from the root, e.g. `rank-jobs/score-posting`. */
+  /** Slash-joined block ids from the system root, e.g. `rank-jobs/score-posting`. */
   path: string;
   /** Absolute path to the block's own folder. */
   dir: string;
   children: LoadedBlock[];
 }
 
+export interface LoadedSystem {
+  rootBlock: string;
+  language: string;
+  root: LoadedBlock;
+}
+
 export interface Project {
   dir: string;
   manifest: Manifest;
-  root: LoadedBlock;
+  systems: LoadedSystem[];
   byPath: Map<string, LoadedBlock>;
 }
 
@@ -85,25 +113,54 @@ export function blocksRoot(projectDir: string): string {
   return path.join(projectDir, BLOCKS_DIR);
 }
 
-/** Where a block's folder lives, given its path from the root. */
+/** Where a block's folder lives, given its path from the blocks root. */
 export function blockDir(projectDir: string, blockPath: string): string {
   return path.join(blocksRoot(projectDir), ...blockPath.split("/"));
 }
 
+/** The system a block belongs to, identified by the first segment of its path. */
+export function systemOf(project: Project, blockPath: string): LoadedSystem | undefined {
+  const rootId = blockPath.split("/")[0];
+  return project.systems.find((system) => system.rootBlock === rootId);
+}
+
+/** The language a block's code is written in. */
+export function languageOf(project: Project, blockPath: string): string | undefined {
+  return systemOf(project, blockPath)?.language;
+}
+
 export async function loadProject(projectDir: string): Promise<Project> {
   const manifestText = await readFile(path.join(projectDir, MANIFEST_FILE), "utf8");
-  const manifest = manifestSchema.parse(JSON.parse(manifestText));
+  const raw: unknown = JSON.parse(manifestText);
 
-  const root = await loadBlockTree(blockDir(projectDir, manifest.rootBlock), manifest.rootBlock);
+  if (raw && typeof raw === "object" && "rootBlock" in raw && !("systems" in raw)) {
+    throw new Error(
+      `The project at ${projectDir} uses the old single-system manifest. Replace "rootBlock" with a "systems" list, for example: "systems": [{ "rootBlock": "${String((raw as { rootBlock: unknown }).rootBlock)}", "language": "typescript" }].`,
+    );
+  }
 
+  const parsed = manifestSchema.safeParse(raw);
+  if (!parsed.success) {
+    const detail = parsed.error.issues.map((i) => `  ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
+    throw new Error(`The project file at ${path.join(projectDir, MANIFEST_FILE)} is not valid:\n${detail}`);
+  }
+  const manifest = parsed.data;
+
+  const systems: LoadedSystem[] = [];
   const byPath = new Map<string, LoadedBlock>();
+
   const index = (node: LoadedBlock) => {
     byPath.set(node.path, node);
     node.children.forEach(index);
   };
-  index(root);
 
-  return { dir: projectDir, manifest, root, byPath };
+  for (const declaration of manifest.systems) {
+    const root = await loadBlockTree(blockDir(projectDir, declaration.rootBlock), declaration.rootBlock);
+    systems.push({ rootBlock: declaration.rootBlock, language: declaration.language, root });
+    index(root);
+  }
+
+  return { dir: projectDir, manifest, systems, byPath };
 }
 
 async function loadBlockTree(dir: string, blockPath: string): Promise<LoadedBlock> {
@@ -124,37 +181,47 @@ async function loadBlockTree(dir: string, blockPath: string): Promise<LoadedBloc
 
   const block = parsed.data;
   if (block.id !== id) {
-    throw new Error(
-      `The block in folder "${id}" calls itself "${block.id}". A block's id must match its folder name.`,
-    );
+    throw new Error(`The block in folder "${id}" calls itself "${block.id}". A block's id must match its folder name.`);
   }
 
+  // A block's folder can sit alongside things that are not blocks: __pycache__,
+  // node_modules, a virtual environment. Only a directory that is named like a
+  // block and actually contains one is treated as a child.
   const entries = await readdir(dir, { withFileTypes: true });
-  const childDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  const candidates = entries
+    .filter((entry) => entry.isDirectory() && blockIdPattern.test(entry.name))
+    .map((entry) => entry.name)
+    .sort();
 
   const children: LoadedBlock[] = [];
-  for (const childId of childDirs) {
-    children.push(await loadBlockTree(path.join(dir, childId), `${blockPath}/${childId}`));
+  for (const childId of candidates) {
+    const childDir = path.join(dir, childId);
+    try {
+      await access(path.join(childDir, BLOCK_FILE));
+    } catch {
+      continue;
+    }
+    children.push(await loadBlockTree(childDir, `${blockPath}/${childId}`));
   }
 
   return { block, path: blockPath, dir, children };
 }
 
 /**
- * Checks every composite in the project against its children, and checks that
- * the folders on disk agree with what the diagram claims.
+ * Checks every composite against its children, and checks that the folders on
+ * disk agree with what the diagram claims.
  */
 export function validateProject(project: Project): ProjectDiagnostic[] {
   const diagnostics: ProjectDiagnostic[] = [];
 
   for (const node of project.byPath.values()) {
-    const onDisk = new Map(node.children.map((c) => [c.block.id, c.block]));
+    const onDisk = new Map(node.children.map((child) => [child.block.id, child.block]));
 
     for (const diagnostic of validateComposite(node.block, onDisk)) {
       diagnostics.push({ ...diagnostic, blockPath: node.path });
     }
 
-    const declared = new Set(node.block.children.map((c) => c.block));
+    const declared = new Set(node.block.children.map((child) => child.block));
     for (const child of node.children) {
       if (!declared.has(child.block.id)) {
         diagnostics.push({
@@ -195,12 +262,14 @@ export async function writeDecomposition(
   }
 }
 
-/** Creates a new project directory containing a single unimplemented root block. */
+/** Creates a project directory containing one unimplemented root block per system. */
 export async function createProject(
   projectDir: string,
   manifest: Manifest,
-  rootBlock: Block,
+  rootBlocks: Block[],
 ): Promise<void> {
   await writeManifest(projectDir, manifest);
-  await writeBlock(blockDir(projectDir, manifest.rootBlock), rootBlock);
+  for (const root of rootBlocks) {
+    await writeBlock(blockDir(projectDir, root.id), root);
+  }
 }

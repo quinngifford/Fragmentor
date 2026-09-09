@@ -7,7 +7,8 @@ import type { Result, SaveLayoutRequest, WriteImplRequest } from "./ipc.js";
 import { projectSnapshot } from "../src/project/snapshot.js";
 import type { ProjectSnapshot } from "../src/project/snapshot.js";
 import { saveViewLayout } from "../src/project/layout.js";
-import { blockDir, loadProject } from "../src/project/project.js";
+import { blockDir, loadProject, systemOf } from "../src/project/project.js";
+import { getPack } from "../src/lang/index.js";
 import { emitProject } from "../src/codegen/emit.js";
 import { resolveInside } from "../src/project/safePath.js";
 import type { EmitResult } from "../src/codegen/emit.js";
@@ -115,7 +116,13 @@ function registerHandlers(): void {
 
   ipcMain.handle(CHANNELS.writeImpl, async (_event, request: WriteImplRequest): Promise<Result<null>> => {
     try {
-      const target = resolveInside(blockDir(request.dir, request.blockPath), "impl.ts");
+      // The file name depends on the language of the system this block is in,
+      // and the renderer is not trusted to say which file to write.
+      const project = await loadProject(request.dir);
+      const system = systemOf(project, request.blockPath);
+      if (!system) throw new Error(`"${request.blockPath}" is not part of any system in this project.`);
+
+      const target = resolveInside(blockDir(request.dir, request.blockPath), getPack(system.language).implFile);
       await writeFile(target, request.contents, "utf8");
       return ok(null);
     } catch (error) {

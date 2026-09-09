@@ -12,3 +12,7 @@ Thumbs.db
 
 # Scratch space for experiments that should not be checkpointed
 scratch/
+
+# Python bytecode, which appears next to generated .py files
+__pycache__/
+*.pyc

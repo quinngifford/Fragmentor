@@ -1,13 +1,14 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { formatWire, functionNameOf } from "../model/block.js";
+import { formatWire } from "../model/block.js";
 import { describeType } from "../model/types.js";
 import type { PortType } from "../model/types.js";
 import { executionOrder, wireCarriedType } from "../model/validate.js";
 import { loadLayout } from "./layout.js";
 import type { Layout } from "./layout.js";
-import { loadProject, validateProject } from "./project.js";
+import { loadProject, systemOf, validateProject } from "./project.js";
 import type { Granularity, ProjectDiagnostic } from "./project.js";
+import { getPack, isKnownLanguage } from "../lang/index.js";
 
 /**
  * Everything the interface needs about a project, in one serialisable value.
@@ -50,6 +51,15 @@ export interface SnapshotWire {
   isArray: boolean;
 }
 
+export interface SnapshotSystem {
+  rootBlock: string;
+  /** Language pack id, e.g. `typescript`. */
+  language: string;
+  displayName: string;
+  /** False when the project asks for a language Fragmentor has no pack for. */
+  known: boolean;
+}
+
 export interface SnapshotBlock {
   path: string;
   id: string;
@@ -64,6 +74,12 @@ export interface SnapshotBlock {
   order: string[];
   wires: SnapshotWire[];
   sources: { impl: string | null; contract: string | null };
+  /** Which system this block belongs to, and therefore which language. */
+  language: string;
+  /** File names for this block, which differ by language. */
+  files: { impl: string; contract: string };
+  /** Whether the implementation is still the untouched scaffold. */
+  implemented: boolean;
 }
 
 export interface ProjectSnapshot {
@@ -71,7 +87,7 @@ export interface ProjectSnapshot {
   name: string;
   goal: string;
   granularity: Granularity;
-  rootPath: string;
+  systems: SnapshotSystem[];
   blocks: Record<string, SnapshotBlock>;
   layout: Layout;
   diagnostics: ProjectDiagnostic[];
@@ -93,6 +109,11 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
     const block = node.block;
     const childBlocks = new Map(node.children.map((c) => [c.block.id, c.block]));
 
+    // Naming and file names are language conventions, so they come from the
+    // pack for whichever system this block belongs to.
+    const language = systemOf(project, blockPath)?.language ?? "typescript";
+    const pack = isKnownLanguage(language) ? getPack(language) : getPack("typescript");
+
     const ports = (record: typeof block.inputs): SnapshotPort[] =>
       Object.entries(record).map(([name, port]) => ({
         name,
@@ -107,7 +128,7 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       name: block.name,
       responsibility: block.responsibility,
       kind: block.kind,
-      functionName: functionNameOf(block.id),
+      functionName: pack.functionName(block.id),
       inputs: ports(block.inputs),
       outputs: ports(block.outputs),
       capabilities: Object.entries(block.capabilities).map(([name, cap]) => ({
@@ -122,7 +143,7 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
         path: `${blockPath}/${child.block}`,
         kind: childBlocks.get(child.block)?.kind ?? "leaf",
         name: childBlocks.get(child.block)?.name ?? child.block,
-        functionName: functionNameOf(child.block),
+        functionName: pack.functionName(child.block),
       })),
       order: executionOrder(block.children, block.wires),
       wires: block.wires.map((wire) => {
@@ -136,10 +157,16 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
         };
       }),
       sources: {
-        impl: await readIfPresent(path.join(node.dir, "impl.ts")),
-        contract: await readIfPresent(path.join(node.dir, "contract.ts")),
+        impl: await readIfPresent(path.join(node.dir, pack.implFile)),
+        contract: await readIfPresent(path.join(node.dir, pack.contractFile)),
       },
+      language,
+      files: { impl: pack.implFile, contract: pack.contractFile },
+      implemented: false,
     };
+
+    const impl = blocks[blockPath].sources.impl;
+    blocks[blockPath].implemented = impl !== null && !pack.isUnimplemented(impl);
   }
 
   return {
@@ -147,7 +174,12 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
     name: project.manifest.name,
     goal: project.manifest.goal,
     granularity: project.manifest.granularity,
-    rootPath: project.root.path,
+    systems: project.systems.map((system) => ({
+      rootBlock: system.rootBlock,
+      language: system.language,
+      displayName: isKnownLanguage(system.language) ? getPack(system.language).displayName : system.language,
+      known: isKnownLanguage(system.language),
+    })),
     blocks,
     layout: await loadLayout(projectDir),
     diagnostics: validateProject(project),

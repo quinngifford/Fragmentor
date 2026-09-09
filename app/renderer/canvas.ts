@@ -391,7 +391,9 @@ export function fitToView(): void {
   const rect = element("canvas-svg").getBoundingClientRect();
   if (!rect.width || !rect.height || !Number.isFinite(minX)) return;
 
-  const zoom = Math.min(3, Math.max(0.25, Math.min(rect.width / (maxX - minX), rect.height / (maxY - minY))));
+  // Fitting shrinks a diagram to make it visible; it never magnifies one, or a
+  // project with two small systems in it would open absurdly zoomed in.
+  const zoom = Math.min(1, Math.max(0.25, Math.min(rect.width / (maxX - minX), rect.height / (maxY - minY))));
   ui.zoom = zoom;
   ui.panX = (rect.width - (maxX - minX) * zoom) / 2 - minX * zoom;
   ui.panY = (rect.height - (maxY - minY) * zoom) / 2 - minY * zoom;

@@ -1,0 +1,46 @@
+{
+  "id": "embed-postings",
+  "name": "Embed Postings",
+  "responsibility": "Turn job postings into vectors so they can be compared by similarity.",
+  "kind": "composite",
+  "inputs": {
+    "postings": {
+      "type": "{ title: string; description: string }[]"
+    },
+    "modelName": {
+      "type": "string",
+      "description": "Which embedding model to use."
+    }
+  },
+  "outputs": {
+    "vectors": {
+      "type": "number[][]",
+      "description": "One vector per posting, in the same order."
+    }
+  },
+  "capabilities": {
+    "log": {
+      "capability": "Logger",
+      "description": "Reports progress through a long batch."
+    }
+  },
+  "children": [
+    {
+      "block": "clean-text",
+      "mode": "each",
+      "eachOver": "posting"
+    },
+    {
+      "block": "embed-text",
+      "mode": "each",
+      "eachOver": "text"
+    }
+  ],
+  "wires": [
+    "input.postings -> clean-text.posting",
+    "clean-text.text -> embed-text.text",
+    "input.modelName -> embed-text.modelName",
+    "embed-text.vector -> output.vectors"
+  ],
+  "pinnedAsLeaf": false
+}

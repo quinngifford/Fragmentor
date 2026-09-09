@@ -2,26 +2,32 @@
 
 /** Reads and writes files. */
 export interface FileSystem {
+  /** Reads a file as text. */
   readFile(path: string): Promise<string>;
+  /** Writes text to a file, replacing what was there. */
   writeFile(path: string, contents: string): Promise<void>;
 }
 
 /** Fetches over the network. */
 export interface Http {
+  /** Fetches a URL and returns the body as text. */
   get(url: string): Promise<string>;
 }
 
 /** Reads the current time. */
 export interface Clock {
-  now(): Date;
+  /** Milliseconds since the epoch. */
+  now(): number;
 }
 
 /** Produces random numbers. */
 export interface Random {
+  /** A number from 0 up to but not including 1. */
   next(): number;
 }
 
 /** Records what happened. */
 export interface Logger {
+  /** Records one message. */
   log(message: string): void;
 }

@@ -1,0 +1,27 @@
+{
+  "id": "embed-text",
+  "name": "Embed Text",
+  "responsibility": "Turn one piece of text into a vector using the named model.",
+  "kind": "leaf",
+  "inputs": {
+    "text": {
+      "type": "string"
+    },
+    "modelName": {
+      "type": "string"
+    }
+  },
+  "outputs": {
+    "vector": {
+      "type": "number[]"
+    }
+  },
+  "capabilities": {
+    "log": {
+      "capability": "Logger"
+    }
+  },
+  "children": [],
+  "wires": [],
+  "pinnedAsLeaf": false
+}

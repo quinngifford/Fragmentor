@@ -14,7 +14,7 @@ let dir: string;
 const manifest: Manifest = {
   name: "Tiny",
   goal: "Double a number.",
-  rootBlock: "double-it",
+  systems: [{ rootBlock: "double-it", language: "typescript" }],
   granularity: { level: 3, maxDepth: 3 },
 };
 
@@ -43,7 +43,7 @@ beforeEach(async () => {
     capabilities: { log: { capability: "Logger" } },
   });
 
-  await createProject(dir, manifest, root);
+  await createProject(dir, manifest, [root]);
   await writeBlock(blockDir(dir, "double-it/add-to-self"), child);
 });
 
