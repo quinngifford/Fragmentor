@@ -14,7 +14,7 @@ Building the headless kernel. Model, project format, validator, decomposition, a
 - **Worked example.** `examples/job-ranker` is produced by the real pipeline and exercised end to end by test: seed block, two rounds of decomposition, written to disk, read back, validated.
 - **Contract generation.** Every block gets a generated `contract.ts`: a zod schema and derived type per side, plus an interface for the effects it needs. Schemas are tested by behaviour, not spelling, and the generated code typechecks under strict mode (`npm run check:examples`). `impl.ts` is scaffolded once and never overwritten.
 - **Self-hosted example.** `examples/contract-generator` is Fragmentor describing its own contract generator as blocks, and Fragmentor generates that project's contracts. 13 blocks across the two examples, 28 generated files, all compiling.
-- **Canvas prototype.** `prototypes/canvas.html` renders both projects from exported project data. It is a design prototype, not connected to the kernel. The build parses the finished page's script and refuses to write one that would render nothing.
+- **Canvas prototype.** `prototypes/canvas.html` renders both projects from exported project data: pan and zoom, draggable blocks, bus-grouped connections, ctrl-click multi-select, a per-block code panel, and per-bus colours. Positions, colours and code edits are kept in the viewer's browser only. It is a design prototype, not connected to the kernel. The build parses the finished page's script and refuses to write one that would render nothing.
 
 ## Not built yet
 
@@ -34,7 +34,8 @@ Building the headless kernel. Model, project format, validator, decomposition, a
 
 ## Human verification needed
 
-- The canvas prototype: whether the visual language reads correctly and the interaction model is right, before it is built for real.
+- The canvas prototype: whether the bus grouping reads better than per-signal wires, and whether the interaction model is right, before any of it is built for real.
+- Whether the prototype should become the real application rather than being rebuilt. It now carries enough behaviour that throwing it away has a cost.
 
 ## Current checkpoint
 

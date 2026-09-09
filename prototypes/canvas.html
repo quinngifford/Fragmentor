@@ -38,31 +38,23 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  .shell {
-    display: grid;
-    grid-template-rows: auto 1fr auto;
-    min-height: 100vh;
-  }
+  /* Fills the viewport when there is one, but keeps a real size if 100vh
+     resolves oddly inside a host frame. Panes scroll, the page does not. */
+  .shell { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; min-height: 660px; }
 
   /* ---- top bar ---- */
 
   .topbar {
     display: flex;
     align-items: center;
-    gap: 20px;
-    padding: 12px 18px;
+    gap: 14px;
+    padding: 10px 16px;
     border-bottom: 1px solid var(--rule);
     background: var(--panel);
     flex-wrap: wrap;
   }
 
-  .mark {
-    display: flex;
-    align-items: baseline;
-    gap: 9px;
-    padding-right: 18px;
-    border-right: 1px solid var(--rule);
-  }
+  .mark { padding-right: 14px; border-right: 1px solid var(--rule); }
 
   .mark strong {
     font-size: 14px;
@@ -72,15 +64,9 @@
     color: var(--signal);
   }
 
-  .mark span {
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--ink-faint);
-  }
+  .tabs { display: flex; gap: 4px; padding-right: 14px; border-right: 1px solid var(--rule); }
 
-  .tabs { display: flex; gap: 4px; padding-right: 16px; border-right: 1px solid var(--rule); }
-
-  .tab {
+  .tab, .toggle, .zoom-btn, .chip {
     font-family: var(--mono);
     font-size: 11.5px;
     padding: 4px 10px;
@@ -91,10 +77,13 @@
     cursor: pointer;
   }
 
-  .tab:hover { color: var(--ink); background: var(--panel-high); }
+  .tab:hover, .toggle:hover, .zoom-btn:hover { color: var(--ink); background: var(--panel-high); }
   .tab[aria-pressed="true"] { border-color: var(--signal-dim); color: var(--signal); background: var(--signal-deep); }
 
-  .crumbs { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; }
+  .toggle { border-color: var(--rule-bright); }
+  .toggle[aria-pressed="true"] { color: var(--signal); border-color: var(--signal-dim); }
+
+  .crumbs { display: flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 12px; }
 
   .crumb {
     background: none;
@@ -110,22 +99,13 @@
   .crumb[aria-current="true"] { color: var(--ink); background: var(--panel-high); cursor: default; }
   .crumb-sep { color: var(--ink-faint); }
 
-  .legend { margin-left: auto; display: flex; gap: 16px; font-size: 11px; color: var(--ink-dim); }
-  .legend div { display: flex; align-items: center; gap: 6px; }
+  .toolbar { margin-left: auto; display: flex; gap: 6px; align-items: center; }
 
-  .swatch { width: 18px; height: 0; border-top: 2px solid var(--signal-dim); }
-  .swatch.bus { border-top: 2px double var(--signal-dim); height: 3px; border-bottom: 2px solid transparent; }
-  .swatch.dot { width: 8px; height: 8px; border: 0; border-radius: 50%; background: var(--effect); }
+  /* ---- panes ---- */
 
-  /* ---- three panes ---- */
+  .panes { display: grid; min-height: 0; }
 
-  .panes {
-    display: grid;
-    grid-template-columns: 232px minmax(0, 1fr) 340px;
-    min-height: 640px;
-  }
-
-  .rail, .inspector { background: var(--panel); overflow-y: auto; }
+  .rail, .inspector { background: var(--panel); overflow-y: auto; min-height: 0; }
   .rail { border-right: 1px solid var(--rule); }
   .inspector { border-left: 1px solid var(--rule); }
 
@@ -134,7 +114,7 @@
     letter-spacing: 0.16em;
     text-transform: uppercase;
     color: var(--ink-faint);
-    padding: 14px 16px 8px;
+    padding: 12px 16px 6px;
   }
 
   /* ---- hierarchy rail ---- */
@@ -159,43 +139,85 @@
 
   .node:hover { background: var(--panel-high); color: var(--ink); }
   .node[aria-selected="true"] { background: var(--signal-deep); color: var(--signal); }
-
   .node .glyph { color: var(--ink-faint); flex: none; width: 11px; text-align: center; }
   .node[aria-selected="true"] .glyph { color: var(--signal); }
   .node .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* ---- canvas ---- */
 
-  .canvas-wrap { min-width: 0; overflow: auto; padding: 26px; }
-  .canvas-wrap svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
-  .canvas-empty { color: var(--ink-dim); font-size: 13px; max-width: 46ch; }
+  .canvas-wrap { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--ground); }
+  #canvas-svg { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  #canvas-svg.panning { cursor: grabbing; }
+  #canvas-svg.dragging { cursor: move; }
 
-  .block-box { cursor: pointer; }
+  .canvas-empty {
+    position: absolute;
+    inset: 26px auto auto 26px;
+    color: var(--ink-dim);
+    font-size: 13px;
+    max-width: 46ch;
+    white-space: pre-wrap;
+  }
+
+  .zoom-bar {
+    position: absolute;
+    left: 14px;
+    bottom: 14px;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    background: color-mix(in srgb, var(--panel) 92%, transparent);
+    border: 1px solid var(--rule-bright);
+    border-radius: var(--radius);
+    padding: 4px;
+  }
+
+  .zoom-btn { border-color: transparent; min-width: 28px; text-align: center; }
+  .zoom-level { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); min-width: 44px; text-align: center; }
+
+  .hint {
+    position: absolute;
+    right: 14px;
+    top: 12px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    text-align: right;
+    pointer-events: none;
+  }
+
+  /* ---- block drawing ---- */
+
+  .block-box { cursor: move; }
   .block-plate { fill: var(--panel-high); stroke: var(--rule-bright); stroke-width: 1; }
   .block-box:hover .block-plate { stroke: var(--signal-dim); }
-  .block-box[data-selected="true"] .block-plate { stroke: var(--signal); }
-  .block-head { fill: var(--panel); }
+  .block-box[data-selected="true"] .block-plate { stroke: var(--signal); stroke-width: 1.8; }
+  .block-box[data-boundary="true"] .block-plate { fill: var(--panel); stroke-dasharray: 3 3; }
+  .block-head { fill: var(--panel); pointer-events: none; }
 
-  .block-name { font-family: var(--sans); font-size: 12.5px; font-weight: 600; fill: var(--ink); }
-  .block-kind { font-family: var(--mono); font-size: 9.5px; fill: var(--ink-faint); letter-spacing: 0.08em; }
-  .port-label { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-dim); }
-  .rail-label { font-family: var(--mono); font-size: 10.5px; fill: var(--signal-dim); }
-  .boundary-title { font-family: var(--mono); font-size: 9.5px; fill: var(--ink-faint); letter-spacing: 0.12em; }
+  .block-name { font-family: var(--sans); font-size: 12.5px; font-weight: 600; fill: var(--ink); pointer-events: none; }
+  .block-kind { font-family: var(--mono); font-size: 9px; fill: var(--ink-faint); letter-spacing: 0.08em; pointer-events: none; }
+  .group-label { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; pointer-events: none; }
+  .port-label { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-dim); pointer-events: none; }
+  .bus-out-label { font-family: var(--mono); font-size: 9px; fill: var(--ink-faint); letter-spacing: 0.06em; pointer-events: none; }
+  .each-badge { font-family: var(--mono); font-size: 9px; fill: var(--signal); pointer-events: none; }
+  .block-divider { stroke: var(--rule-bright); pointer-events: none; }
 
-  .port-dot { fill: var(--panel); stroke: var(--signal-dim); stroke-width: 1.5; }
-  .port-dot.cap { stroke: var(--effect); }
+  .group-bracket { stroke-width: 2; fill: none; }
+  .bus-dot { stroke-width: 1.5; }
+  .cap-line { stroke: var(--effect); stroke-width: 1.2; stroke-dasharray: 2 3; opacity: 0.65; pointer-events: none; }
+  .cap-dot { fill: var(--panel); stroke: var(--effect); stroke-width: 1.5; }
 
-  .wire { fill: none; stroke: var(--signal-deep); stroke-width: 1.5; }
-  .wire.bus { stroke-width: 3.5; stroke: var(--signal-deep); }
-  .wire-hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
-  .wire-group:hover .wire, .wire-group[data-selected="true"] .wire { stroke: var(--signal); }
-  .cap-line { stroke: var(--effect); stroke-width: 1.2; stroke-dasharray: 2 3; opacity: 0.65; }
-  .each-badge { font-family: var(--mono); font-size: 9.5px; fill: var(--signal); }
-  .block-divider { stroke: var(--rule-bright); }
+  .bus { fill: none; stroke-width: 2; opacity: 0.55; }
+  .bus-hit { fill: none; stroke: transparent; stroke-width: 16; cursor: pointer; }
+  .bus-group:hover .bus { opacity: 1; stroke-width: 3; }
+  .bus-group[data-selected="true"] .bus { opacity: 1; stroke-width: 3.5; }
+  .bus-group[data-linked="true"] .bus { opacity: 1; stroke-width: 3; }
+  .bus-count { font-family: var(--mono); font-size: 9px; pointer-events: none; }
 
   /* ---- inspector ---- */
 
-  .inspector-body { padding: 0 16px 24px; display: flex; flex-direction: column; gap: 18px; }
+  .inspector-body { padding: 0 16px 24px; display: flex; flex-direction: column; gap: 16px; }
 
   .insp-head { display: flex; flex-direction: column; gap: 6px; }
   .insp-head h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
@@ -229,6 +251,7 @@
   }
 
   .ports { display: flex; flex-direction: column; gap: 8px; }
+  .group-heading { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); margin: 4px 0 2px; }
 
   .port-row { display: flex; flex-direction: column; gap: 2px; padding-left: 10px; border-left: 2px solid var(--signal-deep); }
   .port-row.cap { border-left-color: var(--effect); }
@@ -250,7 +273,60 @@
   .btn:hover { background: var(--signal-dim); color: var(--ground); }
   .btn[disabled] { border-color: var(--rule-bright); background: transparent; color: var(--ink-faint); cursor: not-allowed; }
 
-  /* ---- test bench ---- */
+  .btn.quiet { border-color: var(--rule-bright); background: transparent; color: var(--ink-dim); }
+  .btn.quiet:hover { color: var(--ink); background: var(--panel-high); }
+
+  code, pre { font-family: var(--mono); }
+
+  pre.code {
+    margin: 0;
+    padding: 10px;
+    background: var(--ground);
+    border: 1px solid var(--rule-bright);
+    border-radius: var(--radius);
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--ink);
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  .code-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+  .chip { border-color: var(--rule-bright); }
+  .chip[aria-pressed="true"] { color: var(--signal); border-color: var(--signal-dim); background: var(--signal-deep); }
+
+  .code-editor {
+    width: 100%;
+    min-height: 240px;
+    resize: vertical;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.6;
+    background: var(--ground);
+    border: 1px solid var(--rule-bright);
+    border-radius: var(--radius);
+    color: var(--ink);
+    padding: 10px;
+    white-space: pre;
+    overflow-wrap: normal;
+    overflow-x: auto;
+  }
+
+  .code-editor[readonly] { color: var(--ink-dim); }
+  .code-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+
+  .swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  .swatch-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px solid var(--rule-bright);
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .swatch-btn[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset: 2px; }
 
   .bench { display: flex; flex-direction: column; gap: 10px; }
   .bench-note { font-size: 11.5px; color: var(--ink-dim); margin: 0; }
@@ -269,18 +345,16 @@
     width: 100%;
   }
 
-  .field textarea { min-height: 62px; resize: vertical; line-height: 1.45; }
-  .field input:focus, .field select:focus, .field textarea:focus { outline: 2px solid var(--signal-dim); outline-offset: 1px; }
+  .field textarea { min-height: 58px; resize: vertical; }
   .field input[type="checkbox"] { width: auto; accent-color: var(--signal); }
+  .subfields { display: flex; flex-direction: column; gap: 8px; padding-left: 10px; border-left: 1px solid var(--rule); }
 
-  .subfields { display: flex; flex-direction: column; gap: 8px; padding-left: 10px; border-left: 1px solid var(--rule); margin-top: 2px; }
-
-  /* ---- status strip ---- */
+  /* ---- status ---- */
 
   .status {
     display: flex;
-    gap: 26px;
-    padding: 9px 18px;
+    gap: 22px;
+    padding: 8px 16px;
     border-top: 1px solid var(--rule);
     background: var(--panel);
     font-family: var(--mono);
@@ -296,38 +370,48 @@
 
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
-  @media (max-width: 1100px) {
-    .panes { grid-template-columns: 1fr; grid-template-rows: auto minmax(320px, 1fr) auto; }
-    .rail { border-right: 0; border-bottom: 1px solid var(--rule); max-height: 190px; }
-    .inspector { border-left: 0; border-top: 1px solid var(--rule); }
-    .shell { height: auto; }
+  /* Narrow enough that three columns would starve the canvas: stack instead.
+     The override has to win over the inline columns the pane toggles set. */
+  @media (max-width: 1040px) {
+    .shell { height: auto; min-height: 0; }
+    .panes { grid-template-columns: 1fr !important; grid-template-rows: auto minmax(420px, 1fr) auto; }
+    .rail { border-right: 0; border-bottom: 1px solid var(--rule); max-height: 172px; }
+    .inspector { border-left: 0; border-top: 1px solid var(--rule); max-height: 460px; }
+    .canvas-wrap { min-height: 420px; }
+    .hint { display: none; }
   }
 </style>
 
 <div class="shell">
   <header class="topbar">
-    <div class="mark">
-      <strong>Fragmentor</strong>
-
-    </div>
+    <div class="mark"><strong>Fragmentor</strong></div>
     <nav class="tabs" id="project-tabs" aria-label="Projects"></nav>
     <nav class="crumbs" id="crumbs" aria-label="Block hierarchy"></nav>
-    <div class="legend">
-      <div><span class="swatch"></span> single value</div>
-      <div><span class="swatch bus"></span> array</div>
-      <div><span class="swatch dot"></span> capability</div>
+    <div class="toolbar">
+      <button class="toggle" id="toggle-rail" aria-pressed="true">Hierarchy</button>
+      <button class="toggle" id="toggle-inspector" aria-pressed="true">Inspector</button>
     </div>
   </header>
 
-  <div class="panes">
-    <aside class="rail">
+  <div class="panes" id="panes">
+    <aside class="rail" id="rail">
       <div class="pane-title">Hierarchy</div>
       <div class="tree" id="tree" role="tree"></div>
     </aside>
 
-    <div class="canvas-wrap" id="canvas-wrap"></div>
+    <div class="canvas-wrap" id="canvas-wrap">
+      <svg id="canvas-svg"><g id="viewport"><g id="bus-layer"></g><g id="node-layer"></g></g></svg>
+      <div class="zoom-bar">
+        <button class="zoom-btn" id="zoom-out" title="Zoom out">&minus;</button>
+        <span class="zoom-level" id="zoom-level">100%</span>
+        <button class="zoom-btn" id="zoom-in" title="Zoom in">+</button>
+        <button class="zoom-btn" id="zoom-fit" title="Fit the diagram">Fit</button>
+        <button class="zoom-btn" id="layout-reset" title="Return blocks to the automatic layout">Re-layout</button>
+      </div>
+      <div class="hint">drag to move &middot; ctrl-click to multi-select &middot; scroll to zoom &middot; drag background to pan</div>
+    </div>
 
-    <aside class="inspector">
+    <aside class="inspector" id="inspector-pane">
       <div class="pane-title">Inspector</div>
       <div class="inspector-body" id="inspector"></div>
     </aside>
@@ -358,6 +442,7 @@
         "name": "Rank Jobs",
         "responsibility": "Read job postings from a file and return them ordered by how well they match a candidate profile, with reasons.",
         "kind": "composite",
+        "functionName": "rankJobs",
         "inputs": [
           {
             "name": "sourcePath",
@@ -438,7 +523,8 @@
             "eachOver": null,
             "path": "rank-jobs/load-postings",
             "kind": "leaf",
-            "name": "Load Postings"
+            "name": "Load Postings",
+            "functionName": "loadPostings"
           },
           {
             "block": "extract-profile-keywords",
@@ -446,7 +532,8 @@
             "eachOver": null,
             "path": "rank-jobs/extract-profile-keywords",
             "kind": "leaf",
-            "name": "Extract Profile Keywords"
+            "name": "Extract Profile Keywords",
+            "functionName": "extractProfileKeywords"
           },
           {
             "block": "score-posting",
@@ -454,7 +541,8 @@
             "eachOver": "posting",
             "path": "rank-jobs/score-posting",
             "kind": "composite",
-            "name": "Score Posting"
+            "name": "Score Posting",
+            "functionName": "scorePosting"
           },
           {
             "block": "rank-results",
@@ -462,7 +550,8 @@
             "eachOver": null,
             "path": "rank-jobs/rank-results",
             "kind": "leaf",
-            "name": "Rank Results"
+            "name": "Rank Results",
+            "functionName": "rankResults"
           }
         ],
         "order": [
@@ -589,7 +678,11 @@
             "type": "{ title: string; company: string; score: number; reasons: string[] }[]",
             "isArray": true
           }
-        ]
+        ],
+        "sources": {
+          "impl": "import type { RankJobsInput, RankJobsOutput, RankJobsCaps } from \"./contract.js\";\n\n/** Read job postings from a file and return them ordered by how well they match a candidate profile, with reasons. */\nexport async function rankJobs(input: RankJobsInput, caps: RankJobsCaps): Promise<RankJobsOutput> {\n  throw new Error(\"Rank Jobs has no implementation yet.\");\n}\n",
+          "contract": "// Generated by Fragmentor from block.json. Do not edit.\n// Rank Jobs: Read job postings from a file and return them ordered by how well they match a candidate profile, with reasons.\n\nimport { z } from \"zod\";\nimport type { FileSystem } from \"../capabilities.js\";\n\nexport const rankJobsInput = z.object({\n  sourcePath: z.string(),\n  profile: z.object({ skills: z.array(z.string()) }),\n});\n\nexport type RankJobsInput = z.infer<typeof rankJobsInput>;\n\nexport const rankJobsOutput = z.object({\n  ranked: z.array(z.object({ title: z.string(), company: z.string(), score: z.number(), reasons: z.array(z.string()) })),\n});\n\nexport type RankJobsOutput = z.infer<typeof rankJobsOutput>;\n\nexport interface RankJobsCaps {\n  /** Reads the postings file. */\n  files: FileSystem;\n}\n"
+        }
       },
       "rank-jobs/extract-profile-keywords": {
         "path": "rank-jobs/extract-profile-keywords",
@@ -597,6 +690,7 @@
         "name": "Extract Profile Keywords",
         "responsibility": "Reduce a candidate profile to the lowercase keywords worth matching against.",
         "kind": "leaf",
+        "functionName": "extractProfileKeywords",
         "inputs": [
           {
             "name": "profile",
@@ -633,7 +727,11 @@
         "capabilities": [],
         "children": [],
         "order": [],
-        "wires": []
+        "wires": [],
+        "sources": {
+          "impl": "import type { ExtractProfileKeywordsInput, ExtractProfileKeywordsOutput, ExtractProfileKeywordsCaps } from \"./contract.js\";\n\n/** Reduce a candidate profile to the lowercase keywords worth matching against. */\nexport async function extractProfileKeywords(input: ExtractProfileKeywordsInput, caps: ExtractProfileKeywordsCaps): Promise<ExtractProfileKeywordsOutput> {\n  throw new Error(\"Extract Profile Keywords has no implementation yet.\");\n}\n",
+          "contract": "// Generated by Fragmentor from block.json. Do not edit.\n// Extract Profile Keywords: Reduce a candidate profile to the lowercase keywords worth matching against.\n\nimport { z } from \"zod\";\n\nexport const extractProfileKeywordsInput = z.object({\n  profile: z.object({ skills: z.array(z.string()) }),\n});\n\nexport type ExtractProfileKeywordsInput = z.infer<typeof extractProfileKeywordsInput>;\n\nexport const extractProfileKeywordsOutput = z.object({\n  keywords: z.array(z.string()),\n});\n\nexport type ExtractProfileKeywordsOutput = z.infer<typeof extractProfileKeywordsOutput>;\n\n/** Extract Profile Keywords needs no effects supplied from outside. */\nexport type ExtractProfileKeywordsCaps = Record<string, never>;\n"
+        }
       },
       "rank-jobs/load-postings": {
         "path": "rank-jobs/load-postings",
@@ -641,6 +739,7 @@
         "name": "Load Postings",
         "responsibility": "Read the postings file and parse it into structured postings.",
         "kind": "leaf",
+        "functionName": "loadPostings",
         "inputs": [
           {
             "name": "path",
@@ -690,7 +789,11 @@
         ],
         "children": [],
         "order": [],
-        "wires": []
+        "wires": [],
+        "sources": {
+          "impl": "import type { LoadPostingsInput, LoadPostingsOutput, LoadPostingsCaps } from \"./contract.js\";\n\n/** Read the postings file and parse it into structured postings. */\nexport async function loadPostings(input: LoadPostingsInput, caps: LoadPostingsCaps): Promise<LoadPostingsOutput> {\n  throw new Error(\"Load Postings has no implementation yet.\");\n}\n",
+          "contract": "// Generated by Fragmentor from block.json. Do not edit.\n// Load Postings: Read the postings file and parse it into structured postings.\n\nimport { z } from \"zod\";\nimport type { FileSystem } from \"../../capabilities.js\";\n\nexport const loadPostingsInput = z.object({\n  path: z.string(),\n});\n\nexport type LoadPostingsInput = z.infer<typeof loadPostingsInput>;\n\nexport const loadPostingsOutput = z.object({\n  postings: z.array(z.object({ title: z.string(), company: z.string(), description: z.string() })),\n});\n\nexport type LoadPostingsOutput = z.infer<typeof loadPostingsOutput>;\n\nexport interface LoadPostingsCaps {\n  files: FileSystem;\n}\n"
+        }
       },
       "rank-jobs/rank-results": {
         "path": "rank-jobs/rank-results",
@@ -698,6 +801,7 @@
         "name": "Rank Results",
         "responsibility": "Combine postings with their scores and reasons and order them best first.",
         "kind": "leaf",
+        "functionName": "rankResults",
         "inputs": [
           {
             "name": "postings",
@@ -794,7 +898,11 @@
         "capabilities": [],
         "children": [],
         "order": [],
-        "wires": []
+        "wires": [],
+        "sources": {
+          "impl": "import type { RankResultsInput, RankResultsOutput, RankResultsCaps } from \"./contract.js\";\n\n/** Combine postings with their scores and reasons and order them best first. */\nexport async function rankResults(input: RankResultsInput, caps: RankResultsCaps): Promise<RankResultsOutput> {\n  throw new Error(\"Rank Results has no implementation yet.\");\n}\n",
+          "contract": "// Generated by Fragmentor from block.json. Do not edit.\n// Rank Results: Combine postings with their scores and reasons and order them best first.\n\nimport { z } from \"zod\";\n\nexport const rankResultsInput = z.object({\n  postings: z.array(z.object({ title: z.string(), company: z.string(), description: z.string() })),\n  scores: z.array(z.number()),\n  reasons: z.array(z.array(z.string())),\n});\n\nexport type RankResultsInput = z.infer<typeof rankResultsInput>;\n\nexport const rankResultsOutput = z.object({\n  ranked: z.array(z.object({ title: z.string(), company: z.string(), score: z.number(), reasons: z.array(z.string()) })),\n});\n\nexport type RankResultsOutput = z.infer<typeof rankResultsOutput>;\n\n/** Rank Results needs no effects supplied from outside. */\nexport type RankResultsCaps = Record<string, never>;\n"
+        }
       },
       "rank-jobs/score-posting": {
         "path": "rank-jobs/score-posting",
@@ -802,6 +910,7 @@
         "name": "Score Posting",
         "responsibility": "Score a single posting against the profile keywords and explain the score.",
         "kind": "composite",
+        "functionName": "scorePosting",
         "inputs": [
           {
             "name": "posting",
@@ -869,7 +978,8 @@
             "eachOver": null,
             "path": "rank-jobs/score-posting/normalize-text",
             "kind": "leaf",
-            "name": "Normalize Text"
+            "name": "Normalize Text",
+            "functionName": "normalizeText"
           },
           {
             "block": "match-keywords",
@@ -877,7 +987,8 @@
             "eachOver": null,
             "path": "rank-jobs/score-posting/match-keywords",
             "kind": "leaf",
-            "name": "Match Keywords"
+            "name": "Match Keywords",
+            "functionName": "matchKeywords"
           },
           {
             "block": "compute-relevance",
@@ -885,7 +996,8 @@
             "eachOver": null,
             "path": "rank-jobs/score-posting/compute-relevance",
             "kind": "leaf",
-            "name": "Compute Relevance"
+            "name": "Compute Relevance",
+            "functionName": "computeRelevance"
           }
         ],
         "order": [
@@ -980,7 +1092,11 @@
             "type": "string[]",
             "isArray": true
           }
-        ]
+        ],
+        "sources": {
+          "impl": "import type { ScorePostingInput, ScorePostingOutput, ScorePostingCaps } from \"./contract.js\";\n\n/** Score a single posting against the profile keywords and explain the score. */\nexport async function scorePosting(input: ScorePostingInput, caps: ScorePostingCaps): Promise<ScorePostingOutput> {\n  throw new Error(\"Score Posting has no implementation yet.\");\n}\n",
+          "contract": "// Generated by Fragmentor from block.json. Do not edit.\n// Score Posting: Score a single posting against the profile keywords and explain the score.\n\nimport { z } from \"zod\";\n\nexport const scorePostingInput = z.object({\n  posting: z.object({ title: z.string(), company: z.string(), description: z.string() }),\n  keywords: z.array(z.string()),\n});\n\nexport type ScorePostingInput = z.infer<typeof scorePostingInput>;\n\nexport const scorePostingOutput = z.object({\n  score: z.number(),\n  reasons: z.array(z.string()),\n});\n\nexport type ScorePostingOutput = z.infer<typeof scorePostingOutput>;\n\n/** Score Posting needs no effects supplied from outside. */\nexport type ScorePostingCaps = Record<string, never>;\n"
+        }
       },
       "rank-jobs/score-posting/compute-relevance": {
         "path": "rank-jobs/score-posting/compute-relevance",
@@ -988,6 +1104,7 @@
         "name": "Compute Relevance",
         "responsibility": "Turn keyword match counts into a relevance score and a short reason for each contribution.",
         "kind": "leaf",
+        "functionName": "computeRelevance",
         "inputs": [
           {
             "name": "matches",
@@ -1037,7 +1154,11 @@
         "capabilities": [],
         "children": [],
         "order": [],
-        "wires": []
+        "wires": [],
+        "sources": {
+          "impl": "import type { ComputeRelevanceInput, ComputeRelevanceOutput, ComputeRelevanceCaps } from \"./contract.js\";\n\n/** Turn keyword match counts into a relevance score and a short reason for each contribution. */\nexport async function computeRelevance(input: ComputeRelevanceInput, caps: ComputeRelevanceCaps): Promise<ComputeRelevanceOutput> {\n  throw new Error(\"Compute Relevance has no implementation yet.\");\n}\n",
+          "contract": "// Generated by Fragmentor from block.json. Do not edit.\n// Compute Relevance: Turn keyword match counts into a relevance score and a short reason for each contribution.\n\nimport { z } from \"zod\";\n\nexport const computeRelevanceInput = z.object({\n  matches: z.array(z.object({ keyword: z.string(), count: z.number() })),\n});\n\nexport type ComputeRelevanceInput = z.infer<typeof computeRelevanceInput>;\n\nexport const computeRelevanceOutput = z.object({\n  score: z.number(),\n  reasons: z.array(z.string()),\n});\n\nexport type ComputeRelevanceOutput = z.infer<typeof computeRelevanceOutput>;\n\n/** Compute Relevance needs no effects supplied from outside. */\nexport type ComputeRelevanceCaps = Record<string, never>;\n"
+        }
       },
       "rank-jobs/score-posting/match-keywords": {
         "path": "rank-jobs/score-posting/match-keywords",
@@ -1045,6 +1166,7 @@
         "name": "Match Keywords",
         "responsibility": "Count how often each profile keyword appears in the posting's tokens.",
         "kind": "leaf",
+        "functionName": "matchKeywords",
         "inputs": [
           {
             "name": "tokens",
@@ -1097,7 +1219,11 @@
         "capabilities": [],
         "children": [],
         "order": [],
-        "wires": []
+        "wires": [],
+        "sources": {
+          "impl": "import type { MatchKeywordsInput, MatchKeywordsOutput, MatchKeywordsCaps } from \"./contract.js\";\n\n/** Count how often each profile keyword appears in the posting's tokens. */\nexport async function matchKeywords(input: MatchKeywordsInput, caps: MatchKeywordsCaps): Promise<MatchKeywordsOutput> {\n  throw new Error(\"Match Keywords has no implementation yet.\");\n}\n",
+          "contract": "// Generated by Fragmentor from block.json. Do not edit.\n// Match Keywords: Count how often each profile keyword appears in the posting's tokens.\n\nimport { z } from \"zod\";\n\nexport const matchKeywordsInput = z.object({\n  tokens: z.array(z.string()),\n  keywords: z.array(z.string()),\n});\n\nexport type MatchKeywordsInput = z.infer<typeof matchKeywordsInput>;\n\nexport const matchKeywordsOutput = z.object({\n  matches: z.array(z.object({ keyword: z.string(), count: z.number() })),\n});\n\nexport type MatchKeywordsOutput = z.infer<typeof matchKeywordsOutput>;\n\n/** Match Keywords needs no effects supplied from outside. */\nexport type MatchKeywordsCaps = Record<string, never>;\n"
+        }
       },
       "rank-jobs/score-posting/normalize-text": {
         "path": "rank-jobs/score-posting/normalize-text",
@@ -1105,6 +1231,7 @@
         "name": "Normalize Text",
         "responsibility": "Flatten a posting's title, company and description into comparable lowercase tokens.",
         "kind": "leaf",
+        "functionName": "normalizeText",
         "inputs": [
           {
             "name": "posting",
@@ -1148,7 +1275,11 @@
         "capabilities": [],
         "children": [],
         "order": [],
-        "wires": []
+        "wires": [],
+        "sources": {
+          "impl": "import type { NormalizeTextInput, NormalizeTextOutput, NormalizeTextCaps } from \"./contract.js\";\n\n/** Flatten a posting's title, company and description into comparable lowercase tokens. */\nexport async function normalizeText(input: NormalizeTextInput, caps: NormalizeTextCaps): Promise<NormalizeTextOutput> {\n  throw new Error(\"Normalize Text has no implementation yet.\");\n}\n",
+          "contract": "// Generated by Fragmentor from block.json. Do not edit.\n// Normalize Text: Flatten a posting's title, company and description into comparable lowercase tokens.\n\nimport { z } from \"zod\";\n\nexport const normalizeTextInput = z.object({\n  posting: z.object({ title: z.string(), company: z.string(), description: z.string() }),\n});\n\nexport type NormalizeTextInput = z.infer<typeof normalizeTextInput>;\n\nexport const normalizeTextOutput = z.object({\n  tokens: z.array(z.string()),\n});\n\nexport type NormalizeTextOutput = z.infer<typeof normalizeTextOutput>;\n\n/** Normalize Text needs no effects supplied from outside. */\nexport type NormalizeTextCaps = Record<string, never>;\n"
+        }
       }
     },
     "blockCount": 8
@@ -1173,6 +1304,7 @@
         "name": "Generate Contract",
         "responsibility": "Produce the TypeScript contract source for one block from its ports, so the contract can never disagree with the diagram.",
         "kind": "composite",
+        "functionName": "generateContract",
         "inputs": [
           {
             "name": "blockId",
@@ -1312,7 +1444,8 @@
             "eachOver": null,
             "path": "generate-contract/derive-names",
             "kind": "leaf",
-            "name": "Derive Names"
+            "name": "Derive Names",
+            "functionName": "deriveNames"
           },
           {
             "block": "render-schemas",
@@ -1320,7 +1453,8 @@
             "eachOver": null,
             "path": "generate-contract/render-schemas",
             "kind": "leaf",
-            "name": "Render Schemas"
+            "name": "Render Schemas",
+            "functionName": "renderSchemas"
           },
           {
             "block": "render-capabilities",
@@ -1328,7 +1462,8 @@
             "eachOver": null,
             "path": "generate-contract/render-capabilities",
             "kind": "leaf",
-            "name": "Render Capabilities"
+            "name": "Render Capabilities",
+            "functionName": "renderCapabilities"
           },
           {
             "block": "assemble-source",
@@ -1336,7 +1471,8 @@
             "eachOver": null,
             "path": "generate-contract/assemble-source",
             "kind": "leaf",
-            "name": "Assemble Source"
+            "name": "Assemble Source",
+            "functionName": "assembleSource"
           }
         ],
         "order": [
@@ -1577,7 +1713,11 @@
             "type": "string",
             "isArray": false
           }
-        ]
+        ],
+        "sources": {
+          "impl": "import type { GenerateContractInput, GenerateContractOutput, GenerateContractCaps } from \"./contract.js\";\n\n/** Produce the TypeScript contract source for one block from its ports, so the contract can never disagree with the diagram. */\nexport async function generateContract(input: GenerateContractInput, caps: GenerateContractCaps): Promise<GenerateContractOutput> {\n  throw new Error(\"Generate Contract has no implementation yet.\");\n}\n",
+          "contract": "// Generated by Fragmentor from block.json. Do not edit.\n// Generate Contract: Produce the TypeScript contract source for one block from its ports, so the contract can never disagree with the diagram.\n\nimport { z } from \"zod\";\n\nexport const generateContractInput = z.object({\n  blockId: z.string(),\n  blockName: z.string(),\n  responsibility: z.string(),\n  blockPath: z.string(),\n  inputs: z.array(z.object({ name: z.string(), type: z.string(), description: z.string().optional() })),\n  outputs: z.array(z.object({ name: z.string(), type: z.string(), description: z.string().optional() })),\n  capabilities: z.array(z.object({ name: z.string(), capability: z.string(), description: z.string().optional() })),\n});\n\nexport type GenerateContractInput = z.infer<typeof generateContractInput>;\n\nexport const generateContractOutput = z.object({\n  source: z.string(),\n});\n\nexport type GenerateContractOutput = z.infer<typeof generateContractOutput>;\n\n/** Generate Contract needs no effects supplied from outside. */\nexport type GenerateContractCaps = Record<string, never>;\n"
+        }
       },
       "generate-contract/assemble-source": {
         "path": "generate-contract/assemble-source",
@@ -1585,6 +1725,7 @@
         "name": "Assemble Source",
         "responsibility": "Lay the rendered pieces out as a complete TypeScript file with its generated-file header.",
         "kind": "leaf",
+        "functionName": "assembleSource",
         "inputs": [
           {
             "name": "blockName",
@@ -1664,7 +1805,11 @@
         "capabilities": [],
         "children": [],
         "order": [],
-        "wires": []
+        "wires": [],
+        "sources": {
+          "impl": "import type { AssembleSourceInput, AssembleSourceOutput, AssembleSourceCaps } from \"./contract.js\";\n\n/** Lay the rendered pieces out as a complete TypeScript file with its generated-file header. */\nexport async function assembleSource(input: AssembleSourceInput, caps: AssembleSourceCaps): Promise<AssembleSourceOutput> {\n  throw new Error(\"Assemble Source has no implementation yet.\");\n}\n",
+          "contract": "// Generated by Fragmentor from block.json. Do not edit.\n// Assemble Source: Lay the rendered pieces out as a complete TypeScript file with its generated-file header.\n\nimport { z } from \"zod\";\n\nexport const assembleSourceInput = z.object({\n  blockName: z.string(),\n  responsibility: z.string(),\n  functionName: z.string(),\n  typeStem: z.string(),\n  inputSchema: z.string(),\n  outputSchema: z.string(),\n  importLine: z.string(),\n  capsDeclaration: z.string(),\n});\n\nexport type AssembleSourceInput = z.infer<typeof assembleSourceInput>;\n\nexport const assembleSourceOutput = z.object({\n  source: z.string(),\n});\n\nexport type AssembleSourceOutput = z.infer<typeof assembleSourceOutput>;\n\n/** Assemble Source needs no effects supplied from outside. */\nexport type AssembleSourceCaps = Record<string, never>;\n"
+        }
       },
       "generate-contract/derive-names": {
         "path": "generate-contract/derive-names",
@@ -1672,6 +1817,7 @@
         "name": "Derive Names",
         "responsibility": "Turn a kebab-case block id into the function name and the type-name stem used throughout the generated file.",
         "kind": "leaf",
+        "functionName": "deriveNames",
         "inputs": [
           {
             "name": "blockId",
@@ -1703,7 +1849,11 @@
         "capabilities": [],
         "children": [],
         "order": [],
-        "wires": []
+        "wires": [],
+        "sources": {
+          "impl": "import type { DeriveNamesInput, DeriveNamesOutput, DeriveNamesCaps } from \"./contract.js\";\n\n/** Turn a kebab-case block id into the function name and the type-name stem used throughout the generated file. */\nexport async function deriveNames(input: DeriveNamesInput, caps: DeriveNamesCaps): Promise<DeriveNamesOutput> {\n  throw new Error(\"Derive Names has no implementation yet.\");\n}\n",
+          "contract": "// Generated by Fragmentor from block.json. Do not edit.\n// Derive Names: Turn a kebab-case block id into the function name and the type-name stem used throughout the generated file.\n\nimport { z } from \"zod\";\n\nexport const deriveNamesInput = z.object({\n  blockId: z.string(),\n});\n\nexport type DeriveNamesInput = z.infer<typeof deriveNamesInput>;\n\nexport const deriveNamesOutput = z.object({\n  functionName: z.string(),\n  typeStem: z.string(),\n});\n\nexport type DeriveNamesOutput = z.infer<typeof deriveNamesOutput>;\n\n/** Derive Names needs no effects supplied from outside. */\nexport type DeriveNamesCaps = Record<string, never>;\n"
+        }
       },
       "generate-contract/render-capabilities": {
         "path": "generate-contract/render-capabilities",
@@ -1711,6 +1861,7 @@
         "name": "Render Capabilities",
         "responsibility": "Render the import of the capability types a block uses and the interface describing what must be supplied to it.",
         "kind": "leaf",
+        "functionName": "renderCapabilities",
         "inputs": [
           {
             "name": "blockName",
@@ -1787,7 +1938,11 @@
         "capabilities": [],
         "children": [],
         "order": [],
-        "wires": []
+        "wires": [],
+        "sources": {
+          "impl": "import type { RenderCapabilitiesInput, RenderCapabilitiesOutput, RenderCapabilitiesCaps } from \"./contract.js\";\n\n/** Render the import of the capability types a block uses and the interface describing what must be supplied to it. */\nexport async function renderCapabilities(input: RenderCapabilitiesInput, caps: RenderCapabilitiesCaps): Promise<RenderCapabilitiesOutput> {\n  throw new Error(\"Render Capabilities has no implementation yet.\");\n}\n",
+          "contract": "// Generated by Fragmentor from block.json. Do not edit.\n// Render Capabilities: Render the import of the capability types a block uses and the interface describing what must be supplied to it.\n\nimport { z } from \"zod\";\n\nexport const renderCapabilitiesInput = z.object({\n  blockName: z.string(),\n  blockPath: z.string(),\n  typeStem: z.string(),\n  capabilities: z.array(z.object({ name: z.string(), capability: z.string(), description: z.string().optional() })),\n});\n\nexport type RenderCapabilitiesInput = z.infer<typeof renderCapabilitiesInput>;\n\nexport const renderCapabilitiesOutput = z.object({\n  importLine: z.string(),\n  capsDeclaration: z.string(),\n});\n\nexport type RenderCapabilitiesOutput = z.infer<typeof renderCapabilitiesOutput>;\n\n/** Render Capabilities needs no effects supplied from outside. */\nexport type RenderCapabilitiesCaps = Record<string, never>;\n"
+        }
       },
       "generate-contract/render-schemas": {
         "path": "generate-contract/render-schemas",
@@ -1795,6 +1950,7 @@
         "name": "Render Schemas",
         "responsibility": "Render the zod object expression for the input ports and for the output ports, expanding each port's type expression into a schema.",
         "kind": "leaf",
+        "functionName": "renderSchemas",
         "inputs": [
           {
             "name": "inputs",
@@ -1876,52 +2032,953 @@
         "capabilities": [],
         "children": [],
         "order": [],
-        "wires": []
+        "wires": [],
+        "sources": {
+          "impl": "import type { RenderSchemasInput, RenderSchemasOutput, RenderSchemasCaps } from \"./contract.js\";\n\n/** Render the zod object expression for the input ports and for the output ports, expanding each port's type expression into a schema. */\nexport async function renderSchemas(input: RenderSchemasInput, caps: RenderSchemasCaps): Promise<RenderSchemasOutput> {\n  throw new Error(\"Render Schemas has no implementation yet.\");\n}\n",
+          "contract": "// Generated by Fragmentor from block.json. Do not edit.\n// Render Schemas: Render the zod object expression for the input ports and for the output ports, expanding each port's type expression into a schema.\n\nimport { z } from \"zod\";\n\nexport const renderSchemasInput = z.object({\n  inputs: z.array(z.object({ name: z.string(), type: z.string(), description: z.string().optional() })),\n  outputs: z.array(z.object({ name: z.string(), type: z.string(), description: z.string().optional() })),\n});\n\nexport type RenderSchemasInput = z.infer<typeof renderSchemasInput>;\n\nexport const renderSchemasOutput = z.object({\n  inputSchema: z.string(),\n  outputSchema: z.string(),\n});\n\nexport type RenderSchemasOutput = z.infer<typeof renderSchemasOutput>;\n\n/** Render Schemas needs no effects supplied from outside. */\nexport type RenderSchemasCaps = Record<string, never>;\n"
+        }
       }
     },
     "blockCount": 5
   }
 ];
 
+  /* ------------------------------------------------------------------ *
+   * Preferences that belong to the person looking, not to the project:
+   * where they dragged a block, what colour they gave a bus, and any
+   * code they typed but have not saved anywhere real. Kept per browser.
+   * ------------------------------------------------------------------ */
+
+  const store = {
+    read(key, fallback) {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw === null ? fallback : JSON.parse(raw);
+      } catch { return fallback; }
+    },
+    write(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private window, or storage off */ }
+    },
+  };
+
+  const POSITIONS_KEY = "fragmentor.positions";
+  const COLORS_KEY = "fragmentor.busColors";
+  const DRAFTS_KEY = "fragmentor.codeDrafts";
+
+  let positions = store.read(POSITIONS_KEY, {});
+  let busColors = store.read(COLORS_KEY, {});
+  let drafts = store.read(DRAFTS_KEY, {});
+
+  const BUS_PALETTE = ["#4fe38f", "#4fc9e3", "#e2a54b", "#b98ce6", "#e3778c", "#8fe34f"];
+
   let active = 0;
   let blocks = PROJECTS[0].blocks;
-  const state = { view: PROJECTS[0].rootPath, selected: PROJECTS[0].rootPath, selectedWire: null };
 
-  function project() { return PROJECTS[active]; }
+  const ui = {
+    view: PROJECTS[0].rootPath,
+    selection: new Set(),
+    selectedBus: null,
+    zoom: 1,
+    panX: 40,
+    panY: 30,
+    showRail: true,
+    showInspector: true,
+    codeTab: "impl",
+    /** Once the view has been moved by hand, stop refitting it automatically. */
+    userAdjusted: false,
+  };
 
-  function selectProject(index) {
-    active = index;
-    blocks = project().blocks;
-    state.view = project().rootPath;
-    state.selected = project().rootPath;
-    state.selectedWire = null;
-    renderProjectTabs();
-    renderStatus();
-    render();
+  const project = () => PROJECTS[active];
+  const parentBlock = () => blocks[ui.view];
+  const scopeKey = () => `${project().key}|${ui.view}`;
+
+  /* ------------------------------------------------------------------ *
+   * The graph as drawn. Every visible thing is a node, including the
+   * boundary: the parent's own inputs are a source and its outputs are a
+   * destination, so one set of rules covers the whole picture.
+   * ------------------------------------------------------------------ */
+
+  function wireEnds(wire) {
+    return {
+      source: wire.source.from === "input" ? "input" : wire.source.block,
+      target: wire.target.to === "output" ? "output" : wire.target.block,
+      sourcePort: wire.source.port,
+      targetPort: wire.target.port,
+      type: wire.type,
+      isArray: wire.isArray,
+      text: wire.text,
+    };
+  }
+
+  function buildGraph() {
+    const parent = parentBlock();
+    if (!parent || parent.children.length === 0) return null;
+
+    const wires = parent.wires.map(wireEnds);
+    const nodes = new Map();
+
+    nodes.set("input", {
+      key: "input",
+      label: "IN",
+      sublabel: parent.name,
+      boundary: true,
+      outputs: parent.inputs,
+      capabilities: [],
+      child: null,
+      block: null,
+    });
+
+    for (const child of parent.children) {
+      const block = blocks[child.path];
+      nodes.set(child.block, {
+        key: child.block,
+        label: block.name,
+        sublabel: block.kind === "composite" ? "COMPOSITE" : "LEAF",
+        boundary: false,
+        outputs: block.outputs,
+        capabilities: block.capabilities,
+        child,
+        block,
+      });
+    }
+
+    nodes.set("output", {
+      key: "output",
+      label: "OUT",
+      sublabel: parent.name,
+      boundary: true,
+      outputs: [],
+      capabilities: [],
+      child: null,
+      block: null,
+    });
+
+    // Inputs are grouped by the bus that feeds them, which is what makes a
+    // block's left edge readable: one bracket per upstream block.
+    for (const node of nodes.values()) node.groups = [];
+
+    for (const wire of wires) {
+      const node = nodes.get(wire.target);
+      if (!node) continue;
+      let group = node.groups.find((g) => g.source === wire.source);
+      if (!group) {
+        group = { source: wire.source, signals: [] };
+        node.groups.push(group);
+      }
+      group.signals.push(wire);
+    }
+
+    // One bus per source-and-destination pair, carrying every signal between them.
+    const buses = new Map();
+    for (const wire of wires) {
+      const id = `${wire.source}->${wire.target}`;
+      let bus = buses.get(id);
+      if (!bus) {
+        bus = { id, source: wire.source, target: wire.target, signals: [] };
+        buses.set(id, bus);
+      }
+      bus.signals.push(wire);
+    }
+
+    return { parent, nodes, buses, wires };
+  }
+
+  function busColor(graph, bus) {
+    const override = busColors[`${scopeKey()}|${bus.id}`];
+    if (override) return override;
+    const order = [...graph.nodes.keys()];
+    return BUS_PALETTE[order.indexOf(bus.source) % BUS_PALETTE.length];
   }
 
   /* ------------------------------------------------------------------ *
-   * Example values, derived from a port's type. The type structure is
-   * the same one that will drive the real test bench, so the shape of
-   * these forms is not a mockup even though nothing can run yet.
+   * Geometry
    * ------------------------------------------------------------------ */
+
+  const NODE_W = 208;
+  const HEAD_H = 34;
+  const ROW_H = 17;
+  const GROUP_HEAD_H = 14;
+  const GROUP_GAP = 7;
+  const BODY_PAD = 9;
+  const COL_GAP = 92;
+  const ROW_GAP = 40;
+
+  function measure(node) {
+    let left = 0;
+    for (const group of node.groups) left += GROUP_HEAD_H + group.signals.length * ROW_H + GROUP_GAP;
+    if (left > 0) left -= GROUP_GAP;
+
+    const right = node.outputs.length > 0 ? GROUP_HEAD_H + node.outputs.length * ROW_H : 0;
+    const body = Math.max(left, right, ROW_H);
+    return {
+      leftHeight: left,
+      rightHeight: right,
+      height: HEAD_H + BODY_PAD + body + BODY_PAD + (node.capabilities.length > 0 ? 20 : 0),
+    };
+  }
+
+  /** Columns by dependency, so an untouched diagram still reads left to right. */
+  function autoLayout(graph) {
+    const depth = new Map([["input", 0]]);
+    const parent = graph.parent;
+
+    for (const id of parent.order) {
+      let d = 1;
+      for (const wire of graph.wires) {
+        if (wire.target !== id || wire.source === "input") continue;
+        d = Math.max(d, (depth.get(wire.source) ?? 1) + 1);
+      }
+      depth.set(id, d);
+    }
+
+    const deepest = Math.max(0, ...[...depth.values()]);
+    depth.set("output", deepest + 1);
+
+    const columns = new Map();
+    for (const node of graph.nodes.values()) {
+      const d = depth.get(node.key) ?? 0;
+      if (!columns.has(d)) columns.set(d, []);
+      columns.get(d).push(node);
+    }
+
+    const placed = new Map();
+    let tallest = 0;
+    for (const column of columns.values()) {
+      const total = column.reduce((h, n) => h + measure(n).height, 0) + ROW_GAP * (column.length - 1);
+      tallest = Math.max(tallest, total);
+    }
+
+    for (const [d, column] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
+      const total = column.reduce((h, n) => h + measure(n).height, 0) + ROW_GAP * (column.length - 1);
+      let y = (tallest - total) / 2;
+      for (const node of column) {
+        placed.set(node.key, { x: d * (NODE_W + COL_GAP), y });
+        y += measure(node).height + ROW_GAP;
+      }
+    }
+
+    return placed;
+  }
+
+  function layoutFor(graph) {
+    const auto = autoLayout(graph);
+    const saved = positions[scopeKey()] ?? {};
+    const result = new Map();
+    for (const node of graph.nodes.values()) {
+      const stored = saved[node.key];
+      result.set(node.key, stored ? { ...stored } : auto.get(node.key));
+    }
+    return result;
+  }
+
+  function savePositions(layout) {
+    const scoped = {};
+    for (const [key, point] of layout) scoped[key] = { x: Math.round(point.x), y: Math.round(point.y) };
+    positions = { ...positions, [scopeKey()]: scoped };
+    store.write(POSITIONS_KEY, positions);
+  }
+
+  /** Where a bus leaves a node: one dot for everything the node produces. */
+  function busOutPoint(node, point) {
+    const { rightHeight } = measure(node);
+    const top = point.y + HEAD_H + BODY_PAD;
+    return { x: point.x + NODE_W, y: top + (rightHeight > 0 ? rightHeight / 2 : ROW_H / 2) };
+  }
+
+  /** Where a bus lands: the middle of the group it feeds. */
+  function busInPoint(node, point, sourceKey) {
+    let y = point.y + HEAD_H + BODY_PAD;
+    for (const group of node.groups) {
+      const height = GROUP_HEAD_H + group.signals.length * ROW_H;
+      if (group.source === sourceKey) return { x: point.x, y: y + height / 2 };
+      y += height + GROUP_GAP;
+    }
+    return { x: point.x, y: point.y + HEAD_H + BODY_PAD };
+  }
+
+  function svgEl(name, attrs, parent) {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+    for (const [key, value] of Object.entries(attrs || {})) node.setAttribute(key, String(value));
+    if (parent) parent.append(node);
+    return node;
+  }
+
+  function curve(a, b) {
+    const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5);
+    return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * The code a wire corresponds to. Composite glue is not written yet,
+   * so this is the call and binding the diagram implies, not a reading
+   * of a file. It is generated the same way for every bus so the shape
+   * is honest even before the code exists.
+   * ------------------------------------------------------------------ */
+
+  /** `port` when the names already agree, `port: source` when they do not. */
+  function argFor(signal) {
+    return signal.sourcePort === signal.targetPort
+      ? signal.targetPort
+      : `${signal.targetPort}: ${signal.sourcePort}`;
+  }
+
+  function signalsOf(node) {
+    return node.groups.flatMap((g) => g.signals);
+  }
+
+  function callStatement(graph, nodeKey) {
+    if (nodeKey === "input") return null;
+
+    if (nodeKey === "output") {
+      const node = graph.nodes.get("output");
+      return `return { ${signalsOf(node).map(argFor).join(", ")} };`;
+    }
+
+    const node = graph.nodes.get(nodeKey);
+    if (!node || !node.block) return null;
+
+    const fn = node.block.functionName;
+    const produced = node.outputs.map((o) => o.name);
+    const signals = signalsOf(node);
+
+    if (node.child && node.child.mode === "each") {
+      const item = node.child.eachOver;
+      const over = signals.find((s) => s.targetPort === item);
+      const arrayVar = over ? over.sourcePort : `${item}s`;
+      const rest = signals.filter((s) => s.targetPort !== item).map(argFor);
+      const inner = [item, ...rest].join(", ");
+      const results = `${fn}Results`;
+
+      return [
+        `const ${results} = await Promise.all(`,
+        `  ${arrayVar}.map((${item}) => ${fn}({ ${inner} }, caps)),`,
+        `);`,
+        ...produced.map((name) => `const ${name} = ${results}.map((r) => r.${name});`),
+      ].join("\n");
+    }
+
+    const binding = produced.length > 0 ? `const { ${produced.join(", ")} } = ` : "";
+    return `${binding}await ${fn}({ ${signals.map(argFor).join(", ")} }, caps);`;
+  }
+
+  function connectionCode(graph, bus) {
+    const lines = [];
+    const sourceNode = graph.nodes.get(bus.source);
+    const targetNode = graph.nodes.get(bus.target);
+
+    if (bus.source === "input") {
+      lines.push(`// ${graph.parent.name} receives these as its own arguments`);
+      lines.push(`const { ${bus.signals.map((s) => s.sourcePort).join(", ")} } = input;`);
+    } else {
+      lines.push(`// produced by ${sourceNode.label}`);
+      lines.push(callStatement(graph, bus.source));
+    }
+
+    lines.push("");
+    if (bus.target === "output") {
+      lines.push(`// returned by ${graph.parent.name}`);
+    } else {
+      lines.push(`// consumed by ${targetNode.label}`);
+    }
+    lines.push(callStatement(graph, bus.target));
+
+    return lines.join("\n");
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Drawing
+   * ------------------------------------------------------------------ */
+
+  let currentGraph = null;
+  let currentLayout = null;
+
+  function applyViewport() {
+    document.getElementById("viewport")
+      .setAttribute("transform", `translate(${ui.panX} ${ui.panY}) scale(${ui.zoom})`);
+    document.getElementById("zoom-level").textContent = `${Math.round(ui.zoom * 100)}%`;
+  }
+
+  function renderCanvas() {
+    const busLayer = document.getElementById("bus-layer");
+    const nodeLayer = document.getElementById("node-layer");
+    busLayer.replaceChildren();
+    nodeLayer.replaceChildren();
+
+    document.querySelectorAll(".canvas-empty").forEach((el) => el.remove());
+
+    const graph = buildGraph();
+    currentGraph = graph;
+
+    if (!graph) {
+      const note = document.createElement("p");
+      note.className = "canvas-empty";
+      const parent = parentBlock();
+      note.textContent = `${parent.name} is a leaf block.\nIts behaviour is code, not a diagram — the inspector shows its contract and source.`;
+      document.getElementById("canvas-wrap").append(note);
+      return;
+    }
+
+    const layout = layoutFor(graph);
+    currentLayout = layout;
+
+    for (const bus of graph.buses.values()) {
+      const sourceNode = graph.nodes.get(bus.source);
+      const targetNode = graph.nodes.get(bus.target);
+      const from = busOutPoint(sourceNode, layout.get(bus.source));
+      const to = busInPoint(targetNode, layout.get(bus.target), bus.source);
+      const colour = busColor(graph, bus);
+
+      const linked = ui.selection.has(bus.source) && ui.selection.has(bus.target);
+      const group = svgEl("g", {
+        class: "bus-group",
+        "data-selected": String(ui.selectedBus === bus.id),
+        "data-linked": String(linked),
+      }, busLayer);
+
+      const path = curve(from, to);
+      svgEl("path", { d: path, class: "bus", stroke: colour }, group);
+      const hit = svgEl("path", { d: path, class: "bus-hit" }, group);
+      svgEl("title", {}, group).textContent =
+        `${bus.source} → ${bus.target}\n${bus.signals.map((s) => `${s.targetPort}: ${s.type}`).join("\n")}`;
+
+      const mid = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 - 6 };
+      const label = svgEl("text", { x: mid.x, y: mid.y, class: "bus-count", "text-anchor": "middle", fill: colour }, group);
+      label.textContent = bus.signals.length === 1 ? bus.signals[0].targetPort : `${bus.signals.length} signals`;
+
+      hit.addEventListener("click", (event) => {
+        event.stopPropagation();
+        ui.selectedBus = bus.id;
+        ui.selection.clear();
+        render();
+      });
+    }
+
+    for (const node of graph.nodes.values()) {
+      const point = layout.get(node.key);
+      const { height, rightHeight } = measure(node);
+      const selected = ui.selection.has(node.key);
+
+      const group = svgEl("g", {
+        class: "block-box",
+        transform: `translate(${point.x} ${point.y})`,
+        "data-selected": String(selected),
+        "data-boundary": String(node.boundary),
+        "data-key": node.key,
+        tabindex: "0",
+        role: "button",
+      }, nodeLayer);
+
+      svgEl("title", {}, group).textContent = node.block
+        ? node.block.responsibility + (node.block.kind === "composite" ? "\n\nDouble-click to open this block's diagram." : "")
+        : `${node.label} of ${graph.parent.name}`;
+
+      svgEl("rect", { x: 0, y: 0, width: NODE_W, height, rx: 3, class: "block-plate" }, group);
+      svgEl("rect", { x: 0, y: 0, width: NODE_W, height: HEAD_H, rx: 3, class: "block-head" }, group);
+      svgEl("line", { x1: 0, y1: HEAD_H, x2: NODE_W, y2: HEAD_H, class: "block-divider" }, group);
+      svgEl("text", { x: 10, y: 15, class: "block-name" }, group).textContent = node.label;
+      svgEl("text", { x: 10, y: 27, class: "block-kind" }, group).textContent = node.sublabel;
+
+      if (node.child && node.child.mode === "each") {
+        svgEl("text", { x: NODE_W - 10, y: 15, class: "each-badge", "text-anchor": "end" }, group)
+          .textContent = `× each ${node.child.eachOver}`;
+      }
+
+      // Left edge: one bracket per incoming bus, with its signals inside it.
+      let y = HEAD_H + BODY_PAD;
+      for (const busGroup of node.groups) {
+        const bus = graph.buses.get(`${busGroup.source}->${node.key}`);
+        const colour = bus ? busColor(graph, bus) : "var(--signal-dim)";
+        const groupHeight = GROUP_HEAD_H + busGroup.signals.length * ROW_H;
+        const sourceLabel = graph.nodes.get(busGroup.source)?.label ?? busGroup.source;
+
+        svgEl("path", {
+          d: `M 6 ${y + 2} L 1 ${y + 2} L 1 ${y + groupHeight - 2} L 6 ${y + groupHeight - 2}`,
+          class: "group-bracket",
+          stroke: colour,
+        }, group);
+
+        svgEl("circle", { cx: 0, cy: y + groupHeight / 2, r: 3.5, class: "bus-dot", fill: "var(--panel)", stroke: colour }, group);
+
+        const heading = svgEl("text", { x: 11, y: y + 10, class: "group-label", fill: colour }, group);
+        heading.textContent = `from ${sourceLabel}`;
+
+        busGroup.signals.forEach((signal, i) => {
+          svgEl("text", { x: 15, y: y + GROUP_HEAD_H + i * ROW_H + 11, class: "port-label" }, group)
+            .textContent = signal.targetPort;
+        });
+
+        y += groupHeight + GROUP_GAP;
+      }
+
+      // Right edge: everything the block produces leaves on one bus.
+      if (node.outputs.length > 0) {
+        const top = HEAD_H + BODY_PAD;
+        svgEl("text", { x: NODE_W - 15, y: top + 10, class: "bus-out-label", "text-anchor": "end" }, group)
+          .textContent = "bus out";
+        node.outputs.forEach((port, i) => {
+          svgEl("text", { x: NODE_W - 15, y: top + GROUP_HEAD_H + i * ROW_H + 11, class: "port-label", "text-anchor": "end" }, group)
+            .textContent = port.name;
+        });
+        svgEl("circle", {
+          cx: NODE_W,
+          cy: top + rightHeight / 2,
+          r: 4,
+          class: "bus-dot",
+          fill: "var(--panel)",
+          stroke: "var(--signal-dim)",
+        }, group);
+      }
+
+      node.capabilities.forEach((cap, i) => {
+        const cx = 26 + i * 58;
+        svgEl("line", { x1: cx, y1: height, x2: cx, y2: height + 11, class: "cap-line" }, group);
+        svgEl("circle", { cx, cy: height + 14, r: 3.5, class: "cap-dot" }, group);
+        svgEl("text", { x: cx + 8, y: height + 17.5, class: "port-label" }, group).textContent = cap.name;
+      });
+
+      attachNodeBehaviour(group, node);
+    }
+
+    applyViewport();
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Selection, dragging, panning, zooming
+   * ------------------------------------------------------------------ */
+
+  let drag = null;
+
+  function attachNodeBehaviour(group, node) {
+    group.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+      const additive = event.ctrlKey || event.metaKey;
+
+      if (additive) {
+        if (ui.selection.has(node.key)) ui.selection.delete(node.key);
+        else ui.selection.add(node.key);
+        ui.selectedBus = null;
+        render();
+        return;
+      }
+
+      if (!ui.selection.has(node.key)) {
+        ui.selection.clear();
+        ui.selection.add(node.key);
+        ui.selectedBus = null;
+        render();
+      }
+
+      drag = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+        origin: new Map([...ui.selection].map((key) => [key, { ...currentLayout.get(key) }])),
+      };
+      document.getElementById("canvas-svg").classList.add("dragging");
+      group.setPointerCapture(event.pointerId);
+    });
+
+    group.addEventListener("pointermove", (event) => {
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const dx = (event.clientX - drag.startX) / ui.zoom;
+      const dy = (event.clientY - drag.startY) / ui.zoom;
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) drag.moved = true;
+
+      for (const [key, origin] of drag.origin) {
+        currentLayout.set(key, { x: origin.x + dx, y: origin.y + dy });
+      }
+      renderCanvas();
+    });
+
+    const finish = (event) => {
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      document.getElementById("canvas-svg").classList.remove("dragging");
+      if (drag.moved) {
+        ui.userAdjusted = true;
+        savePositions(currentLayout);
+      }
+      drag = null;
+      render();
+    };
+
+    group.addEventListener("pointerup", finish);
+    group.addEventListener("pointercancel", finish);
+
+    group.addEventListener("dblclick", (event) => {
+      event.stopPropagation();
+      if (node.block && node.block.kind === "composite") openBlock(node.block.path);
+    });
+
+    group.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      ui.selection.clear();
+      ui.selection.add(node.key);
+      ui.selectedBus = null;
+      render();
+    });
+  }
+
+  function setUpCanvasGestures() {
+    const svg = document.getElementById("canvas-svg");
+    let pan = null;
+
+    svg.addEventListener("pointerdown", (event) => {
+      if (event.target.closest(".block-box") || event.target.closest(".bus-group")) return;
+      pan = { x: event.clientX, y: event.clientY, panX: ui.panX, panY: ui.panY, moved: false };
+      svg.classList.add("panning");
+      svg.setPointerCapture(event.pointerId);
+    });
+
+    svg.addEventListener("pointermove", (event) => {
+      if (!pan) return;
+      ui.panX = pan.panX + (event.clientX - pan.x);
+      ui.panY = pan.panY + (event.clientY - pan.y);
+      if (Math.abs(event.clientX - pan.x) > 2 || Math.abs(event.clientY - pan.y) > 2) {
+        pan.moved = true;
+        ui.userAdjusted = true;
+      }
+      applyViewport();
+    });
+
+    const endPan = (event) => {
+      if (!pan) return;
+      svg.classList.remove("panning");
+      const clicked = !pan.moved;
+      pan = null;
+      if (clicked) {
+        ui.selection.clear();
+        ui.selectedBus = null;
+        render();
+      }
+      void event;
+    };
+
+    svg.addEventListener("pointerup", endPan);
+    svg.addEventListener("pointercancel", endPan);
+
+    svg.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      const rect = svg.getBoundingClientRect();
+      const px = event.clientX - rect.left;
+      const py = event.clientY - rect.top;
+      const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+      zoomAbout(px, py, factor);
+    }, { passive: false });
+  }
+
+  function zoomAbout(px, py, factor) {
+    const next = Math.min(3, Math.max(0.25, ui.zoom * factor));
+    const scale = next / ui.zoom;
+    ui.panX = px - (px - ui.panX) * scale;
+    ui.panY = py - (py - ui.panY) * scale;
+    ui.zoom = next;
+    ui.userAdjusted = true;
+    applyViewport();
+  }
+
+  /** The canvas has no size until layout settles, so keep asking. */
+  function fitWhenReady(attempts) {
+    const rect = document.getElementById("canvas-svg").getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) { fitToView(); return; }
+    if (attempts > 0) requestAnimationFrame(() => fitWhenReady(attempts - 1));
+  }
+
+  function fitToView() {
+    if (!currentGraph || !currentLayout) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+    for (const node of currentGraph.nodes.values()) {
+      const point = currentLayout.get(node.key);
+      const { height } = measure(node);
+      minX = Math.min(minX, point.x - 30);
+      minY = Math.min(minY, point.y - 20);
+      maxX = Math.max(maxX, point.x + NODE_W + 30);
+      maxY = Math.max(maxY, point.y + height + 34);
+    }
+
+    const svg = document.getElementById("canvas-svg").getBoundingClientRect();
+    if (!svg.width || !svg.height) return;
+
+    const zoom = Math.min(3, Math.max(0.25, Math.min(svg.width / (maxX - minX), svg.height / (maxY - minY))));
+    ui.zoom = zoom;
+    ui.panX = (svg.width - (maxX - minX) * zoom) / 2 - minX * zoom;
+    ui.panY = (svg.height - (maxY - minY) * zoom) / 2 - minY * zoom;
+    applyViewport();
+  }
+
+  function openBlock(path) {
+    ui.view = path;
+    ui.selection.clear();
+    ui.selectedBus = null;
+    ui.userAdjusted = false;
+    render();
+    fitWhenReady(20);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Panels
+   * ------------------------------------------------------------------ */
+
+  function renderPanes() {
+    const columns = [];
+    if (ui.showRail) columns.push("232px");
+    columns.push("minmax(0, 1fr)");
+    if (ui.showInspector) columns.push("360px");
+
+    document.getElementById("panes").style.gridTemplateColumns = columns.join(" ");
+    document.getElementById("rail").hidden = !ui.showRail;
+    document.getElementById("inspector-pane").hidden = !ui.showInspector;
+    document.getElementById("toggle-rail").setAttribute("aria-pressed", String(ui.showRail));
+    document.getElementById("toggle-inspector").setAttribute("aria-pressed", String(ui.showInspector));
+  }
+
+  function renderProjectTabs() {
+    const nav = document.getElementById("project-tabs");
+    nav.replaceChildren();
+    PROJECTS.forEach((entry, index) => {
+      const tab = document.createElement("button");
+      tab.className = "tab";
+      tab.textContent = entry.label;
+      tab.setAttribute("aria-pressed", String(index === active));
+      tab.title = entry.manifest.goal;
+      tab.addEventListener("click", () => {
+        active = index;
+        blocks = entry.blocks;
+        ui.view = entry.rootPath;
+        ui.selection.clear();
+        ui.selectedBus = null;
+        ui.userAdjusted = false;
+        renderProjectTabs();
+        renderStatus();
+        render();
+        fitWhenReady(20);
+      });
+      nav.append(tab);
+    });
+  }
+
+  function renderCrumbs() {
+    const nav = document.getElementById("crumbs");
+    nav.replaceChildren();
+    const parts = ui.view.split("/");
+
+    parts.forEach((part, i) => {
+      if (i > 0) {
+        const sep = document.createElement("span");
+        sep.className = "crumb-sep";
+        sep.textContent = "/";
+        nav.append(sep);
+      }
+      const path = parts.slice(0, i + 1).join("/");
+      const button = document.createElement("button");
+      button.className = "crumb";
+      button.textContent = part;
+      const isCurrent = i === parts.length - 1;
+      button.setAttribute("aria-current", String(isCurrent));
+      if (!isCurrent) button.addEventListener("click", () => openBlock(path));
+      nav.append(button);
+    });
+  }
+
+  function renderTree() {
+    const tree = document.getElementById("tree");
+    tree.replaceChildren();
+
+    const walk = (path, depth) => {
+      const block = blocks[path];
+      const button = document.createElement("button");
+      button.className = "node";
+      button.setAttribute("role", "treeitem");
+      button.setAttribute("aria-selected", String(path === ui.view));
+      button.style.paddingLeft = `${8 + depth * 14}px`;
+
+      const glyph = document.createElement("span");
+      glyph.className = "glyph";
+      glyph.textContent = block.kind === "composite" ? "▣" : "▫";
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = block.id;
+      button.append(glyph, label);
+
+      button.addEventListener("click", () => {
+        if (block.kind === "composite") {
+          openBlock(path);
+        } else {
+          const parent = path.split("/").slice(0, -1).join("/") || project().rootPath;
+          ui.view = parent;
+          ui.selection.clear();
+          ui.selection.add(block.id);
+          ui.selectedBus = null;
+          render();
+        }
+      });
+
+      tree.append(button);
+      for (const child of block.children) walk(child.path, depth + 1);
+    };
+
+    walk(project().rootPath, 0);
+  }
+
+  function portSection(title, ports, isCapability) {
+    const section = document.createElement("section");
+    section.className = "section";
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+    section.append(heading);
+
+    if (ports.length === 0) {
+      const none = document.createElement("p");
+      none.className = "bench-note";
+      none.textContent = "None.";
+      section.append(none);
+      return section;
+    }
+
+    const list = document.createElement("div");
+    list.className = "ports";
+    for (const port of ports) {
+      const row = document.createElement("div");
+      row.className = `port-row${isCapability ? " cap" : ""}`;
+      const name = document.createElement("div");
+      name.className = "pname";
+      name.textContent = port.name;
+      const type = document.createElement("div");
+      type.className = "ptype";
+      type.textContent = isCapability ? port.capability : port.type;
+      row.append(name, type);
+      if (port.description) {
+        const desc = document.createElement("div");
+        desc.className = "pdesc";
+        desc.textContent = port.description;
+        row.append(desc);
+      }
+      list.append(row);
+    }
+    section.append(list);
+    return section;
+  }
+
+  function codeSection(block) {
+    const section = document.createElement("section");
+    section.className = "section";
+    const heading = document.createElement("h3");
+    heading.textContent = "Code";
+    section.append(heading);
+
+    const tabs = document.createElement("div");
+    tabs.className = "code-tabs";
+    for (const [key, label] of [["impl", "impl.ts"], ["contract", "contract.ts"]]) {
+      const chip = document.createElement("button");
+      chip.className = "chip";
+      chip.textContent = label;
+      chip.setAttribute("aria-pressed", String(ui.codeTab === key));
+      chip.addEventListener("click", () => { ui.codeTab = key; renderInspector(); });
+      tabs.append(chip);
+    }
+    section.append(tabs);
+
+    const generated = block.sources ? block.sources[ui.codeTab] : null;
+    const draftKey = `${project().key}|${block.path}|${ui.codeTab}`;
+    const isContract = ui.codeTab === "contract";
+    const value = isContract ? generated : (drafts[draftKey] ?? generated);
+
+    if (value === null || value === undefined) {
+      const none = document.createElement("p");
+      none.className = "bench-note";
+      none.textContent = "This file has not been generated yet.";
+      section.append(none);
+      return section;
+    }
+
+    const editor = document.createElement("textarea");
+    editor.className = "code-editor";
+    editor.spellcheck = false;
+    editor.value = value;
+    if (isContract) editor.readOnly = true;
+    section.append(editor);
+
+    const foot = document.createElement("div");
+    foot.className = "code-foot";
+
+    if (isContract) {
+      const note = document.createElement("p");
+      note.className = "bench-note";
+      note.textContent = "Generated from block.json, so it is read-only here. Change the diagram and it is rewritten.";
+      foot.append(note);
+    } else {
+      const save = document.createElement("button");
+      save.className = "btn";
+      save.textContent = "Keep edit";
+      save.addEventListener("click", () => {
+        drafts = { ...drafts, [draftKey]: editor.value };
+        store.write(DRAFTS_KEY, drafts);
+        renderInspector();
+      });
+
+      const revert = document.createElement("button");
+      revert.className = "btn quiet";
+      revert.textContent = "Revert";
+      revert.addEventListener("click", () => {
+        const next = { ...drafts };
+        delete next[draftKey];
+        drafts = next;
+        store.write(DRAFTS_KEY, drafts);
+        renderInspector();
+      });
+
+      const note = document.createElement("p");
+      note.className = "bench-note";
+      note.textContent = drafts[draftKey]
+        ? "Edited in this browser only. Nothing has been written to the file on disk."
+        : "Edits are kept in this browser only; this prototype cannot write to disk.";
+
+      foot.append(save, revert, note);
+    }
+
+    section.append(foot);
+    return section;
+  }
+
+  function benchSection(block) {
+    const bench = document.createElement("section");
+    bench.className = "section bench";
+    const heading = document.createElement("h3");
+    heading.textContent = "Test bench";
+    bench.append(heading);
+
+    const note = document.createElement("p");
+    note.className = "bench-note";
+    note.textContent =
+      "Built from the port types above. The values are examples, and no implementation exists yet, so nothing can run.";
+    bench.append(note);
+
+    for (const port of block.inputs) bench.append(controlFor(port.typeIr, port.name));
+
+    const run = document.createElement("button");
+    run.className = "btn";
+    run.textContent = "Run block";
+    run.disabled = true;
+    run.title = "This block has no implementation yet.";
+    bench.append(run);
+    return bench;
+  }
 
   function exampleFor(type, name) {
     switch (type.kind) {
       case "string": return name && /path/i.test(name) ? "./postings.json" : "example";
       case "number": return 0;
       case "boolean": return false;
-      case "null": return null;
-      case "unknown": return null;
+      case "null": case "unknown": return null;
       case "literal": return type.value;
       case "enum": return type.values[0];
       case "array": return [exampleFor(type.of, name)];
       case "union": return exampleFor(type.of[0], name);
       case "object": {
         const out = {};
-        for (const [field, spec] of Object.entries(type.fields)) {
-          if (!spec.optional) out[field] = exampleFor(spec.type, field);
-        }
+        for (const [field, spec] of Object.entries(type.fields)) if (!spec.optional) out[field] = exampleFor(spec.type, field);
         return out;
       }
       default: return null;
@@ -1937,7 +2994,6 @@
     return wrap;
   }
 
-  /** Builds a control for a port type. Objects nest; arrays take JSON. */
   function controlFor(type, name) {
     if (type.kind === "object") {
       const group = document.createElement("div");
@@ -1979,352 +3035,156 @@
     return field(name, input);
   }
 
-  /* ------------------------------------------------------------------ *
-   * Layout. Children are placed in dependency columns so a wire always
-   * runs left to right, the way the code will read.
-   * ------------------------------------------------------------------ */
+  function renderBusInspector(panel, graph, bus) {
+    const sourceLabel = graph.nodes.get(bus.source)?.label ?? bus.source;
+    const targetLabel = graph.nodes.get(bus.target)?.label ?? bus.target;
 
-  const BLOCK_W = 196;
-  const HEAD_H = 34;
-  const ROW_H = 22;
-  const COL_GAP = 74;
-  const ROW_GAP = 34;
-  const RAIL_W = 122;
+    const head = document.createElement("div");
+    head.className = "insp-head";
+    const title = document.createElement("h2");
+    title.textContent = `${sourceLabel} → ${targetLabel}`;
+    const id = document.createElement("div");
+    id.className = "insp-id";
+    id.textContent = `${bus.signals.length} signal${bus.signals.length === 1 ? "" : "s"} on one bus`;
+    head.append(title, id);
+    panel.append(head);
 
-  function layout(parent) {
-    const kids = parent.children;
-    if (kids.length === 0) return null;
-
-    const depth = new Map(kids.map((k) => [k.block, 0]));
-    for (const id of parent.order) {
-      const incoming = parent.wires.filter((w) => w.target.to === "block" && w.target.block === id);
-      let d = 0;
-      for (const wire of incoming) {
-        if (wire.source.from === "block") d = Math.max(d, (depth.get(wire.source.block) ?? 0) + 1);
-      }
-      depth.set(id, d);
-    }
-
-    const columns = [];
-    for (const kid of kids) {
-      const d = depth.get(kid.block) ?? 0;
-      (columns[d] ||= []).push(kid);
-    }
-
-    const boxes = new Map();
-    let maxHeight = 0;
-
-    const heightOf = (kid) => {
-      const child = blocks[kid.path];
-      const rows = Math.max(child.inputs.length, child.outputs.length, 1);
-      return HEAD_H + rows * ROW_H + 14 + (child.capabilities.length ? 22 : 0);
-    };
-
-    for (const column of columns) {
-      const total = column.map(heightOf).reduce((a, b) => a + b, 0) + ROW_GAP * (column.length - 1);
-      maxHeight = Math.max(maxHeight, total);
-    }
-
-    columns.forEach((column, columnIndex) => {
-      const heights = column.map(heightOf);
-      const total = heights.reduce((a, b) => a + b, 0) + ROW_GAP * (column.length - 1);
-      let y = 40 + (maxHeight - total) / 2;
-      const x = RAIL_W + columnIndex * (BLOCK_W + COL_GAP);
-
-      column.forEach((kid, i) => {
-        boxes.set(kid.block, { kid, x, y, w: BLOCK_W, h: heights[i], block: blocks[kid.path] });
-        y += heights[i] + ROW_GAP;
-      });
-    });
-
-    const columnCount = columns.length;
-    const width = RAIL_W + columnCount * BLOCK_W + (columnCount - 1) * COL_GAP + RAIL_W + 40;
-    const height = maxHeight + 100;
-
-    return { boxes, width, height, rightRailX: width - RAIL_W - 20 };
-  }
-
-  function portPoint(box, side, index) {
-    return {
-      x: side === "in" ? box.x : box.x + box.w,
-      y: box.y + HEAD_H + 13 + index * ROW_H,
-    };
-  }
-
-  function svgEl(name, attrs, parent) {
-    const node = document.createElementNS("http://www.w3.org/2000/svg", name);
-    for (const [key, value] of Object.entries(attrs || {})) node.setAttribute(key, String(value));
-    if (parent) parent.append(node);
-    return node;
-  }
-
-  function curve(a, b) {
-    const dx = Math.max(36, Math.abs(b.x - a.x) * 0.45);
-    return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
-  }
-
-  /* ------------------------------------------------------------------ *
-   * Rendering
-   * ------------------------------------------------------------------ */
-
-  function renderCanvas() {
-    const wrap = document.getElementById("canvas-wrap");
-    wrap.replaceChildren();
-    const parent = blocks[state.view];
-    const plan = layout(parent);
-
-    if (!plan) {
-      const note = document.createElement("p");
-      note.className = "canvas-empty";
-      note.textContent =
-        parent.name + " is a leaf block. It has no diagram of its own — its behaviour is code. Select it in the inspector to see its contract and test bench.";
-      wrap.append(note);
-      return;
-    }
-
-    const svg = svgEl("svg", {
-      width: plan.width,
-      height: plan.height,
-      viewBox: `0 0 ${plan.width} ${plan.height}`,
-      role: "img",
-      "aria-label": `Block diagram of ${parent.name}`,
-    }, wrap);
-
-    // Parent input rail
-    const inX = RAIL_W - 34;
-    svgEl("text", { x: 6, y: 24, class: "boundary-title" }, svg).textContent = "IN";
-    parent.inputs.forEach((port, i) => {
-      const y = 46 + i * 30;
-      const label = svgEl("text", { x: 6, y: y + 4, class: "rail-label" }, svg);
-      label.textContent = port.name;
-      svgEl("circle", { cx: inX, cy: y, r: 3.5, class: "port-dot" }, svg);
-      port._pt = { x: inX, y };
-    });
-
-    // Parent output rail
-    svgEl("text", { x: plan.rightRailX + 14, y: 24, class: "boundary-title" }, svg).textContent = "OUT";
-    parent.outputs.forEach((port, i) => {
-      const y = 46 + i * 30;
-      const label = svgEl("text", { x: plan.rightRailX + 14, y: y + 4, class: "rail-label" }, svg);
-      label.textContent = port.name;
-      svgEl("circle", { cx: plan.rightRailX, cy: y, r: 3.5, class: "port-dot" }, svg);
-      port._pt = { x: plan.rightRailX, y };
-    });
-
-    // Wires first so blocks sit on top
-    for (const wire of parent.wires) {
-      let from;
-      if (wire.source.from === "input") {
-        from = parent.inputs.find((p) => p.name === wire.source.port)._pt;
-      } else {
-        const box = plan.boxes.get(wire.source.block);
-        const index = box.block.outputs.findIndex((p) => p.name === wire.source.port);
-        from = portPoint(box, "out", index);
-      }
-
-      let to;
-      if (wire.target.to === "output") {
-        to = parent.outputs.find((p) => p.name === wire.target.port)._pt;
-      } else {
-        const box = plan.boxes.get(wire.target.block);
-        const index = box.block.inputs.findIndex((p) => p.name === wire.target.port);
-        to = portPoint(box, "in", index);
-      }
-
-      const group = svgEl("g", { class: "wire-group", "data-selected": String(state.selectedWire === wire.text) }, svg);
-      const path = curve(from, to);
-      svgEl("path", { d: path, class: "wire" + (wire.isArray ? " bus" : "") }, group);
-      const hit = svgEl("path", { d: path, class: "wire-hit" }, group);
-      svgEl("title", {}, group).textContent = `${wire.text}  —  ${wire.type}`;
-      hit.addEventListener("click", () => {
-        state.selectedWire = wire.text;
-        state.selected = null;
-        render();
-      });
-    }
-
-    // Blocks
-    for (const [, box] of plan.boxes) {
-      const child = box.block;
-      const selected = state.selected === child.path;
-      const group = svgEl("g", { class: "block-box", "data-selected": String(selected), tabindex: "0", role: "button" }, svg);
-      svgEl("title", {}, group).textContent =
-        child.responsibility + (child.kind === "composite" ? "\n\nDouble-click to open this block's diagram." : "");
-
-      svgEl("rect", { x: box.x, y: box.y, width: box.w, height: box.h, rx: 3, class: "block-plate" }, group);
-      svgEl("rect", { x: box.x, y: box.y, width: box.w, height: HEAD_H, rx: 3, class: "block-head" }, group);
-      svgEl("line", { x1: box.x, y1: box.y + HEAD_H, x2: box.x + box.w, y2: box.y + HEAD_H, class: "block-divider" }, group);
-
-      svgEl("text", { x: box.x + 10, y: box.y + 15, class: "block-name" }, group).textContent = child.name;
-      svgEl("text", { x: box.x + 10, y: box.y + 27, class: "block-kind" }, group).textContent =
-        child.kind === "composite" ? "COMPOSITE" : "LEAF";
-
-      if (box.kid.mode === "each") {
-        svgEl("text", { x: box.x + box.w - 10, y: box.y + 15, class: "each-badge", "text-anchor": "end" }, group)
-          .textContent = "× each " + box.kid.eachOver;
-      }
-
-      child.inputs.forEach((port, i) => {
-        const pt = portPoint(box, "in", i);
-        svgEl("circle", { cx: pt.x, cy: pt.y, r: 3.5, class: "port-dot" }, group);
-        svgEl("text", { x: pt.x + 9, y: pt.y + 3.5, class: "port-label" }, group).textContent = port.name;
-      });
-
-      child.outputs.forEach((port, i) => {
-        const pt = portPoint(box, "out", i);
-        svgEl("circle", { cx: pt.x, cy: pt.y, r: 3.5, class: "port-dot" }, group);
-        svgEl("text", { x: pt.x - 9, y: pt.y + 3.5, class: "port-label", "text-anchor": "end" }, group).textContent = port.name;
-      });
-
-      // Capabilities enter from above, because that is how they are supplied.
-      child.capabilities.forEach((cap, i) => {
-        const cx = box.x + 26 + i * 58;
-        svgEl("line", { x1: cx, y1: box.y + box.h, x2: cx, y2: box.y + box.h + 12, class: "cap-line" }, group);
-        svgEl("circle", { cx, cy: box.y + box.h + 15, r: 3.5, class: "port-dot cap" }, group);
-        svgEl("text", { x: cx + 8, y: box.y + box.h + 18.5, class: "port-label" }, group).textContent = cap.name;
-      });
-
-      const open = () => {
-        state.selected = child.path;
-        state.selectedWire = null;
-        render();
-      };
-      group.addEventListener("click", open);
-      group.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
-      });
-      group.addEventListener("dblclick", () => {
-        if (child.kind === "composite") { state.view = child.path; state.selected = child.path; state.selectedWire = null; render(); }
-      });
-    }
-  }
-
-  function renderCrumbs() {
-    const nav = document.getElementById("crumbs");
-    nav.replaceChildren();
-    const parts = state.view.split("/");
-
-    parts.forEach((part, i) => {
-      if (i > 0) {
-        const sep = document.createElement("span");
-        sep.className = "crumb-sep";
-        sep.textContent = "/";
-        nav.append(sep);
-      }
-      const path = parts.slice(0, i + 1).join("/");
-      const button = document.createElement("button");
-      button.className = "crumb";
-      button.textContent = part;
-      const isCurrent = i === parts.length - 1;
-      button.setAttribute("aria-current", String(isCurrent));
-      if (!isCurrent) {
-        button.addEventListener("click", () => { state.view = path; state.selected = path; state.selectedWire = null; render(); });
-      }
-      nav.append(button);
-    });
-  }
-
-  function renderTree() {
-    const tree = document.getElementById("tree");
-    tree.replaceChildren();
-
-    const walk = (path, depth) => {
-      const block = blocks[path];
-      const button = document.createElement("button");
-      button.className = "node";
-      button.setAttribute("role", "treeitem");
-      button.setAttribute("aria-selected", String(state.selected === path));
-      button.style.paddingLeft = 8 + depth * 14 + "px";
-
-      const glyph = document.createElement("span");
-      glyph.className = "glyph";
-      glyph.textContent = block.kind === "composite" ? "▣" : "▫";
-      const label = document.createElement("span");
-      label.className = "label";
-      label.textContent = block.id;
-      button.append(glyph, label);
-
-      button.addEventListener("click", () => {
-        state.selected = path;
-        state.selectedWire = null;
-        state.view = block.kind === "composite" ? path : path.split("/").slice(0, -1).join("/") || project().rootPath;
-        render();
-      });
-
-      tree.append(button);
-      for (const child of block.children) walk(child.path, depth + 1);
-    };
-
-    walk(project().rootPath, 0);
-  }
-
-  function portSection(title, ports, isCapability) {
-    const section = document.createElement("section");
-    section.className = "section";
-    const heading = document.createElement("h3");
-    heading.textContent = title;
-    section.append(heading);
-
-    if (ports.length === 0) {
-      const none = document.createElement("p");
-      none.className = "bench-note";
-      none.textContent = "None.";
-      section.append(none);
-      return section;
-    }
+    const signals = document.createElement("section");
+    signals.className = "section";
+    const signalsHeading = document.createElement("h3");
+    signalsHeading.textContent = "Carries";
+    signals.append(signalsHeading);
 
     const list = document.createElement("div");
     list.className = "ports";
-    for (const port of ports) {
+    for (const signal of bus.signals) {
       const row = document.createElement("div");
-      row.className = "port-row" + (isCapability ? " cap" : "");
+      row.className = "port-row";
       const name = document.createElement("div");
       name.className = "pname";
-      name.textContent = port.name;
+      name.textContent = `${signal.sourcePort} → ${signal.targetPort}`;
       const type = document.createElement("div");
       type.className = "ptype";
-      type.textContent = isCapability ? port.capability : port.type;
+      type.textContent = signal.type ?? "unknown";
       row.append(name, type);
-      if (port.description) {
-        const desc = document.createElement("div");
-        desc.className = "pdesc";
-        desc.textContent = port.description;
-        row.append(desc);
-      }
       list.append(row);
     }
-    section.append(list);
-    return section;
+    signals.append(list);
+    panel.append(signals);
+
+    const code = document.createElement("section");
+    code.className = "section";
+    const codeHeading = document.createElement("h3");
+    codeHeading.textContent = "In code";
+    code.append(codeHeading);
+
+    const pre = document.createElement("pre");
+    pre.className = "code";
+    pre.textContent = connectionCode(graph, bus);
+    code.append(pre);
+
+    const note = document.createElement("p");
+    note.className = "bench-note";
+    note.style.marginTop = "8px";
+    note.textContent =
+      "The call and binding this connection becomes. The composite's glue is not written yet, so this is derived from the diagram rather than read from the file.";
+    code.append(note);
+    panel.append(code);
+
+    const colours = document.createElement("section");
+    colours.className = "section";
+    const colourHeading = document.createElement("h3");
+    colourHeading.textContent = "Colour";
+    colours.append(colourHeading);
+
+    const swatches = document.createElement("div");
+    swatches.className = "swatches";
+    const key = `${scopeKey()}|${bus.id}`;
+    const currentColour = busColor(graph, bus);
+
+    for (const colour of BUS_PALETTE) {
+      const swatch = document.createElement("button");
+      swatch.className = "swatch-btn";
+      swatch.style.background = colour;
+      swatch.title = colour;
+      swatch.setAttribute("aria-pressed", String(colour.toLowerCase() === currentColour.toLowerCase()));
+      swatch.addEventListener("click", () => {
+        busColors = { ...busColors, [key]: colour };
+        store.write(COLORS_KEY, busColors);
+        render();
+      });
+      swatches.append(swatch);
+    }
+    colours.append(swatches);
+
+    const reset = document.createElement("button");
+    reset.className = "btn quiet";
+    reset.style.marginTop = "8px";
+    reset.textContent = "Use the default colour";
+    reset.addEventListener("click", () => {
+      const next = { ...busColors };
+      delete next[key];
+      busColors = next;
+      store.write(COLORS_KEY, busColors);
+      render();
+    });
+    colours.append(reset);
+    panel.append(colours);
   }
 
-  function renderInspector() {
-    const panel = document.getElementById("inspector");
-    panel.replaceChildren();
+  function renderMultiInspector(panel, graph) {
+    const keys = [...ui.selection];
+    const head = document.createElement("div");
+    head.className = "insp-head";
+    const title = document.createElement("h2");
+    title.textContent = `${keys.length} blocks selected`;
+    const id = document.createElement("div");
+    id.className = "insp-id";
+    id.textContent = keys.join(", ");
+    head.append(title, id);
+    panel.append(head);
 
-    if (state.selectedWire) {
-      const parent = blocks[state.view];
-      const wire = parent.wires.find((w) => w.text === state.selectedWire);
-      const head = document.createElement("div");
-      head.className = "insp-head";
-      head.innerHTML = "<h2>Wire</h2>";
-      const id = document.createElement("div");
-      id.className = "insp-id";
-      id.textContent = wire.text;
-      head.append(id);
-      panel.append(head);
+    const between = [...graph.buses.values()].filter((b) => ui.selection.has(b.source) && ui.selection.has(b.target));
 
-      panel.append(portSection("Carries", [{ name: wire.isArray ? "array of values" : "one value", type: wire.type }], false));
+    const section = document.createElement("section");
+    section.className = "section";
+    const heading = document.createElement("h3");
+    heading.textContent = "Buses between them";
+    section.append(heading);
 
-      const note = document.createElement("p");
-      note.className = "bench-note";
-      note.textContent =
-        "Once this block has code, running it will record the value that travelled this wire, and it will be shown here.";
-      panel.append(note);
-      return;
+    if (between.length === 0) {
+      const none = document.createElement("p");
+      none.className = "bench-note";
+      none.textContent = "These blocks are not directly connected.";
+      section.append(none);
+    } else {
+      const list = document.createElement("div");
+      list.className = "ports";
+      for (const bus of between) {
+        const row = document.createElement("div");
+        row.className = "port-row";
+        row.style.borderLeftColor = busColor(graph, bus);
+        const name = document.createElement("div");
+        name.className = "pname";
+        name.textContent = `${graph.nodes.get(bus.source).label} → ${graph.nodes.get(bus.target).label}`;
+        const type = document.createElement("div");
+        type.className = "ptype";
+        type.textContent = bus.signals.map((s) => s.targetPort).join(", ");
+        row.append(name, type);
+        list.append(row);
+      }
+      section.append(list);
     }
 
-    const block = blocks[state.selected] || blocks[state.view];
+    panel.append(section);
 
+    const note = document.createElement("p");
+    note.className = "bench-note";
+    note.textContent = "Ctrl-click a block to add or remove it from the selection.";
+    panel.append(note);
+  }
+
+  function renderBlockInspector(panel, block) {
     const head = document.createElement("div");
     head.className = "insp-head";
     const title = document.createElement("h2");
@@ -2332,25 +3192,24 @@
     const id = document.createElement("div");
     id.className = "insp-id";
     id.textContent = block.path;
+
     const badges = document.createElement("div");
     badges.className = "badges";
-
     const kind = document.createElement("span");
-    kind.className = "badge" + (block.kind === "composite" ? " composite" : "");
+    kind.className = `badge${block.kind === "composite" ? " composite" : ""}`;
     kind.textContent = block.kind;
     const status = document.createElement("span");
     status.className = "badge state";
     status.textContent = "specified";
     badges.append(kind, status);
+    head.append(title, id, badges);
 
-    if (block.kind === "composite") {
-      const openBtn = document.createElement("button");
-      openBtn.className = "btn";
-      openBtn.textContent = "Open diagram";
-      openBtn.addEventListener("click", () => { state.view = block.path; render(); });
-      head.append(title, id, badges, openBtn);
-    } else {
-      head.append(title, id, badges);
+    if (block.kind === "composite" && block.path !== ui.view) {
+      const open = document.createElement("button");
+      open.className = "btn";
+      open.textContent = "Open diagram";
+      open.addEventListener("click", () => openBlock(block.path));
+      head.append(open);
     }
     panel.append(head);
 
@@ -2362,63 +3221,61 @@
     panel.append(portSection("Inputs", block.inputs, false));
     panel.append(portSection("Outputs", block.outputs, false));
     panel.append(portSection("Capabilities", block.capabilities, true));
+    panel.append(codeSection(block));
+    panel.append(benchSection(block));
+  }
 
-    // Test bench preview
-    const bench = document.createElement("section");
-    bench.className = "section bench";
-    const heading = document.createElement("h3");
-    heading.textContent = "Test bench";
-    bench.append(heading);
+  function renderInspector() {
+    const panel = document.getElementById("inspector");
+    panel.replaceChildren();
+    const graph = currentGraph;
 
-    const note = document.createElement("p");
-    note.className = "bench-note";
-    note.textContent =
-      "These controls are built from the port types above. The values are examples, not a saved case, and no code exists yet, so nothing can run.";
-    bench.append(note);
+    if (graph && ui.selectedBus && graph.buses.has(ui.selectedBus)) {
+      renderBusInspector(panel, graph, graph.buses.get(ui.selectedBus));
+      return;
+    }
 
-    for (const port of block.inputs) bench.append(controlFor(port.typeIr, port.name));
+    if (graph && ui.selection.size > 1) {
+      renderMultiInspector(panel, graph);
+      return;
+    }
 
-    const run = document.createElement("button");
-    run.className = "btn";
-    run.textContent = "Run block";
-    run.disabled = true;
-    run.title = "This block has no implementation yet.";
-    bench.append(run);
-    panel.append(bench);
+    if (ui.selection.size === 1 && graph) {
+      const key = [...ui.selection][0];
+      const node = graph.nodes.get(key);
+      if (node && node.block) {
+        renderBlockInspector(panel, node.block);
+        return;
+      }
+    }
+
+    renderBlockInspector(panel, parentBlock());
   }
 
   function renderStatus() {
     const all = Object.values(blocks);
     const composites = all.filter((b) => b.kind === "composite").length;
-    const strip = document.getElementById("status");
-    strip.innerHTML =
+    const graph = currentGraph;
+    const busCount = graph ? graph.buses.size : 0;
+    const signalCount = graph ? graph.wires.length : 0;
+
+    document.getElementById("status").innerHTML =
       `<span>blocks <b>${all.length}</b></span>` +
       `<span>composite <b>${composites}</b></span>` +
       `<span>leaf <b>${all.length - composites}</b></span>` +
+      `<span>in view: <b>${busCount}</b> buses carrying <b>${signalCount}</b> signals</span>` +
       `<span class="warn">implemented <b>0</b></span>` +
       `<span class="warn">tests passing <b>0</b></span>` +
-      `<span>granularity <b>${project().manifest.granularity.level}</b> of 5, max depth <b>${project().manifest.granularity.maxDepth}</b></span>`;
-  }
-
-  function renderProjectTabs() {
-    const nav = document.getElementById("project-tabs");
-    nav.replaceChildren();
-    PROJECTS.forEach((entry, index) => {
-      const tab = document.createElement("button");
-      tab.className = "tab";
-      tab.textContent = entry.label;
-      tab.setAttribute("aria-pressed", String(index === active));
-      tab.title = entry.manifest.goal;
-      tab.addEventListener("click", () => selectProject(index));
-      nav.append(tab);
-    });
+      `<span>granularity <b>${project().manifest.granularity.level}</b> of 5</span>`;
   }
 
   function render() {
+    renderPanes();
     renderCrumbs();
     renderTree();
     renderCanvas();
     renderInspector();
+    renderStatus();
   }
 
   function reportFailure(error) {
@@ -2426,15 +3283,49 @@
     if (!wrap) return;
     const note = document.createElement("pre");
     note.className = "canvas-empty";
-    note.style.whiteSpace = "pre-wrap";
     note.textContent = "The canvas could not be drawn.\n\n" + (error && error.stack ? error.stack : String(error));
-    wrap.replaceChildren(note);
+    wrap.append(note);
   }
 
   try {
+    document.getElementById("toggle-rail").addEventListener("click", () => {
+      ui.showRail = !ui.showRail;
+      renderPanes();
+    });
+    document.getElementById("toggle-inspector").addEventListener("click", () => {
+      ui.showInspector = !ui.showInspector;
+      renderPanes();
+    });
+
+    document.getElementById("zoom-in").addEventListener("click", () => {
+      const rect = document.getElementById("canvas-svg").getBoundingClientRect();
+      zoomAbout(rect.width / 2, rect.height / 2, 1.2);
+    });
+    document.getElementById("zoom-out").addEventListener("click", () => {
+      const rect = document.getElementById("canvas-svg").getBoundingClientRect();
+      zoomAbout(rect.width / 2, rect.height / 2, 1 / 1.2);
+    });
+    document.getElementById("zoom-fit").addEventListener("click", fitToView);
+    document.getElementById("layout-reset").addEventListener("click", () => {
+      const next = { ...positions };
+      delete next[scopeKey()];
+      positions = next;
+      store.write(POSITIONS_KEY, positions);
+      ui.userAdjusted = false;
+      render();
+      fitToView();
+    });
+
+    setUpCanvasGestures();
+
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(() => { if (!ui.userAdjusted) fitToView(); })
+        .observe(document.getElementById("canvas-wrap"));
+    }
+
     renderProjectTabs();
-    renderStatus();
     render();
+    fitWhenReady(20);
   } catch (error) {
     reportFailure(error);
     throw error;
