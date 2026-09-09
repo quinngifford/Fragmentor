@@ -95,8 +95,14 @@ export function describeType(type: PortType): string {
       return typeof type.value === "string" ? JSON.stringify(type.value) : String(type.value);
     case "enum":
       return type.values.map((v) => JSON.stringify(v)).join(" | ");
-    case "array":
-      return `${describeType(type.of)}[]`;
+    case "array": {
+      // A union binds looser than `[]`, so without brackets an array of a
+      // union would read back as a union ending in an array.
+      const element = describeType(type.of);
+      const needsBrackets =
+        type.of.kind === "union" || (type.of.kind === "enum" && type.of.values.length > 1);
+      return needsBrackets ? `(${element})[]` : `${element}[]`;
+    }
     case "union":
       return type.of.map(describeType).join(" | ");
     case "object": {
