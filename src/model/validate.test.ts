@@ -1,0 +1,239 @@
+import { describe, expect, it } from "vitest";
+import { executionOrder, validateComposite } from "./validate.js";
+import type { Diagnostic } from "./validate.js";
+import { makeBlock, t } from "./testing.js";
+import type { Block } from "./block.js";
+
+const errors = (d: Diagnostic[]) => d.filter((x) => x.severity === "error").map((x) => x.message);
+const warnings = (d: Diagnostic[]) => d.filter((x) => x.severity === "warning").map((x) => x.message);
+
+/** A posting is scored, then the scores are summarised. */
+function straightLine(): { parent: Block; children: Map<string, Block> } {
+  const score = makeBlock({
+    id: "score-posting",
+    inputs: { posting: { type: t.object({ title: t.string }) } },
+    outputs: { score: { type: t.number } },
+  });
+
+  const label = makeBlock({
+    id: "label-score",
+    inputs: { score: { type: t.number } },
+    outputs: { label: { type: t.string } },
+  });
+
+  const parent = makeBlock({
+    id: "rank-posting",
+    kind: "composite",
+    inputs: { posting: { type: t.object({ title: t.string }) } },
+    outputs: { label: { type: t.string } },
+    children: [
+      { block: "score-posting", mode: "once" },
+      { block: "label-score", mode: "once" },
+    ],
+    wires: [
+      { source: { from: "input", port: "posting" }, target: { to: "block", block: "score-posting", port: "posting" } },
+      {
+        source: { from: "block", block: "score-posting", port: "score" },
+        target: { to: "block", block: "label-score", port: "score" },
+      },
+      { source: { from: "block", block: "label-score", port: "label" }, target: { to: "output", port: "label" } },
+    ],
+  });
+
+  return { parent, children: new Map([[score.id, score], [label.id, label]]) };
+}
+
+describe("validateComposite", () => {
+  it("accepts a well-formed straight-line composite", () => {
+    const { parent, children } = straightLine();
+    expect(validateComposite(parent, children)).toEqual([]);
+  });
+
+  it("accepts a child run once per item, treating its wires as arrays", () => {
+    const score = makeBlock({
+      id: "score-posting",
+      inputs: { posting: { type: t.object({ title: t.string }) }, weight: { type: t.number } },
+      outputs: { score: { type: t.number } },
+    });
+
+    const parent = makeBlock({
+      id: "score-all",
+      kind: "composite",
+      inputs: { postings: { type: t.array(t.object({ title: t.string })) }, weight: { type: t.number } },
+      outputs: { scores: { type: t.array(t.number) } },
+      children: [{ block: "score-posting", mode: "each", eachOver: "posting" }],
+      wires: [
+        // The iterated port carries an array; other inputs are broadcast as-is.
+        {
+          source: { from: "input", port: "postings" },
+          target: { to: "block", block: "score-posting", port: "posting" },
+        },
+        { source: { from: "input", port: "weight" }, target: { to: "block", block: "score-posting", port: "weight" } },
+        { source: { from: "block", block: "score-posting", port: "score" }, target: { to: "output", port: "scores" } },
+      ],
+    });
+
+    expect(validateComposite(parent, new Map([[score.id, score]]))).toEqual([]);
+  });
+
+  it("rejects feeding a whole array to a child that runs once", () => {
+    const score = makeBlock({
+      id: "score-posting",
+      inputs: { posting: { type: t.object({ title: t.string }) } },
+      outputs: { score: { type: t.number } },
+    });
+
+    const parent = makeBlock({
+      id: "score-all",
+      kind: "composite",
+      inputs: { postings: { type: t.array(t.object({ title: t.string })) } },
+      outputs: { score: { type: t.number } },
+      children: [{ block: "score-posting", mode: "once" }],
+      wires: [
+        {
+          source: { from: "input", port: "postings" },
+          target: { to: "block", block: "score-posting", port: "posting" },
+        },
+        { source: { from: "block", block: "score-posting", port: "score" }, target: { to: "output", port: "score" } },
+      ],
+    });
+
+    expect(errors(validateComposite(parent, new Map([[score.id, score]])))).toEqual([
+      expect.stringContaining("Type mismatch"),
+    ]);
+  });
+
+  it("reports a wire whose types do not line up", () => {
+    const { parent, children } = straightLine();
+    children.set("label-score", makeBlock({ id: "label-score", inputs: { score: { type: t.string } }, outputs: { label: { type: t.string } } }));
+
+    expect(errors(validateComposite(parent, children))).toEqual([
+      expect.stringContaining("the source carries number but the destination expects string"),
+    ]);
+  });
+
+  it("reports a child block that does not exist", () => {
+    const { parent, children } = straightLine();
+    children.delete("label-score");
+
+    const found = errors(validateComposite(parent, children));
+    expect(found).toContain('"rank-posting" refers to a child block "label-score" that does not exist.');
+  });
+
+  it("reports an input that nothing is connected to", () => {
+    const { parent, children } = straightLine();
+    parent.wires = parent.wires.filter((w) => !(w.target.to === "block" && w.target.port === "score"));
+
+    expect(errors(validateComposite(parent, children))).toContain(
+      'Nothing is connected to "label-score" input "score".',
+    );
+  });
+
+  it("reports an input driven by more than one wire", () => {
+    const { parent, children } = straightLine();
+    parent.wires.push({
+      source: { from: "block", block: "score-posting", port: "score" },
+      target: { to: "block", block: "label-score", port: "score" },
+    });
+
+    expect(errors(validateComposite(parent, children))).toContain(
+      '"label-score" input "score" is driven by 2 wires; it can only accept one.',
+    );
+  });
+
+  it("reports an output that nothing produces", () => {
+    const { parent, children } = straightLine();
+    parent.outputs.extra = { type: t.string };
+
+    expect(errors(validateComposite(parent, children))).toContain(
+      'Nothing produces "rank-posting" output "extra".',
+    );
+  });
+
+  it("requires the parent to supply every capability its children need", () => {
+    const { parent, children } = straightLine();
+    children.get("score-posting")!.capabilities = { http: { capability: "Http" } };
+
+    expect(errors(validateComposite(parent, children))).toContain(
+      '"score-posting" needs the capability "http" (Http), but "rank-posting" does not declare it.',
+    );
+  });
+
+  it("reports a capability supplied with the wrong kind", () => {
+    const { parent, children } = straightLine();
+    children.get("score-posting")!.capabilities = { store: { capability: "Http" } };
+    parent.capabilities = { store: { capability: "FileSystem" } };
+
+    expect(errors(validateComposite(parent, children))).toContain(
+      '"score-posting" needs "store" to be Http, but "rank-posting" supplies FileSystem.',
+    );
+  });
+
+  it("reports blocks wired into a loop", () => {
+    const a = makeBlock({ id: "a", inputs: { in: { type: t.number } }, outputs: { out: { type: t.number } } });
+    const b = makeBlock({ id: "b", inputs: { in: { type: t.number } }, outputs: { out: { type: t.number } } });
+
+    const parent = makeBlock({
+      id: "looper",
+      kind: "composite",
+      outputs: { result: { type: t.number } },
+      children: [{ block: "a", mode: "once" }, { block: "b", mode: "once" }],
+      wires: [
+        { source: { from: "block", block: "a", port: "out" }, target: { to: "block", block: "b", port: "in" } },
+        { source: { from: "block", block: "b", port: "out" }, target: { to: "block", block: "a", port: "in" } },
+        { source: { from: "block", block: "b", port: "out" }, target: { to: "output", port: "result" } },
+      ],
+    });
+
+    expect(errors(validateComposite(parent, new Map([[a.id, a], [b.id, b]])))).toContain(
+      "These blocks feed into each other in a loop, so there is no order to run them in: a -> b -> a.",
+    );
+  });
+
+  it("warns about values that are produced but never used", () => {
+    const { parent, children } = straightLine();
+    children.get("score-posting")!.outputs.debug = { type: t.string };
+    parent.inputs.unused = { type: t.string };
+
+    const found = warnings(validateComposite(parent, children));
+    expect(found).toContain('"score-posting" produces an output "debug" that nothing uses.');
+    expect(found).toContain('"rank-posting" takes an input "unused" that nothing inside it uses.');
+  });
+
+  it("flags a leaf block that declares structure", () => {
+    const leaf = makeBlock({ id: "leaf", children: [{ block: "x", mode: "once" }] });
+    expect(errors(validateComposite(leaf, new Map()))).toEqual([
+      '"leaf" is a leaf block but declares children or wires.',
+    ]);
+  });
+});
+
+describe("executionOrder", () => {
+  it("orders blocks after the blocks that feed them", () => {
+    const { parent } = straightLine();
+    expect(executionOrder(parent.children, parent.wires)).toEqual(["score-posting", "label-score"]);
+  });
+
+  it("keeps declaration order when nothing forces an ordering", () => {
+    const children = [
+      { block: "c", mode: "once" as const },
+      { block: "a", mode: "once" as const },
+      { block: "b", mode: "once" as const },
+    ];
+    expect(executionOrder(children, [])).toEqual(["c", "a", "b"]);
+  });
+
+  it("puts a dependency first even when it is declared last", () => {
+    const children = [
+      { block: "consumer", mode: "once" as const },
+      { block: "producer", mode: "once" as const },
+    ];
+    const wires = [
+      {
+        source: { from: "block" as const, block: "producer", port: "out" },
+        target: { to: "block" as const, block: "consumer", port: "in" },
+      },
+    ];
+    expect(executionOrder(children, wires)).toEqual(["producer", "consumer"]);
+  });
+});
