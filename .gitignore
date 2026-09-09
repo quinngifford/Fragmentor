@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+.env
+.env.local
+
+.DS_Store
+Thumbs.db
+
+# Scratch space for experiments that should not be checkpointed
+scratch/
