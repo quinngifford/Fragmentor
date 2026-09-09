@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Building the headless kernel. Model, project format, validator, decomposition, and contract generation all work, under 113 tests. Next is the part that can actually run: leaf implementations, then the conformance check.
+The desktop application exists and drives the kernel for real. Next is the part that can actually run: leaf implementations, then the conformance check.
 
 ## Working
 
@@ -14,14 +14,16 @@ Building the headless kernel. Model, project format, validator, decomposition, a
 - **Worked example.** `examples/job-ranker` is produced by the real pipeline and exercised end to end by test: seed block, two rounds of decomposition, written to disk, read back, validated.
 - **Contract generation.** Every block gets a generated `contract.ts`: a zod schema and derived type per side, plus an interface for the effects it needs. Schemas are tested by behaviour, not spelling, and the generated code typechecks under strict mode (`npm run check:examples`). `impl.ts` is scaffolded once and never overwritten.
 - **Self-hosted example.** `examples/contract-generator` is Fragmentor describing its own contract generator as blocks, and Fragmentor generates that project's contracts. 13 blocks across the two examples, 28 generated files, all compiling.
-- **Canvas prototype.** `prototypes/canvas.html` renders both projects from exported project data: pan and zoom, draggable blocks, bus-grouped connections, ctrl-click multi-select, a per-block code panel, and per-bus colours. Positions, colours and code edits are kept in the viewer's browser only. It is a design prototype, not connected to the kernel. The build parses the finished page's script and refuses to write one that would render nothing.
+- **Desktop application** (Electron). Opens a project from disk, draws its diagram, and writes changes back. Pan and zoom, draggable blocks whose positions are saved into the project's `layout.json`, bus-grouped connections, ctrl-click multi-select, per-bus colours, and a code panel that saves `impl.ts` to disk. Generated `contract.ts` is shown read-only, because it is derived from the diagram.
+- **The application checks itself.** `npm run check:app` starts the real window, opens an example, edits a block's code, saves it, restores it, and reports what was drawn — then captures a screenshot to `dist/self-check.png`. It fails the command if the interface did not draw.
 
 ## Not built yet
 
 - Leaf implementations and composite glue. Only the contract layer is generated; every `impl.ts` still throws.
 - The conformance check that holds written code to the diagram.
 - Test generation and a way to run a block.
-- The real application. The canvas prototype is a drawing, not the product.
+- Decomposition from inside the application. The AI loop exists but is only reachable from tests.
+- Running a block. The test bench builds its form from the port types but has nothing to call.
 
 ## Known problems or uncertainties
 
@@ -34,8 +36,7 @@ Building the headless kernel. Model, project format, validator, decomposition, a
 
 ## Human verification needed
 
-- The canvas prototype: whether the bus grouping reads better than per-signal wires, and whether the interaction model is right, before any of it is built for real.
-- Whether the prototype should become the real application rather than being rebuilt. It now carries enough behaviour that throwing it away has a cost.
+- The application in ordinary use: `npm run app`. Whether the bus grouping reads better than per-signal wires, and whether dragging, zooming and the code panel feel right.
 
 ## Current checkpoint
 
@@ -45,8 +46,8 @@ Building the headless kernel. Model, project format, validator, decomposition, a
 
 1. Implement the four leaves of `examples/contract-generator` and wire the composite, so a Fragmentor project generates contracts and can be checked against the hand-written generator it mirrors.
 2. Build the conformance check and find out whether it holds.
-3. Generate and run tests for each block.
-4. Decide what the real application is built with.
+3. Run a block from the test bench, which needs the generated code to be executable.
+4. Bring decomposition into the application, once there is an API key to run it against.
 
 ## Status-file rule
 

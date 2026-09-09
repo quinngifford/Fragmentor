@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:;"
+    />
+    <title>Fragmentor</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="mark"><strong>Fragmentor</strong></div>
+        <nav class="crumbs" id="crumbs" aria-label="Block hierarchy"></nav>
+        <div class="toolbar">
+          <button class="toggle" id="open-project">Open project…</button>
+          <button class="toggle" id="reload-project" title="Re-read the project from disk">Reload</button>
+          <button class="toggle" id="generate-code" title="Regenerate every block's contract">Generate code</button>
+          <span class="toolbar-sep"></span>
+          <button class="toggle" id="toggle-rail" aria-pressed="true">Hierarchy</button>
+          <button class="toggle" id="toggle-inspector" aria-pressed="true">Inspector</button>
+        </div>
+      </header>
+
+      <div class="panes" id="panes">
+        <aside class="rail" id="rail">
+          <div class="pane-title">Hierarchy</div>
+          <div class="tree" id="tree" role="tree"></div>
+        </aside>
+
+        <div class="canvas-wrap" id="canvas-wrap">
+          <svg id="canvas-svg">
+            <g id="viewport"><g id="bus-layer"></g><g id="node-layer"></g></g>
+          </svg>
+
+          <div class="zoom-bar">
+            <button class="zoom-btn" id="zoom-out" title="Zoom out">&minus;</button>
+            <span class="zoom-level" id="zoom-level">100%</span>
+            <button class="zoom-btn" id="zoom-in" title="Zoom in">+</button>
+            <button class="zoom-btn" id="zoom-fit" title="Fit the diagram">Fit</button>
+            <button class="zoom-btn" id="layout-reset" title="Return blocks to the automatic layout">Re-layout</button>
+          </div>
+
+          <div class="hint">drag to move &middot; ctrl-click to multi-select &middot; scroll to zoom</div>
+
+          <section class="welcome" id="welcome">
+            <h1>Fragmentor</h1>
+            <p>Software built as blocks, with the connections between them written down.</p>
+            <div class="welcome-body" id="welcome-body"></div>
+          </section>
+        </div>
+
+        <aside class="inspector" id="inspector-pane">
+          <div class="pane-title">Inspector</div>
+          <div class="inspector-body" id="inspector"></div>
+        </aside>
+      </div>
+
+      <footer class="status" id="status"></footer>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

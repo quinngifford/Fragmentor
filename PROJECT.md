@@ -74,7 +74,9 @@ The interface is a visual canvas — dark, high-contrast, structural — where t
 
 **The user interacts through the UI.** Understanding the structure should come from looking at it, and every action the user takes should be a clear, clickable control. The user is never expected to learn or type commands to operate Fragmentor. Any command-line tooling exists as internal scaffolding for development and verification of Fragmentor itself, and is not a user-facing surface.
 
-The canvas is not the first thing built, because the unproven part of this product is whether an AI can decompose a real requirement into a coherent hierarchy of precise contracts whose generated blocks actually compose into working software. That is proven headlessly first. The kernel is therefore built as a library that the canvas consumes, never as a tool the user drives directly.
+**Fragmentor is a desktop application.** There is no web version. The work is local: a project is a directory of files, the tools it drives are local, and nothing needs a server. The kernel is a library the application consumes, never a tool the user drives directly.
+
+If projects are ever shared, that happens through an ordinary repository holding the blocks and their code, rather than by moving the application online. Nothing in the file format should assume otherwise.
 
 ## Scope
 
@@ -84,7 +86,8 @@ Not in scope now:
 
 - generating code in languages other than TypeScript
 - importing or reverse-engineering existing codebases into blocks
-- multi-user collaboration or hosting
+- a browser version of the application, or any hosted service
+- sharing projects between people, which would be a repository integration rather than a feature of the application
 - deploying or operating the software Fragmentor builds
 
 ## Development strategy

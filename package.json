@@ -8,9 +8,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "build:canvas": "tsx scripts/build-canvas.ts",
     "build:examples": "tsx scripts/generate-examples.ts",
-    "check:examples": "tsc -p examples/tsconfig.json"
+    "check:examples": "tsc -p examples/tsconfig.json",
+    "build:app": "tsc -p tsconfig.app.json && tsx scripts/copy-app-assets.ts",
+    "app": "npm run build:app && electron .",
+    "check:app": "npm run build:app && electron . --smoke"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
@@ -18,8 +20,10 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "electron": "^44.3.0",
     "tsx": "^4.23.13",
     "typescript": "^5.7.2",
     "vitest": "^5.0.0"
-  }
+  },
+  "main": "dist/app/main.js"
 }

@@ -1,0 +1,155 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { formatWire, functionNameOf } from "../model/block.js";
+import { describeType } from "../model/types.js";
+import type { PortType } from "../model/types.js";
+import { executionOrder, wireCarriedType } from "../model/validate.js";
+import { loadLayout } from "./layout.js";
+import type { Layout } from "./layout.js";
+import { loadProject, validateProject } from "./project.js";
+import type { Granularity, ProjectDiagnostic } from "./project.js";
+
+/**
+ * Everything the interface needs about a project, in one serialisable value.
+ *
+ * The canvas never reaches into the kernel: it is handed this, and hands back
+ * edits. That keeps the drawing code free of file paths and the kernel free of
+ * anything to do with drawing.
+ */
+
+export interface SnapshotPort {
+  name: string;
+  /** The type as written, e.g. `{ title: string }[]`. */
+  type: string;
+  /** The same type as structure, which the test bench walks to build a form. */
+  typeIr: PortType;
+  description: string | null;
+}
+
+export interface SnapshotCapability {
+  name: string;
+  capability: string;
+  description: string | null;
+}
+
+export interface SnapshotChild {
+  block: string;
+  mode: "once" | "each";
+  eachOver: string | null;
+  path: string;
+  kind: "leaf" | "composite";
+  name: string;
+  functionName: string;
+}
+
+export interface SnapshotWire {
+  text: string;
+  source: { from: "input"; port: string } | { from: "block"; block: string; port: string };
+  target: { to: "output"; port: string } | { to: "block"; block: string; port: string };
+  type: string | null;
+  isArray: boolean;
+}
+
+export interface SnapshotBlock {
+  path: string;
+  id: string;
+  name: string;
+  responsibility: string;
+  kind: "leaf" | "composite";
+  functionName: string;
+  inputs: SnapshotPort[];
+  outputs: SnapshotPort[];
+  capabilities: SnapshotCapability[];
+  children: SnapshotChild[];
+  order: string[];
+  wires: SnapshotWire[];
+  sources: { impl: string | null; contract: string | null };
+}
+
+export interface ProjectSnapshot {
+  dir: string;
+  name: string;
+  goal: string;
+  granularity: Granularity;
+  rootPath: string;
+  blocks: Record<string, SnapshotBlock>;
+  layout: Layout;
+  diagnostics: ProjectDiagnostic[];
+}
+
+async function readIfPresent(filePath: string): Promise<string | null> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+export async function projectSnapshot(projectDir: string): Promise<ProjectSnapshot> {
+  const project = await loadProject(projectDir);
+  const blocks: Record<string, SnapshotBlock> = {};
+
+  for (const [blockPath, node] of project.byPath) {
+    const block = node.block;
+    const childBlocks = new Map(node.children.map((c) => [c.block.id, c.block]));
+
+    const ports = (record: typeof block.inputs): SnapshotPort[] =>
+      Object.entries(record).map(([name, port]) => ({
+        name,
+        type: describeType(port.type),
+        typeIr: port.type,
+        description: port.description ?? null,
+      }));
+
+    blocks[blockPath] = {
+      path: blockPath,
+      id: block.id,
+      name: block.name,
+      responsibility: block.responsibility,
+      kind: block.kind,
+      functionName: functionNameOf(block.id),
+      inputs: ports(block.inputs),
+      outputs: ports(block.outputs),
+      capabilities: Object.entries(block.capabilities).map(([name, cap]) => ({
+        name,
+        capability: cap.capability,
+        description: cap.description ?? null,
+      })),
+      children: block.children.map((child) => ({
+        block: child.block,
+        mode: child.mode,
+        eachOver: child.eachOver ?? null,
+        path: `${blockPath}/${child.block}`,
+        kind: childBlocks.get(child.block)?.kind ?? "leaf",
+        name: childBlocks.get(child.block)?.name ?? child.block,
+        functionName: functionNameOf(child.block),
+      })),
+      order: executionOrder(block.children, block.wires),
+      wires: block.wires.map((wire) => {
+        const carried = wireCarriedType(block, childBlocks, wire);
+        return {
+          text: formatWire(wire),
+          source: wire.source,
+          target: wire.target,
+          type: carried ? describeType(carried) : null,
+          isArray: carried?.kind === "array",
+        };
+      }),
+      sources: {
+        impl: await readIfPresent(path.join(node.dir, "impl.ts")),
+        contract: await readIfPresent(path.join(node.dir, "contract.ts")),
+      },
+    };
+  }
+
+  return {
+    dir: project.dir,
+    name: project.manifest.name,
+    goal: project.manifest.goal,
+    granularity: project.manifest.granularity,
+    rootPath: project.root.path,
+    blocks,
+    layout: await loadLayout(projectDir),
+    diagnostics: validateProject(project),
+  };
+}
