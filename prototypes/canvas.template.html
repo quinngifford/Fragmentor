@@ -1,0 +1,840 @@
+<title>Fragmentor Canvas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  /* A committed single visual world: this is an instrument panel, and the
+     phosphor green is signal colour, not decoration. Every surface paints
+     itself so the page holds on any host ground. */
+  :root {
+    --ground: #07090a;
+    --panel: #0d1113;
+    --panel-high: #131a1c;
+    --rule: #1d2629;
+    --rule-bright: #2b3a3e;
+    --ink: #c6d5d0;
+    --ink-dim: #6b807b;
+    --ink-faint: #475855;
+    --signal: #4fe38f;
+    --signal-dim: #2b8d5c;
+    --signal-deep: #1a4b34;
+    --effect: #e2a54b;
+    --pending: #7a8b96;
+    --radius: 3px;
+    --sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    height: 100vh;
+    min-height: 560px;
+  }
+
+  /* ---- top bar ---- */
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--panel);
+    flex-wrap: wrap;
+  }
+
+  .mark {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    padding-right: 18px;
+    border-right: 1px solid var(--rule);
+  }
+
+  .mark strong {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--signal);
+  }
+
+  .mark span {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-faint);
+  }
+
+  .crumbs { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; }
+
+  .crumb {
+    background: none;
+    border: 0;
+    padding: 3px 7px;
+    border-radius: var(--radius);
+    font: inherit;
+    color: var(--ink-dim);
+    cursor: pointer;
+  }
+
+  .crumb:hover { color: var(--signal); background: var(--panel-high); }
+  .crumb[aria-current="true"] { color: var(--ink); background: var(--panel-high); cursor: default; }
+  .crumb-sep { color: var(--ink-faint); }
+
+  .legend { margin-left: auto; display: flex; gap: 16px; font-size: 11px; color: var(--ink-dim); }
+  .legend div { display: flex; align-items: center; gap: 6px; }
+
+  .swatch { width: 18px; height: 0; border-top: 2px solid var(--signal-dim); }
+  .swatch.bus { border-top: 2px double var(--signal-dim); height: 3px; border-bottom: 2px solid transparent; }
+  .swatch.dot { width: 8px; height: 8px; border: 0; border-radius: 50%; background: var(--effect); }
+
+  /* ---- three panes ---- */
+
+  .panes {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr) 340px;
+    min-height: 0;
+  }
+
+  .rail, .inspector { background: var(--panel); min-height: 0; overflow-y: auto; }
+  .rail { border-right: 1px solid var(--rule); }
+  .inspector { border-left: 1px solid var(--rule); }
+
+  .pane-title {
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding: 14px 16px 8px;
+  }
+
+  /* ---- hierarchy rail ---- */
+
+  .tree { padding: 0 8px 20px; display: flex; flex-direction: column; gap: 1px; }
+
+  .node {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: var(--radius);
+    background: none;
+    color: var(--ink-dim);
+    font-family: var(--mono);
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .node:hover { background: var(--panel-high); color: var(--ink); }
+  .node[aria-selected="true"] { background: var(--signal-deep); color: var(--signal); }
+
+  .node .glyph { color: var(--ink-faint); flex: none; width: 11px; text-align: center; }
+  .node[aria-selected="true"] .glyph { color: var(--signal); }
+  .node .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---- canvas ---- */
+
+  .canvas-wrap { min-width: 0; overflow: auto; padding: 26px; }
+  .canvas-wrap svg { max-width: 100%; height: auto; display: block; }
+  .canvas-empty { color: var(--ink-dim); font-size: 13px; max-width: 46ch; }
+
+  .block-box { cursor: pointer; }
+  .block-plate { fill: var(--panel-high); stroke: var(--rule-bright); stroke-width: 1; }
+  .block-box:hover .block-plate { stroke: var(--signal-dim); }
+  .block-box[data-selected="true"] .block-plate { stroke: var(--signal); }
+  .block-head { fill: var(--panel); }
+
+  .block-name { font-family: var(--sans); font-size: 12.5px; font-weight: 600; fill: var(--ink); }
+  .block-kind { font-family: var(--mono); font-size: 9.5px; fill: var(--ink-faint); letter-spacing: 0.08em; }
+  .port-label { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-dim); }
+  .rail-label { font-family: var(--mono); font-size: 10.5px; fill: var(--signal-dim); }
+  .boundary-title { font-family: var(--mono); font-size: 9.5px; fill: var(--ink-faint); letter-spacing: 0.12em; }
+
+  .port-dot { fill: var(--panel); stroke: var(--signal-dim); stroke-width: 1.5; }
+  .port-dot.cap { stroke: var(--effect); }
+
+  .wire { fill: none; stroke: var(--signal-deep); stroke-width: 1.5; }
+  .wire.bus { stroke-width: 3.5; stroke: var(--signal-deep); }
+  .wire-hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
+  .wire-group:hover .wire, .wire-group[data-selected="true"] .wire { stroke: var(--signal); }
+  .cap-line { stroke: var(--effect); stroke-width: 1.2; stroke-dasharray: 2 3; opacity: 0.65; }
+  .each-badge { font-family: var(--mono); font-size: 9.5px; fill: var(--signal); }
+
+  /* ---- inspector ---- */
+
+  .inspector-body { padding: 0 16px 24px; display: flex; flex-direction: column; gap: 18px; }
+
+  .insp-head { display: flex; flex-direction: column; gap: 6px; }
+  .insp-head h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  .insp-id { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; }
+
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+
+  .badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 2px;
+    border: 1px solid var(--rule-bright);
+    color: var(--ink-dim);
+  }
+
+  .badge.composite { border-color: var(--signal-dim); color: var(--signal); }
+  .badge.state { border-color: color-mix(in srgb, var(--pending) 45%, transparent); color: var(--pending); }
+
+  .responsibility { margin: 0; font-size: 13px; color: var(--ink); }
+
+  .section h3 {
+    margin: 0 0 8px;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 500;
+  }
+
+  .ports { display: flex; flex-direction: column; gap: 8px; }
+
+  .port-row { display: flex; flex-direction: column; gap: 2px; padding-left: 10px; border-left: 2px solid var(--signal-deep); }
+  .port-row.cap { border-left-color: var(--effect); }
+  .port-row .pname { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+  .port-row .ptype { font-family: var(--mono); font-size: 11px; color: var(--signal-dim); word-break: break-word; }
+  .port-row .pdesc { font-size: 11.5px; color: var(--ink-dim); }
+
+  .btn {
+    font: inherit;
+    font-size: 12px;
+    padding: 7px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--signal-dim);
+    background: var(--signal-deep);
+    color: var(--signal);
+    cursor: pointer;
+  }
+
+  .btn:hover { background: var(--signal-dim); color: var(--ground); }
+  .btn[disabled] { border-color: var(--rule-bright); background: transparent; color: var(--ink-faint); cursor: not-allowed; }
+
+  /* ---- test bench ---- */
+
+  .bench { display: flex; flex-direction: column; gap: 10px; }
+  .bench-note { font-size: 11.5px; color: var(--ink-dim); margin: 0; }
+
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field > label { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
+
+  .field input, .field select, .field textarea {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--ground);
+    border: 1px solid var(--rule-bright);
+    border-radius: var(--radius);
+    color: var(--ink);
+    padding: 6px 8px;
+    width: 100%;
+  }
+
+  .field textarea { min-height: 62px; resize: vertical; line-height: 1.45; }
+  .field input:focus, .field select:focus, .field textarea:focus { outline: 2px solid var(--signal-dim); outline-offset: 1px; }
+  .field input[type="checkbox"] { width: auto; accent-color: var(--signal); }
+
+  .subfields { display: flex; flex-direction: column; gap: 8px; padding-left: 10px; border-left: 1px solid var(--rule); margin-top: 2px; }
+
+  /* ---- status strip ---- */
+
+  .status {
+    display: flex;
+    gap: 26px;
+    padding: 9px 18px;
+    border-top: 1px solid var(--rule);
+    background: var(--panel);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-dim);
+    flex-wrap: wrap;
+  }
+
+  .status b { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .status .warn { color: var(--pending); }
+
+  :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+  @media (max-width: 1100px) {
+    .panes { grid-template-columns: 1fr; grid-template-rows: auto minmax(320px, 1fr) auto; }
+    .rail { border-right: 0; border-bottom: 1px solid var(--rule); max-height: 190px; }
+    .inspector { border-left: 0; border-top: 1px solid var(--rule); }
+    .shell { height: auto; }
+  }
+</style>
+
+<div class="shell">
+  <header class="topbar">
+    <div class="mark">
+      <strong>Fragmentor</strong>
+      <span id="project-name"></span>
+    </div>
+    <nav class="crumbs" id="crumbs" aria-label="Block hierarchy"></nav>
+    <div class="legend">
+      <div><span class="swatch"></span> single value</div>
+      <div><span class="swatch bus"></span> array</div>
+      <div><span class="swatch dot"></span> capability</div>
+    </div>
+  </header>
+
+  <div class="panes">
+    <aside class="rail">
+      <div class="pane-title">Hierarchy</div>
+      <div class="tree" id="tree" role="tree"></div>
+    </aside>
+
+    <div class="canvas-wrap" id="canvas-wrap"></div>
+
+    <aside class="inspector">
+      <div class="pane-title">Inspector</div>
+      <div class="inspector-body" id="inspector"></div>
+    </aside>
+  </div>
+
+  <footer class="status" id="status"></footer>
+</div>
+
+<script>
+  const PROJECT = /*__DATA__*/;
+
+  const blocks = PROJECT.blocks;
+  const state = { view: PROJECT.rootPath, selected: PROJECT.rootPath, selectedWire: null };
+
+  /* ------------------------------------------------------------------ *
+   * Example values, derived from a port's type. The type structure is
+   * the same one that will drive the real test bench, so the shape of
+   * these forms is not a mockup even though nothing can run yet.
+   * ------------------------------------------------------------------ */
+
+  function exampleFor(type, name) {
+    switch (type.kind) {
+      case "string": return name && /path/i.test(name) ? "./postings.json" : "example";
+      case "number": return 0;
+      case "boolean": return false;
+      case "null": return null;
+      case "unknown": return null;
+      case "literal": return type.value;
+      case "enum": return type.values[0];
+      case "array": return [exampleFor(type.of, name)];
+      case "union": return exampleFor(type.of[0], name);
+      case "object": {
+        const out = {};
+        for (const [field, spec] of Object.entries(type.fields)) {
+          if (!spec.optional) out[field] = exampleFor(spec.type, field);
+        }
+        return out;
+      }
+      default: return null;
+    }
+  }
+
+  function field(labelText, control) {
+    const wrap = document.createElement("div");
+    wrap.className = "field";
+    const label = document.createElement("label");
+    label.textContent = labelText;
+    wrap.append(label, control);
+    return wrap;
+  }
+
+  /** Builds a control for a port type. Objects nest; arrays take JSON. */
+  function controlFor(type, name) {
+    if (type.kind === "object") {
+      const group = document.createElement("div");
+      group.className = "subfields";
+      for (const [fieldName, spec] of Object.entries(type.fields)) {
+        group.append(controlFor(spec.type, fieldName + (spec.optional ? "?" : "")));
+      }
+      return field(name, group);
+    }
+
+    if (type.kind === "array") {
+      const area = document.createElement("textarea");
+      area.value = JSON.stringify(exampleFor(type, name), null, 1);
+      area.spellcheck = false;
+      return field(name, area);
+    }
+
+    if (type.kind === "boolean") {
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      return field(name, box);
+    }
+
+    if (type.kind === "enum") {
+      const select = document.createElement("select");
+      for (const value of type.values) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        select.append(option);
+      }
+      return field(name, select);
+    }
+
+    const input = document.createElement("input");
+    input.type = type.kind === "number" ? "number" : "text";
+    const sample = exampleFor(type, name);
+    input.value = sample === null ? "" : String(sample);
+    return field(name, input);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Layout. Children are placed in dependency columns so a wire always
+   * runs left to right, the way the code will read.
+   * ------------------------------------------------------------------ */
+
+  const BLOCK_W = 208;
+  const HEAD_H = 34;
+  const ROW_H = 22;
+  const COL_GAP = 96;
+  const ROW_GAP = 34;
+  const RAIL_W = 150;
+
+  function layout(parent) {
+    const kids = parent.children;
+    if (kids.length === 0) return null;
+
+    const depth = new Map(kids.map((k) => [k.block, 0]));
+    for (const id of parent.order) {
+      const incoming = parent.wires.filter((w) => w.target.to === "block" && w.target.block === id);
+      let d = 0;
+      for (const wire of incoming) {
+        if (wire.source.from === "block") d = Math.max(d, (depth.get(wire.source.block) ?? 0) + 1);
+      }
+      depth.set(id, d);
+    }
+
+    const columns = [];
+    for (const kid of kids) {
+      const d = depth.get(kid.block) ?? 0;
+      (columns[d] ||= []).push(kid);
+    }
+
+    const boxes = new Map();
+    let maxHeight = 0;
+
+    const heightOf = (kid) => {
+      const child = blocks[kid.path];
+      const rows = Math.max(child.inputs.length, child.outputs.length, 1);
+      return HEAD_H + rows * ROW_H + 14 + (child.capabilities.length ? 22 : 0);
+    };
+
+    for (const column of columns) {
+      const total = column.map(heightOf).reduce((a, b) => a + b, 0) + ROW_GAP * (column.length - 1);
+      maxHeight = Math.max(maxHeight, total);
+    }
+
+    columns.forEach((column, columnIndex) => {
+      const heights = column.map(heightOf);
+      const total = heights.reduce((a, b) => a + b, 0) + ROW_GAP * (column.length - 1);
+      let y = 40 + (maxHeight - total) / 2;
+      const x = RAIL_W + columnIndex * (BLOCK_W + COL_GAP);
+
+      column.forEach((kid, i) => {
+        boxes.set(kid.block, { kid, x, y, w: BLOCK_W, h: heights[i], block: blocks[kid.path] });
+        y += heights[i] + ROW_GAP;
+      });
+    });
+
+    const columnCount = columns.length;
+    const width = RAIL_W + columnCount * BLOCK_W + (columnCount - 1) * COL_GAP + RAIL_W + 40;
+    const height = maxHeight + 100;
+
+    return { boxes, width, height, rightRailX: width - RAIL_W - 20 };
+  }
+
+  function portPoint(box, side, index) {
+    return {
+      x: side === "in" ? box.x : box.x + box.w,
+      y: box.y + HEAD_H + 13 + index * ROW_H,
+    };
+  }
+
+  function svgEl(name, attrs, parent) {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+    for (const [key, value] of Object.entries(attrs || {})) node.setAttribute(key, String(value));
+    if (parent) parent.append(node);
+    return node;
+  }
+
+  function curve(a, b) {
+    const dx = Math.max(36, Math.abs(b.x - a.x) * 0.45);
+    return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Rendering
+   * ------------------------------------------------------------------ */
+
+  function renderCanvas() {
+    const wrap = document.getElementById("canvas-wrap");
+    wrap.replaceChildren();
+    const parent = blocks[state.view];
+    const plan = layout(parent);
+
+    if (!plan) {
+      const note = document.createElement("p");
+      note.className = "canvas-empty";
+      note.textContent =
+        parent.name + " is a leaf block. It has no diagram of its own — its behaviour is code. Select it in the inspector to see its contract and test bench.";
+      wrap.append(note);
+      return;
+    }
+
+    const svg = svgEl("svg", {
+      width: plan.width,
+      height: plan.height,
+      viewBox: `0 0 ${plan.width} ${plan.height}`,
+      role: "img",
+      "aria-label": `Block diagram of ${parent.name}`,
+    }, wrap);
+
+    // Parent input rail
+    const inX = RAIL_W - 34;
+    svgEl("text", { x: 6, y: 24, class: "boundary-title" }, svg).textContent = "IN";
+    parent.inputs.forEach((port, i) => {
+      const y = 46 + i * 30;
+      const label = svgEl("text", { x: 6, y: y + 4, class: "rail-label" }, svg);
+      label.textContent = port.name;
+      svgEl("circle", { cx: inX, cy: y, r: 3.5, class: "port-dot" }, svg);
+      port._pt = { x: inX, y };
+    });
+
+    // Parent output rail
+    svgEl("text", { x: plan.rightRailX + 14, y: 24, class: "boundary-title" }, svg).textContent = "OUT";
+    parent.outputs.forEach((port, i) => {
+      const y = 46 + i * 30;
+      const label = svgEl("text", { x: plan.rightRailX + 14, y: y + 4, class: "rail-label" }, svg);
+      label.textContent = port.name;
+      svgEl("circle", { cx: plan.rightRailX, cy: y, r: 3.5, class: "port-dot" }, svg);
+      port._pt = { x: plan.rightRailX, y };
+    });
+
+    // Wires first so blocks sit on top
+    for (const wire of parent.wires) {
+      let from;
+      if (wire.source.from === "input") {
+        from = parent.inputs.find((p) => p.name === wire.source.port)._pt;
+      } else {
+        const box = plan.boxes.get(wire.source.block);
+        const index = box.block.outputs.findIndex((p) => p.name === wire.source.port);
+        from = portPoint(box, "out", index);
+      }
+
+      let to;
+      if (wire.target.to === "output") {
+        to = parent.outputs.find((p) => p.name === wire.target.port)._pt;
+      } else {
+        const box = plan.boxes.get(wire.target.block);
+        const index = box.block.inputs.findIndex((p) => p.name === wire.target.port);
+        to = portPoint(box, "in", index);
+      }
+
+      const group = svgEl("g", { class: "wire-group", "data-selected": String(state.selectedWire === wire.text) }, svg);
+      const path = curve(from, to);
+      svgEl("path", { d: path, class: "wire" + (wire.isArray ? " bus" : "") }, group);
+      const hit = svgEl("path", { d: path, class: "wire-hit" }, group);
+      svgEl("title", {}, group).textContent = `${wire.text}  —  ${wire.type}`;
+      hit.addEventListener("click", () => {
+        state.selectedWire = wire.text;
+        state.selected = null;
+        render();
+      });
+    }
+
+    // Blocks
+    for (const [, box] of plan.boxes) {
+      const child = box.block;
+      const selected = state.selected === child.path;
+      const group = svgEl("g", { class: "block-box", "data-selected": String(selected), tabindex: "0", role: "button" }, svg);
+      svgEl("title", {}, group).textContent =
+        child.responsibility + (child.kind === "composite" ? "
+
+Double-click to open this block's diagram." : "");
+
+      svgEl("rect", { x: box.x, y: box.y, width: box.w, height: box.h, rx: 3, class: "block-plate" }, group);
+      svgEl("rect", { x: box.x, y: box.y, width: box.w, height: HEAD_H, rx: 3, class: "block-head" }, group);
+      svgEl("line", { x1: box.x, y1: box.y + HEAD_H, x2: box.x + box.w, y2: box.y + HEAD_H, stroke: "var(--rule-bright)" }, group);
+
+      svgEl("text", { x: box.x + 10, y: box.y + 15, class: "block-name" }, group).textContent = child.name;
+      svgEl("text", { x: box.x + 10, y: box.y + 27, class: "block-kind" }, group).textContent =
+        child.kind === "composite" ? "COMPOSITE" : "LEAF";
+
+      if (box.kid.mode === "each") {
+        svgEl("text", { x: box.x + box.w - 10, y: box.y + 15, class: "each-badge", "text-anchor": "end" }, group)
+          .textContent = "× each " + box.kid.eachOver;
+      }
+
+      child.inputs.forEach((port, i) => {
+        const pt = portPoint(box, "in", i);
+        svgEl("circle", { cx: pt.x, cy: pt.y, r: 3.5, class: "port-dot" }, group);
+        svgEl("text", { x: pt.x + 9, y: pt.y + 3.5, class: "port-label" }, group).textContent = port.name;
+      });
+
+      child.outputs.forEach((port, i) => {
+        const pt = portPoint(box, "out", i);
+        svgEl("circle", { cx: pt.x, cy: pt.y, r: 3.5, class: "port-dot" }, group);
+        svgEl("text", { x: pt.x - 9, y: pt.y + 3.5, class: "port-label", "text-anchor": "end" }, group).textContent = port.name;
+      });
+
+      // Capabilities enter from above, because that is how they are supplied.
+      child.capabilities.forEach((cap, i) => {
+        const cx = box.x + 26 + i * 58;
+        svgEl("line", { x1: cx, y1: box.y + box.h, x2: cx, y2: box.y + box.h + 12, class: "cap-line" }, group);
+        svgEl("circle", { cx, cy: box.y + box.h + 15, r: 3.5, class: "port-dot cap" }, group);
+        svgEl("text", { x: cx + 8, y: box.y + box.h + 18.5, class: "port-label" }, group).textContent = cap.name;
+      });
+
+      const open = () => {
+        state.selected = child.path;
+        state.selectedWire = null;
+        render();
+      };
+      group.addEventListener("click", open);
+      group.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
+      });
+      group.addEventListener("dblclick", () => {
+        if (child.kind === "composite") { state.view = child.path; state.selected = child.path; state.selectedWire = null; render(); }
+      });
+    }
+  }
+
+  function renderCrumbs() {
+    const nav = document.getElementById("crumbs");
+    nav.replaceChildren();
+    const parts = state.view.split("/");
+
+    parts.forEach((part, i) => {
+      if (i > 0) {
+        const sep = document.createElement("span");
+        sep.className = "crumb-sep";
+        sep.textContent = "/";
+        nav.append(sep);
+      }
+      const path = parts.slice(0, i + 1).join("/");
+      const button = document.createElement("button");
+      button.className = "crumb";
+      button.textContent = part;
+      const isCurrent = i === parts.length - 1;
+      button.setAttribute("aria-current", String(isCurrent));
+      if (!isCurrent) {
+        button.addEventListener("click", () => { state.view = path; state.selected = path; state.selectedWire = null; render(); });
+      }
+      nav.append(button);
+    });
+  }
+
+  function renderTree() {
+    const tree = document.getElementById("tree");
+    tree.replaceChildren();
+
+    const walk = (path, depth) => {
+      const block = blocks[path];
+      const button = document.createElement("button");
+      button.className = "node";
+      button.setAttribute("role", "treeitem");
+      button.setAttribute("aria-selected", String(state.selected === path));
+      button.style.paddingLeft = 8 + depth * 14 + "px";
+
+      const glyph = document.createElement("span");
+      glyph.className = "glyph";
+      glyph.textContent = block.kind === "composite" ? "▣" : "▫";
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = block.id;
+      button.append(glyph, label);
+
+      button.addEventListener("click", () => {
+        state.selected = path;
+        state.selectedWire = null;
+        state.view = block.kind === "composite" ? path : path.split("/").slice(0, -1).join("/") || PROJECT.rootPath;
+        render();
+      });
+
+      tree.append(button);
+      for (const child of block.children) walk(child.path, depth + 1);
+    };
+
+    walk(PROJECT.rootPath, 0);
+  }
+
+  function portSection(title, ports, isCapability) {
+    const section = document.createElement("section");
+    section.className = "section";
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+    section.append(heading);
+
+    if (ports.length === 0) {
+      const none = document.createElement("p");
+      none.className = "bench-note";
+      none.textContent = "None.";
+      section.append(none);
+      return section;
+    }
+
+    const list = document.createElement("div");
+    list.className = "ports";
+    for (const port of ports) {
+      const row = document.createElement("div");
+      row.className = "port-row" + (isCapability ? " cap" : "");
+      const name = document.createElement("div");
+      name.className = "pname";
+      name.textContent = port.name;
+      const type = document.createElement("div");
+      type.className = "ptype";
+      type.textContent = isCapability ? port.capability : port.type;
+      row.append(name, type);
+      if (port.description) {
+        const desc = document.createElement("div");
+        desc.className = "pdesc";
+        desc.textContent = port.description;
+        row.append(desc);
+      }
+      list.append(row);
+    }
+    section.append(list);
+    return section;
+  }
+
+  function renderInspector() {
+    const panel = document.getElementById("inspector");
+    panel.replaceChildren();
+
+    if (state.selectedWire) {
+      const parent = blocks[state.view];
+      const wire = parent.wires.find((w) => w.text === state.selectedWire);
+      const head = document.createElement("div");
+      head.className = "insp-head";
+      head.innerHTML = "<h2>Wire</h2>";
+      const id = document.createElement("div");
+      id.className = "insp-id";
+      id.textContent = wire.text;
+      head.append(id);
+      panel.append(head);
+
+      panel.append(portSection("Carries", [{ name: wire.isArray ? "array of values" : "one value", type: wire.type }], false));
+
+      const note = document.createElement("p");
+      note.className = "bench-note";
+      note.textContent =
+        "Once this block has code, running it will record the value that travelled this wire, and it will be shown here.";
+      panel.append(note);
+      return;
+    }
+
+    const block = blocks[state.selected] || blocks[state.view];
+
+    const head = document.createElement("div");
+    head.className = "insp-head";
+    const title = document.createElement("h2");
+    title.textContent = block.name;
+    const id = document.createElement("div");
+    id.className = "insp-id";
+    id.textContent = block.path;
+    const badges = document.createElement("div");
+    badges.className = "badges";
+
+    const kind = document.createElement("span");
+    kind.className = "badge" + (block.kind === "composite" ? " composite" : "");
+    kind.textContent = block.kind;
+    const status = document.createElement("span");
+    status.className = "badge state";
+    status.textContent = "specified";
+    badges.append(kind, status);
+
+    if (block.kind === "composite") {
+      const openBtn = document.createElement("button");
+      openBtn.className = "btn";
+      openBtn.textContent = "Open diagram";
+      openBtn.addEventListener("click", () => { state.view = block.path; render(); });
+      head.append(title, id, badges, openBtn);
+    } else {
+      head.append(title, id, badges);
+    }
+    panel.append(head);
+
+    const responsibility = document.createElement("p");
+    responsibility.className = "responsibility";
+    responsibility.textContent = block.responsibility;
+    panel.append(responsibility);
+
+    panel.append(portSection("Inputs", block.inputs, false));
+    panel.append(portSection("Outputs", block.outputs, false));
+    panel.append(portSection("Capabilities", block.capabilities, true));
+
+    // Test bench preview
+    const bench = document.createElement("section");
+    bench.className = "section bench";
+    const heading = document.createElement("h3");
+    heading.textContent = "Test bench";
+    bench.append(heading);
+
+    const note = document.createElement("p");
+    note.className = "bench-note";
+    note.textContent =
+      "These controls are built from the port types above. The values are examples, not a saved case, and no code exists yet, so nothing can run.";
+    bench.append(note);
+
+    for (const port of block.inputs) bench.append(controlFor(port.typeIr, port.name));
+
+    const run = document.createElement("button");
+    run.className = "btn";
+    run.textContent = "Run block";
+    run.disabled = true;
+    run.title = "This block has no implementation yet.";
+    bench.append(run);
+    panel.append(bench);
+  }
+
+  function renderStatus() {
+    const all = Object.values(blocks);
+    const composites = all.filter((b) => b.kind === "composite").length;
+    const strip = document.getElementById("status");
+    strip.innerHTML =
+      `<span>blocks <b>${all.length}</b></span>` +
+      `<span>composite <b>${composites}</b></span>` +
+      `<span>leaf <b>${all.length - composites}</b></span>` +
+      `<span class="warn">implemented <b>0</b></span>` +
+      `<span class="warn">tests passing <b>0</b></span>` +
+      `<span>granularity <b>${PROJECT.manifest.granularity.level}</b> of 5, max depth <b>${PROJECT.manifest.granularity.maxDepth}</b></span>`;
+  }
+
+  function render() {
+    renderCrumbs();
+    renderTree();
+    renderCanvas();
+    renderInspector();
+  }
+
+  document.getElementById("project-name").textContent = PROJECT.manifest.name;
+  renderStatus();
+  render();
+</script>

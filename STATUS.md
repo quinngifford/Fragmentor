@@ -2,45 +2,46 @@
 
 ## Current focus
 
-Design settled; nothing implemented yet. The next step is proving the kernel — whether an AI can decompose a real requirement into a coherent block hierarchy with precise contracts whose generated blocks compose into working software — headlessly, before any canvas is built.
+Building the headless kernel. The block model, project format, validator, and AI decomposition loop work and are tested. Code generation is the next piece.
 
 ## Working
 
-- Nothing implemented yet. The repository currently contains project documentation only.
+- **Block model.** Typed ports, capability ports that flow down by name, and a control vocabulary of straight-line plus per-item iteration. 92 tests.
+- **Type expressions.** Port types are written and stored as `{ title: string; salary?: number }[]` and parsed into the structure the test bench will walk. Round-tripping is held exact by test.
+- **Project format.** A project's folder structure is its block hierarchy. Blocks load, validate, and write back unchanged.
+- **Validator.** Checks wiring, arity across iterated children, capability supply, and cycles, in plain language meant to be shown in the UI.
+- **AI decomposition.** A proposal is turned into real blocks, run through the ordinary validator, and any problems are handed back to the model to correct. Tested against a scripted client including retry and give-up behaviour.
+- **Worked example.** `examples/job-ranker` is produced by the real pipeline and exercised end to end by test: seed block, two rounds of decomposition, written to disk, read back, validated.
+- **Canvas prototype.** `prototypes/canvas.html` renders that example from exported project data. It is a design prototype, not connected to the kernel.
 
-## Decided
+## Not built yet
 
-- The diagram is a specification; the AI writes all code, including composite glue, and a conformance check verifies the code matches the diagram.
-- Every block is a real callable function, because the interactive test bench requires callability. Steps too small to justify a function are lines inside a leaf, not blocks.
-- Effects are declared as capability ports that flow down the hierarchy, so any block can run in isolation with substitutes supplied.
-- Generated code is TypeScript only. Port contracts use runtime schemas that also drive test bench forms.
-- The compiled-graph alternative is recorded in `ALTERNATIVE-COMPILED-GRAPH.md` and is deliberately not being built.
-
-## In development
-
-- Nothing yet.
+- Code generation for leaf blocks and composite glue.
+- The conformance check that holds generated code to the diagram.
+- Test generation and a way to run a block.
+- The real application. The canvas prototype is a drawing, not the product.
 
 ## Known problems or uncertainties
 
-- Whether AI decomposition produces hierarchies that are stable and sensible rather than arbitrary is the central unproven risk.
-- Whether conformance checking of AI-written composite glue is reliable enough to keep the diagram trustworthy is unproven.
-- The restricted glue dialect that makes conformance checkable has not been specified.
-- The canvas technology is intentionally undecided until the kernel is proven.
+- **Decomposition has never run against a live model.** No API key is configured, so every decomposition so far came from a scripted client replaying an authored proposal. The pipeline is proven; the model's reliability at this task is not.
+- **Wires carry whole port values.** There is no way to take one field out of an object on a wire, which was noticed while building the example and worked around by having a block accept the whole object. Whether field access belongs on the diagram is unresolved.
+- **The restricted glue dialect is unspecified.** Conformance checking depends on it, and if it ends up so restricted that it is effectively compiler input, the compiled-graph alternative becomes the simpler design.
+- No conditional or error-handling vocabulary exists on the diagram. Branching lives inside leaves until an example proves that insufficient.
 
 ## Human verification needed
 
-- None yet.
+- The canvas prototype: whether the visual language reads correctly and the interaction model is right, before it is built for real.
 
 ## Current checkpoint
 
-- Not recorded. The repository is not yet under version control; create the first checkpoint once a working baseline exists.
+- `cd40a35` and later on `main`. Every commit so far is a working tree with a passing suite.
 
 ## Next major steps
 
-1. Build the headless kernel: block model and on-disk project format, contract representation, AI decomposition loop, leaf and glue code generation, test generation, conformance check.
-2. Prove it end to end by building one small real program with it.
-3. AI-verify, then human-verify the result.
-4. Checkpoint before starting the canvas.
+1. Generate leaf implementations and composite glue for the example project.
+2. Build the conformance check and find out whether it holds.
+3. Generate and run tests for each block.
+4. Get the example running end to end, then decide what the real application is built with.
 
 ## Status-file rule
 

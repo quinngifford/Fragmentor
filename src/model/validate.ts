@@ -2,6 +2,43 @@ import type { Block, ChildRef, Wire } from "./block.js";
 import { describeType, typesEqual } from "./types.js";
 import type { PortType } from "./types.js";
 
+/**
+ * What a child's input port expects on the wire. A child invoked once per
+ * item declares the type of a single item, but the wire feeding the port it
+ * iterates over carries the whole array.
+ */
+function inputTypeOnWire(ref: ChildRef, def: Block, port: string): PortType | undefined {
+  const declared = def.inputs[port]?.type;
+  if (!declared) return undefined;
+  return ref.mode === "each" && ref.eachOver === port ? { kind: "array", of: declared } : declared;
+}
+
+/** What a child's output port produces on the wire, accounting for `each`. */
+function outputTypeOnWire(ref: ChildRef, def: Block, port: string): PortType | undefined {
+  const declared = def.outputs[port]?.type;
+  if (!declared) return undefined;
+  return ref.mode === "each" ? { kind: "array", of: declared } : declared;
+}
+
+/**
+ * The type of the value a wire actually carries. This is what the canvas
+ * shows when someone selects a wire, and what a recorded run is checked
+ * against.
+ */
+export function wireCarriedType(
+  parent: Block,
+  children: Map<string, Block>,
+  wire: Wire,
+): PortType | undefined {
+  const source = wire.source;
+  if (source.from === "input") return parent.inputs[source.port]?.type;
+
+  const def = children.get(source.block);
+  const ref = parent.children.find((c) => c.block === source.block);
+  if (!def || !ref) return undefined;
+  return outputTypeOnWire(ref, def, source.port);
+}
+
 export interface Diagnostic {
   severity: "error" | "warning";
   /** Plain language. These are shown to the user in the canvas, not just logged. */
@@ -63,20 +100,6 @@ export function validateComposite(parent: Block, children: Map<string, Block>): 
 
   const childOf = (id: string): Block | undefined => (seen.has(id) ? children.get(id) : undefined);
   const refOf = (id: string): ChildRef | undefined => present.find((c) => c.block === id);
-
-  /** What a child's input port expects on the wire, accounting for `each`. */
-  const inputTypeOnWire = (ref: ChildRef, def: Block, port: string): PortType | undefined => {
-    const declared = def.inputs[port]?.type;
-    if (!declared) return undefined;
-    return ref.mode === "each" && ref.eachOver === port ? { kind: "array", of: declared } : declared;
-  };
-
-  /** What a child's output port produces on the wire, accounting for `each`. */
-  const outputTypeOnWire = (ref: ChildRef, def: Block, port: string): PortType | undefined => {
-    const declared = def.outputs[port]?.type;
-    if (!declared) return undefined;
-    return ref.mode === "each" ? { kind: "array", of: declared } : declared;
-  };
 
   // --- wires resolve on both ends ------------------------------------------
 
