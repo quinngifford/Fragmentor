@@ -1,0 +1,23 @@
+{
+  "id": "derive-names",
+  "name": "Derive Names",
+  "responsibility": "Turn a kebab-case block id into the function name and the type-name stem used throughout the generated file.",
+  "kind": "leaf",
+  "inputs": {
+    "blockId": {
+      "type": "string"
+    }
+  },
+  "outputs": {
+    "functionName": {
+      "type": "string"
+    },
+    "typeStem": {
+      "type": "string"
+    }
+  },
+  "capabilities": {},
+  "children": [],
+  "wires": [],
+  "pinnedAsLeaf": false
+}

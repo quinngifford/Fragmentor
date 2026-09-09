@@ -1,0 +1,9 @@
+{
+  "name": "Contract Generator",
+  "goal": "Given one block's name, responsibility and ports, produce the TypeScript source of its contract: a runtime schema and a derived type for its inputs and outputs, and an interface for the effects it needs supplied.",
+  "rootBlock": "generate-contract",
+  "granularity": {
+    "level": 3,
+    "maxDepth": 3
+  }
+}

@@ -16,11 +16,15 @@ import { executionOrder, wireCarriedType } from "../src/model/validate.js";
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const projectDir = path.join(here, "..", "examples", "job-ranker");
+const projectDirs = [
+  { key: "job-ranker", label: "Job Ranker" },
+  { key: "contract-generator", label: "Contract Generator" },
+];
 const templatePath = path.join(here, "..", "prototypes", "canvas.template.html");
 const outputPath = path.join(here, "..", "prototypes", "canvas.html");
 
-const project = await loadProject(projectDir);
+async function exportProject(key: string, label: string) {
+const project = await loadProject(path.join(here, "..", "examples", key));
 const blocks: Record<string, unknown> = {};
 
 for (const [blockPath, node] of project.byPath) {
@@ -70,7 +74,12 @@ for (const [blockPath, node] of project.byPath) {
   };
 }
 
-const data = JSON.stringify({ manifest: project.manifest, rootPath: project.root.path, blocks }, null, 2);
+return { key, label, manifest: project.manifest, rootPath: project.root.path, blocks, blockCount: project.byPath.size };
+}
+
+const exported = [];
+for (const { key, label } of projectDirs) exported.push(await exportProject(key, label));
+const data = JSON.stringify(exported, null, 2);
 
 const template = await readFile(templatePath, "utf8");
 const PLACEHOLDER = "/*__DATA__*/";
@@ -90,4 +99,7 @@ try {
 }
 
 await writeFile(outputPath, page, "utf8");
-console.log(`Wrote ${path.relative(process.cwd(), outputPath)} — ${project.byPath.size} blocks, script parses.`);
+const total = exported.reduce((n, p) => n + p.blockCount, 0);
+console.log(
+  `Wrote ${path.relative(process.cwd(), outputPath)} — ${exported.length} projects, ${total} blocks, script parses.`,
+);

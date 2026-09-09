@@ -1,0 +1,26 @@
+{
+  "id": "render-schemas",
+  "name": "Render Schemas",
+  "responsibility": "Render the zod object expression for the input ports and for the output ports, expanding each port's type expression into a schema.",
+  "kind": "leaf",
+  "inputs": {
+    "inputs": {
+      "type": "{ name: string; type: string; description?: string }[]"
+    },
+    "outputs": {
+      "type": "{ name: string; type: string; description?: string }[]"
+    }
+  },
+  "outputs": {
+    "inputSchema": {
+      "type": "string"
+    },
+    "outputSchema": {
+      "type": "string"
+    }
+  },
+  "capabilities": {},
+  "children": [],
+  "wires": [],
+  "pinnedAsLeaf": false
+}

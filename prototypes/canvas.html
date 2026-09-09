@@ -78,6 +78,22 @@
     color: var(--ink-faint);
   }
 
+  .tabs { display: flex; gap: 4px; padding-right: 16px; border-right: 1px solid var(--rule); }
+
+  .tab {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    padding: 4px 10px;
+    border-radius: var(--radius);
+    border: 1px solid transparent;
+    background: none;
+    color: var(--ink-dim);
+    cursor: pointer;
+  }
+
+  .tab:hover { color: var(--ink); background: var(--panel-high); }
+  .tab[aria-pressed="true"] { border-color: var(--signal-dim); color: var(--signal); background: var(--signal-deep); }
+
   .crumbs { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; }
 
   .crumb {
@@ -292,8 +308,9 @@
   <header class="topbar">
     <div class="mark">
       <strong>Fragmentor</strong>
-      <span id="project-name"></span>
+
     </div>
+    <nav class="tabs" id="project-tabs" aria-label="Projects"></nav>
     <nav class="crumbs" id="crumbs" aria-label="Block hierarchy"></nav>
     <div class="legend">
       <div><span class="swatch"></span> single value</div>
@@ -320,77 +337,43 @@
 </div>
 
 <script>
-  const PROJECT = {
-  "manifest": {
-    "name": "Job Relevance Ranker",
-    "goal": "Read job postings from a local file, score each one against a candidate profile, and return them ordered from most to least relevant with a short explanation for each score.",
-    "rootBlock": "rank-jobs",
-    "granularity": {
-      "level": 3,
-      "maxDepth": 4
-    }
-  },
-  "rootPath": "rank-jobs",
-  "blocks": {
-    "rank-jobs": {
-      "path": "rank-jobs",
-      "id": "rank-jobs",
-      "name": "Rank Jobs",
-      "responsibility": "Read job postings from a file and return them ordered by how well they match a candidate profile, with reasons.",
-      "kind": "composite",
-      "inputs": [
-        {
-          "name": "sourcePath",
-          "type": "string",
-          "typeIr": {
-            "kind": "string"
+  const PROJECTS = [
+  {
+    "key": "job-ranker",
+    "label": "Job Ranker",
+    "manifest": {
+      "name": "Job Relevance Ranker",
+      "goal": "Read job postings from a local file, score each one against a candidate profile, and return them ordered from most to least relevant with a short explanation for each score.",
+      "rootBlock": "rank-jobs",
+      "granularity": {
+        "level": 3,
+        "maxDepth": 4
+      }
+    },
+    "rootPath": "rank-jobs",
+    "blocks": {
+      "rank-jobs": {
+        "path": "rank-jobs",
+        "id": "rank-jobs",
+        "name": "Rank Jobs",
+        "responsibility": "Read job postings from a file and return them ordered by how well they match a candidate profile, with reasons.",
+        "kind": "composite",
+        "inputs": [
+          {
+            "name": "sourcePath",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": "File holding the postings to rank."
           },
-          "description": "File holding the postings to rank."
-        },
-        {
-          "name": "profile",
-          "type": "{ skills: string[] }",
-          "typeIr": {
-            "kind": "object",
-            "fields": {
-              "skills": {
-                "type": {
-                  "kind": "array",
-                  "of": {
-                    "kind": "string"
-                  }
-                }
-              }
-            }
-          },
-          "description": "The candidate to rank against."
-        }
-      ],
-      "outputs": [
-        {
-          "name": "ranked",
-          "type": "{ title: string; company: string; score: number; reasons: string[] }[]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
+          {
+            "name": "profile",
+            "type": "{ skills: string[] }",
+            "typeIr": {
               "kind": "object",
               "fields": {
-                "title": {
-                  "type": {
-                    "kind": "string"
-                  }
-                },
-                "company": {
-                  "type": {
-                    "kind": "string"
-                  }
-                },
-                "score": {
-                  "type": {
-                    "kind": "number"
-                  }
-                },
-                "reasons": {
+                "skills": {
                   "type": {
                     "kind": "array",
                     "of": {
@@ -399,347 +382,431 @@
                   }
                 }
               }
-            }
-          },
-          "description": "Best match first."
-        }
-      ],
-      "capabilities": [
-        {
-          "name": "files",
-          "capability": "FileSystem",
-          "description": "Reads the postings file."
-        }
-      ],
-      "children": [
-        {
-          "block": "load-postings",
-          "mode": "once",
-          "eachOver": null,
-          "path": "rank-jobs/load-postings",
-          "kind": "leaf",
-          "name": "Load Postings"
-        },
-        {
-          "block": "extract-profile-keywords",
-          "mode": "once",
-          "eachOver": null,
-          "path": "rank-jobs/extract-profile-keywords",
-          "kind": "leaf",
-          "name": "Extract Profile Keywords"
-        },
-        {
-          "block": "score-posting",
-          "mode": "each",
-          "eachOver": "posting",
-          "path": "rank-jobs/score-posting",
-          "kind": "composite",
-          "name": "Score Posting"
-        },
-        {
-          "block": "rank-results",
-          "mode": "once",
-          "eachOver": null,
-          "path": "rank-jobs/rank-results",
-          "kind": "leaf",
-          "name": "Rank Results"
-        }
-      ],
-      "order": [
-        "load-postings",
-        "extract-profile-keywords",
-        "score-posting",
-        "rank-results"
-      ],
-      "wires": [
-        {
-          "text": "input.sourcePath -> load-postings.path",
-          "source": {
-            "from": "input",
-            "port": "sourcePath"
-          },
-          "target": {
-            "to": "block",
-            "block": "load-postings",
-            "port": "path"
-          },
-          "type": "string",
-          "isArray": false
-        },
-        {
-          "text": "input.profile -> extract-profile-keywords.profile",
-          "source": {
-            "from": "input",
-            "port": "profile"
-          },
-          "target": {
-            "to": "block",
-            "block": "extract-profile-keywords",
-            "port": "profile"
-          },
-          "type": "{ skills: string[] }",
-          "isArray": false
-        },
-        {
-          "text": "load-postings.postings -> score-posting.posting",
-          "source": {
-            "from": "block",
-            "block": "load-postings",
-            "port": "postings"
-          },
-          "target": {
-            "to": "block",
-            "block": "score-posting",
-            "port": "posting"
-          },
-          "type": "{ title: string; company: string; description: string }[]",
-          "isArray": true
-        },
-        {
-          "text": "extract-profile-keywords.keywords -> score-posting.keywords",
-          "source": {
-            "from": "block",
-            "block": "extract-profile-keywords",
-            "port": "keywords"
-          },
-          "target": {
-            "to": "block",
-            "block": "score-posting",
-            "port": "keywords"
-          },
-          "type": "string[]",
-          "isArray": true
-        },
-        {
-          "text": "load-postings.postings -> rank-results.postings",
-          "source": {
-            "from": "block",
-            "block": "load-postings",
-            "port": "postings"
-          },
-          "target": {
-            "to": "block",
-            "block": "rank-results",
-            "port": "postings"
-          },
-          "type": "{ title: string; company: string; description: string }[]",
-          "isArray": true
-        },
-        {
-          "text": "score-posting.score -> rank-results.scores",
-          "source": {
-            "from": "block",
-            "block": "score-posting",
-            "port": "score"
-          },
-          "target": {
-            "to": "block",
-            "block": "rank-results",
-            "port": "scores"
-          },
-          "type": "number[]",
-          "isArray": true
-        },
-        {
-          "text": "score-posting.reasons -> rank-results.reasons",
-          "source": {
-            "from": "block",
-            "block": "score-posting",
-            "port": "reasons"
-          },
-          "target": {
-            "to": "block",
-            "block": "rank-results",
-            "port": "reasons"
-          },
-          "type": "string[][]",
-          "isArray": true
-        },
-        {
-          "text": "rank-results.ranked -> output.ranked",
-          "source": {
-            "from": "block",
-            "block": "rank-results",
-            "port": "ranked"
-          },
-          "target": {
-            "to": "output",
-            "port": "ranked"
-          },
-          "type": "{ title: string; company: string; score: number; reasons: string[] }[]",
-          "isArray": true
-        }
-      ]
-    },
-    "rank-jobs/extract-profile-keywords": {
-      "path": "rank-jobs/extract-profile-keywords",
-      "id": "extract-profile-keywords",
-      "name": "Extract Profile Keywords",
-      "responsibility": "Reduce a candidate profile to the lowercase keywords worth matching against.",
-      "kind": "leaf",
-      "inputs": [
-        {
-          "name": "profile",
-          "type": "{ skills: string[] }",
-          "typeIr": {
-            "kind": "object",
-            "fields": {
-              "skills": {
-                "type": {
-                  "kind": "array",
-                  "of": {
-                    "kind": "string"
+            },
+            "description": "The candidate to rank against."
+          }
+        ],
+        "outputs": [
+          {
+            "name": "ranked",
+            "type": "{ title: string; company: string; score: number; reasons: string[] }[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "object",
+                "fields": {
+                  "title": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "company": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "score": {
+                    "type": {
+                      "kind": "number"
+                    }
+                  },
+                  "reasons": {
+                    "type": {
+                      "kind": "array",
+                      "of": {
+                        "kind": "string"
+                      }
+                    }
                   }
                 }
               }
-            }
+            },
+            "description": "Best match first."
+          }
+        ],
+        "capabilities": [
+          {
+            "name": "files",
+            "capability": "FileSystem",
+            "description": "Reads the postings file."
+          }
+        ],
+        "children": [
+          {
+            "block": "load-postings",
+            "mode": "once",
+            "eachOver": null,
+            "path": "rank-jobs/load-postings",
+            "kind": "leaf",
+            "name": "Load Postings"
           },
-          "description": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "keywords",
-          "type": "string[]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
-              "kind": "string"
-            }
+          {
+            "block": "extract-profile-keywords",
+            "mode": "once",
+            "eachOver": null,
+            "path": "rank-jobs/extract-profile-keywords",
+            "kind": "leaf",
+            "name": "Extract Profile Keywords"
           },
-          "description": null
-        }
-      ],
-      "capabilities": [],
-      "children": [],
-      "order": [],
-      "wires": []
-    },
-    "rank-jobs/load-postings": {
-      "path": "rank-jobs/load-postings",
-      "id": "load-postings",
-      "name": "Load Postings",
-      "responsibility": "Read the postings file and parse it into structured postings.",
-      "kind": "leaf",
-      "inputs": [
-        {
-          "name": "path",
-          "type": "string",
-          "typeIr": {
-            "kind": "string"
+          {
+            "block": "score-posting",
+            "mode": "each",
+            "eachOver": "posting",
+            "path": "rank-jobs/score-posting",
+            "kind": "composite",
+            "name": "Score Posting"
           },
-          "description": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "postings",
-          "type": "{ title: string; company: string; description: string }[]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
+          {
+            "block": "rank-results",
+            "mode": "once",
+            "eachOver": null,
+            "path": "rank-jobs/rank-results",
+            "kind": "leaf",
+            "name": "Rank Results"
+          }
+        ],
+        "order": [
+          "load-postings",
+          "extract-profile-keywords",
+          "score-posting",
+          "rank-results"
+        ],
+        "wires": [
+          {
+            "text": "input.sourcePath -> load-postings.path",
+            "source": {
+              "from": "input",
+              "port": "sourcePath"
+            },
+            "target": {
+              "to": "block",
+              "block": "load-postings",
+              "port": "path"
+            },
+            "type": "string",
+            "isArray": false
+          },
+          {
+            "text": "input.profile -> extract-profile-keywords.profile",
+            "source": {
+              "from": "input",
+              "port": "profile"
+            },
+            "target": {
+              "to": "block",
+              "block": "extract-profile-keywords",
+              "port": "profile"
+            },
+            "type": "{ skills: string[] }",
+            "isArray": false
+          },
+          {
+            "text": "load-postings.postings -> score-posting.posting",
+            "source": {
+              "from": "block",
+              "block": "load-postings",
+              "port": "postings"
+            },
+            "target": {
+              "to": "block",
+              "block": "score-posting",
+              "port": "posting"
+            },
+            "type": "{ title: string; company: string; description: string }[]",
+            "isArray": true
+          },
+          {
+            "text": "extract-profile-keywords.keywords -> score-posting.keywords",
+            "source": {
+              "from": "block",
+              "block": "extract-profile-keywords",
+              "port": "keywords"
+            },
+            "target": {
+              "to": "block",
+              "block": "score-posting",
+              "port": "keywords"
+            },
+            "type": "string[]",
+            "isArray": true
+          },
+          {
+            "text": "load-postings.postings -> rank-results.postings",
+            "source": {
+              "from": "block",
+              "block": "load-postings",
+              "port": "postings"
+            },
+            "target": {
+              "to": "block",
+              "block": "rank-results",
+              "port": "postings"
+            },
+            "type": "{ title: string; company: string; description: string }[]",
+            "isArray": true
+          },
+          {
+            "text": "score-posting.score -> rank-results.scores",
+            "source": {
+              "from": "block",
+              "block": "score-posting",
+              "port": "score"
+            },
+            "target": {
+              "to": "block",
+              "block": "rank-results",
+              "port": "scores"
+            },
+            "type": "number[]",
+            "isArray": true
+          },
+          {
+            "text": "score-posting.reasons -> rank-results.reasons",
+            "source": {
+              "from": "block",
+              "block": "score-posting",
+              "port": "reasons"
+            },
+            "target": {
+              "to": "block",
+              "block": "rank-results",
+              "port": "reasons"
+            },
+            "type": "string[][]",
+            "isArray": true
+          },
+          {
+            "text": "rank-results.ranked -> output.ranked",
+            "source": {
+              "from": "block",
+              "block": "rank-results",
+              "port": "ranked"
+            },
+            "target": {
+              "to": "output",
+              "port": "ranked"
+            },
+            "type": "{ title: string; company: string; score: number; reasons: string[] }[]",
+            "isArray": true
+          }
+        ]
+      },
+      "rank-jobs/extract-profile-keywords": {
+        "path": "rank-jobs/extract-profile-keywords",
+        "id": "extract-profile-keywords",
+        "name": "Extract Profile Keywords",
+        "responsibility": "Reduce a candidate profile to the lowercase keywords worth matching against.",
+        "kind": "leaf",
+        "inputs": [
+          {
+            "name": "profile",
+            "type": "{ skills: string[] }",
+            "typeIr": {
               "kind": "object",
               "fields": {
-                "title": {
+                "skills": {
                   "type": {
-                    "kind": "string"
-                  }
-                },
-                "company": {
-                  "type": {
-                    "kind": "string"
-                  }
-                },
-                "description": {
-                  "type": {
-                    "kind": "string"
+                    "kind": "array",
+                    "of": {
+                      "kind": "string"
+                    }
                   }
                 }
               }
-            }
-          },
-          "description": null
-        }
-      ],
-      "capabilities": [
-        {
-          "name": "files",
-          "capability": "FileSystem",
-          "description": null
-        }
-      ],
-      "children": [],
-      "order": [],
-      "wires": []
-    },
-    "rank-jobs/rank-results": {
-      "path": "rank-jobs/rank-results",
-      "id": "rank-results",
-      "name": "Rank Results",
-      "responsibility": "Combine postings with their scores and reasons and order them best first.",
-      "kind": "leaf",
-      "inputs": [
-        {
-          "name": "postings",
-          "type": "{ title: string; company: string; description: string }[]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
-              "kind": "object",
-              "fields": {
-                "title": {
-                  "type": {
-                    "kind": "string"
-                  }
-                },
-                "company": {
-                  "type": {
-                    "kind": "string"
-                  }
-                },
-                "description": {
-                  "type": {
-                    "kind": "string"
-                  }
-                }
-              }
-            }
-          },
-          "description": null
-        },
-        {
-          "name": "scores",
-          "type": "number[]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
-              "kind": "number"
-            }
-          },
-          "description": null
-        },
-        {
-          "name": "reasons",
-          "type": "string[][]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
+            },
+            "description": null
+          }
+        ],
+        "outputs": [
+          {
+            "name": "keywords",
+            "type": "string[]",
+            "typeIr": {
               "kind": "array",
               "of": {
                 "kind": "string"
               }
-            }
+            },
+            "description": null
+          }
+        ],
+        "capabilities": [],
+        "children": [],
+        "order": [],
+        "wires": []
+      },
+      "rank-jobs/load-postings": {
+        "path": "rank-jobs/load-postings",
+        "id": "load-postings",
+        "name": "Load Postings",
+        "responsibility": "Read the postings file and parse it into structured postings.",
+        "kind": "leaf",
+        "inputs": [
+          {
+            "name": "path",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          }
+        ],
+        "outputs": [
+          {
+            "name": "postings",
+            "type": "{ title: string; company: string; description: string }[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "object",
+                "fields": {
+                  "title": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "company": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "description": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "description": null
+          }
+        ],
+        "capabilities": [
+          {
+            "name": "files",
+            "capability": "FileSystem",
+            "description": null
+          }
+        ],
+        "children": [],
+        "order": [],
+        "wires": []
+      },
+      "rank-jobs/rank-results": {
+        "path": "rank-jobs/rank-results",
+        "id": "rank-results",
+        "name": "Rank Results",
+        "responsibility": "Combine postings with their scores and reasons and order them best first.",
+        "kind": "leaf",
+        "inputs": [
+          {
+            "name": "postings",
+            "type": "{ title: string; company: string; description: string }[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "object",
+                "fields": {
+                  "title": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "company": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "description": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "description": null
           },
-          "description": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "ranked",
-          "type": "{ title: string; company: string; score: number; reasons: string[] }[]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
+          {
+            "name": "scores",
+            "type": "number[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "number"
+              }
+            },
+            "description": null
+          },
+          {
+            "name": "reasons",
+            "type": "string[][]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "array",
+                "of": {
+                  "kind": "string"
+                }
+              }
+            },
+            "description": null
+          }
+        ],
+        "outputs": [
+          {
+            "name": "ranked",
+            "type": "{ title: string; company: string; score: number; reasons: string[] }[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "object",
+                "fields": {
+                  "title": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "company": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "score": {
+                    "type": {
+                      "kind": "number"
+                    }
+                  },
+                  "reasons": {
+                    "type": {
+                      "kind": "array",
+                      "of": {
+                        "kind": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "description": null
+          }
+        ],
+        "capabilities": [],
+        "children": [],
+        "order": [],
+        "wires": []
+      },
+      "rank-jobs/score-posting": {
+        "path": "rank-jobs/score-posting",
+        "id": "score-posting",
+        "name": "Score Posting",
+        "responsibility": "Score a single posting against the profile keywords and explain the score.",
+        "kind": "composite",
+        "inputs": [
+          {
+            "name": "posting",
+            "type": "{ title: string; company: string; description: string }",
+            "typeIr": {
               "kind": "object",
               "fields": {
                 "title": {
@@ -752,389 +819,1086 @@
                     "kind": "string"
                   }
                 },
-                "score": {
+                "description": {
                   "type": {
-                    "kind": "number"
+                    "kind": "string"
                   }
-                },
-                "reasons": {
-                  "type": {
-                    "kind": "array",
-                    "of": {
+                }
+              }
+            },
+            "description": null
+          },
+          {
+            "name": "keywords",
+            "type": "string[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "string"
+              }
+            },
+            "description": null
+          }
+        ],
+        "outputs": [
+          {
+            "name": "score",
+            "type": "number",
+            "typeIr": {
+              "kind": "number"
+            },
+            "description": null
+          },
+          {
+            "name": "reasons",
+            "type": "string[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "string"
+              }
+            },
+            "description": null
+          }
+        ],
+        "capabilities": [],
+        "children": [
+          {
+            "block": "normalize-text",
+            "mode": "once",
+            "eachOver": null,
+            "path": "rank-jobs/score-posting/normalize-text",
+            "kind": "leaf",
+            "name": "Normalize Text"
+          },
+          {
+            "block": "match-keywords",
+            "mode": "once",
+            "eachOver": null,
+            "path": "rank-jobs/score-posting/match-keywords",
+            "kind": "leaf",
+            "name": "Match Keywords"
+          },
+          {
+            "block": "compute-relevance",
+            "mode": "once",
+            "eachOver": null,
+            "path": "rank-jobs/score-posting/compute-relevance",
+            "kind": "leaf",
+            "name": "Compute Relevance"
+          }
+        ],
+        "order": [
+          "normalize-text",
+          "match-keywords",
+          "compute-relevance"
+        ],
+        "wires": [
+          {
+            "text": "input.posting -> normalize-text.posting",
+            "source": {
+              "from": "input",
+              "port": "posting"
+            },
+            "target": {
+              "to": "block",
+              "block": "normalize-text",
+              "port": "posting"
+            },
+            "type": "{ title: string; company: string; description: string }",
+            "isArray": false
+          },
+          {
+            "text": "normalize-text.tokens -> match-keywords.tokens",
+            "source": {
+              "from": "block",
+              "block": "normalize-text",
+              "port": "tokens"
+            },
+            "target": {
+              "to": "block",
+              "block": "match-keywords",
+              "port": "tokens"
+            },
+            "type": "string[]",
+            "isArray": true
+          },
+          {
+            "text": "input.keywords -> match-keywords.keywords",
+            "source": {
+              "from": "input",
+              "port": "keywords"
+            },
+            "target": {
+              "to": "block",
+              "block": "match-keywords",
+              "port": "keywords"
+            },
+            "type": "string[]",
+            "isArray": true
+          },
+          {
+            "text": "match-keywords.matches -> compute-relevance.matches",
+            "source": {
+              "from": "block",
+              "block": "match-keywords",
+              "port": "matches"
+            },
+            "target": {
+              "to": "block",
+              "block": "compute-relevance",
+              "port": "matches"
+            },
+            "type": "{ keyword: string; count: number }[]",
+            "isArray": true
+          },
+          {
+            "text": "compute-relevance.score -> output.score",
+            "source": {
+              "from": "block",
+              "block": "compute-relevance",
+              "port": "score"
+            },
+            "target": {
+              "to": "output",
+              "port": "score"
+            },
+            "type": "number",
+            "isArray": false
+          },
+          {
+            "text": "compute-relevance.reasons -> output.reasons",
+            "source": {
+              "from": "block",
+              "block": "compute-relevance",
+              "port": "reasons"
+            },
+            "target": {
+              "to": "output",
+              "port": "reasons"
+            },
+            "type": "string[]",
+            "isArray": true
+          }
+        ]
+      },
+      "rank-jobs/score-posting/compute-relevance": {
+        "path": "rank-jobs/score-posting/compute-relevance",
+        "id": "compute-relevance",
+        "name": "Compute Relevance",
+        "responsibility": "Turn keyword match counts into a relevance score and a short reason for each contribution.",
+        "kind": "leaf",
+        "inputs": [
+          {
+            "name": "matches",
+            "type": "{ keyword: string; count: number }[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "object",
+                "fields": {
+                  "keyword": {
+                    "type": {
                       "kind": "string"
+                    }
+                  },
+                  "count": {
+                    "type": {
+                      "kind": "number"
                     }
                   }
                 }
               }
-            }
+            },
+            "description": null
+          }
+        ],
+        "outputs": [
+          {
+            "name": "score",
+            "type": "number",
+            "typeIr": {
+              "kind": "number"
+            },
+            "description": null
           },
-          "description": null
-        }
-      ],
-      "capabilities": [],
-      "children": [],
-      "order": [],
-      "wires": []
-    },
-    "rank-jobs/score-posting": {
-      "path": "rank-jobs/score-posting",
-      "id": "score-posting",
-      "name": "Score Posting",
-      "responsibility": "Score a single posting against the profile keywords and explain the score.",
-      "kind": "composite",
-      "inputs": [
-        {
-          "name": "posting",
-          "type": "{ title: string; company: string; description: string }",
-          "typeIr": {
-            "kind": "object",
-            "fields": {
-              "title": {
-                "type": {
-                  "kind": "string"
-                }
-              },
-              "company": {
-                "type": {
-                  "kind": "string"
-                }
-              },
-              "description": {
-                "type": {
-                  "kind": "string"
+          {
+            "name": "reasons",
+            "type": "string[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "string"
+              }
+            },
+            "description": null
+          }
+        ],
+        "capabilities": [],
+        "children": [],
+        "order": [],
+        "wires": []
+      },
+      "rank-jobs/score-posting/match-keywords": {
+        "path": "rank-jobs/score-posting/match-keywords",
+        "id": "match-keywords",
+        "name": "Match Keywords",
+        "responsibility": "Count how often each profile keyword appears in the posting's tokens.",
+        "kind": "leaf",
+        "inputs": [
+          {
+            "name": "tokens",
+            "type": "string[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "string"
+              }
+            },
+            "description": null
+          },
+          {
+            "name": "keywords",
+            "type": "string[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "string"
+              }
+            },
+            "description": null
+          }
+        ],
+        "outputs": [
+          {
+            "name": "matches",
+            "type": "{ keyword: string; count: number }[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "object",
+                "fields": {
+                  "keyword": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "count": {
+                    "type": {
+                      "kind": "number"
+                    }
+                  }
                 }
               }
-            }
-          },
-          "description": null
-        },
-        {
-          "name": "keywords",
-          "type": "string[]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
-              "kind": "string"
-            }
-          },
-          "description": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "score",
-          "type": "number",
-          "typeIr": {
-            "kind": "number"
-          },
-          "description": null
-        },
-        {
-          "name": "reasons",
-          "type": "string[]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
-              "kind": "string"
-            }
-          },
-          "description": null
-        }
-      ],
-      "capabilities": [],
-      "children": [
-        {
-          "block": "normalize-text",
-          "mode": "once",
-          "eachOver": null,
-          "path": "rank-jobs/score-posting/normalize-text",
-          "kind": "leaf",
-          "name": "Normalize Text"
-        },
-        {
-          "block": "match-keywords",
-          "mode": "once",
-          "eachOver": null,
-          "path": "rank-jobs/score-posting/match-keywords",
-          "kind": "leaf",
-          "name": "Match Keywords"
-        },
-        {
-          "block": "compute-relevance",
-          "mode": "once",
-          "eachOver": null,
-          "path": "rank-jobs/score-posting/compute-relevance",
-          "kind": "leaf",
-          "name": "Compute Relevance"
-        }
-      ],
-      "order": [
-        "normalize-text",
-        "match-keywords",
-        "compute-relevance"
-      ],
-      "wires": [
-        {
-          "text": "input.posting -> normalize-text.posting",
-          "source": {
-            "from": "input",
-            "port": "posting"
-          },
-          "target": {
-            "to": "block",
-            "block": "normalize-text",
-            "port": "posting"
-          },
-          "type": "{ title: string; company: string; description: string }",
-          "isArray": false
-        },
-        {
-          "text": "normalize-text.tokens -> match-keywords.tokens",
-          "source": {
-            "from": "block",
-            "block": "normalize-text",
-            "port": "tokens"
-          },
-          "target": {
-            "to": "block",
-            "block": "match-keywords",
-            "port": "tokens"
-          },
-          "type": "string[]",
-          "isArray": true
-        },
-        {
-          "text": "input.keywords -> match-keywords.keywords",
-          "source": {
-            "from": "input",
-            "port": "keywords"
-          },
-          "target": {
-            "to": "block",
-            "block": "match-keywords",
-            "port": "keywords"
-          },
-          "type": "string[]",
-          "isArray": true
-        },
-        {
-          "text": "match-keywords.matches -> compute-relevance.matches",
-          "source": {
-            "from": "block",
-            "block": "match-keywords",
-            "port": "matches"
-          },
-          "target": {
-            "to": "block",
-            "block": "compute-relevance",
-            "port": "matches"
-          },
-          "type": "{ keyword: string; count: number }[]",
-          "isArray": true
-        },
-        {
-          "text": "compute-relevance.score -> output.score",
-          "source": {
-            "from": "block",
-            "block": "compute-relevance",
-            "port": "score"
-          },
-          "target": {
-            "to": "output",
-            "port": "score"
-          },
-          "type": "number",
-          "isArray": false
-        },
-        {
-          "text": "compute-relevance.reasons -> output.reasons",
-          "source": {
-            "from": "block",
-            "block": "compute-relevance",
-            "port": "reasons"
-          },
-          "target": {
-            "to": "output",
-            "port": "reasons"
-          },
-          "type": "string[]",
-          "isArray": true
-        }
-      ]
-    },
-    "rank-jobs/score-posting/compute-relevance": {
-      "path": "rank-jobs/score-posting/compute-relevance",
-      "id": "compute-relevance",
-      "name": "Compute Relevance",
-      "responsibility": "Turn keyword match counts into a relevance score and a short reason for each contribution.",
-      "kind": "leaf",
-      "inputs": [
-        {
-          "name": "matches",
-          "type": "{ keyword: string; count: number }[]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
+            },
+            "description": null
+          }
+        ],
+        "capabilities": [],
+        "children": [],
+        "order": [],
+        "wires": []
+      },
+      "rank-jobs/score-posting/normalize-text": {
+        "path": "rank-jobs/score-posting/normalize-text",
+        "id": "normalize-text",
+        "name": "Normalize Text",
+        "responsibility": "Flatten a posting's title, company and description into comparable lowercase tokens.",
+        "kind": "leaf",
+        "inputs": [
+          {
+            "name": "posting",
+            "type": "{ title: string; company: string; description: string }",
+            "typeIr": {
               "kind": "object",
               "fields": {
-                "keyword": {
+                "title": {
                   "type": {
                     "kind": "string"
                   }
                 },
-                "count": {
-                  "type": {
-                    "kind": "number"
-                  }
-                }
-              }
-            }
-          },
-          "description": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "score",
-          "type": "number",
-          "typeIr": {
-            "kind": "number"
-          },
-          "description": null
-        },
-        {
-          "name": "reasons",
-          "type": "string[]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
-              "kind": "string"
-            }
-          },
-          "description": null
-        }
-      ],
-      "capabilities": [],
-      "children": [],
-      "order": [],
-      "wires": []
-    },
-    "rank-jobs/score-posting/match-keywords": {
-      "path": "rank-jobs/score-posting/match-keywords",
-      "id": "match-keywords",
-      "name": "Match Keywords",
-      "responsibility": "Count how often each profile keyword appears in the posting's tokens.",
-      "kind": "leaf",
-      "inputs": [
-        {
-          "name": "tokens",
-          "type": "string[]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
-              "kind": "string"
-            }
-          },
-          "description": null
-        },
-        {
-          "name": "keywords",
-          "type": "string[]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
-              "kind": "string"
-            }
-          },
-          "description": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "matches",
-          "type": "{ keyword: string; count: number }[]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
-              "kind": "object",
-              "fields": {
-                "keyword": {
+                "company": {
                   "type": {
                     "kind": "string"
                   }
                 },
-                "count": {
+                "description": {
                   "type": {
-                    "kind": "number"
+                    "kind": "string"
                   }
                 }
               }
-            }
-          },
-          "description": null
-        }
-      ],
-      "capabilities": [],
-      "children": [],
-      "order": [],
-      "wires": []
+            },
+            "description": null
+          }
+        ],
+        "outputs": [
+          {
+            "name": "tokens",
+            "type": "string[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "string"
+              }
+            },
+            "description": null
+          }
+        ],
+        "capabilities": [],
+        "children": [],
+        "order": [],
+        "wires": []
+      }
     },
-    "rank-jobs/score-posting/normalize-text": {
-      "path": "rank-jobs/score-posting/normalize-text",
-      "id": "normalize-text",
-      "name": "Normalize Text",
-      "responsibility": "Flatten a posting's title, company and description into comparable lowercase tokens.",
-      "kind": "leaf",
-      "inputs": [
-        {
-          "name": "posting",
-          "type": "{ title: string; company: string; description: string }",
-          "typeIr": {
-            "kind": "object",
-            "fields": {
-              "title": {
-                "type": {
-                  "kind": "string"
-                }
-              },
-              "company": {
-                "type": {
-                  "kind": "string"
-                }
-              },
-              "description": {
-                "type": {
-                  "kind": "string"
+    "blockCount": 8
+  },
+  {
+    "key": "contract-generator",
+    "label": "Contract Generator",
+    "manifest": {
+      "name": "Contract Generator",
+      "goal": "Given one block's name, responsibility and ports, produce the TypeScript source of its contract: a runtime schema and a derived type for its inputs and outputs, and an interface for the effects it needs supplied.",
+      "rootBlock": "generate-contract",
+      "granularity": {
+        "level": 3,
+        "maxDepth": 3
+      }
+    },
+    "rootPath": "generate-contract",
+    "blocks": {
+      "generate-contract": {
+        "path": "generate-contract",
+        "id": "generate-contract",
+        "name": "Generate Contract",
+        "responsibility": "Produce the TypeScript contract source for one block from its ports, so the contract can never disagree with the diagram.",
+        "kind": "composite",
+        "inputs": [
+          {
+            "name": "blockId",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": "Kebab-case id, e.g. score-posting."
+          },
+          {
+            "name": "blockName",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "responsibility",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "blockPath",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": "Path from the blocks root, used to locate shared modules."
+          },
+          {
+            "name": "inputs",
+            "type": "{ name: string; type: string; description?: string }[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "object",
+                "fields": {
+                  "name": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "type": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "description": {
+                    "type": {
+                      "kind": "string"
+                    },
+                    "optional": true
+                  }
                 }
               }
-            }
+            },
+            "description": "Each type is an expression such as `string[]`."
           },
-          "description": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "tokens",
-          "type": "string[]",
-          "typeIr": {
-            "kind": "array",
-            "of": {
+          {
+            "name": "outputs",
+            "type": "{ name: string; type: string; description?: string }[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "object",
+                "fields": {
+                  "name": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "type": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "description": {
+                    "type": {
+                      "kind": "string"
+                    },
+                    "optional": true
+                  }
+                }
+              }
+            },
+            "description": null
+          },
+          {
+            "name": "capabilities",
+            "type": "{ name: string; capability: string; description?: string }[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "object",
+                "fields": {
+                  "name": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "capability": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "description": {
+                    "type": {
+                      "kind": "string"
+                    },
+                    "optional": true
+                  }
+                }
+              }
+            },
+            "description": null
+          }
+        ],
+        "outputs": [
+          {
+            "name": "source",
+            "type": "string",
+            "typeIr": {
               "kind": "string"
-            }
+            },
+            "description": "Contents of the block's contract.ts."
+          }
+        ],
+        "capabilities": [],
+        "children": [
+          {
+            "block": "derive-names",
+            "mode": "once",
+            "eachOver": null,
+            "path": "generate-contract/derive-names",
+            "kind": "leaf",
+            "name": "Derive Names"
           },
-          "description": null
-        }
-      ],
-      "capabilities": [],
-      "children": [],
-      "order": [],
-      "wires": []
-    }
+          {
+            "block": "render-schemas",
+            "mode": "once",
+            "eachOver": null,
+            "path": "generate-contract/render-schemas",
+            "kind": "leaf",
+            "name": "Render Schemas"
+          },
+          {
+            "block": "render-capabilities",
+            "mode": "once",
+            "eachOver": null,
+            "path": "generate-contract/render-capabilities",
+            "kind": "leaf",
+            "name": "Render Capabilities"
+          },
+          {
+            "block": "assemble-source",
+            "mode": "once",
+            "eachOver": null,
+            "path": "generate-contract/assemble-source",
+            "kind": "leaf",
+            "name": "Assemble Source"
+          }
+        ],
+        "order": [
+          "derive-names",
+          "render-schemas",
+          "render-capabilities",
+          "assemble-source"
+        ],
+        "wires": [
+          {
+            "text": "input.blockId -> derive-names.blockId",
+            "source": {
+              "from": "input",
+              "port": "blockId"
+            },
+            "target": {
+              "to": "block",
+              "block": "derive-names",
+              "port": "blockId"
+            },
+            "type": "string",
+            "isArray": false
+          },
+          {
+            "text": "input.inputs -> render-schemas.inputs",
+            "source": {
+              "from": "input",
+              "port": "inputs"
+            },
+            "target": {
+              "to": "block",
+              "block": "render-schemas",
+              "port": "inputs"
+            },
+            "type": "{ name: string; type: string; description?: string }[]",
+            "isArray": true
+          },
+          {
+            "text": "input.outputs -> render-schemas.outputs",
+            "source": {
+              "from": "input",
+              "port": "outputs"
+            },
+            "target": {
+              "to": "block",
+              "block": "render-schemas",
+              "port": "outputs"
+            },
+            "type": "{ name: string; type: string; description?: string }[]",
+            "isArray": true
+          },
+          {
+            "text": "input.blockName -> render-capabilities.blockName",
+            "source": {
+              "from": "input",
+              "port": "blockName"
+            },
+            "target": {
+              "to": "block",
+              "block": "render-capabilities",
+              "port": "blockName"
+            },
+            "type": "string",
+            "isArray": false
+          },
+          {
+            "text": "input.blockPath -> render-capabilities.blockPath",
+            "source": {
+              "from": "input",
+              "port": "blockPath"
+            },
+            "target": {
+              "to": "block",
+              "block": "render-capabilities",
+              "port": "blockPath"
+            },
+            "type": "string",
+            "isArray": false
+          },
+          {
+            "text": "input.capabilities -> render-capabilities.capabilities",
+            "source": {
+              "from": "input",
+              "port": "capabilities"
+            },
+            "target": {
+              "to": "block",
+              "block": "render-capabilities",
+              "port": "capabilities"
+            },
+            "type": "{ name: string; capability: string; description?: string }[]",
+            "isArray": true
+          },
+          {
+            "text": "derive-names.typeStem -> render-capabilities.typeStem",
+            "source": {
+              "from": "block",
+              "block": "derive-names",
+              "port": "typeStem"
+            },
+            "target": {
+              "to": "block",
+              "block": "render-capabilities",
+              "port": "typeStem"
+            },
+            "type": "string",
+            "isArray": false
+          },
+          {
+            "text": "input.blockName -> assemble-source.blockName",
+            "source": {
+              "from": "input",
+              "port": "blockName"
+            },
+            "target": {
+              "to": "block",
+              "block": "assemble-source",
+              "port": "blockName"
+            },
+            "type": "string",
+            "isArray": false
+          },
+          {
+            "text": "input.responsibility -> assemble-source.responsibility",
+            "source": {
+              "from": "input",
+              "port": "responsibility"
+            },
+            "target": {
+              "to": "block",
+              "block": "assemble-source",
+              "port": "responsibility"
+            },
+            "type": "string",
+            "isArray": false
+          },
+          {
+            "text": "derive-names.functionName -> assemble-source.functionName",
+            "source": {
+              "from": "block",
+              "block": "derive-names",
+              "port": "functionName"
+            },
+            "target": {
+              "to": "block",
+              "block": "assemble-source",
+              "port": "functionName"
+            },
+            "type": "string",
+            "isArray": false
+          },
+          {
+            "text": "derive-names.typeStem -> assemble-source.typeStem",
+            "source": {
+              "from": "block",
+              "block": "derive-names",
+              "port": "typeStem"
+            },
+            "target": {
+              "to": "block",
+              "block": "assemble-source",
+              "port": "typeStem"
+            },
+            "type": "string",
+            "isArray": false
+          },
+          {
+            "text": "render-schemas.inputSchema -> assemble-source.inputSchema",
+            "source": {
+              "from": "block",
+              "block": "render-schemas",
+              "port": "inputSchema"
+            },
+            "target": {
+              "to": "block",
+              "block": "assemble-source",
+              "port": "inputSchema"
+            },
+            "type": "string",
+            "isArray": false
+          },
+          {
+            "text": "render-schemas.outputSchema -> assemble-source.outputSchema",
+            "source": {
+              "from": "block",
+              "block": "render-schemas",
+              "port": "outputSchema"
+            },
+            "target": {
+              "to": "block",
+              "block": "assemble-source",
+              "port": "outputSchema"
+            },
+            "type": "string",
+            "isArray": false
+          },
+          {
+            "text": "render-capabilities.importLine -> assemble-source.importLine",
+            "source": {
+              "from": "block",
+              "block": "render-capabilities",
+              "port": "importLine"
+            },
+            "target": {
+              "to": "block",
+              "block": "assemble-source",
+              "port": "importLine"
+            },
+            "type": "string",
+            "isArray": false
+          },
+          {
+            "text": "render-capabilities.capsDeclaration -> assemble-source.capsDeclaration",
+            "source": {
+              "from": "block",
+              "block": "render-capabilities",
+              "port": "capsDeclaration"
+            },
+            "target": {
+              "to": "block",
+              "block": "assemble-source",
+              "port": "capsDeclaration"
+            },
+            "type": "string",
+            "isArray": false
+          },
+          {
+            "text": "assemble-source.source -> output.source",
+            "source": {
+              "from": "block",
+              "block": "assemble-source",
+              "port": "source"
+            },
+            "target": {
+              "to": "output",
+              "port": "source"
+            },
+            "type": "string",
+            "isArray": false
+          }
+        ]
+      },
+      "generate-contract/assemble-source": {
+        "path": "generate-contract/assemble-source",
+        "id": "assemble-source",
+        "name": "Assemble Source",
+        "responsibility": "Lay the rendered pieces out as a complete TypeScript file with its generated-file header.",
+        "kind": "leaf",
+        "inputs": [
+          {
+            "name": "blockName",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "responsibility",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "functionName",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "typeStem",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "inputSchema",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "outputSchema",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "importLine",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "capsDeclaration",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          }
+        ],
+        "outputs": [
+          {
+            "name": "source",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          }
+        ],
+        "capabilities": [],
+        "children": [],
+        "order": [],
+        "wires": []
+      },
+      "generate-contract/derive-names": {
+        "path": "generate-contract/derive-names",
+        "id": "derive-names",
+        "name": "Derive Names",
+        "responsibility": "Turn a kebab-case block id into the function name and the type-name stem used throughout the generated file.",
+        "kind": "leaf",
+        "inputs": [
+          {
+            "name": "blockId",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          }
+        ],
+        "outputs": [
+          {
+            "name": "functionName",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "typeStem",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          }
+        ],
+        "capabilities": [],
+        "children": [],
+        "order": [],
+        "wires": []
+      },
+      "generate-contract/render-capabilities": {
+        "path": "generate-contract/render-capabilities",
+        "id": "render-capabilities",
+        "name": "Render Capabilities",
+        "responsibility": "Render the import of the capability types a block uses and the interface describing what must be supplied to it.",
+        "kind": "leaf",
+        "inputs": [
+          {
+            "name": "blockName",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "blockPath",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "typeStem",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "capabilities",
+            "type": "{ name: string; capability: string; description?: string }[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "object",
+                "fields": {
+                  "name": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "capability": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "description": {
+                    "type": {
+                      "kind": "string"
+                    },
+                    "optional": true
+                  }
+                }
+              }
+            },
+            "description": null
+          }
+        ],
+        "outputs": [
+          {
+            "name": "importLine",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "capsDeclaration",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          }
+        ],
+        "capabilities": [],
+        "children": [],
+        "order": [],
+        "wires": []
+      },
+      "generate-contract/render-schemas": {
+        "path": "generate-contract/render-schemas",
+        "id": "render-schemas",
+        "name": "Render Schemas",
+        "responsibility": "Render the zod object expression for the input ports and for the output ports, expanding each port's type expression into a schema.",
+        "kind": "leaf",
+        "inputs": [
+          {
+            "name": "inputs",
+            "type": "{ name: string; type: string; description?: string }[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "object",
+                "fields": {
+                  "name": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "type": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "description": {
+                    "type": {
+                      "kind": "string"
+                    },
+                    "optional": true
+                  }
+                }
+              }
+            },
+            "description": null
+          },
+          {
+            "name": "outputs",
+            "type": "{ name: string; type: string; description?: string }[]",
+            "typeIr": {
+              "kind": "array",
+              "of": {
+                "kind": "object",
+                "fields": {
+                  "name": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "type": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  },
+                  "description": {
+                    "type": {
+                      "kind": "string"
+                    },
+                    "optional": true
+                  }
+                }
+              }
+            },
+            "description": null
+          }
+        ],
+        "outputs": [
+          {
+            "name": "inputSchema",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          },
+          {
+            "name": "outputSchema",
+            "type": "string",
+            "typeIr": {
+              "kind": "string"
+            },
+            "description": null
+          }
+        ],
+        "capabilities": [],
+        "children": [],
+        "order": [],
+        "wires": []
+      }
+    },
+    "blockCount": 5
   }
-};
+];
 
-  const blocks = PROJECT.blocks;
-  const state = { view: PROJECT.rootPath, selected: PROJECT.rootPath, selectedWire: null };
+  let active = 0;
+  let blocks = PROJECTS[0].blocks;
+  const state = { view: PROJECTS[0].rootPath, selected: PROJECTS[0].rootPath, selectedWire: null };
+
+  function project() { return PROJECTS[active]; }
+
+  function selectProject(index) {
+    active = index;
+    blocks = project().blocks;
+    state.view = project().rootPath;
+    state.selected = project().rootPath;
+    state.selectedWire = null;
+    renderProjectTabs();
+    renderStatus();
+    render();
+  }
 
   /* ------------------------------------------------------------------ *
    * Example values, derived from a port's type. The type structure is
@@ -1483,7 +2247,7 @@
       button.addEventListener("click", () => {
         state.selected = path;
         state.selectedWire = null;
-        state.view = block.kind === "composite" ? path : path.split("/").slice(0, -1).join("/") || PROJECT.rootPath;
+        state.view = block.kind === "composite" ? path : path.split("/").slice(0, -1).join("/") || project().rootPath;
         render();
       });
 
@@ -1491,7 +2255,7 @@
       for (const child of block.children) walk(child.path, depth + 1);
     };
 
-    walk(PROJECT.rootPath, 0);
+    walk(project().rootPath, 0);
   }
 
   function portSection(title, ports, isCapability) {
@@ -1633,7 +2397,21 @@
       `<span>leaf <b>${all.length - composites}</b></span>` +
       `<span class="warn">implemented <b>0</b></span>` +
       `<span class="warn">tests passing <b>0</b></span>` +
-      `<span>granularity <b>${PROJECT.manifest.granularity.level}</b> of 5, max depth <b>${PROJECT.manifest.granularity.maxDepth}</b></span>`;
+      `<span>granularity <b>${project().manifest.granularity.level}</b> of 5, max depth <b>${project().manifest.granularity.maxDepth}</b></span>`;
+  }
+
+  function renderProjectTabs() {
+    const nav = document.getElementById("project-tabs");
+    nav.replaceChildren();
+    PROJECTS.forEach((entry, index) => {
+      const tab = document.createElement("button");
+      tab.className = "tab";
+      tab.textContent = entry.label;
+      tab.setAttribute("aria-pressed", String(index === active));
+      tab.title = entry.manifest.goal;
+      tab.addEventListener("click", () => selectProject(index));
+      nav.append(tab);
+    });
   }
 
   function render() {
@@ -1654,7 +2432,7 @@
   }
 
   try {
-    document.getElementById("project-name").textContent = PROJECT.manifest.name;
+    renderProjectTabs();
     renderStatus();
     render();
   } catch (error) {

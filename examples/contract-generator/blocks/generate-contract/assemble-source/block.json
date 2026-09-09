@@ -1,0 +1,41 @@
+{
+  "id": "assemble-source",
+  "name": "Assemble Source",
+  "responsibility": "Lay the rendered pieces out as a complete TypeScript file with its generated-file header.",
+  "kind": "leaf",
+  "inputs": {
+    "blockName": {
+      "type": "string"
+    },
+    "responsibility": {
+      "type": "string"
+    },
+    "functionName": {
+      "type": "string"
+    },
+    "typeStem": {
+      "type": "string"
+    },
+    "inputSchema": {
+      "type": "string"
+    },
+    "outputSchema": {
+      "type": "string"
+    },
+    "importLine": {
+      "type": "string"
+    },
+    "capsDeclaration": {
+      "type": "string"
+    }
+  },
+  "outputs": {
+    "source": {
+      "type": "string"
+    }
+  },
+  "capabilities": {},
+  "children": [],
+  "wires": [],
+  "pinnedAsLeaf": false
+}

@@ -1,0 +1,32 @@
+{
+  "id": "render-capabilities",
+  "name": "Render Capabilities",
+  "responsibility": "Render the import of the capability types a block uses and the interface describing what must be supplied to it.",
+  "kind": "leaf",
+  "inputs": {
+    "blockName": {
+      "type": "string"
+    },
+    "blockPath": {
+      "type": "string"
+    },
+    "typeStem": {
+      "type": "string"
+    },
+    "capabilities": {
+      "type": "{ name: string; capability: string; description?: string }[]"
+    }
+  },
+  "outputs": {
+    "importLine": {
+      "type": "string"
+    },
+    "capsDeclaration": {
+      "type": "string"
+    }
+  },
+  "capabilities": {},
+  "children": [],
+  "wires": [],
+  "pinnedAsLeaf": false
+}

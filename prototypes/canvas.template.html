@@ -78,6 +78,22 @@
     color: var(--ink-faint);
   }
 
+  .tabs { display: flex; gap: 4px; padding-right: 16px; border-right: 1px solid var(--rule); }
+
+  .tab {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    padding: 4px 10px;
+    border-radius: var(--radius);
+    border: 1px solid transparent;
+    background: none;
+    color: var(--ink-dim);
+    cursor: pointer;
+  }
+
+  .tab:hover { color: var(--ink); background: var(--panel-high); }
+  .tab[aria-pressed="true"] { border-color: var(--signal-dim); color: var(--signal); background: var(--signal-deep); }
+
   .crumbs { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12px; }
 
   .crumb {
@@ -292,8 +308,9 @@
   <header class="topbar">
     <div class="mark">
       <strong>Fragmentor</strong>
-      <span id="project-name"></span>
+
     </div>
+    <nav class="tabs" id="project-tabs" aria-label="Projects"></nav>
     <nav class="crumbs" id="crumbs" aria-label="Block hierarchy"></nav>
     <div class="legend">
       <div><span class="swatch"></span> single value</div>
@@ -320,10 +337,24 @@
 </div>
 
 <script>
-  const PROJECT = /*__DATA__*/;
+  const PROJECTS = /*__DATA__*/;
 
-  const blocks = PROJECT.blocks;
-  const state = { view: PROJECT.rootPath, selected: PROJECT.rootPath, selectedWire: null };
+  let active = 0;
+  let blocks = PROJECTS[0].blocks;
+  const state = { view: PROJECTS[0].rootPath, selected: PROJECTS[0].rootPath, selectedWire: null };
+
+  function project() { return PROJECTS[active]; }
+
+  function selectProject(index) {
+    active = index;
+    blocks = project().blocks;
+    state.view = project().rootPath;
+    state.selected = project().rootPath;
+    state.selectedWire = null;
+    renderProjectTabs();
+    renderStatus();
+    render();
+  }
 
   /* ------------------------------------------------------------------ *
    * Example values, derived from a port's type. The type structure is
@@ -672,7 +703,7 @@
       button.addEventListener("click", () => {
         state.selected = path;
         state.selectedWire = null;
-        state.view = block.kind === "composite" ? path : path.split("/").slice(0, -1).join("/") || PROJECT.rootPath;
+        state.view = block.kind === "composite" ? path : path.split("/").slice(0, -1).join("/") || project().rootPath;
         render();
       });
 
@@ -680,7 +711,7 @@
       for (const child of block.children) walk(child.path, depth + 1);
     };
 
-    walk(PROJECT.rootPath, 0);
+    walk(project().rootPath, 0);
   }
 
   function portSection(title, ports, isCapability) {
@@ -822,7 +853,21 @@
       `<span>leaf <b>${all.length - composites}</b></span>` +
       `<span class="warn">implemented <b>0</b></span>` +
       `<span class="warn">tests passing <b>0</b></span>` +
-      `<span>granularity <b>${PROJECT.manifest.granularity.level}</b> of 5, max depth <b>${PROJECT.manifest.granularity.maxDepth}</b></span>`;
+      `<span>granularity <b>${project().manifest.granularity.level}</b> of 5, max depth <b>${project().manifest.granularity.maxDepth}</b></span>`;
+  }
+
+  function renderProjectTabs() {
+    const nav = document.getElementById("project-tabs");
+    nav.replaceChildren();
+    PROJECTS.forEach((entry, index) => {
+      const tab = document.createElement("button");
+      tab.className = "tab";
+      tab.textContent = entry.label;
+      tab.setAttribute("aria-pressed", String(index === active));
+      tab.title = entry.manifest.goal;
+      tab.addEventListener("click", () => selectProject(index));
+      nav.append(tab);
+    });
   }
 
   function render() {
@@ -843,7 +888,7 @@
   }
 
   try {
-    document.getElementById("project-name").textContent = PROJECT.manifest.name;
+    renderProjectTabs();
     renderStatus();
     render();
   } catch (error) {
