@@ -2,11 +2,11 @@
 
 ## Current focus
 
-Building the headless kernel. Model, project format, validator, decomposition, and contract generation all work. Next is the part that can actually run: leaf implementations, then the conformance check.
+Building the headless kernel. Model, project format, validator, decomposition, and contract generation all work, under 113 tests. Next is the part that can actually run: leaf implementations, then the conformance check.
 
 ## Working
 
-- **Block model.** Typed ports, capability ports that flow down by name, and a control vocabulary of straight-line plus per-item iteration. 92 tests.
+- **Block model.** Typed ports, capability ports that flow down by name, and a control vocabulary of straight-line plus per-item iteration.
 - **Type expressions.** Port types are written and stored as `{ title: string; salary?: number }[]` and parsed into the structure the test bench will walk. Round-tripping is held exact by test.
 - **Project format.** A project's folder structure is its block hierarchy. Blocks load, validate, and write back unchanged.
 - **Validator.** Checks wiring, arity across iterated children, capability supply, and cycles, in plain language meant to be shown in the UI.
