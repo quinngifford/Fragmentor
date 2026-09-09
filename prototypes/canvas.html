@@ -151,7 +151,7 @@
   /* ---- canvas ---- */
 
   .canvas-wrap { min-width: 0; overflow: auto; padding: 26px; }
-  .canvas-wrap svg { max-width: 100%; height: auto; display: block; }
+  .canvas-wrap svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
   .canvas-empty { color: var(--ink-dim); font-size: 13px; max-width: 46ch; }
 
   .block-box { cursor: pointer; }
@@ -1220,12 +1220,12 @@
    * runs left to right, the way the code will read.
    * ------------------------------------------------------------------ */
 
-  const BLOCK_W = 208;
+  const BLOCK_W = 196;
   const HEAD_H = 34;
   const ROW_H = 22;
-  const COL_GAP = 96;
+  const COL_GAP = 74;
   const ROW_GAP = 34;
-  const RAIL_W = 150;
+  const RAIL_W = 122;
 
   function layout(parent) {
     const kids = parent.children;
@@ -1385,9 +1385,7 @@
       const selected = state.selected === child.path;
       const group = svgEl("g", { class: "block-box", "data-selected": String(selected), tabindex: "0", role: "button" }, svg);
       svgEl("title", {}, group).textContent =
-        child.responsibility + (child.kind === "composite" ? "
-
-Double-click to open this block's diagram." : "");
+        child.responsibility + (child.kind === "composite" ? "\n\nDouble-click to open this block's diagram." : "");
 
       svgEl("rect", { x: box.x, y: box.y, width: box.w, height: box.h, rx: 3, class: "block-plate" }, group);
       svgEl("rect", { x: box.x, y: box.y, width: box.w, height: HEAD_H, rx: 3, class: "block-head" }, group);
@@ -1651,9 +1649,7 @@ Double-click to open this block's diagram." : "");
     const note = document.createElement("pre");
     note.className = "canvas-empty";
     note.style.whiteSpace = "pre-wrap";
-    note.textContent = "The canvas could not be drawn.
-
-" + (error && error.stack ? error.stack : String(error));
+    note.textContent = "The canvas could not be drawn.\n\n" + (error && error.stack ? error.stack : String(error));
     wrap.replaceChildren(note);
   }
 

@@ -1,19 +1,26 @@
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 import { loadProject } from "../src/project/project.js";
 import { formatWire } from "../src/model/block.js";
 import { describeType } from "../src/model/types.js";
 import { executionOrder, wireCarriedType } from "../src/model/validate.js";
 
 /**
- * Dumps the example project in the shape the canvas prototype consumes, so
- * the drawing is produced from blocks the real loader and validator read
- * rather than from anything retyped by hand.
+ * Builds the canvas prototype from the example project.
+ *
+ * The drawing is produced from blocks the real loader and validator read, and
+ * the finished page's script is parsed before it is written. A page that does
+ * not parse fails here rather than silently rendering nothing.
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const project = await loadProject(path.join(here, "..", "examples", "job-ranker"));
+const projectDir = path.join(here, "..", "examples", "job-ranker");
+const templatePath = path.join(here, "..", "prototypes", "canvas.template.html");
+const outputPath = path.join(here, "..", "prototypes", "canvas.html");
 
+const project = await loadProject(projectDir);
 const blocks: Record<string, unknown> = {};
 
 for (const [blockPath, node] of project.byPath) {
@@ -63,10 +70,24 @@ for (const [blockPath, node] of project.byPath) {
   };
 }
 
-console.log(
-  JSON.stringify(
-    { manifest: project.manifest, rootPath: project.root.path, blocks },
-    null,
-    2,
-  ),
-);
+const data = JSON.stringify({ manifest: project.manifest, rootPath: project.root.path, blocks }, null, 2);
+
+const template = await readFile(templatePath, "utf8");
+const PLACEHOLDER = "/*__DATA__*/";
+if (!template.includes(PLACEHOLDER)) throw new Error(`The template no longer contains ${PLACEHOLDER}.`);
+
+// A string replacement, not a pattern: "$" sequences in JSON must stay literal.
+const page = template.replace(PLACEHOLDER, () => data);
+
+const scriptStart = page.indexOf("<script>");
+const scriptEnd = page.lastIndexOf("</" + "script>");
+if (scriptStart < 0 || scriptEnd < 0) throw new Error("Could not find the page script to check.");
+
+try {
+  new vm.Script(page.slice(scriptStart + "<script>".length, scriptEnd), { filename: "canvas.html" });
+} catch (cause) {
+  throw new Error(`The page script does not parse, so it would render nothing:\n${String(cause)}`);
+}
+
+await writeFile(outputPath, page, "utf8");
+console.log(`Wrote ${path.relative(process.cwd(), outputPath)} — ${project.byPath.size} blocks, script parses.`);

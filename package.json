@@ -9,7 +9,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "build:example": "tsx scripts/generate-example.ts",
-    "build:canvas-data": "tsx scripts/export-canvas-data.ts"
+    "build:canvas": "tsx scripts/build-canvas.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
