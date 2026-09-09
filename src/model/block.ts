@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v4";
 import { identifierPattern, portTypeSchema } from "./types.js";
 import type { PortType } from "./types.js";
 
@@ -148,7 +148,7 @@ export const blockSchema = z
   .refine((b) => b.kind === "composite" || b.wires.length === 0, {
     message: "a leaf block cannot declare wires",
     path: ["wires"],
-  }) as unknown as z.ZodType<Block, z.ZodTypeDef, unknown>;
+  }) as unknown as z.ZodType<Block>;
 
 /** `rank-jobs` -> `rankJobs`. The block's exported function name. */
 export function functionNameOf(id: string): string {

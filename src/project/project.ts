@@ -1,6 +1,6 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { z } from "zod";
+import { z } from "zod/v4";
 import { blockIdPattern, blockSchema } from "../model/block.js";
 import type { Block } from "../model/block.js";
 import { validateComposite } from "../model/validate.js";
@@ -55,7 +55,7 @@ export const manifestSchema = z
       .strict()
       .default({ level: 3, maxDepth: 4 }),
   })
-  .strict() as unknown as z.ZodType<Manifest, z.ZodTypeDef, unknown>;
+  .strict() as unknown as z.ZodType<Manifest>;
 
 export interface LoadedBlock {
   block: Block;
