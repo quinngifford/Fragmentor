@@ -23,4 +23,4 @@ export const assembleSourceOutput = z.object({
 export type AssembleSourceOutput = z.infer<typeof assembleSourceOutput>;
 
 /** Assemble Source needs no effects supplied from outside. */
-export type AssembleSourceCaps = Record<string, never>;
+export interface AssembleSourceCaps {}

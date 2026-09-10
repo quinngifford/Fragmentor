@@ -1,6 +1,7 @@
 import type { ProjectSnapshot } from "../src/project/snapshot.js";
 import type { Point } from "../src/project/layout.js";
 import type { EmitResult } from "../src/codegen/emit.js";
+import type { RunOutcome } from "../src/run/run.js";
 
 /**
  * The whole surface between the interface and the kernel.
@@ -19,6 +20,7 @@ export const CHANNELS = {
   saveLayout: "layout:save",
   emitCode: "codegen:emit",
   revealBlock: "block:reveal",
+  runBlock: "block:run",
 } as const;
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -27,6 +29,12 @@ export interface SaveLayoutRequest {
   dir: string;
   viewPath: string;
   positions: Record<string, Point>;
+}
+
+export interface RunBlockRequest {
+  dir: string;
+  blockPath: string;
+  input: unknown;
 }
 
 export interface WriteImplRequest {
@@ -47,6 +55,8 @@ export interface FragmentorApi {
   emitCode(dir: string): Promise<Result<EmitResult>>;
   /** Shows a block's folder in the system file manager. */
   revealBlock(dir: string, blockPath: string): Promise<Result<null>>;
+  /** Runs one block against the given input and reports what happened. */
+  runBlock(request: RunBlockRequest): Promise<Result<RunOutcome>>;
 }
 
 declare global {

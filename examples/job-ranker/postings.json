@@ -1,0 +1,22 @@
+[
+  {
+    "title": "Senior TypeScript Engineer",
+    "company": "Northwind Labs",
+    "description": "Build developer tooling in TypeScript. Strong Node.js and testing background. Some Rust exposure welcome."
+  },
+  {
+    "title": "Data Engineer",
+    "company": "Vector Foundry",
+    "description": "Python pipelines, Airflow, and SQL at scale. Occasional TypeScript for internal dashboards."
+  },
+  {
+    "title": "Frontend Developer",
+    "company": "Kite and Co",
+    "description": "React and TypeScript, design systems, accessibility. Testing culture matters to us."
+  },
+  {
+    "title": "Warehouse Supervisor",
+    "company": "Harbour Freight",
+    "description": "Manage shift rotas and stock control for a busy distribution centre."
+  }
+]

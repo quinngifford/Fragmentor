@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { proposeDecomposition } from "../src/ai/decompose.js";
@@ -37,8 +37,10 @@ interface Step {
 }
 
 async function build(dir: string, manifest: Manifest, seeds: Block[], steps: Step[]): Promise<void> {
+  // Deliberately not cleared first. Implementations live in these folders and
+  // are the one thing here that was written by hand rather than generated;
+  // wiping the directory to rebuild the diagram would throw them away.
   const target = path.join(here, "..", "examples", dir);
-  await rm(target, { recursive: true, force: true });
   await createProject(target, manifest, seeds);
 
   // Each step decomposes a block produced by an earlier step, or a seed.

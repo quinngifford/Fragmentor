@@ -46,6 +46,12 @@ export interface LanguagePack {
   capabilitiesSource(): string;
 
   /**
+   * Whether Fragmentor can execute a block in this language yet. A pack is
+   * useful for generating code before it is useful for running it.
+   */
+  canRun: boolean;
+
+  /**
    * A block whose implementation still looks like this has not been written.
    * Used to report progress honestly rather than counting files.
    */

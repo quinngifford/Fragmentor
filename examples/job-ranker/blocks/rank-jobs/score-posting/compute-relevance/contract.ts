@@ -17,4 +17,4 @@ export const computeRelevanceOutput = z.object({
 export type ComputeRelevanceOutput = z.infer<typeof computeRelevanceOutput>;
 
 /** Compute Relevance needs no effects supplied from outside. */
-export type ComputeRelevanceCaps = Record<string, never>;
+export interface ComputeRelevanceCaps {}

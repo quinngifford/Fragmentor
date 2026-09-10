@@ -17,4 +17,4 @@ export const matchKeywordsOutput = z.object({
 export type MatchKeywordsOutput = z.infer<typeof matchKeywordsOutput>;
 
 /** Match Keywords needs no effects supplied from outside. */
-export type MatchKeywordsCaps = Record<string, never>;
+export interface MatchKeywordsCaps {}

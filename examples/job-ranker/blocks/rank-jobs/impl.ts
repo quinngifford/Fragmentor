@@ -1,6 +1,23 @@
 import type { RankJobsInput, RankJobsOutput, RankJobsCaps } from "./contract.js";
+import { loadPostings } from "./load-postings/impl.js";
+import { extractProfileKeywords } from "./extract-profile-keywords/impl.js";
+import { scorePosting } from "./score-posting/impl.js";
+import { rankResults } from "./rank-results/impl.js";
 
 /** Read job postings from a file and return them ordered by how well they match a candidate profile, with reasons. */
 export async function rankJobs(input: RankJobsInput, caps: RankJobsCaps): Promise<RankJobsOutput> {
-  throw new Error("Rank Jobs has no implementation yet.");
+  const { sourcePath, profile } = input;
+
+  const { postings } = await loadPostings({ path: sourcePath }, caps);
+  const { keywords } = await extractProfileKeywords({ profile }, caps);
+
+  const scorePostingResults = await Promise.all(
+    postings.map((posting) => scorePosting({ posting, keywords }, caps)),
+  );
+  const score = scorePostingResults.map((r) => r.score);
+  const reasons = scorePostingResults.map((r) => r.reasons);
+
+  const { ranked } = await rankResults({ postings, scores: score, reasons }, caps);
+
+  return { ranked };
 }

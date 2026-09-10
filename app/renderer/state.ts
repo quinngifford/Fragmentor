@@ -1,4 +1,5 @@
 import type { ProjectSnapshot } from "../../src/project/snapshot.js";
+import type { RunOutcome } from "../../src/run/run.js";
 
 /**
  * What the interface is currently showing. Kernel types are imported for their
@@ -22,6 +23,12 @@ export interface UiState {
   userAdjusted: boolean;
   /** Unsaved edits to a block's implementation, keyed by block path. */
   edits: Map<string, string>;
+  /** What has been typed into each block's test bench, kept across redraws. */
+  benchInputs: Map<string, Record<string, unknown>>;
+  /** The last result from running each block. */
+  runs: Map<string, RunOutcome>;
+  /** Blocks currently running. */
+  running: Set<string>;
   status: { text: string; tone: "info" | "good" | "bad" } | null;
 }
 
@@ -38,6 +45,9 @@ export const ui: UiState = {
   codeTab: "impl",
   userAdjusted: false,
   edits: new Map(),
+  benchInputs: new Map(),
+  runs: new Map(),
+  running: new Set(),
   status: null,
 };
 

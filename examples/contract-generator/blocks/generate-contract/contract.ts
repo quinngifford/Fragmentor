@@ -22,4 +22,4 @@ export const generateContractOutput = z.object({
 export type GenerateContractOutput = z.infer<typeof generateContractOutput>;
 
 /** Generate Contract needs no effects supplied from outside. */
-export type GenerateContractCaps = Record<string, never>;
+export interface GenerateContractCaps {}

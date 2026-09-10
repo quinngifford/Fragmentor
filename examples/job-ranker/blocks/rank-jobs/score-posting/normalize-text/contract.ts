@@ -16,4 +16,4 @@ export const normalizeTextOutput = z.object({
 export type NormalizeTextOutput = z.infer<typeof normalizeTextOutput>;
 
 /** Normalize Text needs no effects supplied from outside. */
-export type NormalizeTextCaps = Record<string, never>;
+export interface NormalizeTextCaps {}

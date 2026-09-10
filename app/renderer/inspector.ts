@@ -1,9 +1,9 @@
-import type { PortType } from "../../src/model/types.js";
 import type { SnapshotBlock } from "../../src/project/snapshot.js";
 import { BUS_PALETTE, busColors, requireSnapshot, ui } from "./state.js";
 import { busColour, connectionCode } from "./graph.js";
 import type { Bus, Graph } from "./graph.js";
 import { graphInView, openDiagram } from "./canvas.js";
+import { benchSection } from "./bench.js";
 
 let notify: () => void = () => {};
 export function onInspectorChange(callback: () => void): void {
@@ -25,85 +25,6 @@ function section(title: string): HTMLElement {
   const node = el("section", "section");
   node.append(el("h3", undefined, title));
   return node;
-}
-
-/* -------------------------------------------------------------------------- */
-/* Test bench                                                                  */
-/* -------------------------------------------------------------------------- */
-
-function exampleFor(type: PortType, name?: string): unknown {
-  switch (type.kind) {
-    case "string":
-      return name && /path/i.test(name) ? "./postings.json" : "example";
-    case "number":
-      return 0;
-    case "boolean":
-      return false;
-    case "null":
-    case "unknown":
-      return null;
-    case "literal":
-      return type.value;
-    case "enum":
-      return type.values[0];
-    case "array":
-      return [exampleFor(type.of, name)];
-    case "union":
-      return exampleFor(type.of[0]!, name);
-    case "object": {
-      const out: Record<string, unknown> = {};
-      for (const [field, spec] of Object.entries(type.fields)) {
-        if (!spec.optional) out[field] = exampleFor(spec.type, field);
-      }
-      return out;
-    }
-  }
-}
-
-function field(labelText: string, control: HTMLElement): HTMLElement {
-  const wrap = el("div", "field");
-  wrap.append(el("label", undefined, labelText), control);
-  return wrap;
-}
-
-function controlFor(type: PortType, name: string): HTMLElement {
-  if (type.kind === "object") {
-    const group = el("div", "subfields");
-    for (const [fieldName, spec] of Object.entries(type.fields)) {
-      group.append(controlFor(spec.type, fieldName + (spec.optional ? "?" : "")));
-    }
-    return field(name, group);
-  }
-
-  if (type.kind === "array") {
-    const area = el("textarea");
-    area.value = JSON.stringify(exampleFor(type, name), null, 1);
-    area.spellcheck = false;
-    return field(name, area);
-  }
-
-  if (type.kind === "boolean") {
-    const box = el("input");
-    box.type = "checkbox";
-    return field(name, box);
-  }
-
-  if (type.kind === "enum") {
-    const select = el("select");
-    for (const value of type.values) {
-      const option = el("option");
-      option.value = value;
-      option.textContent = value;
-      select.append(option);
-    }
-    return field(name, select);
-  }
-
-  const input = el("input");
-  input.type = type.kind === "number" ? "number" : "text";
-  const sample = exampleFor(type, name);
-  input.value = sample === null ? "" : String(sample);
-  return field(name, input);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -218,18 +139,6 @@ function codeSection(block: SnapshotBlock): HTMLElement {
   return node;
 }
 
-function benchSection(block: SnapshotBlock): HTMLElement {
-  const node = section("Test bench");
-  node.append(el("p", "bench-note", "Built from the port types above. The values are examples, and no block can run yet."));
-  for (const port of block.inputs) node.append(controlFor(port.typeIr, port.name));
-
-  const run = el("button", "btn", "Run block");
-  run.disabled = true;
-  run.title = "Running a block is not built yet.";
-  node.append(run);
-  return node;
-}
-
 function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   const head = el("div", "insp-head");
   head.append(el("h2", undefined, block.name), el("div", "insp-id", block.path));
@@ -281,7 +190,7 @@ function busPanel(panel: HTMLElement, graph: Graph, bus: Bus): void {
   const code = section("In code");
   const pre = el("pre", "code", connectionCode(graph, bus));
   code.append(pre);
-  code.append(el("p", "bench-note", "The call and binding this connection becomes. Composite glue is not written yet, so this is derived from the diagram rather than read from the file."));
+  code.append(el("p", "bench-note", "The call and binding this connection stands for, derived from the diagram. Open the parent block to read the code that was actually written."));
   panel.append(code);
 
   const colours = section("Colour");

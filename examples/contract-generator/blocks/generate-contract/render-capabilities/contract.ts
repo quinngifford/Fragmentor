@@ -20,4 +20,4 @@ export const renderCapabilitiesOutput = z.object({
 export type RenderCapabilitiesOutput = z.infer<typeof renderCapabilitiesOutput>;
 
 /** Render Capabilities needs no effects supplied from outside. */
-export type RenderCapabilitiesCaps = Record<string, never>;
+export interface RenderCapabilitiesCaps {}

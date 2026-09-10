@@ -18,4 +18,4 @@ export const renderSchemasOutput = z.object({
 export type RenderSchemasOutput = z.infer<typeof renderSchemasOutput>;
 
 /** Render Schemas needs no effects supplied from outside. */
-export type RenderSchemasCaps = Record<string, never>;
+export interface RenderSchemasCaps {}

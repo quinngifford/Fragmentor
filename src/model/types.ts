@@ -156,3 +156,80 @@ export function typesEqual(a: PortType, b: PortType): boolean {
     }
   }
 }
+
+/**
+ * Checks a value against a port type, returning what is wrong with it.
+ *
+ * The test bench needs this to reject a bad input before running anything, and
+ * to notice when a block returns something its contract does not allow. It is
+ * deliberately independent of any language's validation library, because it
+ * has to work the same for every language pack.
+ */
+export function checkValue(value: unknown, type: PortType, where = "value"): string[] {
+  switch (type.kind) {
+    case "unknown":
+      return [];
+    case "string":
+      return typeof value === "string" ? [] : [`${where} should be a string, but it is ${describeValue(value)}.`];
+    case "number":
+      return typeof value === "number" && Number.isFinite(value)
+        ? []
+        : [`${where} should be a number, but it is ${describeValue(value)}.`];
+    case "boolean":
+      return typeof value === "boolean" ? [] : [`${where} should be true or false, but it is ${describeValue(value)}.`];
+    case "null":
+      return value === null ? [] : [`${where} should be null, but it is ${describeValue(value)}.`];
+    case "literal":
+      return value === type.value ? [] : [`${where} should be ${JSON.stringify(type.value)}, but it is ${describeValue(value)}.`];
+    case "enum":
+      return typeof value === "string" && type.values.includes(value)
+        ? []
+        : [`${where} should be one of ${type.values.map((v) => JSON.stringify(v)).join(", ")}, but it is ${describeValue(value)}.`];
+    case "array": {
+      if (!Array.isArray(value)) return [`${where} should be a list, but it is ${describeValue(value)}.`];
+      return value.flatMap((item, i) => checkValue(item, type.of, `${where}[${i}]`));
+    }
+    case "union": {
+      if (type.of.some((member) => checkValue(value, member).length === 0)) return [];
+      return [`${where} should be ${describeType(type)}, but it is ${describeValue(value)}.`];
+    }
+    case "object": {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return [`${where} should be an object, but it is ${describeValue(value)}.`];
+      }
+
+      const record = value as Record<string, unknown>;
+      const problems: string[] = [];
+
+      for (const [name, field] of Object.entries(type.fields)) {
+        if (!(name in record) || record[name] === undefined) {
+          if (!field.optional) problems.push(`${where}.${name} is missing.`);
+          continue;
+        }
+        problems.push(...checkValue(record[name], field.type, `${where}.${name}`));
+      }
+
+      for (const name of Object.keys(record)) {
+        if (!(name in type.fields)) problems.push(`${where}.${name} is not part of this type.`);
+      }
+
+      return problems;
+    }
+  }
+}
+
+function describeValue(value: unknown): string {
+  if (value === null) return "null";
+  if (value === undefined) return "missing";
+  if (Array.isArray(value)) return "a list";
+  switch (typeof value) {
+    case "string":
+    case "number":
+    case "boolean":
+      return JSON.stringify(value);
+    case "object":
+      return "an object";
+    default:
+      return typeof value;
+  }
+}

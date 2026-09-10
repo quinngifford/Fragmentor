@@ -17,4 +17,4 @@ export const deriveNamesOutput = z.object({
 export type DeriveNamesOutput = z.infer<typeof deriveNamesOutput>;
 
 /** Derive Names needs no effects supplied from outside. */
-export type DeriveNamesCaps = Record<string, never>;
+export interface DeriveNamesCaps {}

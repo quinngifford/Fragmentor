@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
 import { CHANNELS } from "./ipc.js";
-import type { Result, SaveLayoutRequest, WriteImplRequest } from "./ipc.js";
+import type { Result, RunBlockRequest, SaveLayoutRequest, WriteImplRequest } from "./ipc.js";
 import { projectSnapshot } from "../src/project/snapshot.js";
 import type { ProjectSnapshot } from "../src/project/snapshot.js";
 import { saveViewLayout } from "../src/project/layout.js";
@@ -11,6 +11,8 @@ import { blockDir, loadProject, systemOf } from "../src/project/project.js";
 import { getPack } from "../src/lang/index.js";
 import { emitProject } from "../src/codegen/emit.js";
 import { resolveInside } from "../src/project/safePath.js";
+import { runBlock } from "../src/run/run.js";
+import type { RunOutcome } from "../src/run/run.js";
 import type { EmitResult } from "../src/codegen/emit.js";
 
 /**
@@ -148,6 +150,14 @@ function registerHandlers(): void {
     }
   });
 
+  ipcMain.handle(CHANNELS.runBlock, async (_event, request: RunBlockRequest): Promise<Result<RunOutcome>> => {
+    try {
+      return ok(await runBlock({ projectDir: request.dir, blockPath: request.blockPath, input: request.input }));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
   ipcMain.handle(CHANNELS.revealBlock, async (_event, dir: string, blockPath: string): Promise<Result<null>> => {
     try {
       shell.showItemInFolder(resolveInside(blockDir(dir, blockPath), "block.json"));
@@ -218,15 +228,46 @@ function smokeScript(exampleDir: string): string {
     type(original);
     saveButton().click();
     await wait(500);
-    const afterRestore = statusText();
+    // Measured here, before anything navigates away and swaps the editor out.
+    const restoredCleanly = editor().value === original && /Saved .*impl\\.ts/.test(statusText());
+
+    // Running a block is what makes this an application rather than a viewer.
+    const rankJobs = [...document.querySelectorAll(".tree .node")]
+      .find((node) => node.textContent.includes("rank-jobs"));
+
+    let ran = "no rank-jobs in the tree";
+    if (rankJobs) {
+      rankJobs.click();
+      await wait(400);
+
+      const skills = document.querySelector(".bench textarea");
+      if (skills) {
+        skills.value = JSON.stringify(["TypeScript", "testing"]);
+        skills.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+
+      const runButton = [...document.querySelectorAll(".bench .btn")]
+        .find((button) => button.textContent === "Run block");
+
+      if (!runButton) ran = "no run button";
+      else if (runButton.disabled) ran = "run button disabled";
+      else {
+        runButton.click();
+        await wait(8000);
+        const output = document.querySelector(".run-result pre.code");
+        const problems = document.querySelector(".run-problems li");
+        ran = output ? output.textContent.slice(0, 200) : problems ? "PROBLEM: " + problems.textContent : "no result";
+      }
+    }
 
     return {
       stage: "opened",
       bootError: (document.querySelector(".canvas-empty") || {}).textContent || null,
       ...drawn,
+      ran,
       savedToDisk: /Saved .*impl\\.ts/.test(afterSave),
       saveMessage: afterSave.slice(-70),
-      restoredCleanly: editor().value === original && /Saved .*impl\\.ts/.test(afterRestore),
+      restoredCleanly,
       status: statusText().slice(0, 90),
     };
   })()`;

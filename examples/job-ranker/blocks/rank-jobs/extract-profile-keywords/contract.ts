@@ -16,4 +16,4 @@ export const extractProfileKeywordsOutput = z.object({
 export type ExtractProfileKeywordsOutput = z.infer<typeof extractProfileKeywordsOutput>;
 
 /** Extract Profile Keywords needs no effects supplied from outside. */
-export type ExtractProfileKeywordsCaps = Record<string, never>;
+export interface ExtractProfileKeywordsCaps {}

@@ -18,4 +18,4 @@ export const rankResultsOutput = z.object({
 export type RankResultsOutput = z.infer<typeof rankResultsOutput>;
 
 /** Rank Results needs no effects supplied from outside. */
-export type RankResultsCaps = Record<string, never>;
+export interface RankResultsCaps {}

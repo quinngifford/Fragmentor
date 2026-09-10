@@ -18,4 +18,4 @@ export const scorePostingOutput = z.object({
 export type ScorePostingOutput = z.infer<typeof scorePostingOutput>;
 
 /** Score Posting needs no effects supplied from outside. */
-export type ScorePostingCaps = Record<string, never>;
+export interface ScorePostingCaps {}

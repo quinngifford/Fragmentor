@@ -13,6 +13,7 @@ import {
   zoomAbout,
 } from "./canvas.js";
 import { onInspectorChange, renderInspector } from "./inspector.js";
+import { onBenchChange } from "./bench.js";
 import { PROJECT_VIEW } from "./graph.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
@@ -317,6 +318,7 @@ function reportFailure(error: unknown): void {
 try {
   onCanvasChange(render);
   onInspectorChange(render);
+  onBenchChange(render);
   wireToolbar();
   setUpCanvasGestures();
   watchCanvasSize();
