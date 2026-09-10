@@ -1,7 +1,8 @@
 import type { ProjectSnapshot } from "../src/project/snapshot.js";
 import type { Point } from "../src/project/layout.js";
 import type { EmitResult } from "../src/codegen/emit.js";
-import type { RunOutcome } from "../src/run/run.js";
+import type { CaseResult, RunOutcome } from "../src/run/run.js";
+import type { TestCase } from "../src/run/cases.js";
 
 /**
  * The whole surface between the interface and the kernel.
@@ -21,6 +22,8 @@ export const CHANNELS = {
   emitCode: "codegen:emit",
   revealBlock: "block:reveal",
   runBlock: "block:run",
+  saveCases: "block:save-cases",
+  runCases: "block:run-cases",
 } as const;
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -35,6 +38,12 @@ export interface RunBlockRequest {
   dir: string;
   blockPath: string;
   input: unknown;
+}
+
+export interface SaveCasesRequest {
+  dir: string;
+  blockPath: string;
+  cases: TestCase[];
 }
 
 export interface WriteImplRequest {
@@ -57,6 +66,10 @@ export interface FragmentorApi {
   revealBlock(dir: string, blockPath: string): Promise<Result<null>>;
   /** Runs one block against the given input and reports what happened. */
   runBlock(request: RunBlockRequest): Promise<Result<RunOutcome>>;
+  /** Replaces the tests saved for a block. */
+  saveCases(request: SaveCasesRequest): Promise<Result<null>>;
+  /** Runs every saved test for a block. */
+  runCases(dir: string, blockPath: string): Promise<Result<CaseResult[]>>;
 }
 
 declare global {

@@ -9,6 +9,8 @@ import type { Layout } from "./layout.js";
 import { loadProject, systemOf, validateProject } from "./project.js";
 import type { Granularity, ProjectDiagnostic } from "./project.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
+import { loadCases } from "../run/cases.js";
+import type { TestCase } from "../run/cases.js";
 
 /**
  * Everything the interface needs about a project, in one serialisable value.
@@ -80,6 +82,8 @@ export interface SnapshotBlock {
   files: { impl: string; contract: string };
   /** Whether the implementation is still the untouched scaffold. */
   implemented: boolean;
+  /** Tests saved alongside this block. */
+  cases: TestCase[];
 }
 
 export interface ProjectSnapshot {
@@ -163,6 +167,7 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       language,
       files: { impl: pack.implFile, contract: pack.contractFile },
       implemented: false,
+      cases: await loadCases(projectDir, blockPath),
     };
 
     const impl = blocks[blockPath].sources.impl;

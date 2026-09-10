@@ -1,5 +1,7 @@
 import type { PortType } from "../../src/model/types.js";
 import type { SnapshotBlock } from "../../src/project/snapshot.js";
+import type { TestCase } from "../../src/run/cases.js";
+import type { CaseResult } from "../../src/run/run.js";
 import { requireSnapshot, ui } from "./state.js";
 
 /**
@@ -198,6 +200,171 @@ function resultPanel(block: SnapshotBlock): HTMLElement | null {
   return panel;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Saved tests                                                                 */
+/* -------------------------------------------------------------------------- */
+
+async function writeCases(block: SnapshotBlock, cases: TestCase[]): Promise<void> {
+  const result = await window.fragmentor.saveCases({
+    dir: requireSnapshot().dir,
+    blockPath: block.path,
+    cases,
+  });
+
+  if (!result.ok) {
+    ui.status = { text: `Could not save the tests: ${result.error}`, tone: "bad" };
+  } else {
+    block.cases = cases;
+    ui.status = { text: `Saved ${cases.length} test${cases.length === 1 ? "" : "s"} for ${block.name}.`, tone: "good" };
+  }
+  notify();
+}
+
+function statusWord(status: CaseResult["status"]): string {
+  return status === "unchecked" ? "no expectation" : status;
+}
+
+function caseRow(block: SnapshotBlock, testCase: TestCase, result: CaseResult | undefined): HTMLElement {
+  const row = el("div", "case-row");
+  row.append(el("div", "case-name", testCase.name));
+
+  if (result) row.append(el("div", `case-status ${result.status}`, statusWord(result.status)));
+  else if (testCase.expected === undefined) row.append(el("div", "case-status unchecked", "no expectation"));
+
+  const actions = el("div", "case-actions");
+
+  const load = el("button", undefined, "Load");
+  load.title = "Put this test's input into the form above.";
+  load.addEventListener("click", () => {
+    ui.benchInputs.set(block.path, structuredClone(testCase.input) as Draft);
+    ui.status = { text: `Loaded "${testCase.name}".`, tone: "info" };
+    notify();
+  });
+
+  const remove = el("button", undefined, "Delete");
+  remove.addEventListener("click", () => {
+    void writeCases(block, block.cases.filter((entry) => entry.name !== testCase.name));
+  });
+
+  actions.append(load, remove);
+  row.append(actions);
+  return row;
+}
+
+function casesSection(block: SnapshotBlock): HTMLElement {
+  const node = el("section", "section");
+  node.append(el("h3", undefined, "Saved tests"));
+
+  const results = ui.caseResults.get(block.path);
+  const byName = new Map((results ?? []).map((result) => [result.name, result]));
+
+  if (block.cases.length === 0) {
+    node.append(el("p", "bench-note", "No tests saved yet. Fill in the values above and save them as a test."));
+  } else {
+    const list = el("div", "cases");
+    for (const testCase of block.cases) list.append(caseRow(block, testCase, byName.get(testCase.name)));
+    node.append(list);
+  }
+
+  // Saving the current input, optionally with the last output as the expectation.
+  const lastRun = ui.runs.get(block.path);
+  const canExpect = Boolean(lastRun?.ok);
+
+  const nameField = el("input");
+  nameField.type = "text";
+  nameField.placeholder = "Name this test";
+  nameField.value = ui.caseNames.get(block.path) ?? "";
+  nameField.addEventListener("input", () => ui.caseNames.set(block.path, nameField.value));
+
+  const expectBox = el("input");
+  expectBox.type = "checkbox";
+  expectBox.id = `expect-${block.path}`;
+  expectBox.checked = canExpect;
+  expectBox.disabled = !canExpect;
+
+  const expectLabel = el("label", undefined, canExpect ? "expect the last output" : "run the block first to expect an output");
+  expectLabel.htmlFor = expectBox.id;
+  expectLabel.style.fontSize = "11.5px";
+  expectLabel.style.color = "var(--ink-dim)";
+
+  const save = el("button", "btn quiet", "Save as test");
+  save.addEventListener("click", () => {
+    const name = (ui.caseNames.get(block.path) ?? "").trim();
+    if (!name) {
+      ui.status = { text: "Give the test a name first.", tone: "bad" };
+      notify();
+      return;
+    }
+
+    const draft = structuredClone(draftFor(block)) as unknown;
+    const testCase: TestCase = expectBox.checked && lastRun?.ok
+      ? { name, input: draft, expected: structuredClone(lastRun.output) }
+      : { name, input: draft };
+
+    const kept = block.cases.filter((entry) => entry.name !== name);
+    ui.caseNames.set(block.path, "");
+    void writeCases(block, [...kept, testCase]);
+  });
+
+  const saveRow = el("div", "case-save");
+  saveRow.append(nameField, save);
+  node.append(saveRow);
+
+  const expectRow = el("div", "case-save");
+  expectRow.append(expectBox, expectLabel);
+  node.append(expectRow);
+
+  // Running them all.
+  const runAll = el("button", "btn", "Run all tests");
+  runAll.disabled = block.cases.length === 0 || ui.runningCases.has(block.path) || !block.implemented;
+  runAll.addEventListener("click", () => {
+    void (async () => {
+      ui.runningCases.add(block.path);
+      ui.caseResults.delete(block.path);
+      notify();
+
+      const outcome = await window.fragmentor.runCases(requireSnapshot().dir, block.path);
+      ui.runningCases.delete(block.path);
+
+      if (!outcome.ok) {
+        ui.status = { text: `Could not run the tests: ${outcome.error}`, tone: "bad" };
+      } else {
+        ui.caseResults.set(block.path, outcome.value);
+        const passed = outcome.value.filter((entry) => entry.status === "passed").length;
+        const checked = outcome.value.filter((entry) => entry.status !== "unchecked").length;
+        ui.status = {
+          text: `${passed} of ${checked} test${checked === 1 ? "" : "s"} passed.`,
+          tone: passed === checked ? "good" : "bad",
+        };
+      }
+      notify();
+    })();
+  });
+  node.append(runAll);
+
+  if (ui.runningCases.has(block.path)) node.append(el("p", "bench-note", "Running tests…"));
+
+  if (results && results.length > 0) {
+    const passed = results.filter((entry) => entry.status === "passed").length;
+    const checked = results.filter((entry) => entry.status !== "unchecked").length;
+    node.append(
+      el(
+        "p",
+        `case-summary ${passed === checked ? "passed" : "failed"}`,
+        checked === 0 ? "No test has an expected output yet." : `${passed} of ${checked} passed.`,
+      ),
+    );
+
+    for (const result of results) {
+      if (result.status === "passed" || result.status === "unchecked") continue;
+      const detail = result.differences.length > 0 ? result.differences : [result.error ?? "Failed."];
+      node.append(problemList(result.name, detail, "bad"));
+    }
+  }
+
+  return node;
+}
+
 export function benchSection(block: SnapshotBlock): HTMLElement {
   const node = el("section", "section bench");
   node.append(el("h3", undefined, "Test bench"));
@@ -265,4 +432,9 @@ export function benchSection(block: SnapshotBlock): HTMLElement {
   if (result) node.append(result);
 
   return node;
+}
+
+/** The bench and its saved tests, which the inspector shows together. */
+export function benchSections(block: SnapshotBlock): HTMLElement[] {
+  return [benchSection(block), casesSection(block)];
 }

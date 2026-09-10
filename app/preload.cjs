@@ -17,6 +17,8 @@ const CHANNELS = {
   emitCode: "codegen:emit",
   revealBlock: "block:reveal",
   runBlock: "block:run",
+  saveCases: "block:save-cases",
+  runCases: "block:run-cases",
 };
 
 contextBridge.exposeInMainWorld("fragmentor", {
@@ -29,4 +31,6 @@ contextBridge.exposeInMainWorld("fragmentor", {
   emitCode: (dir) => ipcRenderer.invoke(CHANNELS.emitCode, dir),
   revealBlock: (dir, blockPath) => ipcRenderer.invoke(CHANNELS.revealBlock, dir, blockPath),
   runBlock: (request) => ipcRenderer.invoke(CHANNELS.runBlock, request),
+  saveCases: (request) => ipcRenderer.invoke(CHANNELS.saveCases, request),
+  runCases: (dir, blockPath) => ipcRenderer.invoke(CHANNELS.runCases, dir, blockPath),
 });

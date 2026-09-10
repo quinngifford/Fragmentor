@@ -467,3 +467,74 @@ pre.code {
 
 .run-result pre.code { max-height: 320px; overflow: auto; white-space: pre-wrap; }
 .field textarea[data-invalid="true"] { border-color: var(--bad); }
+
+/* ---- inspector section divisions ---- */
+
+.inspector-body > .section {
+  border-top: 1px solid var(--rule);
+  padding-top: 14px;
+}
+
+.inspector-body > .section h3 {
+  color: var(--ink-dim);
+  margin-bottom: 10px;
+}
+
+.inspector-body > .insp-head { padding-bottom: 2px; }
+
+/* ---- saved tests ---- */
+
+.cases { display: flex; flex-direction: column; gap: 6px; }
+
+.case-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--ground);
+}
+
+.case-row .case-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.case-row .case-status {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  flex: none;
+}
+
+.case-status.passed { color: var(--signal); }
+.case-status.failed, .case-status.error { color: var(--bad); }
+.case-status.unchecked { color: var(--pending); }
+
+.case-actions { display: flex; gap: 4px; flex: none; }
+
+.case-actions button {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 3px 7px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule-bright);
+  background: none;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.case-actions button:hover { color: var(--ink); background: var(--panel-high); }
+
+.case-save { display: flex; gap: 6px; align-items: center; }
+.case-save input { flex: 1; }
+.case-summary { font-family: var(--mono); font-size: 11.5px; }
+.case-summary.passed { color: var(--signal); }
+.case-summary.failed { color: var(--bad); }

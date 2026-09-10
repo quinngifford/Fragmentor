@@ -12,17 +12,30 @@ import {
   layoutFor,
   measure,
 } from "./graph.js";
-import type { Graph, GraphNode } from "./graph.js";
+import type { Bus, Graph, GraphNode } from "./graph.js";
 import { requireSnapshot, ui } from "./state.js";
 
-/** The drawing. It reports back through this hook rather than importing the shell. */
-let notify: () => void = () => {};
-export function onCanvasChange(callback: () => void): void {
+/**
+ * The diagram.
+ *
+ * Drawing and updating are deliberately separate. Selecting or moving a block
+ * changes attributes on the elements that are already there; only a change of
+ * diagram rebuilds them. That is not an optimisation — an element replaced
+ * between two clicks can never receive a double-click, and a dragged element
+ * that is replaced mid-gesture loses the pointer and stops following the mouse.
+ */
+
+let notify: (options: { redraw: boolean }) => void = () => {};
+export function onCanvasChange(callback: (options: { redraw: boolean }) => void): void {
   notify = callback;
 }
 
 let currentGraph: Graph | null = null;
 let currentLayout: Map<string, Point> | null = null;
+
+/** The drawn elements, so they can be updated rather than replaced. */
+const nodeElements = new Map<string, SVGGElement>();
+const busElements = new Map<string, { group: SVGGElement; paths: SVGPathElement[]; label: SVGTextElement }>();
 
 export function graphInView(): Graph | null {
   return currentGraph;
@@ -55,11 +68,70 @@ export function applyViewport(): void {
   element("zoom-level").textContent = `${Math.round(ui.zoom * 100)}%`;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Updating what is already drawn                                             */
+/* -------------------------------------------------------------------------- */
+
+export function applySelection(): void {
+  for (const [key, group] of nodeElements) {
+    group.dataset.selected = String(ui.selection.has(key));
+  }
+  for (const [id, drawn] of busElements) {
+    const bus = currentGraph?.buses.get(id);
+    drawn.group.dataset.selected = String(ui.selectedBus === id);
+    drawn.group.dataset.linked = String(
+      Boolean(bus && ui.selection.has(bus.source) && ui.selection.has(bus.target)),
+    );
+  }
+}
+
+/** Moves the drawn blocks and re-routes their buses, without rebuilding them. */
+export function applyPositions(): void {
+  if (!currentGraph || !currentLayout) return;
+
+  for (const [key, group] of nodeElements) {
+    const point = currentLayout.get(key);
+    if (point) group.setAttribute("transform", `translate(${point.x} ${point.y})`);
+  }
+
+  for (const [id, drawn] of busElements) {
+    const bus = currentGraph.buses.get(id);
+    if (!bus) continue;
+    const geometry = busGeometry(currentGraph, currentLayout, bus);
+    if (!geometry) continue;
+
+    for (const path of drawn.paths) path.setAttribute("d", geometry.path);
+    drawn.label.setAttribute("x", String(geometry.middle.x));
+    drawn.label.setAttribute("y", String(geometry.middle.y));
+  }
+}
+
+function busGeometry(graph: Graph, layout: Map<string, Point>, bus: Bus) {
+  const sourceNode = graph.nodes.get(bus.source);
+  const targetNode = graph.nodes.get(bus.target);
+  const from = layout.get(bus.source);
+  const to = layout.get(bus.target);
+  if (!sourceNode || !targetNode || !from || !to) return null;
+
+  const start = busOutPoint(sourceNode, from);
+  const end = busInPoint(targetNode, to, bus.source);
+  return {
+    path: curve(start, end),
+    middle: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 - 6 },
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Drawing                                                                     */
+/* -------------------------------------------------------------------------- */
+
 export function renderCanvas(): void {
   const busLayer = element("bus-layer");
   const nodeLayer = element("node-layer");
   busLayer.replaceChildren();
   nodeLayer.replaceChildren();
+  nodeElements.clear();
+  busElements.clear();
   document.querySelectorAll(".canvas-empty").forEach((el) => el.remove());
 
   const graph = buildGraph(ui.view);
@@ -80,32 +152,22 @@ export function renderCanvas(): void {
   currentLayout = layout;
 
   for (const bus of graph.buses.values()) {
-    const sourceNode = graph.nodes.get(bus.source);
-    const targetNode = graph.nodes.get(bus.target);
-    const from = layout.get(bus.source);
-    const to = layout.get(bus.target);
-    if (!sourceNode || !targetNode || !from || !to) continue;
+    const geometry = busGeometry(graph, layout, bus);
+    if (!geometry) continue;
 
-    const start = busOutPoint(sourceNode, from);
-    const end = busInPoint(targetNode, to, bus.source);
     const colour = busColour(graph, ui.view, bus);
-    const linked = ui.selection.has(bus.source) && ui.selection.has(bus.target);
+    const group = svgEl("g", { class: "bus-group" }, busLayer);
 
-    const group = svgEl("g", {
-      class: "bus-group",
-      "data-selected": String(ui.selectedBus === bus.id),
-      "data-linked": String(linked),
-    }, busLayer);
-
-    const path = curve(start, end);
-    svgEl("path", { d: path, class: "bus", stroke: colour }, group);
-    const hit = svgEl("path", { d: path, class: "bus-hit" }, group);
+    const line = svgEl("path", { d: geometry.path, class: "bus", stroke: colour }, group);
+    const hit = svgEl("path", { d: geometry.path, class: "bus-hit" }, group);
     svgEl("title", {}, group).textContent =
-      `${sourceNode.label} → ${targetNode.label}\n${bus.signals.map((s) => `${s.targetPort}: ${s.type ?? "unknown"}`).join("\n")}`;
+      `${graph.nodes.get(bus.source)?.label} → ${graph.nodes.get(bus.target)?.label}\n${bus.signals
+        .map((s) => `${s.targetPort}: ${s.type ?? "unknown"}`)
+        .join("\n")}`;
 
     const label = svgEl("text", {
-      x: (start.x + end.x) / 2,
-      y: (start.y + end.y) / 2 - 6,
+      x: geometry.middle.x,
+      y: geometry.middle.y,
       class: "bus-count",
       "text-anchor": "middle",
       fill: colour,
@@ -116,8 +178,11 @@ export function renderCanvas(): void {
       event.stopPropagation();
       ui.selectedBus = bus.id;
       ui.selection.clear();
-      notify();
+      applySelection();
+      notify({ redraw: false });
     });
+
+    busElements.set(bus.id, { group, paths: [line, hit], label });
   }
 
   for (const node of graph.nodes.values()) {
@@ -126,6 +191,7 @@ export function renderCanvas(): void {
     drawNode(graph, node, point, nodeLayer);
   }
 
+  applySelection();
   applyViewport();
 }
 
@@ -134,7 +200,6 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element): 
   const group = svgEl("g", {
     class: "block-box",
     transform: `translate(${point.x} ${point.y})`,
-    "data-selected": String(ui.selection.has(node.key)),
     "data-boundary": String(node.boundary),
     "data-key": node.key,
     tabindex: "0",
@@ -203,6 +268,7 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element): 
     svgEl("text", { x: cx + 8, y: height + 17.5, class: "port-label" }, group).textContent = cap.name;
   });
 
+  nodeElements.set(node.key, group);
   attachNodeBehaviour(group, node);
 }
 
@@ -227,13 +293,13 @@ async function persistLayout(): Promise<void> {
   const positions: Record<string, Point> = {};
   for (const [key, point] of currentLayout) positions[key] = { x: Math.round(point.x), y: Math.round(point.y) };
 
-  // Keep the open snapshot in step so re-rendering does not snap blocks back.
+  // Keep the open snapshot in step so a later redraw does not snap blocks back.
   snapshot.layout = { ...snapshot.layout, [ui.view]: positions };
 
   const result = await window.fragmentor.saveLayout({ dir: snapshot.dir, viewPath: ui.view, positions });
   if (!result.ok) {
     ui.status = { text: `Could not save the layout: ${result.error}`, tone: "bad" };
-    notify();
+    notify({ redraw: false });
   }
 }
 
@@ -245,7 +311,8 @@ function attachNodeBehaviour(group: SVGGElement, node: GraphNode): void {
       if (ui.selection.has(node.key)) ui.selection.delete(node.key);
       else ui.selection.add(node.key);
       ui.selectedBus = null;
-      notify();
+      applySelection();
+      notify({ redraw: false });
       return;
     }
 
@@ -253,7 +320,8 @@ function attachNodeBehaviour(group: SVGGElement, node: GraphNode): void {
       ui.selection.clear();
       ui.selection.add(node.key);
       ui.selectedBus = null;
-      notify();
+      applySelection();
+      notify({ redraw: false });
     }
 
     if (!currentLayout) return;
@@ -265,32 +333,40 @@ function attachNodeBehaviour(group: SVGGElement, node: GraphNode): void {
       origin: new Map([...ui.selection].map((key) => [key, { ...(currentLayout!.get(key) ?? { x: 0, y: 0 }) }])),
     };
     element("canvas-svg").classList.add("dragging");
-    group.setPointerCapture(event.pointerId);
+
+    // Tracked on the window rather than through pointer capture: the pointer
+    // can leave the block it started on, and capture is refused outright for a
+    // pointer the browser is not already tracking.
+    const onMove = (move: PointerEvent) => {
+      if (!drag || drag.pointerId !== move.pointerId || !currentLayout) return;
+
+      const dx = (move.clientX - drag.startX) / ui.zoom;
+      const dy = (move.clientY - drag.startY) / ui.zoom;
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+        drag.moved = true;
+        ui.userAdjusted = true;
+      }
+
+      for (const [key, origin] of drag.origin) currentLayout.set(key, { x: origin.x + dx, y: origin.y + dy });
+      applyPositions();
+    };
+
+    const onUp = (up: PointerEvent) => {
+      if (drag && drag.pointerId !== up.pointerId) return;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+
+      element("canvas-svg").classList.remove("dragging");
+      const moved = drag?.moved ?? false;
+      drag = null;
+      if (moved) void persistLayout();
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   });
-
-  group.addEventListener("pointermove", (event) => {
-    if (!drag || drag.pointerId !== event.pointerId || !currentLayout) return;
-    const dx = (event.clientX - drag.startX) / ui.zoom;
-    const dy = (event.clientY - drag.startY) / ui.zoom;
-    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-      drag.moved = true;
-      ui.userAdjusted = true;
-    }
-    for (const [key, origin] of drag.origin) currentLayout.set(key, { x: origin.x + dx, y: origin.y + dy });
-    renderCanvas();
-  });
-
-  const finish = (event: PointerEvent) => {
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    element("canvas-svg").classList.remove("dragging");
-    const moved = drag.moved;
-    drag = null;
-    if (moved) void persistLayout();
-    notify();
-  };
-
-  group.addEventListener("pointerup", finish);
-  group.addEventListener("pointercancel", finish);
 
   group.addEventListener("dblclick", (event) => {
     event.stopPropagation();
@@ -298,12 +374,18 @@ function attachNodeBehaviour(group: SVGGElement, node: GraphNode): void {
   });
 
   group.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
+    if (event.key === "Enter" && node.block?.kind === "composite") {
+      event.preventDefault();
+      openDiagram(node.block.path);
+      return;
+    }
+    if (event.key !== " ") return;
     event.preventDefault();
     ui.selection.clear();
     ui.selection.add(node.key);
     ui.selectedBus = null;
-    notify();
+    applySelection();
+    notify({ redraw: false });
   });
 }
 
@@ -312,7 +394,7 @@ export function openDiagram(path: string): void {
   ui.selection.clear();
   ui.selectedBus = null;
   ui.userAdjusted = false;
-  notify();
+  notify({ redraw: true });
   fitWhenReady(20);
 }
 
@@ -347,7 +429,8 @@ export function setUpCanvasGestures(): void {
     if (clicked) {
       ui.selection.clear();
       ui.selectedBus = null;
-      notify();
+      applySelection();
+      notify({ redraw: false });
     }
   };
 
@@ -424,7 +507,7 @@ export function resetLayout(): void {
   delete layout[ui.view];
   snapshot.layout = layout;
   ui.userAdjusted = false;
-  notify();
+  notify({ redraw: true });
   void window.fragmentor.saveLayout({ dir: snapshot.dir, viewPath: ui.view, positions: {} });
   fitToView();
 }

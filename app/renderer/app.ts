@@ -266,10 +266,17 @@ function renderStatus(): void {
   }
 }
 
-export function render(): void {
+/** Everything except the diagram, which keeps its elements between clicks. */
+function renderPanels(): void {
   renderPanes();
   renderCrumbs();
   renderTree();
+  renderInspector();
+  renderStatus();
+}
+
+export function render(): void {
+  renderPanels();
   if (ui.snapshot) renderCanvas();
   renderInspector();
   renderStatus();
@@ -316,7 +323,9 @@ function reportFailure(error: unknown): void {
 }
 
 try {
-  onCanvasChange(render);
+  // A selection or a drag updates the panels only: rebuilding the diagram
+  // would replace the element the gesture is happening on.
+  onCanvasChange(({ redraw }) => (redraw ? render() : renderPanels()));
   onInspectorChange(render);
   onBenchChange(render);
   wireToolbar();

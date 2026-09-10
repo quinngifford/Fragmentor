@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Blocks run. The job-ranker system is fully implemented and can be executed from the test bench, contract-checked on both sides. Next is the conformance check that holds written code to the diagram.
+Blocks run, and tests can be saved against them. The job-ranker system is fully implemented and ships with saved tests. Next is the conformance check that holds written code to the diagram.
 
 ## Working
 
@@ -17,6 +17,7 @@ Blocks run. The job-ranker system is fully implemented and can be executed from 
 - **Self-hosted example.** `examples/contract-generator` is Fragmentor describing its own contract generator as blocks. `examples/job-ranker` holds two systems: the ranker in TypeScript and an embedding system in Python. Generated TypeScript typechecks (`npm run check:examples`) and generated Python parses (`npm run check:examples:py`).
 - **Desktop application** (Electron). Opens a project from disk, draws its diagram, and writes changes back. Pan and zoom, draggable blocks whose positions are saved into the project's `layout.json`, bus-grouped connections, ctrl-click multi-select, per-bus colours, and a code panel that saves `impl.ts` to disk. Generated `contract.ts` is shown read-only, because it is derived from the diagram.
 - **Running blocks.** A block runs in a separate process against values typed into the test bench, with substitutes for its capabilities. The input is checked against the contract before anything runs and the output is checked afterwards, so a wrong value is a message rather than a crash and a block that returns the wrong shape is caught. Implementations are compiled into a throwaway copy, so nothing is written into the project.
+- **Saved tests.** A block's tests live in `cases.json` in its own folder, so they travel with it. A case is an input and, optionally, an expected output; running them reports passed, failed with the exact differences, or unchecked when there is no expectation yet. The system is compiled once for the whole run.
 - **A worked system that actually works.** Every block of `examples/job-ranker`'s TypeScript system is implemented, including the composite glue. Running `rank-jobs` reads a postings file through its FileSystem capability, scores four postings and ranks them.
 - **The application checks itself.** `npm run check:app` starts the real window, opens an example, edits a block's code, saves it, restores it, and reports what was drawn — then captures a screenshot to `dist/self-check.png`. It fails the command if the interface did not draw.
 
@@ -24,7 +25,7 @@ Blocks run. The job-ranker system is fully implemented and can be executed from 
 
 - Leaf implementations and composite glue. Only the contract layer is generated; every `impl.ts` still throws.
 - The conformance check that holds written code to the diagram.
-- Test generation. Every block is meant to have generated tests; none exist yet.
+- Generated tests. Tests can be written and saved by hand, but the AI does not yet propose them.
 - Decomposition from inside the application. The AI loop exists but is only reachable from tests.
 - Running Python blocks, and running the `embed-postings` system at all.
 

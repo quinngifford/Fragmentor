@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
 import { CHANNELS } from "./ipc.js";
-import type { Result, RunBlockRequest, SaveLayoutRequest, WriteImplRequest } from "./ipc.js";
+import type { Result, RunBlockRequest, SaveCasesRequest, SaveLayoutRequest, WriteImplRequest } from "./ipc.js";
 import { projectSnapshot } from "../src/project/snapshot.js";
 import type { ProjectSnapshot } from "../src/project/snapshot.js";
 import { saveViewLayout } from "../src/project/layout.js";
@@ -11,8 +11,9 @@ import { blockDir, loadProject, systemOf } from "../src/project/project.js";
 import { getPack } from "../src/lang/index.js";
 import { emitProject } from "../src/codegen/emit.js";
 import { resolveInside } from "../src/project/safePath.js";
-import { runBlock } from "../src/run/run.js";
-import type { RunOutcome } from "../src/run/run.js";
+import { runBlock, runCases } from "../src/run/run.js";
+import type { CaseResult, RunOutcome } from "../src/run/run.js";
+import { saveCases } from "../src/run/cases.js";
 import type { EmitResult } from "../src/codegen/emit.js";
 
 /**
@@ -158,6 +159,24 @@ function registerHandlers(): void {
     }
   });
 
+  ipcMain.handle(CHANNELS.saveCases, async (_event, request: SaveCasesRequest): Promise<Result<null>> => {
+    try {
+      resolveInside(blockDir(request.dir, request.blockPath), "cases.json");
+      await saveCases(request.dir, request.blockPath, request.cases);
+      return ok(null);
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  ipcMain.handle(CHANNELS.runCases, async (_event, dir: string, blockPath: string): Promise<Result<CaseResult[]>> => {
+    try {
+      return ok(await runCases(dir, blockPath));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
   ipcMain.handle(CHANNELS.revealBlock, async (_event, dir: string, blockPath: string): Promise<Result<null>> => {
     try {
       shell.showItemInFolder(resolveInside(blockDir(dir, blockPath), "block.json"));
@@ -260,11 +279,58 @@ function smokeScript(exampleDir: string): string {
       }
     }
 
+    // Each of these is reported rather than allowed to abort the whole check.
+    const attempt = async (run) => {
+      try {
+        return await run();
+      } catch (error) {
+        return "THREW: " + (error && error.message ? error.message : String(error));
+      }
+    };
+
+    const nodeOf = (key) => document.querySelector('.block-box[data-key="' + key + '"]');
+
+    const tests = await attempt(async () => {
+      const runAll = [...document.querySelectorAll(".section .btn")]
+        .find((button) => button.textContent === "Run all tests");
+      if (!runAll) return "no run-all button";
+      if (runAll.disabled) return "run-all disabled";
+      runAll.click();
+      await wait(9000);
+      const summary = document.querySelector(".case-summary");
+      return summary ? summary.textContent : "no summary";
+    });
+
+    const dragged = await attempt(async () => {
+      const target = nodeOf("load-postings");
+      if (!target) return "no block to drag";
+      const before = target.getAttribute("transform");
+      const at = (type, x, y) =>
+        new PointerEvent(type, { bubbles: true, pointerId: 7, clientX: x, clientY: y, isPrimary: true });
+      target.dispatchEvent(at("pointerdown", 400, 400));
+      window.dispatchEvent(at("pointermove", 480, 460));
+      window.dispatchEvent(at("pointerup", 480, 460));
+      await wait(400);
+      return before === target.getAttribute("transform") ? "DID NOT MOVE" : "moved";
+    });
+
+    const openedByDoubleClick = await attempt(async () => {
+      const composite = nodeOf("score-posting");
+      if (!composite) return "no composite to open";
+      composite.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      await wait(700);
+      const crumb = document.querySelector('.crumb[aria-current="true"]');
+      return crumb ? crumb.textContent : "no current crumb";
+    });
+
     return {
       stage: "opened",
       bootError: (document.querySelector(".canvas-empty") || {}).textContent || null,
       ...drawn,
       ran,
+      tests,
+      dragged,
+      openedByDoubleClick,
       savedToDisk: /Saved .*impl\\.ts/.test(afterSave),
       saveMessage: afterSave.slice(-70),
       restoredCleanly,

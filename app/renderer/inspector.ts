@@ -3,7 +3,7 @@ import { BUS_PALETTE, busColors, requireSnapshot, ui } from "./state.js";
 import { busColour, connectionCode } from "./graph.js";
 import type { Bus, Graph } from "./graph.js";
 import { graphInView, openDiagram } from "./canvas.js";
-import { benchSection } from "./bench.js";
+import { benchSections } from "./bench.js";
 
 let notify: () => void = () => {};
 export function onInspectorChange(callback: () => void): void {
@@ -162,7 +162,7 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   panel.append(portSection("Outputs", block.outputs));
   panel.append(portSection("Capabilities", block.capabilities, true));
   panel.append(codeSection(block));
-  panel.append(benchSection(block));
+  for (const section of benchSections(block)) panel.append(section);
 }
 
 function busPanel(panel: HTMLElement, graph: Graph, bus: Bus): void {

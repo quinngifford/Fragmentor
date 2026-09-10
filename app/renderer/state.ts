@@ -1,5 +1,5 @@
 import type { ProjectSnapshot } from "../../src/project/snapshot.js";
-import type { RunOutcome } from "../../src/run/run.js";
+import type { CaseResult, RunOutcome } from "../../src/run/run.js";
 
 /**
  * What the interface is currently showing. Kernel types are imported for their
@@ -29,6 +29,12 @@ export interface UiState {
   runs: Map<string, RunOutcome>;
   /** Blocks currently running. */
   running: Set<string>;
+  /** The last result of running each block's saved tests. */
+  caseResults: Map<string, CaseResult[]>;
+  /** Blocks whose saved tests are running. */
+  runningCases: Set<string>;
+  /** The name being typed for a new test, per block. */
+  caseNames: Map<string, string>;
   status: { text: string; tone: "info" | "good" | "bad" } | null;
 }
 
@@ -48,6 +54,9 @@ export const ui: UiState = {
   benchInputs: new Map(),
   runs: new Map(),
   running: new Set(),
+  caseResults: new Map(),
+  runningCases: new Set(),
+  caseNames: new Map(),
   status: null,
 };
 
