@@ -311,7 +311,16 @@ function smokeScript(exampleDir: string): string {
       window.dispatchEvent(at("pointermove", 480, 460));
       window.dispatchEvent(at("pointerup", 480, 460));
       await wait(400);
-      return before === target.getAttribute("transform") ? "DID NOT MOVE" : "moved";
+      const moved = before !== target.getAttribute("transform");
+
+      // Drag it back, so running this check leaves the example unchanged.
+      target.dispatchEvent(at("pointerdown", 480, 460));
+      window.dispatchEvent(at("pointermove", 400, 400));
+      window.dispatchEvent(at("pointerup", 400, 400));
+      await wait(400);
+
+      const restored = before === target.getAttribute("transform");
+      return moved ? (restored ? "moved" : "moved but not restored") : "DID NOT MOVE";
     });
 
     const openedByDoubleClick = await attempt(async () => {
@@ -323,6 +332,38 @@ function smokeScript(exampleDir: string): string {
       return crumb ? crumb.textContent : "no current crumb";
     });
 
+    // Finish on a block that has saved tests, scrolled to them, so the
+    // screenshot this check captures shows the part worth looking at.
+    const shown = await attempt(async () => {
+      const withTests = [...document.querySelectorAll(".tree .node")]
+        .find((node) => node.textContent.includes("extract-profile-keywords"));
+      if (!withTests) return "not found";
+      withTests.click();
+      await wait(400);
+
+      const runAll = [...document.querySelectorAll(".section .btn")]
+        .find((button) => button.textContent === "Run all tests");
+      if (runAll && !runAll.disabled) {
+        runAll.click();
+        await wait(6000);
+      }
+
+      // Re-select after the run, since finishing redraws the panels, then
+      // scroll so the captured screenshot shows the tests.
+      [...document.querySelectorAll(".tree .node")]
+        .find((node) => node.textContent.includes("extract-profile-keywords"))
+        .click();
+      await wait(400);
+
+      const panel = document.getElementById("inspector-pane");
+      panel.scrollTop = panel.scrollHeight;
+      await wait(400);
+
+      const heading = document.querySelector("#inspector h2");
+      const summary = document.querySelector(".case-summary");
+      return (heading ? heading.textContent : "no heading") + " / " + (summary ? summary.textContent : "no summary");
+    });
+
     return {
       stage: "opened",
       bootError: (document.querySelector(".canvas-empty") || {}).textContent || null,
@@ -331,6 +372,7 @@ function smokeScript(exampleDir: string): string {
       tests,
       dragged,
       openedByDoubleClick,
+      shown,
       savedToDisk: /Saved .*impl\\.ts/.test(afterSave),
       saveMessage: afterSave.slice(-70),
       restoredCleanly,
@@ -353,6 +395,11 @@ function attachSmokeCheck(window: BrowserWindow): void {
           smokeScript(path.join(repoRoot, "examples", "job-ranker")),
         );
         console.log(JSON.stringify(report, null, 2));
+
+        // The window needs a moment to composite what the script just did,
+        // or the capture shows a frame from before it.
+        window.webContents.invalidate();
+        await new Promise((resolve) => setTimeout(resolve, 900));
 
         const shot = path.join(repoRoot, "dist", "self-check.png");
         await writeFile(shot, (await window.webContents.capturePage()).toPNG());
@@ -384,6 +431,9 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // A window that is not in front gets its painting throttled, which makes
+      // the self-check capture a frame from several steps ago.
+      backgroundThrottling: !selfChecking(),
     },
   });
 

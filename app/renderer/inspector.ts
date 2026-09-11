@@ -21,8 +21,9 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-function section(title: string): HTMLElement {
-  const node = el("section", "section");
+/** `major` marks one of the three areas the panel is divided into. */
+function section(title: string, major = false): HTMLElement {
+  const node = el("section", major ? "section major" : "section");
   node.append(el("h3", undefined, title));
   return node;
 }
@@ -55,7 +56,7 @@ function portSection(
 }
 
 function codeSection(block: SnapshotBlock): HTMLElement {
-  const node = section("Code");
+  const node = section("Code", true);
 
   const tabs = el("div", "code-tabs");
   for (const [key, label] of [["impl", block.files.impl], ["contract", block.files.contract]] as const) {

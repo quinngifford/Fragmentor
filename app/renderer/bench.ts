@@ -251,22 +251,10 @@ function caseRow(block: SnapshotBlock, testCase: TestCase, result: CaseResult | 
   return row;
 }
 
-function casesSection(block: SnapshotBlock): HTMLElement {
-  const node = el("section", "section");
-  node.append(el("h3", undefined, "Saved tests"));
+function newCaseBox(block: SnapshotBlock): HTMLElement {
+  const box = el("div", "case-new");
+  box.append(el("h4", undefined, "Save the current values as a test"));
 
-  const results = ui.caseResults.get(block.path);
-  const byName = new Map((results ?? []).map((result) => [result.name, result]));
-
-  if (block.cases.length === 0) {
-    node.append(el("p", "bench-note", "No tests saved yet. Fill in the values above and save them as a test."));
-  } else {
-    const list = el("div", "cases");
-    for (const testCase of block.cases) list.append(caseRow(block, testCase, byName.get(testCase.name)));
-    node.append(list);
-  }
-
-  // Saving the current input, optionally with the last output as the expectation.
   const lastRun = ui.runs.get(block.path);
   const canExpect = Boolean(lastRun?.ok);
 
@@ -282,14 +270,16 @@ function casesSection(block: SnapshotBlock): HTMLElement {
   expectBox.checked = canExpect;
   expectBox.disabled = !canExpect;
 
-  const expectLabel = el("label", undefined, canExpect ? "expect the last output" : "run the block first to expect an output");
+  const expectLabel = el(
+    "label",
+    undefined,
+    canExpect ? "Expect the output it just produced" : "Run the block first to record an expected output",
+  );
   expectLabel.htmlFor = expectBox.id;
-  expectLabel.style.fontSize = "11.5px";
-  expectLabel.style.color = "var(--ink-dim)";
 
-  const save = el("button", "btn quiet", "Save as test");
+  const save = el("button", "btn quiet", "Save");
   save.addEventListener("click", () => {
-    const name = (ui.caseNames.get(block.path) ?? "").trim();
+    const name = nameField.value.trim();
     if (!name) {
       ui.status = { text: "Give the test a name first.", tone: "bad" };
       notify();
@@ -301,46 +291,64 @@ function casesSection(block: SnapshotBlock): HTMLElement {
       ? { name, input: draft, expected: structuredClone(lastRun.output) }
       : { name, input: draft };
 
+    // Saving under an existing name replaces that test rather than adding a
+    // second one with the same name, which nothing could tell apart.
     const kept = block.cases.filter((entry) => entry.name !== name);
     ui.caseNames.set(block.path, "");
     void writeCases(block, [...kept, testCase]);
   });
 
-  const saveRow = el("div", "case-save");
-  saveRow.append(nameField, save);
-  node.append(saveRow);
+  const row = el("div", "case-new-row");
+  row.append(nameField, save);
 
-  const expectRow = el("div", "case-save");
-  expectRow.append(expectBox, expectLabel);
-  node.append(expectRow);
+  const expect = el("div", "case-expect");
+  expect.append(expectBox, expectLabel);
 
-  // Running them all.
-  const runAll = el("button", "btn", "Run all tests");
-  runAll.disabled = block.cases.length === 0 || ui.runningCases.has(block.path) || !block.implemented;
-  runAll.addEventListener("click", () => {
-    void (async () => {
-      ui.runningCases.add(block.path);
-      ui.caseResults.delete(block.path);
-      notify();
+  box.append(row, expect);
+  return box;
+}
 
-      const outcome = await window.fragmentor.runCases(requireSnapshot().dir, block.path);
-      ui.runningCases.delete(block.path);
+function casesSection(block: SnapshotBlock): HTMLElement {
+  const node = el("section", "section");
+  node.append(el("h3", undefined, "Saved tests"));
 
-      if (!outcome.ok) {
-        ui.status = { text: `Could not run the tests: ${outcome.error}`, tone: "bad" };
-      } else {
-        ui.caseResults.set(block.path, outcome.value);
-        const passed = outcome.value.filter((entry) => entry.status === "passed").length;
-        const checked = outcome.value.filter((entry) => entry.status !== "unchecked").length;
-        ui.status = {
-          text: `${passed} of ${checked} test${checked === 1 ? "" : "s"} passed.`,
-          tone: passed === checked ? "good" : "bad",
-        };
-      }
-      notify();
-    })();
-  });
-  node.append(runAll);
+  const results = ui.caseResults.get(block.path);
+  const byName = new Map((results ?? []).map((result) => [result.name, result]));
+
+  if (block.cases.length === 0) {
+    node.append(el("p", "bench-note", "No tests saved yet."));
+  } else {
+    const list = el("div", "cases");
+    for (const testCase of block.cases) list.append(caseRow(block, testCase, byName.get(testCase.name)));
+    node.append(list);
+
+    const runAll = el("button", "btn", "Run all tests");
+    runAll.disabled = ui.runningCases.has(block.path) || !block.implemented;
+    runAll.addEventListener("click", () => {
+      void (async () => {
+        ui.runningCases.add(block.path);
+        ui.caseResults.delete(block.path);
+        notify();
+
+        const outcome = await window.fragmentor.runCases(requireSnapshot().dir, block.path);
+        ui.runningCases.delete(block.path);
+
+        if (!outcome.ok) {
+          ui.status = { text: `Could not run the tests: ${outcome.error}`, tone: "bad" };
+        } else {
+          ui.caseResults.set(block.path, outcome.value);
+          const passed = outcome.value.filter((entry) => entry.status === "passed").length;
+          const checked = outcome.value.filter((entry) => entry.status !== "unchecked").length;
+          ui.status = {
+            text: `${passed} of ${checked} test${checked === 1 ? "" : "s"} passed.`,
+            tone: passed === checked ? "good" : "bad",
+          };
+        }
+        notify();
+      })();
+    });
+    node.append(runAll);
+  }
 
   if (ui.runningCases.has(block.path)) node.append(el("p", "bench-note", "Running tests…"));
 
@@ -362,11 +370,12 @@ function casesSection(block: SnapshotBlock): HTMLElement {
     }
   }
 
+  node.append(newCaseBox(block));
   return node;
 }
 
 export function benchSection(block: SnapshotBlock): HTMLElement {
-  const node = el("section", "section bench");
+  const node = el("section", "section bench major");
   node.append(el("h3", undefined, "Test bench"));
 
   const draft = draftFor(block);
