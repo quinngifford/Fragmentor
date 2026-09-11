@@ -9,30 +9,5 @@
       "y": 143
     }
   },
-  "rank-jobs": {
-    "input": {
-      "x": 0,
-      "y": 63
-    },
-    "load-postings": {
-      "x": 431,
-      "y": 99
-    },
-    "extract-profile-keywords": {
-      "x": 300,
-      "y": 143
-    },
-    "score-posting": {
-      "x": 600,
-      "y": 53
-    },
-    "rank-results": {
-      "x": 900,
-      "y": 44
-    },
-    "output": {
-      "x": 1200,
-      "y": 72
-    }
-  }
+  "rank-jobs": {}
 }
