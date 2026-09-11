@@ -9,7 +9,10 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 const CHANNELS = {
   chooseProject: "project:choose",
+  newProject: "project:new",
   loadProject: "project:load",
+  readProject: "project:read",
+  projectChanged: "project:changed",
   recentProjects: "project:recent",
   exampleProjects: "project:examples",
   writeImpl: "block:write-impl",
@@ -23,7 +26,13 @@ const CHANNELS = {
 
 contextBridge.exposeInMainWorld("fragmentor", {
   chooseProject: () => ipcRenderer.invoke(CHANNELS.chooseProject),
+  newProject: () => ipcRenderer.invoke(CHANNELS.newProject),
   loadProject: (dir) => ipcRenderer.invoke(CHANNELS.loadProject, dir),
+  readProject: (dir) => ipcRenderer.invoke(CHANNELS.readProject, dir),
+  // Only the folder is passed on, never the event, which would expose the sender.
+  onProjectChanged: (callback) => {
+    ipcRenderer.on(CHANNELS.projectChanged, (_event, dir) => callback(dir));
+  },
   recentProjects: () => ipcRenderer.invoke(CHANNELS.recentProjects),
   exampleProjects: () => ipcRenderer.invoke(CHANNELS.exampleProjects),
   writeImpl: (request) => ipcRenderer.invoke(CHANNELS.writeImpl, request),

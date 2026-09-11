@@ -1,4 +1,4 @@
-import type { ProjectSnapshot } from "../../src/project/snapshot.js";
+import type { ProjectLoad } from "../ipc.js";
 import { requireSnapshot, ui } from "./state.js";
 import {
   fitToView,
@@ -9,6 +9,8 @@ import {
   renderCanvas,
   resetLayout,
   setUpCanvasGestures,
+  showBlock,
+  showCanvasMessage,
   watchCanvasSize,
   zoomAbout,
 } from "./canvas.js";
@@ -39,17 +41,64 @@ function el<K extends keyof HTMLElementTagNameMap>(
 /* Opening projects                                                            */
 /* -------------------------------------------------------------------------- */
 
-function adopt(snapshot: ProjectSnapshot): void {
-  ui.snapshot = snapshot;
-  ui.view = snapshot.systems.length > 1 ? PROJECT_VIEW : (snapshot.systems[0]?.rootBlock ?? PROJECT_VIEW);
-  ui.selection.clear();
-  ui.selectedBus = null;
-  ui.edits.clear();
-  ui.userAdjusted = false;
-  ui.status = null;
+/**
+ * Shows what was read from a project folder. `opening` is true when the
+ * person chose the folder, and false when it is being read again because
+ * something changed it on disk — usually the agent.
+ */
+function show(load: ProjectLoad, opening: boolean): void {
+  const fresh = opening || ui.dir !== load.dir;
+
+  // A change that leaves the project exactly as shown is not worth a redraw,
+  // which would take the focus from whatever the person was doing.
+  const unchanged =
+    !fresh &&
+    load.snapshot !== null &&
+    ui.snapshot !== null &&
+    load.error === ui.loadError &&
+    JSON.stringify(load.snapshot) === JSON.stringify(ui.snapshot);
+  if (unchanged) return;
+
+  ui.dir = load.dir;
+  ui.waiting = !load.hasManifest;
+  ui.loadError = load.error;
   document.body.dataset.project = "open";
+
+  if (fresh) {
+    ui.edits.clear();
+    ui.benchInputs.clear();
+    ui.runs.clear();
+    ui.caseResults.clear();
+    ui.status = null;
+  }
+
+  if (!load.snapshot) {
+    // A project that stops reading halfway through a change keeps its last
+    // good diagram on screen, with the reason shown over it, until the next
+    // change puts it right.
+    if (fresh || !load.hasManifest) ui.snapshot = null;
+    render();
+    return;
+  }
+
+  const firstSight = fresh || ui.snapshot === null;
+  ui.snapshot = load.snapshot;
+
+  if (firstSight) {
+    ui.view = load.snapshot.systems.length > 1 ? PROJECT_VIEW : (load.snapshot.systems[0]?.rootBlock ?? PROJECT_VIEW);
+    ui.selection.clear();
+    ui.selectedBus = null;
+    ui.userAdjusted = false;
+  } else if (ui.view !== PROJECT_VIEW && !load.snapshot.blocks[ui.view]) {
+    // The diagram that was on screen no longer exists.
+    ui.view = PROJECT_VIEW;
+    ui.selection.clear();
+    ui.selectedBus = null;
+  }
+
   render();
-  fitWhenReady(20);
+  // Keep whatever the agent added in view, unless the person has arranged the view themselves.
+  if (!ui.userAdjusted) fitWhenReady(20);
 }
 
 async function chooseProject(): Promise<void> {
@@ -59,7 +108,17 @@ async function chooseProject(): Promise<void> {
     render();
     return;
   }
-  if (result.value) adopt(result.value);
+  if (result.value) show(result.value, true);
+}
+
+async function newProject(): Promise<void> {
+  const result = await window.fragmentor.newProject();
+  if (!result.ok) {
+    ui.status = { text: `Could not start a project there: ${result.error}`, tone: "bad" };
+    render();
+    return;
+  }
+  if (result.value) show(result.value, true);
 }
 
 async function openPath(dir: string): Promise<void> {
@@ -69,22 +128,29 @@ async function openPath(dir: string): Promise<void> {
     render();
     return;
   }
-  adopt(result.value);
+  show(result.value, true);
 }
 
+/** Changes arrive in bursts, so only the most recent read may update the screen. */
+let latestRead = 0;
+
 async function reload(): Promise<void> {
-  const snapshot = ui.snapshot;
-  if (!snapshot) return;
-  const view = ui.view;
-  const result = await window.fragmentor.loadProject(snapshot.dir);
+  const dir = ui.dir;
+  if (!dir) return;
+
+  const ticket = ++latestRead;
+  const result = await window.fragmentor.readProject(dir);
+  if (ticket !== latestRead || ui.dir !== dir) return;
+
   if (!result.ok) {
-    ui.status = { text: `Could not reload: ${result.error}`, tone: "bad" };
+    // The folder itself could not be read, which is not the same as waiting
+    // for an agent to write into it.
+    ui.waiting = false;
+    ui.loadError = result.error;
     render();
     return;
   }
-  ui.snapshot = result.value;
-  ui.view = view === PROJECT_VIEW || result.value.blocks[view] ? view : PROJECT_VIEW;
-  render();
+  show(result.value, false);
 }
 
 async function generateCode(): Promise<void> {
@@ -98,10 +164,11 @@ async function generateCode(): Promise<void> {
     return;
   }
 
-  const { written, skipped, problems } = result.value;
-  ui.status = problems.length > 0
-    ? { text: problems[0]!, tone: "bad" }
-    : { text: `Generated ${written.length} files, kept ${skipped.length} existing implementations.`, tone: "good" };
+  const { written, problems } = result.value;
+  const summary = written.length === 0
+    ? "Everything was already up to date."
+    : `Updated ${written.length} file${written.length === 1 ? "" : "s"}.`;
+  ui.status = problems.length > 0 ? { text: problems[0]!, tone: "bad" } : { text: summary, tone: "good" };
 
   await reload();
 }
@@ -114,9 +181,14 @@ async function renderWelcome(): Promise<void> {
   const panel = element("welcome-body");
   panel.replaceChildren();
 
-  const open = el("button", "btn", "Open a project folder…");
+  const actions = el("div", "welcome-actions");
+  const start = el("button", "btn", "New project…");
+  start.title = "Choose an empty folder, then open your coding agent in it";
+  start.addEventListener("click", () => void newProject());
+  const open = el("button", "btn quiet", "Open a project folder…");
   open.addEventListener("click", () => void chooseProject());
-  panel.append(open);
+  actions.append(start, open);
+  panel.append(actions);
 
   const examples = await window.fragmentor.exampleProjects();
   if (examples.ok && examples.value.length > 0) {
@@ -208,17 +280,7 @@ function renderTree(): void {
       if (system) button.append(el("span", "lang", system.displayName));
     }
 
-    button.addEventListener("click", () => {
-      if (block.kind === "composite") {
-        openDiagram(path);
-      } else {
-        ui.view = path.split("/").slice(0, -1).join("/") || PROJECT_VIEW;
-        ui.selection.clear();
-        ui.selection.add(block.id);
-        ui.selectedBus = null;
-        render();
-      }
-    });
+    button.addEventListener("click", () => showBlock(path));
 
     tree.append(button);
     for (const child of block.children) walk(child.path, depth + 1);
@@ -231,39 +293,74 @@ function renderStatus(): void {
   const bar = element("status");
   bar.replaceChildren();
 
-  if (!ui.snapshot) {
-    bar.append(el("span", undefined, "No project open"));
-    return;
-  }
-
-  const snapshot = requireSnapshot();
-  const all = Object.values(snapshot.blocks);
-  const composites = all.filter((b) => b.kind === "composite").length;
-  const implemented = all.filter((block) => block.implemented).length;
-  const graph = graphInView();
-  const errors = snapshot.diagnostics.filter((d) => d.severity === "error").length;
-  const warnings = snapshot.diagnostics.length - errors;
-
   const stat = (label: string, value: string | number, tone?: string) => {
     const span = el("span", tone);
     span.append(document.createTextNode(`${label} `), el("b", undefined, String(value)));
     return span;
   };
 
-  bar.append(el("span", "project-name", snapshot.name));
-  bar.append(el("span", undefined, snapshot.systems.map((system) => `${system.rootBlock} (${system.displayName})`).join("  ")));
-  bar.append(stat("blocks", all.length));
-  bar.append(stat("composite", composites));
-  bar.append(stat("implemented", implemented, implemented === all.length ? "good" : "warn"));
-  if (graph) bar.append(stat("buses in view", graph.buses.size));
-  bar.append(stat("errors", errors, errors > 0 ? "bad" : undefined));
-  bar.append(stat("warnings", warnings, warnings > 0 ? "warn" : undefined));
+  if (!ui.snapshot) {
+    if (!ui.dir) {
+      bar.append(el("span", undefined, "No project open"));
+    } else {
+      bar.append(el("span", "project-name", ui.dir));
+      bar.append(el("span", undefined, ui.waiting ? "waiting for the agent to define the system" : "could not be read"));
+    }
+  } else {
+    const snapshot = ui.snapshot;
+    const all = Object.values(snapshot.blocks);
+    const composites = all.filter((b) => b.kind === "composite").length;
+    const implemented = all.filter((block) => block.implemented).length;
+    const graph = graphInView();
+    const errors = snapshot.diagnostics.filter((d) => d.severity === "error").length;
+    const warnings = snapshot.diagnostics.length - errors;
+
+    bar.append(el("span", "project-name", snapshot.name));
+    bar.append(el("span", undefined, snapshot.systems.map((system) => `${system.rootBlock} (${system.displayName})`).join("  ")));
+    bar.append(stat("blocks", all.length));
+    bar.append(stat("composite", composites));
+    bar.append(stat("implemented", implemented, implemented === all.length ? "good" : "warn"));
+    if (graph) bar.append(stat("buses in view", graph.buses.size));
+    bar.append(stat("errors", errors, errors > 0 ? "bad" : undefined));
+    bar.append(stat("warnings", warnings, warnings > 0 ? "warn" : undefined));
+  }
 
   if (ui.status) {
     const message = el("span", `message ${ui.status.tone}`, ui.status.text);
     message.style.marginLeft = "auto";
     bar.append(message);
   }
+}
+
+/** What the canvas says when a folder is open but there is no diagram to draw. */
+function noDiagramText(): string {
+  if (ui.waiting) {
+    return [
+      "No system has been defined here yet.",
+      "",
+      "Open your coding agent (Claude Code or Codex) in this folder and describe what you want to build:",
+      "",
+      `  ${ui.dir ?? ""}`,
+      "",
+      "The agent learns how Fragmentor projects work from FRAGMENTOR.md. The diagram appears here as soon as it writes fragmentor.json.",
+    ].join("\n");
+  }
+  return [
+    "This project could not be read.",
+    "",
+    ui.loadError ?? "No reason was given.",
+    "",
+    "Fragmentor is watching the folder and will try again when a file in it changes.",
+  ].join("\n");
+}
+
+function renderLoadError(): void {
+  const banner = element("load-error");
+  const showing = Boolean(ui.snapshot && ui.loadError);
+  banner.hidden = !showing;
+  banner.textContent = showing
+    ? `The latest change could not be read, so this is the last version that could.\n\n${ui.loadError}`
+    : "";
 }
 
 /** Everything except the diagram, which keeps its elements between clicks. */
@@ -278,6 +375,8 @@ function renderPanels(): void {
 export function render(): void {
   renderPanels();
   if (ui.snapshot) renderCanvas();
+  else if (ui.dir) showCanvasMessage(noDiagramText());
+  renderLoadError();
   renderInspector();
   renderStatus();
 }
@@ -295,6 +394,7 @@ function wireToolbar(): void {
     ui.showInspector = !ui.showInspector;
     renderPanes();
   });
+  element("new-project").addEventListener("click", () => void newProject());
   element("open-project").addEventListener("click", () => void chooseProject());
   element("generate-code").addEventListener("click", () => void generateCode());
   element("reload-project").addEventListener("click", () => void reload());
@@ -317,7 +417,7 @@ function wireToolbar(): void {
 function reportFailure(error: unknown): void {
   const wrap = document.getElementById("canvas-wrap");
   if (!wrap) return;
-  const note = el("pre", "canvas-empty");
+  const note = el("pre", "canvas-empty boot-error");
   note.textContent = `Something went wrong.\n\n${error instanceof Error ? (error.stack ?? error.message) : String(error)}`;
   wrap.append(note);
 }
@@ -328,6 +428,10 @@ try {
   onCanvasChange(({ redraw }) => (redraw ? render() : renderPanels()));
   onInspectorChange(render);
   onBenchChange(render);
+  // The agent works in the same folder; follow what it does.
+  window.fragmentor.onProjectChanged((dir) => {
+    if (dir === ui.dir) void reload();
+  });
   wireToolbar();
   setUpCanvasGestures();
   watchCanvasSize();

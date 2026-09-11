@@ -58,17 +58,31 @@ const syntaxErrorsIn = (source: string) =>
   }).diagnostics ?? []).map((d) => ts.flattenDiagnosticMessageText(d.messageText, " "));
 
 describe("emitProject", () => {
-  it("writes a contract and a scaffold for every block, plus the shared capabilities", async () => {
+  it("writes a contract and a scaffold for every block, the shared capabilities, and the agent's guide", async () => {
     const result = await emitProject(await loadProject(dir));
 
     expect(result.problems).toEqual([]);
     expect(result.written).toEqual([
+      "FRAGMENTOR.md",
       "blocks/capabilities.ts",
       "blocks/double-it/add-to-self/contract.ts",
       "blocks/double-it/add-to-self/impl.ts",
       "blocks/double-it/contract.ts",
       "blocks/double-it/impl.ts",
     ]);
+
+    // Those are created when a folder is prepared for an agent, and belong to
+    // the person after that, so generating code never brings them back.
+    await expect(readFile(path.join(dir, "AGENTS.md"), "utf8")).rejects.toThrow();
+    await expect(readFile(path.join(dir, "CLAUDE.md"), "utf8")).rejects.toThrow();
+  });
+
+  it("writes nothing when nothing has changed, so a watching window has nothing to redraw", async () => {
+    await emitProject(await loadProject(dir));
+    const second = await emitProject(await loadProject(dir));
+
+    expect(second.written).toEqual([]);
+    expect(second.skipped).toEqual(["blocks/double-it/add-to-self/impl.ts", "blocks/double-it/impl.ts"]);
   });
 
   it("generates contracts that are valid TypeScript", async () => {
@@ -121,7 +135,7 @@ describe("emitProject", () => {
     );
 
     const result = await emitProject(await loadProject(dir));
-    expect(result.written).toEqual([]);
+    expect(result.written.filter((file) => file.startsWith("blocks/"))).toEqual([]);
     expect(result.problems[0]).toContain('unknown kind "QuantumComputer"');
   });
 });

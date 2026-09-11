@@ -4,11 +4,14 @@
   "private": true,
   "type": "module",
   "description": "A modular block-based environment for AI-assisted software development",
+  "bin": {
+    "fragmentor": "bin/fragmentor.js"
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "build:examples": "tsx scripts/generate-examples.ts",
+    "fragmentor": "tsx src/cli.ts",
     "check:examples": "tsc -p examples/tsconfig.json",
     "build:app": "tsc -p tsconfig.app.json && tsx scripts/copy-app-assets.ts",
     "app": "npm run build:app && electron .",
@@ -16,14 +19,13 @@
     "check:examples:py": "python -c \"import ast,pathlib; [ast.parse(f.read_text(encoding=chr(117)+chr(116)+chr(102)+chr(45)+chr(56)), str(f)) for f in pathlib.Path(chr(101)+chr(120)+chr(97)+chr(109)+chr(112)+chr(108)+chr(101)+chr(115)).rglob(chr(42)+chr(46)+chr(112)+chr(121))]; print(chr(111)+chr(107))\""
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.124.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5.7.2",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "electron": "^44.3.0",
-    "tsx": "^4.23.13",
-    "typescript": "^5.7.2",
     "vitest": "^5.0.0"
   },
   "main": "dist/app/main.js"

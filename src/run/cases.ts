@@ -42,17 +42,47 @@ export function hasExpectation(testCase: TestCase): boolean {
   return testCase.expected !== undefined;
 }
 
-export async function loadCases(projectDir: string, blockPath: string): Promise<TestCase[]> {
+/**
+ * A block's saved tests, and why they could not be read if they could not.
+ * A missing file just means there are no tests yet. A broken one is reported,
+ * because an agent writing tests by hand would otherwise watch them vanish.
+ */
+export async function readCases(
+  projectDir: string,
+  blockPath: string,
+): Promise<{ cases: TestCase[]; problem: string | null }> {
+  let text: string;
+  try {
+    text = await readFile(casesPath(projectDir, blockPath), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { cases: [], problem: null };
+    const reason = error instanceof Error ? error.message : String(error);
+    return { cases: [], problem: `Its tests could not be read: ${reason}` };
+  }
+
   let raw: unknown;
   try {
-    raw = JSON.parse(await readFile(casesPath(projectDir, blockPath), "utf8"));
-  } catch {
-    return [];
+    raw = JSON.parse(text);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return { cases: [], problem: `Its tests could not be read: cases.json is not valid JSON (${reason}).` };
   }
 
   const parsed = casesSchema.safeParse(raw);
-  // A tests file that cannot be read should not stop a block being opened.
-  return parsed.success ? (parsed.data as TestCase[]) : [];
+  if (!parsed.success) {
+    const detail = parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
+    return {
+      cases: [],
+      problem: `Its tests could not be read: cases.json should be a list of { "name", "input", "expected" } (${detail}).`,
+    };
+  }
+
+  return { cases: parsed.data as TestCase[], problem: null };
+}
+
+/** A block's saved tests. A file that cannot be read should not stop a block being opened. */
+export async function loadCases(projectDir: string, blockPath: string): Promise<TestCase[]> {
+  return (await readCases(projectDir, blockPath)).cases;
 }
 
 export async function saveCases(projectDir: string, blockPath: string, cases: TestCase[]): Promise<void> {

@@ -2,7 +2,7 @@
 
 Fragmentor is a modular, block-based environment for AI-assisted software development.
 
-Software is designed as a hierarchy of blocks — systems and subsystems — with precisely defined contracts and connections between them. The AI decomposes a design into blocks, writes the code for each block, writes verification tests for every block, and wires the blocks together. The user inspects, tests, and steers the structure through a visual canvas.
+Software is designed as a hierarchy of blocks — systems and subsystems — with precisely defined contracts and connections between them. An AI coding agent decomposes a design into blocks, writes the code for each block, writes verification tests for every block, and wires the blocks together. Fragmentor gives that work its structure, makes it visible, and verifies it. The user inspects, tests, and steers the structure through a visual canvas.
 
 The reference point is MATLAB Simulink, applied to general software development rather than signal processing.
 
@@ -52,17 +52,33 @@ Drift is therefore a visible, reported state on a block rather than silent rot.
 
 An alternative design in which the diagram compiles directly into composite code is recorded in `ALTERNATIVE-COMPILED-GRAPH.md`. It is not the current direction.
 
-## AI decomposition
+## Where the AI fits
 
-The user defines as much of the block hierarchy as they want, at any level. The AI fills in the rest.
+Fragmentor does not contain an AI and never calls a model. The AI is an external coding agent — Claude Code, Codex, or anything like them — working in the same project folder. The agent builds the system; Fragmentor supplies the structure, the visibility, and the verification.
 
-Decomposition is a review loop, not a single shot. For an undefined block, the AI proposes child blocks, their contracts, and the wiring between them. The user accepts, edits, regenerates, or pins the block as a leaf. Code is written only after the structure is agreed, working bottom-up.
+The workflow is:
 
-Decomposition depth is user-controlled. A default granularity applies to the whole project, individual blocks may override it, and any block may be pinned as a leaf. Granularity is expressed as a stop condition the AI evaluates — a block is a leaf when it has one clear responsibility with no further useful internal structure — with a hard depth limit as a safety net.
+1. The user gives the agent a goal.
+2. The agent defines the architecture as blocks, following Fragmentor's rules.
+3. Fragmentor reads that structure from disk and draws it, redrawing whenever the agent changes a file.
+4. The agent writes the implementation and the tests.
+5. Fragmentor validates the diagram, checks the code against it, and runs the tests.
+6. The agent fixes whatever is reported, and the loop repeats.
+
+A project keeps two things apart:
+
+- **The architecture**, which is specific to the project and machine-readable: `fragmentor.json` and a `block.json` for each block. It is the single source of truth for the diagram.
+- **The rules for working on it**, which are general and the same in every project: `FRAGMENTOR.md`, which Fragmentor writes into the project and keeps current. `AGENTS.md` and `CLAUDE.md` point agents at it, and are otherwise the user's, for instructions specific to the project.
+
+The agent checks its work with the `fragmentor` command, which runs the same checks the application relies on and reports them as text and an exit status.
+
+Decomposition is still a review loop rather than a single shot. The user defines as much of the block hierarchy as they want, at any level, and the agent fills in the rest. The agent settles the structure first and lets the user review it on the canvas; code is written only after the structure is agreed, working bottom-up.
+
+Decomposition depth is user-controlled. A default granularity applies to the whole project, individual blocks may override it, and any block may be pinned as a leaf. Granularity is expressed as a stop condition the agent evaluates — a block is a leaf when it has one clear responsibility with no further useful internal structure — with a hard depth limit as a safety net.
 
 ## Verification
 
-Every block has generated tests. This is not optional and is not limited to leaf blocks.
+Every block has tests, written by the agent alongside its code. This is not optional and is not limited to leaf blocks.
 
 Beyond automated tests, each block has an interactive test bench. The block's input schema generates an input form, capability ports are filled with substitutes, and the user runs the block and compares actual outputs against expected ones, with data visualization where the output shape supports it.
 
@@ -72,11 +88,11 @@ Each block carries a state: specified, implemented, tests passing, or stale. A b
 
 ## Developer interface
 
-The interface is a visual canvas — dark, high-contrast, structural — where the user navigates the hierarchy, opens blocks, reads code, runs tests, inspects wires, and directs the AI.
+The interface is a visual canvas — dark, high-contrast, structural — where the user navigates the hierarchy, opens blocks, reads code, runs tests, inspects wires, and watches the agent's work take shape. The user directs the agent in the agent's own tool; Fragmentor is where they see and check what it built.
 
-**The user interacts through the UI.** Understanding the structure should come from looking at it, and every action the user takes should be a clear, clickable control. The user is never expected to learn or type commands to operate Fragmentor. Any command-line tooling exists as internal scaffolding for development and verification of Fragmentor itself, and is not a user-facing surface.
+**The user interacts through the UI.** Understanding the structure should come from looking at it, and every action the user takes should be a clear, clickable control. The user is never expected to learn or type commands to operate Fragmentor. The `fragmentor` command exists for the coding agent, and for developing and verifying Fragmentor itself; it is not a user-facing surface.
 
-**Fragmentor is a desktop application.** There is no web version. The work is local: a project is a directory of files, the tools it drives are local, and nothing needs a server. The kernel is a library the application consumes, never a tool the user drives directly.
+**Fragmentor is a desktop application.** There is no web version. The work is local: a project is a directory of files, the tools it drives are local, and nothing needs a server. The kernel is a library that the application and the agent's command both consume, never a tool the user drives directly.
 
 If projects are ever shared, that happens through an ordinary repository holding the blocks and their code, rather than by moving the application online. Nothing in the file format should assume otherwise.
 
@@ -95,6 +111,7 @@ Two properties of the design limit which languages fit cleanly, and should be ch
 
 Not in scope now:
 
+- Fragmentor calling AI models itself; the AI is always an agent working in the project folder
 - importing or reverse-engineering existing codebases into blocks
 - connecting systems to each other, in the same language or across languages
 - a browser version of the application, or any hosted service

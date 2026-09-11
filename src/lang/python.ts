@@ -203,6 +203,7 @@ export const pythonPack: LanguagePack = {
   // Generating Python works; running it needs the module layout question
   // in STATUS.md settled first.
   canRun: false,
+  canCheck: false,
   isUnimplemented: (source) => source.includes(UNIMPLEMENTED),
 };
 

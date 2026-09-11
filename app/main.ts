@@ -1,15 +1,18 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdirSync, mkdtempSync, watch, writeFileSync } from "node:fs";
+import type { FSWatcher } from "node:fs";
+import { access, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
 import { CHANNELS } from "./ipc.js";
-import type { Result, RunBlockRequest, SaveCasesRequest, SaveLayoutRequest, WriteImplRequest } from "./ipc.js";
+import type { ProjectLoad, Result, RunBlockRequest, SaveCasesRequest, SaveLayoutRequest, WriteImplRequest } from "./ipc.js";
 import { projectSnapshot } from "../src/project/snapshot.js";
-import type { ProjectSnapshot } from "../src/project/snapshot.js";
 import { saveViewLayout } from "../src/project/layout.js";
-import { blockDir, loadProject, systemOf } from "../src/project/project.js";
+import { blockDir, loadProject, manifestPath, systemOf } from "../src/project/project.js";
 import { getPack } from "../src/lang/index.js";
-import { emitProject } from "../src/codegen/emit.js";
+import { emitProject, writeAgentFiles } from "../src/codegen/emit.js";
+import { GUIDE_FILE } from "../src/codegen/guide.js";
 import { resolveInside } from "../src/project/safePath.js";
 import { runBlock, runCases } from "../src/run/run.js";
 import type { CaseResult, RunOutcome } from "../src/run/run.js";
@@ -19,6 +22,10 @@ import type { EmitResult } from "../src/codegen/emit.js";
 /**
  * The main process owns everything with side effects: the window, the disk,
  * and the kernel. The renderer is given data and sends back requests.
+ *
+ * It also watches the open project, because the person is rarely the one
+ * changing it: a coding agent works in the same folder, and the window has
+ * to keep up with it.
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -30,12 +37,44 @@ function selfChecking(): boolean {
   return Boolean(process.env.FRAGMENTOR_SMOKE) || process.argv.includes("--smoke");
 }
 
+/**
+ * The self-check works in a throwaway folder with its own settings, so running
+ * it never edits the examples in the repository or the user's recent projects.
+ * The settings path has to be chosen before the application is ready.
+ */
+const selfCheck = selfChecking() ? prepareSelfCheck() : null;
+
+function prepareSelfCheck(): { root: string; projectDir: string } {
+  const root = mkdtempSync(path.join(tmpdir(), "fragmentor-self-check-"));
+  const projectDir = path.join(root, "project");
+  const userData = path.join(root, "user-data");
+  mkdirSync(projectDir);
+  mkdirSync(userData);
+  // Offered on the welcome screen as a recent project, which is how the check opens it.
+  writeFileSync(path.join(userData, "recent-projects.json"), JSON.stringify([projectDir]));
+  app.setPath("userData", userData);
+  return { root, projectDir };
+}
+
 function ok<T>(value: T): Result<T> {
   return { ok: true, value };
 }
 
 function failed(error: unknown): Result<never> {
-  return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  return { ok: false, error: messageOf(error) };
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function exists(file: string): Promise<boolean> {
+  try {
+    await access(file);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function recentFile(): string {
@@ -58,31 +97,158 @@ async function rememberProject(dir: string): Promise<void> {
   await writeFile(recentFile(), `${JSON.stringify(next, null, 2)}\n`, "utf8");
 }
 
-async function openProject(dir: string): Promise<ProjectSnapshot> {
-  const snapshot = await projectSnapshot(dir);
-  await rememberProject(snapshot.dir);
-  return snapshot;
+/**
+ * Reads a folder as a project. The ordinary states an agent leaves a folder in
+ * — nothing defined yet, or a file half written — are reported, not thrown.
+ */
+async function readProject(dir: string): Promise<ProjectLoad> {
+  const resolved = path.resolve(dir);
+  const info = await stat(resolved).catch(() => null);
+  if (!info?.isDirectory()) throw new Error(`${resolved} is not a folder that exists.`);
+
+  if (!(await exists(manifestPath(resolved)))) {
+    // A folder started with New project holds the guide and is waiting for an
+    // agent to define the system. Any other folder is simply not a project.
+    if (!(await exists(path.join(resolved, GUIDE_FILE)))) {
+      throw new Error(`There is no Fragmentor project in ${resolved}. Use New project… to start one there.`);
+    }
+    return { dir: resolved, snapshot: null, hasManifest: false, error: null };
+  }
+
+  try {
+    return { dir: resolved, snapshot: await projectSnapshot(resolved), hasManifest: true, error: null };
+  } catch (error) {
+    return { dir: resolved, snapshot: null, hasManifest: true, error: messageOf(error) };
+  }
 }
 
-function registerHandlers(): void {
-  ipcMain.handle(CHANNELS.chooseProject, async (): Promise<Result<ProjectSnapshot | null>> => {
-    try {
-      const window = BrowserWindow.getFocusedWindow();
-      const picked = window
-        ? await dialog.showOpenDialog(window, { properties: ["openDirectory"], title: "Open a Fragmentor project" })
-        : await dialog.showOpenDialog({ properties: ["openDirectory"], title: "Open a Fragmentor project" });
+/* -------------------------------------------------------------------------- */
+/* Watching                                                                    */
+/* -------------------------------------------------------------------------- */
 
-      const dir = picked.canceled ? undefined : picked.filePaths[0];
-      if (!dir) return ok(null);
-      return ok(await openProject(dir));
+/** One watcher per window, on whichever project that window has open. */
+const watchers = new Map<number, FSWatcher>();
+
+/**
+ * Changes that are nobody's business: the canvas layout, which this
+ * application writes itself, and the folders tools keep inside a project.
+ */
+function ignored(filename: string): boolean {
+  if (filename === "layout.json") return true;
+  return filename.split(/[\\/]/).some((part) => part === "node_modules" || part === "__pycache__" || part.startsWith("."));
+}
+
+function stopWatching(id: number): void {
+  watchers.get(id)?.close();
+  watchers.delete(id);
+}
+
+/**
+ * Tells a window whenever its project changes on disk. An agent writes files
+ * in bursts, so the window hears once things go quiet, not once per file.
+ */
+function watchProject(contents: Electron.WebContents, dir: string): void {
+  const id = contents.id;
+  stopWatching(id);
+
+  let timer: NodeJS.Timeout | undefined;
+  const notify = () => {
+    if (!contents.isDestroyed()) contents.send(CHANNELS.projectChanged, dir);
+  };
+
+  let watcher: FSWatcher;
+  try {
+    watcher = watch(dir, { recursive: true }, (_event, filename) => {
+      if (filename && ignored(filename)) return;
+      clearTimeout(timer);
+      timer = setTimeout(notify, 300);
+    });
+  } catch (error) {
+    // Some systems refuse to watch a very large folder. The project still
+    // opens; it just has to be reloaded by hand.
+    console.warn(`Fragmentor cannot watch ${dir} for changes: ${messageOf(error)}`);
+    return;
+  }
+
+  // The folder was removed or became unreadable. Stop, and let the window's
+  // next read say what happened.
+  watcher.on("error", () => {
+    if (watchers.get(id) === watcher) stopWatching(id);
+    notify();
+  });
+
+  watchers.set(id, watcher);
+}
+
+async function openProject(contents: Electron.WebContents, dir: string): Promise<ProjectLoad> {
+  const load = await readProject(dir);
+  // Watch as soon as the folder has been read, so as little as possible can
+  // change unseen in between.
+  watchProject(contents, load.dir);
+  await rememberProject(load.dir);
+  return load;
+}
+
+async function pickFolder(contents: Electron.WebContents, options: Electron.OpenDialogOptions): Promise<string | undefined> {
+  const window = BrowserWindow.fromWebContents(contents);
+  const picked = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+  return picked.canceled ? undefined : picked.filePaths[0];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Requests from the window                                                    */
+/* -------------------------------------------------------------------------- */
+
+function registerHandlers(): void {
+  ipcMain.handle(CHANNELS.chooseProject, async (event): Promise<Result<ProjectLoad | null>> => {
+    try {
+      const dir = await pickFolder(event.sender, { properties: ["openDirectory"], title: "Open a Fragmentor project" });
+      return ok(dir ? await openProject(event.sender, dir) : null);
     } catch (error) {
       return failed(error);
     }
   });
 
-  ipcMain.handle(CHANNELS.loadProject, async (_event, dir: string): Promise<Result<ProjectSnapshot>> => {
+  ipcMain.handle(CHANNELS.newProject, async (event): Promise<Result<ProjectLoad | null>> => {
     try {
-      return ok(await openProject(dir));
+      const dir = await pickFolder(event.sender, {
+        properties: ["openDirectory", "createDirectory"],
+        title: "Choose a folder for the new project",
+        buttonLabel: "Start project here",
+      });
+      if (!dir) return ok(null);
+
+      // The guide is what tells an agent opened in this folder what to do.
+      const { withoutGuide } = await writeAgentFiles(dir);
+      if (withoutGuide.length > 0) {
+        // Those files are the person's, so they are left alone, but an agent
+        // reading them would never learn the guide is there.
+        const files = withoutGuide.join(" and ");
+        const options: Electron.MessageBoxOptions = {
+          type: "info",
+          message: `Point ${files} at Fragmentor's rules`,
+          detail: `This folder already had ${files}, and Fragmentor never changes files like that. Add a line so your agent reads ${GUIDE_FILE}: "@${GUIDE_FILE}" in CLAUDE.md, or "Read ${GUIDE_FILE} before changing anything." in AGENTS.md.`,
+        };
+        const window = BrowserWindow.fromWebContents(event.sender);
+        await (window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options));
+      }
+      return ok(await openProject(event.sender, dir));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  ipcMain.handle(CHANNELS.loadProject, async (event, dir: string): Promise<Result<ProjectLoad>> => {
+    try {
+      return ok(await openProject(event.sender, dir));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  ipcMain.handle(CHANNELS.readProject, async (_event, dir: string): Promise<Result<ProjectLoad>> => {
+    try {
+      return ok(await readProject(dir));
     } catch (error) {
       return failed(error);
     }
@@ -187,235 +353,397 @@ function registerHandlers(): void {
   });
 }
 
+/* -------------------------------------------------------------------------- */
+/* Self-check                                                                  */
+/* -------------------------------------------------------------------------- */
+
 /**
- * A scripted run of the real interface: open the window, click through to an
- * example project, report what was drawn, and quit. Started with
- * FRAGMENTOR_SMOKE=1, it is how this application gets checked without a person
+ * A scripted run of the real interface, started with --smoke. The main process
+ * plays the agent, changing files in the project, and each step checks that
+ * the window noticed on its own. In between, the script uses the controls a
+ * person would. It is how this application gets checked without anyone
  * watching it.
  */
-function smokeScript(exampleDir: string): string {
-  return `(async () => {
-    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const STEP_HELPERS = `
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const until = async (test, ms = 8000) => {
+    const end = Date.now() + ms;
+    for (;;) {
+      const value = test();
+      if (value || Date.now() > end) return value;
+      await wait(100);
+    }
+  };
+  const text = (selector) => (document.querySelector(selector) || {}).textContent || "";
+`;
+
+const step = (body: string) => `(async () => {${STEP_HELPERS}\n${body}\n})()`;
+
+/** Everything a person does with an open project, against the example. */
+const INTERACTIONS = `
+  const drawn = {
+    projectOpen: document.body.dataset.project === "open",
+    blocks: document.querySelectorAll(".block-box").length,
+    buses: document.querySelectorAll(".bus-group").length,
+    brackets: document.querySelectorAll(".group-bracket").length,
+    treeItems: document.querySelectorAll(".tree .node").length,
+    zoom: text("#zoom-level"),
+    inspector: text("#inspector h2") || null,
+  };
+
+  // Editing a block's code and having it reach the disk is the whole point
+  // of this being an application rather than a drawing, so check it.
+  const editor = () => document.querySelector(".code-editor");
+  const saveButton = () => document.querySelector(".code-foot .btn");
+  const statusText = () => text("#status");
+
+  const leaf = [...document.querySelectorAll(".tree .node")]
+    .find((node) => node.textContent.includes("load-postings"));
+  if (!leaf) return { stage: "no-leaf", drawn };
+  leaf.click();
+  await wait(300);
+
+  const first = editor();
+  if (!first) return { stage: "no-editor", drawn };
+  const original = first.value;
+  // Opening a file is not editing it, whatever line endings it was saved with.
+  const startsSaved = text(".code-foot .bench-note") === "Saved.";
+
+  const type = (value) => {
+    const box = editor();
+    box.value = value;
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  // Each save is followed by a pause long enough for the window to hear about
+  // its own write and reload, so later steps do not race it.
+  type(original + "// written by the self-check\\n");
+  saveButton().click();
+  await wait(900);
+  const afterSave = statusText();
+
+  type(original);
+  saveButton().click();
+  await wait(900);
+  // Measured here, before anything navigates away and swaps the editor out.
+  const restoredCleanly = editor().value === original && /Saved .*impl\\.ts/.test(statusText());
+
+  // Running a block is what makes this an application rather than a viewer.
+  const rankJobs = [...document.querySelectorAll(".tree .node")]
+    .find((node) => node.textContent.includes("rank-jobs"));
+
+  let ran = "no rank-jobs in the tree";
+  if (rankJobs) {
+    rankJobs.click();
     await wait(400);
 
-    const boot = document.querySelector(".canvas-empty");
-    const links = [...document.querySelectorAll(".welcome-link")].map((b) => b.textContent);
-    const target = [...document.querySelectorAll(".welcome-link")]
-      .find((b) => b.title === ${JSON.stringify(exampleDir)} || /Job Relevance Ranker/.test(b.textContent));
-
-    if (!target) return { stage: "welcome", bootError: boot ? boot.textContent : null, links };
-    target.click();
-    await wait(900);
-
-    const drawn = {
-      projectOpen: document.body.dataset.project === "open",
-      blocks: document.querySelectorAll(".block-box").length,
-      buses: document.querySelectorAll(".bus-group").length,
-      brackets: document.querySelectorAll(".group-bracket").length,
-      treeItems: document.querySelectorAll(".tree .node").length,
-      zoom: (document.getElementById("zoom-level") || {}).textContent,
-      inspector: (document.querySelector("#inspector h2") || {}).textContent || null,
-    };
-
-    // Editing a block's code and having it reach the disk is the whole point
-    // of this being an application rather than a drawing, so check it.
-    const editor = () => document.querySelector(".code-editor");
-    const saveButton = () => document.querySelector(".code-foot .btn");
-    const statusText = () => (document.getElementById("status") || {}).textContent || "";
-
-    const leaf = [...document.querySelectorAll(".tree .node")]
-      .find((node) => node.textContent.includes("load-postings"));
-    if (!leaf) return { stage: "no-leaf", drawn };
-    leaf.click();
-    await wait(300);
-
-    const first = editor();
-    if (!first) return { stage: "no-editor", drawn };
-    const original = first.value;
-
-    const type = (value) => {
-      const box = editor();
-      box.value = value;
-      box.dispatchEvent(new Event("input", { bubbles: true }));
-    };
-
-    type(original + "// written by the self-check\\n");
-    saveButton().click();
-    await wait(500);
-    const afterSave = statusText();
-
-    type(original);
-    saveButton().click();
-    await wait(500);
-    // Measured here, before anything navigates away and swaps the editor out.
-    const restoredCleanly = editor().value === original && /Saved .*impl\\.ts/.test(statusText());
-
-    // Running a block is what makes this an application rather than a viewer.
-    const rankJobs = [...document.querySelectorAll(".tree .node")]
-      .find((node) => node.textContent.includes("rank-jobs"));
-
-    let ran = "no rank-jobs in the tree";
-    if (rankJobs) {
-      rankJobs.click();
-      await wait(400);
-
-      const skills = document.querySelector(".bench textarea");
-      if (skills) {
-        skills.value = JSON.stringify(["TypeScript", "testing"]);
-        skills.dispatchEvent(new Event("input", { bubbles: true }));
-      }
-
-      const runButton = [...document.querySelectorAll(".bench .btn")]
-        .find((button) => button.textContent === "Run block");
-
-      if (!runButton) ran = "no run button";
-      else if (runButton.disabled) ran = "run button disabled";
-      else {
-        runButton.click();
-        await wait(8000);
-        const output = document.querySelector(".run-result pre.code");
-        const problems = document.querySelector(".run-problems li");
-        ran = output ? output.textContent.slice(0, 200) : problems ? "PROBLEM: " + problems.textContent : "no result";
-      }
+    const skills = document.querySelector(".bench textarea");
+    if (skills) {
+      skills.value = JSON.stringify(["TypeScript", "testing"]);
+      skills.dispatchEvent(new Event("input", { bubbles: true }));
     }
 
-    // Each of these is reported rather than allowed to abort the whole check.
-    const attempt = async (run) => {
-      try {
-        return await run();
-      } catch (error) {
-        return "THREW: " + (error && error.message ? error.message : String(error));
-      }
-    };
+    const runButton = [...document.querySelectorAll(".bench .btn")]
+      .find((button) => button.textContent === "Run block");
 
-    const nodeOf = (key) => document.querySelector('.block-box[data-key="' + key + '"]');
+    if (!runButton) ran = "no run button";
+    else if (runButton.disabled) ran = "run button disabled";
+    else {
+      runButton.click();
+      await wait(8000);
+      const output = document.querySelector(".run-result pre.code");
+      const problems = document.querySelector(".run-problems li");
+      ran = output ? output.textContent.slice(0, 200) : problems ? "PROBLEM: " + problems.textContent : "no result";
+    }
+  }
 
-    const tests = await attempt(async () => {
-      const runAll = [...document.querySelectorAll(".section .btn")]
-        .find((button) => button.textContent === "Run all tests");
-      if (!runAll) return "no run-all button";
-      if (runAll.disabled) return "run-all disabled";
+  // Each of these is reported rather than allowed to abort the whole check.
+  const attempt = async (run) => {
+    try {
+      return await run();
+    } catch (error) {
+      return "THREW: " + (error && error.message ? error.message : String(error));
+    }
+  };
+
+  const nodeOf = (key) => document.querySelector('.block-box[data-key="' + key + '"]');
+
+  const tests = await attempt(async () => {
+    const runAll = [...document.querySelectorAll(".section .btn")]
+      .find((button) => button.textContent === "Run all tests");
+    if (!runAll) return "no run-all button";
+    if (runAll.disabled) return "run-all disabled";
+    runAll.click();
+    await wait(9000);
+    const summary = document.querySelector(".case-summary");
+    return summary ? summary.textContent : "no summary";
+  });
+
+  const dragged = await attempt(async () => {
+    const target = nodeOf("load-postings");
+    if (!target) return "no block to drag";
+    const before = target.getAttribute("transform");
+    const at = (type, x, y) =>
+      new PointerEvent(type, { bubbles: true, pointerId: 7, clientX: x, clientY: y, isPrimary: true });
+    target.dispatchEvent(at("pointerdown", 400, 400));
+    window.dispatchEvent(at("pointermove", 480, 460));
+    window.dispatchEvent(at("pointerup", 480, 460));
+    await wait(400);
+    const moved = before !== target.getAttribute("transform");
+
+    target.dispatchEvent(at("pointerdown", 480, 460));
+    window.dispatchEvent(at("pointermove", 400, 400));
+    window.dispatchEvent(at("pointerup", 400, 400));
+    await wait(400);
+
+    const restored = before === target.getAttribute("transform");
+    return moved ? (restored ? "moved" : "moved but not restored") : "DID NOT MOVE";
+  });
+
+  const openedByDoubleClick = await attempt(async () => {
+    const composite = nodeOf("score-posting");
+    if (!composite) return "no composite to open";
+    composite.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await wait(700);
+    return text('.crumb[aria-current="true"]') || "no current crumb";
+  });
+
+  // Finish on a block that has saved tests, scrolled to them, so the
+  // screenshot this check captures shows the part worth looking at.
+  const shown = await attempt(async () => {
+    const withTests = () => [...document.querySelectorAll(".tree .node")]
+      .find((node) => node.textContent.includes("extract-profile-keywords"));
+    if (!withTests()) return "not found";
+    withTests().click();
+    await wait(400);
+
+    const runAll = [...document.querySelectorAll(".section .btn")]
+      .find((button) => button.textContent === "Run all tests");
+    if (runAll && !runAll.disabled) {
       runAll.click();
-      await wait(9000);
-      const summary = document.querySelector(".case-summary");
-      return summary ? summary.textContent : "no summary";
-    });
+      await wait(6000);
+    }
 
-    const dragged = await attempt(async () => {
-      const target = nodeOf("load-postings");
-      if (!target) return "no block to drag";
-      const before = target.getAttribute("transform");
-      const at = (type, x, y) =>
-        new PointerEvent(type, { bubbles: true, pointerId: 7, clientX: x, clientY: y, isPrimary: true });
-      target.dispatchEvent(at("pointerdown", 400, 400));
-      window.dispatchEvent(at("pointermove", 480, 460));
-      window.dispatchEvent(at("pointerup", 480, 460));
-      await wait(400);
-      const moved = before !== target.getAttribute("transform");
+    // Re-select after the run, since finishing redraws the panels, then
+    // scroll so the captured screenshot shows the tests.
+    withTests().click();
+    await wait(400);
 
-      // Drag it back, so running this check leaves the example unchanged.
-      target.dispatchEvent(at("pointerdown", 480, 460));
-      window.dispatchEvent(at("pointermove", 400, 400));
-      window.dispatchEvent(at("pointerup", 400, 400));
-      await wait(400);
+    const panel = document.getElementById("inspector-pane");
+    panel.scrollTop = panel.scrollHeight;
+    await wait(400);
 
-      const restored = before === target.getAttribute("transform");
-      return moved ? (restored ? "moved" : "moved but not restored") : "DID NOT MOVE";
-    });
+    return (text("#inspector h2") || "no heading") + " / " + (text(".case-summary") || "no summary");
+  });
 
-    const openedByDoubleClick = await attempt(async () => {
-      const composite = nodeOf("score-posting");
-      if (!composite) return "no composite to open";
-      composite.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-      await wait(700);
-      const crumb = document.querySelector('.crumb[aria-current="true"]');
-      return crumb ? crumb.textContent : "no current crumb";
-    });
+  return {
+    stage: "opened",
+    bootError: text(".boot-error") || null,
+    ...drawn,
+    ran,
+    tests,
+    dragged,
+    openedByDoubleClick,
+    shown,
+    savedToDisk: /Saved .*impl\\.ts/.test(afterSave),
+    saveMessage: afterSave.slice(-70),
+    restoredCleanly,
+    startsSaved,
+    status: statusText().slice(0, 90),
+  };
+`;
 
-    // Finish on a block that has saved tests, scrolled to them, so the
-    // screenshot this check captures shows the part worth looking at.
-    const shown = await attempt(async () => {
-      const withTests = [...document.querySelectorAll(".tree .node")]
-        .find((node) => node.textContent.includes("extract-profile-keywords"));
-      if (!withTests) return "not found";
-      withTests.click();
-      await wait(400);
+type StepResult = Record<string, unknown>;
 
-      const runAll = [...document.querySelectorAll(".section .btn")]
-        .find((button) => button.textContent === "Run all tests");
-      if (runAll && !runAll.disabled) {
-        runAll.click();
-        await wait(6000);
-      }
+function selfCheckFailures(report: Record<string, StepResult>): string[] {
+  const value = (label: string, key: string) => report[label]?.[key];
 
-      // Re-select after the run, since finishing redraws the panels, then
-      // scroll so the captured screenshot shows the tests.
-      [...document.querySelectorAll(".tree .node")]
-        .find((node) => node.textContent.includes("extract-profile-keywords"))
-        .click();
-      await wait(400);
+  const checks: [string, boolean][] = [
+    ["a new project waits for its agent", value("waiting", "waiting") === true],
+    ["the diagram appears once the agent writes the project", value("appeared", "appeared") === true],
+    [
+      "the interface draws, and nothing crashed",
+      value("interface", "stage") === "opened" && !value("interface", "bootError") && Number(value("interface", "blocks")) > 0,
+    ],
+    ["a file that has only been opened is not reported as edited", value("interface", "startsSaved") === true],
+    [
+      "code saved from the window reaches the disk",
+      value("interface", "savedToDisk") === true && value("interface", "restoredCleanly") === true,
+    ],
+    ["a block renamed on disk is redrawn without a manual reload", value("renamed", "renamed") === true],
+    [
+      "reloading keeps the diagram and the selection that were on screen",
+      value("renamed", "keptView") === "rank-jobs" && value("renamed", "keptSelection") === "Extract Profile Keywords",
+    ],
+    [
+      "a half-written file is reported over the last good diagram",
+      value("broken", "reported") === true && Number(value("broken", "stillDrawn")) > 0,
+    ],
+    ["the report clears once the file is whole again", value("restored", "recovered") === true],
+    ["unsaved edits warn when the agent changes the same file", value("conflict", "warned") === true],
+    [
+      "the inspector lists what the checks found, and the status bar counts it",
+      value("problems", "listed") === true && value("problems", "counted") === true,
+    ],
+  ];
 
-      const panel = document.getElementById("inspector-pane");
-      panel.scrollTop = panel.scrollHeight;
-      await wait(400);
-
-      const heading = document.querySelector("#inspector h2");
-      const summary = document.querySelector(".case-summary");
-      return (heading ? heading.textContent : "no heading") + " / " + (summary ? summary.textContent : "no summary");
-    });
-
-    return {
-      stage: "opened",
-      bootError: (document.querySelector(".canvas-empty") || {}).textContent || null,
-      ...drawn,
-      ran,
-      tests,
-      dragged,
-      openedByDoubleClick,
-      shown,
-      savedToDisk: /Saved .*impl\\.ts/.test(afterSave),
-      saveMessage: afterSave.slice(-70),
-      restoredCleanly,
-      status: statusText().slice(0, 90),
-    };
-  })()`;
+  return checks.filter(([, passed]) => !passed).map(([name]) => name);
 }
 
-function attachSmokeCheck(window: BrowserWindow): void {
+/**
+ * Saves what the window shows to dist/<name>.png, for a person to look over.
+ * A screenshot is a record, not a check, so one that cannot be taken is
+ * reported and the check carries on.
+ */
+async function capture(window: BrowserWindow, name: string): Promise<void> {
+  const shot = path.join(repoRoot, "dist", `${name}.png`);
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    // The window needs a moment to composite what the script just did, or the
+    // capture shows a frame from before it.
+    window.webContents.invalidate();
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    try {
+      await writeFile(shot, (await window.webContents.capturePage()).toPNG());
+      console.log(`Screenshot: ${shot}`);
+      return;
+    } catch (error) {
+      if (attempt === 3) console.warn(`Could not capture ${name}: ${messageOf(error)}`);
+    }
+  }
+}
+
+// Electron exits with 0 on app.quit() whatever process.exitCode says, so the
+// self-check exits explicitly, or a failed check would pass as a command.
+function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDir: string }): void {
   window.webContents.on("did-fail-load", (_event, code, description) => {
     console.error(`The window failed to load: ${description} (${code})`);
-    process.exitCode = 1;
-    app.quit();
+    app.exit(1);
   });
 
   window.webContents.once("did-finish-load", () => {
     void (async () => {
+      // The page can finish loading before the window is shown, and a window
+      // that has never been shown cannot be captured.
+      if (!window.isVisible()) await new Promise<void>((resolve) => window.once("show", () => resolve()));
+
+      const report: Record<string, StepResult> = {};
+      const run = async (label: string, body: string) => {
+        report[label] = (await window.webContents.executeJavaScript(step(body))) as StepResult;
+      };
+      const inProject = (...parts: string[]) => path.join(check.projectDir, ...parts);
+
       try {
-        const report: unknown = await window.webContents.executeJavaScript(
-          smokeScript(path.join(repoRoot, "examples", "job-ranker")),
-        );
+        // New project: an empty folder holding only the agent's instructions.
+        await writeAgentFiles(check.projectDir);
+        await run("waiting", `
+          await wait(400);
+          const link = [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.projectDir)});
+          if (!link) return { waiting: false, links: [...document.querySelectorAll(".welcome-link")].map((b) => b.title || b.textContent) };
+          link.click();
+          const waiting = await until(() => /fragmentor\\.json/.test(text(".canvas-empty")));
+          return { waiting, note: text(".canvas-empty").slice(0, 120) };
+        `);
+        await capture(window, "self-check-waiting");
+
+        // The agent defines and builds the system — here, all at once.
+        await cp(path.join(repoRoot, "examples", "job-ranker"), check.projectDir, { recursive: true });
+        await run("appeared", `
+          const blocks = await until(() => document.querySelectorAll(".block-box").length);
+          return { appeared: blocks > 0, blocks };
+        `);
+
+        await run("interface", INTERACTIONS);
+        await capture(window, "self-check");
+
+        // The agent renames a block.
+        const loadPostings = inProject("blocks", "rank-jobs", "load-postings", "block.json");
+        const renamed = { ...JSON.parse(await readFile(loadPostings, "utf8")), name: "Load Postings (renamed on disk)" };
+        await writeFile(loadPostings, JSON.stringify(renamed, null, 2), "utf8");
+        await run("renamed", `
+          const renamed = await until(() => text('.block-box[data-key="load-postings"] .block-name') === "Load Postings (renamed on disk)");
+          return { renamed, keptView: text('.crumb[aria-current="true"]'), keptSelection: text("#inspector h2") };
+        `);
+
+        // The agent is caught halfway through writing a file, then finishes it.
+        const rankResults = inProject("blocks", "rank-jobs", "rank-results", "block.json");
+        const whole = await readFile(rankResults, "utf8");
+        await writeFile(rankResults, "{ half written", "utf8");
+        await run("broken", `
+          const banner = await until(() => {
+            const note = document.getElementById("load-error");
+            return note && !note.hidden ? note.textContent : null;
+          });
+          return { reported: Boolean(banner && /rank-results/.test(banner)), stillDrawn: document.querySelectorAll(".block-box").length };
+        `);
+        await capture(window, "self-check-broken");
+
+        await writeFile(rankResults, whole, "utf8");
+        await run("restored", `
+          return { recovered: Boolean(await until(() => document.getElementById("load-error").hidden)) };
+        `);
+
+        // A person has unsaved edits in a file the agent then rewrites.
+        await run("typed", `
+          const box = document.querySelector(".code-editor");
+          if (!box) return { typed: false };
+          box.value = box.value + "// a person's unsaved edit\\n";
+          box.dispatchEvent(new Event("input", { bubbles: true }));
+          return { typed: true };
+        `);
+        const impl = inProject("blocks", "rank-jobs", "extract-profile-keywords", "impl.ts");
+        await writeFile(impl, `${await readFile(impl, "utf8")}\n// changed by the agent\n`, "utf8");
+        await run("conflict", `
+          const warned = await until(() => /changed on disk/.test(text(".code-foot .bench-note")));
+          return { warned: Boolean(warned), note: text(".code-foot .bench-note") };
+        `);
+
+        // The agent leaves a wire out, so the diagram has a real problem to show.
+        const rankJobs = inProject("blocks", "rank-jobs", "block.json");
+        const unwired = JSON.parse(await readFile(rankJobs, "utf8")) as { wires: string[] };
+        unwired.wires = unwired.wires.filter((wire) => wire !== "extract-profile-keywords.keywords -> score-posting.keywords");
+        await writeFile(rankJobs, JSON.stringify(unwired, null, 2), "utf8");
+        await run("problems", `
+          const root = [...document.querySelectorAll(".tree .node")]
+            .find((node) => (node.querySelector(".label") || {}).textContent === "rank-jobs");
+          if (!root) return { listed: false };
+          root.click();
+          const problem = await until(() => {
+            const found = [...document.querySelectorAll(".problem.error .problem-text")]
+              .find((entry) => /Nothing is connected/.test(entry.textContent));
+            return found ? found.textContent : null;
+          });
+          document.getElementById("inspector-pane").scrollTop = 0;
+          return { listed: Boolean(problem), problem, counted: /errors 1/.test(text("#status")) };
+        `);
+        await capture(window, "self-check-problems");
+
         console.log(JSON.stringify(report, null, 2));
 
-        // The window needs a moment to composite what the script just did,
-        // or the capture shows a frame from before it.
-        window.webContents.invalidate();
-        await new Promise((resolve) => setTimeout(resolve, 900));
-
-        const shot = path.join(repoRoot, "dist", "self-check.png");
-        await writeFile(shot, (await window.webContents.capturePage()).toPNG());
-        console.log(`Screenshot: ${shot}`);
-
-        const summary = report as { stage?: string; bootError?: string | null; blocks?: number };
-        if (summary.stage !== "opened" || summary.bootError || !summary.blocks) process.exitCode = 1;
+        const failures = selfCheckFailures(report);
+        if (failures.length > 0) {
+          console.error(`The self-check failed:\n${failures.map((failure) => `  - ${failure}`).join("\n")}`);
+          process.exitCode = 1;
+        } else {
+          console.log("The self-check passed.");
+        }
       } catch (error) {
+        console.log(JSON.stringify(report, null, 2));
         console.error("The self-check could not run:", error);
         process.exitCode = 1;
       } finally {
-        app.quit();
+        for (const id of [...watchers.keys()]) stopWatching(id);
+        await rm(check.root, { recursive: true, force: true }).catch(() => {});
+        app.exit(process.exitCode === 1 ? 1 : 0);
       }
     })();
   });
 }
+
+/* -------------------------------------------------------------------------- */
+/* Window                                                                      */
+/* -------------------------------------------------------------------------- */
 
 function createWindow(): void {
   const window = new BrowserWindow({
@@ -433,15 +761,18 @@ function createWindow(): void {
       sandbox: true,
       // A window that is not in front gets its painting throttled, which makes
       // the self-check capture a frame from several steps ago.
-      backgroundThrottling: !selfChecking(),
+      backgroundThrottling: !selfCheck,
     },
   });
 
-  if (selfChecking()) {
+  const id = window.webContents.id;
+  window.webContents.on("destroyed", () => stopWatching(id));
+
+  if (selfCheck) {
     // Shown but not focused: the page has to be composited to be captured,
     // and taking focus from whoever started the check would be rude.
     window.once("ready-to-show", () => window.showInactive());
-    attachSmokeCheck(window);
+    attachSelfCheck(window, selfCheck);
   } else {
     window.once("ready-to-show", () => window.show());
   }

@@ -8,6 +8,12 @@ import type { CaseResult, RunOutcome } from "../../src/run/run.js";
 
 export interface UiState {
   snapshot: ProjectSnapshot | null;
+  /** The folder open as a project, even while it holds nothing readable. */
+  dir: string | null;
+  /** True while the folder is waiting for an agent to write fragmentor.json. */
+  waiting: boolean;
+  /** Why the newest version of the project could not be read. The last good snapshot stays on screen. */
+  loadError: string | null;
   /** The composite whose diagram is on the canvas. */
   view: string;
   /** Node keys inside the current diagram: a child id, or `input` / `output`. */
@@ -21,8 +27,13 @@ export interface UiState {
   codeTab: "impl" | "contract";
   /** Once the view has been moved by hand, stop refitting it automatically. */
   userAdjusted: boolean;
-  /** Unsaved edits to a block's implementation, keyed by block path. */
-  edits: Map<string, string>;
+  /**
+   * Unsaved edits to a block's implementation, keyed by block path, with the
+   * file as it was when editing began. That is how a change made on disk in
+   * the meantime — usually by the agent — is pointed out rather than silently
+   * overwritten.
+   */
+  edits: Map<string, { base: string | null; text: string }>;
   /** What has been typed into each block's test bench, kept across redraws. */
   benchInputs: Map<string, Record<string, unknown>>;
   /** The last result from running each block. */
@@ -40,6 +51,9 @@ export interface UiState {
 
 export const ui: UiState = {
   snapshot: null,
+  dir: null,
+  waiting: false,
+  loadError: null,
   view: "",
   selection: new Set(),
   selectedBus: null,

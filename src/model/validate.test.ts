@@ -120,6 +120,25 @@ describe("validateComposite", () => {
     expect(found).toContain('"rank-posting" refers to a child block "label-score" that does not exist.');
   });
 
+  it("refuses a child whose id is how wires name the parent's own ports", () => {
+    const { parent, children } = straightLine();
+    parent.children.push({ block: "input", mode: "once" });
+    children.set("input", makeBlock({ id: "input" }));
+
+    expect(errors(validateComposite(parent, children))).toContain(
+      '"rank-posting" has a child called "input", but that id is reserved: wires use "input.<port>" for the parent\'s own ports.',
+    );
+  });
+
+  it("refuses children for a block the person pinned as a leaf", () => {
+    const { parent, children } = straightLine();
+    parent.pinnedAsLeaf = true;
+
+    expect(errors(validateComposite(parent, children))).toContain(
+      '"rank-posting" is pinned as a leaf, but it has been given children. Make it a leaf again, or set "pinnedAsLeaf" to false if the person agrees.',
+    );
+  });
+
   it("reports an input that nothing is connected to", () => {
     const { parent, children } = straightLine();
     parent.wires = parent.wires.filter((w) => !(w.target.to === "block" && w.target.port === "score"));

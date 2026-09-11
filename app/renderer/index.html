@@ -15,8 +15,9 @@
         <div class="mark"><strong>Fragmentor</strong></div>
         <nav class="crumbs" id="crumbs" aria-label="Block hierarchy"></nav>
         <div class="toolbar">
+          <button class="toggle" id="new-project" title="Start a project in an empty folder, for a coding agent to build">New project…</button>
           <button class="toggle" id="open-project">Open project…</button>
-          <button class="toggle" id="reload-project" title="Re-read the project from disk">Reload</button>
+          <button class="toggle" id="reload-project" title="Re-read the project from disk. Fragmentor also does this whenever a file in it changes.">Reload</button>
           <button class="toggle" id="generate-code" title="Regenerate every block's contract">Generate code</button>
           <span class="toolbar-sep"></span>
           <button class="toggle" id="toggle-rail" aria-pressed="true">Hierarchy</button>
@@ -45,9 +46,11 @@
 
           <div class="hint">drag to move &middot; ctrl-click to multi-select &middot; scroll to zoom</div>
 
+          <div class="load-error" id="load-error" role="alert" hidden></div>
+
           <section class="welcome" id="welcome">
             <h1>Fragmentor</h1>
-            <p>Software built as blocks, with the connections between them written down.</p>
+            <p>Software built as blocks, with the connections between them written down. Your coding agent builds it; Fragmentor shows it and checks it.</p>
             <div class="welcome-body" id="welcome-body"></div>
           </section>
         </div>

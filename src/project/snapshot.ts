@@ -9,7 +9,7 @@ import type { Layout } from "./layout.js";
 import { loadProject, systemOf, validateProject } from "./project.js";
 import type { Granularity, ProjectDiagnostic } from "./project.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
-import { loadCases } from "../run/cases.js";
+import { readCases } from "../run/cases.js";
 import type { TestCase } from "../run/cases.js";
 
 /**
@@ -109,6 +109,15 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
   const project = await loadProject(projectDir);
   const blocks: Record<string, SnapshotBlock> = {};
 
+  // A tests file that cannot be read is reported with the diagram's problems,
+  // rather than the block silently appearing to have no tests.
+  const caseProblems: ProjectDiagnostic[] = [];
+  const casesFor = async (blockPath: string) => {
+    const saved = await readCases(projectDir, blockPath);
+    if (saved.problem) caseProblems.push({ severity: "error", blockPath, message: saved.problem });
+    return saved.cases;
+  };
+
   for (const [blockPath, node] of project.byPath) {
     const block = node.block;
     const childBlocks = new Map(node.children.map((c) => [c.block.id, c.block]));
@@ -167,7 +176,7 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       language,
       files: { impl: pack.implFile, contract: pack.contractFile },
       implemented: false,
-      cases: await loadCases(projectDir, blockPath),
+      cases: await casesFor(blockPath),
     };
 
     const impl = blocks[blockPath].sources.impl;
@@ -187,6 +196,6 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
     })),
     blocks,
     layout: await loadLayout(projectDir),
-    diagnostics: validateProject(project),
+    diagnostics: [...validateProject(project), ...caseProblems],
   };
 }

@@ -1,8 +1,9 @@
 import type { SnapshotBlock } from "../../src/project/snapshot.js";
+import type { ProjectDiagnostic } from "../../src/project/project.js";
 import { BUS_PALETTE, busColors, requireSnapshot, ui } from "./state.js";
 import { busColour, connectionCode } from "./graph.js";
 import type { Bus, Graph } from "./graph.js";
-import { graphInView, openDiagram } from "./canvas.js";
+import { graphInView, openDiagram, showBlock } from "./canvas.js";
 import { benchSections } from "./bench.js";
 
 let notify: () => void = () => {};
@@ -31,6 +32,36 @@ function section(title: string, major = false): HTMLElement {
 /* -------------------------------------------------------------------------- */
 /* Panels                                                                      */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * What the checks found. For the whole project every problem is listed, each
+ * leading to its block; for one block, only that block's own.
+ */
+function problemsSection(diagnostics: ProjectDiagnostic[], linked: boolean): HTMLElement | null {
+  if (diagnostics.length === 0) return null;
+
+  const node = section("Problems");
+  const list = el("div", "problems");
+  const ordered = [
+    ...diagnostics.filter((d) => d.severity === "error"),
+    ...diagnostics.filter((d) => d.severity === "warning"),
+  ];
+
+  for (const diagnostic of ordered) {
+    const row = el(linked ? "button" : "div", `problem ${diagnostic.severity}`);
+    row.append(el("span", "problem-level", diagnostic.severity));
+    if (linked) {
+      row.append(el("span", "problem-where", diagnostic.blockPath));
+      row.title = "Show this block";
+      row.addEventListener("click", () => showBlock(diagnostic.blockPath));
+    }
+    row.append(el("span", "problem-text", diagnostic.message));
+    list.append(row);
+  }
+
+  node.append(list);
+  return node;
+}
 
 function portSection(
   title: string,
@@ -70,10 +101,12 @@ function codeSection(block: SnapshotBlock): HTMLElement {
   }
   node.append(tabs);
 
-  const onDisk = block.sources[ui.codeTab];
+  // A textarea hands back its text with \n line endings whatever the file
+  // uses, so the file is compared in the same form or it would never match.
+  const onDisk = block.sources[ui.codeTab]?.replace(/\r\n/g, "\n") ?? null;
   const isContract = ui.codeTab === "contract";
   const pending = ui.edits.get(block.path);
-  const value = isContract ? onDisk : (pending ?? onDisk);
+  const value = isContract ? onDisk : (pending?.text ?? onDisk);
 
   if (value === null || value === undefined) {
     node.append(el("p", "bench-note", "This file has not been generated yet. Use Generate code."));
@@ -94,11 +127,27 @@ function codeSection(block: SnapshotBlock): HTMLElement {
     return node;
   }
 
+  // The file on disk is not the one editing started from: someone else —
+  // usually the agent — rewrote it in the meantime.
+  const changedUnderneath = () => {
+    const edit = ui.edits.get(block.path);
+    return Boolean(edit && edit.base !== onDisk);
+  };
+
+  const describe = () => {
+    if (editor.value === onDisk) return "Saved.";
+    if (changedUnderneath()) {
+      return "This file changed on disk while you were editing it. Saving replaces that change; Revert shows it.";
+    }
+    return "Unsaved changes.";
+  };
+
   editor.addEventListener("input", () => {
     if (editor.value === onDisk) ui.edits.delete(block.path);
-    else ui.edits.set(block.path, editor.value);
+    else ui.edits.set(block.path, { base: ui.edits.get(block.path)?.base ?? onDisk, text: editor.value });
     save.disabled = editor.value === onDisk;
-    dirty.textContent = editor.value === onDisk ? "Saved." : "Unsaved changes.";
+    dirty.textContent = describe();
+    dirty.classList.toggle("bad", editor.value !== onDisk && changedUnderneath());
   });
 
   const save = el("button", "btn", "Save to disk");
@@ -134,7 +183,8 @@ function codeSection(block: SnapshotBlock): HTMLElement {
     void window.fragmentor.revealBlock(requireSnapshot().dir, block.path);
   });
 
-  const dirty = el("p", "bench-note", value === onDisk ? "Saved." : "Unsaved changes.");
+  const conflict = value !== onDisk && changedUnderneath();
+  const dirty = el("p", conflict ? "bench-note bad" : "bench-note", describe());
   foot.append(save, revert, reveal, dirty);
   node.append(foot);
   return node;
@@ -159,6 +209,10 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   panel.append(head);
 
   panel.append(el("p", "responsibility", block.responsibility));
+
+  const problems = problemsSection(requireSnapshot().diagnostics.filter((d) => d.blockPath === block.path), false);
+  if (problems) panel.append(problems);
+
   panel.append(portSection("Inputs", block.inputs));
   panel.append(portSection("Outputs", block.outputs));
   panel.append(portSection("Capabilities", block.capabilities, true));
@@ -253,7 +307,12 @@ export function renderInspector(): void {
   panel.replaceChildren();
 
   if (!ui.snapshot) {
-    panel.append(el("p", "bench-note", "Open a project to inspect its blocks."));
+    const note = !ui.dir
+      ? "Open a project to inspect its blocks."
+      : ui.waiting
+        ? "There is nothing to inspect until the agent defines the system."
+        : "There is nothing to inspect until the project can be read.";
+    panel.append(el("p", "bench-note", note));
     return;
   }
 
@@ -293,6 +352,9 @@ export function renderInspector(): void {
   head.append(el("h2", undefined, snapshot.name), el("div", "insp-id", snapshot.dir));
   panel.append(head);
   panel.append(el("p", "responsibility", snapshot.goal));
+
+  const problems = problemsSection(snapshot.diagnostics, true);
+  if (problems) panel.append(problems);
 
   const systems = section("Systems");
   const list = el("div", "ports");

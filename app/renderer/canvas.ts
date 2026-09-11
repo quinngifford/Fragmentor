@@ -4,6 +4,7 @@ import {
   GROUP_HEAD_H,
   HEAD_H,
   NODE_W,
+  PROJECT_VIEW,
   ROW_H,
   buildGraph,
   busColour,
@@ -125,29 +126,60 @@ function busGeometry(graph: Graph, layout: Map<string, Point>, bus: Bus) {
 /* Drawing                                                                     */
 /* -------------------------------------------------------------------------- */
 
-export function renderCanvas(): void {
-  const busLayer = element("bus-layer");
-  const nodeLayer = element("node-layer");
-  busLayer.replaceChildren();
-  nodeLayer.replaceChildren();
+function clearCanvas(): void {
+  element("bus-layer").replaceChildren();
+  element("node-layer").replaceChildren();
   nodeElements.clear();
   busElements.clear();
+  currentGraph = null;
+  currentLayout = null;
   document.querySelectorAll(".canvas-empty").forEach((el) => el.remove());
+}
+
+/** Empties the canvas and leaves a note where the diagram would be. */
+export function showCanvasMessage(text: string): void {
+  clearCanvas();
+  const note = document.createElement("p");
+  note.className = "canvas-empty";
+  note.textContent = text;
+  element("canvas-wrap").append(note);
+}
+
+/**
+ * Brings a block into view: a composite opens its own diagram, and a leaf is
+ * selected in its parent's.
+ */
+export function showBlock(path: string): void {
+  const block = ui.snapshot?.blocks[path];
+  if (!block) return;
+  if (block.kind === "composite") {
+    openDiagram(path);
+    return;
+  }
+  ui.view = path.split("/").slice(0, -1).join("/") || PROJECT_VIEW;
+  ui.selection.clear();
+  ui.selection.add(block.id);
+  ui.selectedBus = null;
+  notify({ redraw: true });
+}
+
+export function renderCanvas(): void {
+  clearCanvas();
 
   const graph = buildGraph(ui.view);
-  currentGraph = graph;
-
   if (!graph) {
     const parent = requireSnapshot().blocks[ui.view];
-    const note = document.createElement("p");
-    note.className = "canvas-empty";
-    note.textContent = parent
-      ? `${parent.name} is a leaf block.\nIts behaviour is code, not a diagram — the inspector shows its contract and source.`
-      : "This block no longer exists.";
-    element("canvas-wrap").append(note);
+    showCanvasMessage(
+      parent
+        ? `${parent.name} is a leaf block.\nIts behaviour is code, not a diagram — the inspector shows its contract and source.`
+        : "This block no longer exists.",
+    );
     return;
   }
 
+  currentGraph = graph;
+  const busLayer = element("bus-layer");
+  const nodeLayer = element("node-layer");
   const layout = layoutFor(graph, ui.view);
   currentLayout = layout;
 

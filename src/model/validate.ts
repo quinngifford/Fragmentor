@@ -66,12 +66,25 @@ export function validateComposite(parent: Block, children: Map<string, Block>): 
     return diagnostics;
   }
 
+  if (parent.pinnedAsLeaf) {
+    error(
+      `"${parent.name}" is pinned as a leaf, but it has been given children. Make it a leaf again, or set "pinnedAsLeaf" to false if the person agrees.`,
+    );
+  }
+
   // --- children resolve and are unique -------------------------------------
 
   const seen = new Set<string>();
   const present: ChildRef[] = [];
 
   parent.children.forEach((child, i) => {
+    if (child.block === "input" || child.block === "output") {
+      error(
+        `"${parent.name}" has a child called "${child.block}", but that id is reserved: wires use "${child.block}.<port>" for the parent's own ports.`,
+        `children[${i}]`,
+      );
+      return;
+    }
     if (seen.has(child.block)) {
       error(`"${parent.name}" lists the child block "${child.block}" more than once.`, `children[${i}]`);
       return;

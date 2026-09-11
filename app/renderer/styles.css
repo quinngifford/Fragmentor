@@ -583,3 +583,59 @@ pre.code {
 .case-summary { font-family: var(--mono); font-size: 11.5px; }
 .case-summary.passed { color: var(--signal); }
 .case-summary.failed { color: var(--bad); }
+
+/* ---- following the agent ---- */
+
+/* Shown over the last good diagram when the newest files could not be read. */
+.load-error {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  max-width: min(64ch, calc(100% - 28px));
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--bad);
+  border-radius: var(--radius);
+  color: var(--bad);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.load-error[hidden] { display: none; }
+
+.welcome-actions { display: flex; gap: 8px; }
+
+.problems { display: flex; flex-direction: column; gap: 8px; }
+
+.problem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 0 0 10px;
+  border: 0;
+  border-left: 2px solid var(--pending);
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+}
+
+.problem.error { border-left-color: var(--bad); }
+button.problem { cursor: pointer; }
+button.problem:hover .problem-where { color: var(--signal); }
+
+.problem-level {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pending);
+}
+
+.problem.error .problem-level { color: var(--bad); }
+.problem-where { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; }
+.problem-text { font-size: 12px; }
+
+.code-foot .bench-note.bad { color: var(--bad); }

@@ -151,6 +151,7 @@ export const typescriptPack: LanguagePack = {
   },
 
   canRun: true,
+  canCheck: true,
   isUnimplemented: (source) => source.includes(UNIMPLEMENTED),
 };
 

@@ -51,6 +51,9 @@ export interface LanguagePack {
    */
   canRun: boolean;
 
+  /** Whether `fragmentor check` can typecheck code in this language yet. */
+  canCheck: boolean;
+
   /**
    * A block whose implementation still looks like this has not been written.
    * Used to report progress honestly rather than counting files.

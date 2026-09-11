@@ -30,11 +30,11 @@ import type { Diagnostic } from "../model/validate.js";
 
 export interface Granularity {
   /**
-   * How far the AI decomposes on its own. 1 leaves large blocks alone;
+   * How finely the agent divides the work. 1 leaves large blocks alone;
    * 5 breaks work down to small single-purpose pieces.
    */
   level: 1 | 2 | 3 | 4 | 5;
-  /** A hard floor applied regardless of level, so decomposition terminates. */
+  /** How many levels deep the hierarchy may go, counting a system's root as the first. */
   maxDepth: number;
 }
 
@@ -113,6 +113,11 @@ export function blocksRoot(projectDir: string): string {
   return path.join(projectDir, BLOCKS_DIR);
 }
 
+/** A folder is a Fragmentor project when it holds this file. */
+export function manifestPath(projectDir: string): string {
+  return path.join(projectDir, MANIFEST_FILE);
+}
+
 /** Where a block's folder lives, given its path from the blocks root. */
 export function blockDir(projectDir: string, blockPath: string): string {
   return path.join(blocksRoot(projectDir), ...blockPath.split("/"));
@@ -130,7 +135,7 @@ export function languageOf(project: Project, blockPath: string): string | undefi
 }
 
 export async function loadProject(projectDir: string): Promise<Project> {
-  const manifestText = await readFile(path.join(projectDir, MANIFEST_FILE), "utf8");
+  const manifestText = await readFile(manifestPath(projectDir), "utf8");
   const raw: unknown = JSON.parse(manifestText);
 
   if (raw && typeof raw === "object" && "rootBlock" in raw && !("systems" in raw)) {
@@ -142,7 +147,7 @@ export async function loadProject(projectDir: string): Promise<Project> {
   const parsed = manifestSchema.safeParse(raw);
   if (!parsed.success) {
     const detail = parsed.error.issues.map((i) => `  ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
-    throw new Error(`The project file at ${path.join(projectDir, MANIFEST_FILE)} is not valid:\n${detail}`);
+    throw new Error(`The project file at ${manifestPath(projectDir)} is not valid:\n${detail}`);
   }
   const manifest = parsed.data;
 
@@ -170,7 +175,14 @@ async function loadBlockTree(dir: string, blockPath: string): Promise<LoadedBloc
   try {
     raw = JSON.parse(await readFile(path.join(dir, BLOCK_FILE), "utf8"));
   } catch (cause) {
-    throw new Error(`Could not read the block definition at ${path.join(dir, BLOCK_FILE)}`, { cause });
+    // Say why, because whoever wrote the file needs to know what to fix.
+    const reason =
+      (cause as NodeJS.ErrnoException).code === "ENOENT"
+        ? "the file does not exist"
+        : cause instanceof Error
+          ? cause.message
+          : String(cause);
+    throw new Error(`Could not read the block definition at ${path.join(dir, BLOCK_FILE)}: ${reason}.`, { cause });
   }
 
   const parsed = blockSchema.safeParse(raw);
@@ -213,6 +225,7 @@ async function loadBlockTree(dir: string, blockPath: string): Promise<LoadedBloc
  */
 export function validateProject(project: Project): ProjectDiagnostic[] {
   const diagnostics: ProjectDiagnostic[] = [];
+  const { maxDepth } = project.manifest.granularity;
 
   for (const node of project.byPath.values()) {
     const onDisk = new Map(node.children.map((child) => [child.block.id, child.block]));
@@ -231,6 +244,15 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
         });
       }
     }
+
+    const depth = node.path.split("/").length;
+    if (depth > maxDepth) {
+      diagnostics.push({
+        severity: "warning",
+        blockPath: node.path,
+        message: `"${node.block.name}" is ${depth} levels deep, but the project allows at most ${maxDepth} (granularity.maxDepth in fragmentor.json).`,
+      });
+    }
   }
 
   return diagnostics;
@@ -243,26 +265,10 @@ export async function writeBlock(dir: string, block: Block): Promise<void> {
 
 export async function writeManifest(projectDir: string, manifest: Manifest): Promise<void> {
   await mkdir(projectDir, { recursive: true });
-  await writeFile(path.join(projectDir, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  await writeFile(manifestPath(projectDir), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
-/**
- * Records an accepted decomposition: the parent becomes a composite and each
- * child gets its own folder beneath it.
- */
-export async function writeDecomposition(
-  projectDir: string,
-  parentPath: string,
-  parent: Block,
-  children: Block[],
-): Promise<void> {
-  await writeBlock(blockDir(projectDir, parentPath), parent);
-  for (const child of children) {
-    await writeBlock(blockDir(projectDir, `${parentPath}/${child.id}`), child);
-  }
-}
-
-/** Creates a project directory containing one unimplemented root block per system. */
+/** Creates a project directory containing one root block per system. */
 export async function createProject(
   projectDir: string,
   manifest: Manifest,

@@ -14,7 +14,10 @@ import type { TestCase } from "../src/run/cases.js";
 
 export const CHANNELS = {
   chooseProject: "project:choose",
+  newProject: "project:new",
   loadProject: "project:load",
+  readProject: "project:read",
+  projectChanged: "project:changed",
   recentProjects: "project:recent",
   exampleProjects: "project:examples",
   writeImpl: "block:write-impl",
@@ -27,6 +30,20 @@ export const CHANNELS = {
 } as const;
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+
+/**
+ * A folder opened as a project. It need not hold a readable project: the agent
+ * may not have defined the system yet, or may be halfway through writing it.
+ */
+export interface ProjectLoad {
+  dir: string;
+  /** Null when there is nothing readable to show. */
+  snapshot: ProjectSnapshot | null;
+  /** False while the folder is waiting for an agent to write fragmentor.json. */
+  hasManifest: boolean;
+  /** Why the project could not be read, when it could not. */
+  error: string | null;
+}
 
 export interface SaveLayoutRequest {
   dir: string;
@@ -54,8 +71,15 @@ export interface WriteImplRequest {
 
 export interface FragmentorApi {
   /** Opens a folder picker. Resolves to null when the user cancels. */
-  chooseProject(): Promise<Result<ProjectSnapshot | null>>;
-  loadProject(dir: string): Promise<Result<ProjectSnapshot>>;
+  chooseProject(): Promise<Result<ProjectLoad | null>>;
+  /** Picks a folder and prepares it for a coding agent. Resolves to null when the user cancels. */
+  newProject(): Promise<Result<ProjectLoad | null>>;
+  /** Opens a project: remembers it, starts watching it, and reads it. */
+  loadProject(dir: string): Promise<Result<ProjectLoad>>;
+  /** Reads the open project again, after something changed it. */
+  readProject(dir: string): Promise<Result<ProjectLoad>>;
+  /** Called with the project's folder whenever files in it change on disk. */
+  onProjectChanged(callback: (dir: string) => void): void;
   recentProjects(): Promise<Result<string[]>>;
   /** Example projects shipped with Fragmentor, so there is something to open. */
   exampleProjects(): Promise<Result<{ dir: string; name: string }[]>>;

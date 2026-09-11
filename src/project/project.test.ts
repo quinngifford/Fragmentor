@@ -126,6 +126,30 @@ describe("project round trip", () => {
     );
   });
 
+  it("warns about a block deeper than the project allows", async () => {
+    await writeSmallProject();
+    await writeFile(
+      path.join(dir, "fragmentor.json"),
+      JSON.stringify({ ...manifest, granularity: { level: 3, maxDepth: 1 } }),
+      "utf8",
+    );
+
+    expect(validateProject(await loadProject(dir))).toEqual([
+      {
+        severity: "warning",
+        blockPath: "rank-jobs/score-posting",
+        message: '"score-posting" is 2 levels deep, but the project allows at most 1 (granularity.maxDepth in fragmentor.json).',
+      },
+    ]);
+  });
+
+  it("says why a block file could not be read", async () => {
+    await writeSmallProject();
+    await writeFile(path.join(blockDir(dir, "rank-jobs/score-posting"), "block.json"), "{ not json", "utf8");
+
+    await expect(loadProject(dir)).rejects.toThrow(/Could not read the block definition at .*block\.json: .*JSON/s);
+  });
+
   it("explains how to fix a project still using the old single-system manifest", async () => {
     await writeSmallProject();
     await writeFile(
