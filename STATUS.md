@@ -55,7 +55,7 @@ Projects have two modes, chosen when they are created along with the granularity
 
 ## Current checkpoint
 
-- The tag `checkpoint/pre-modes` marks `main` as it was before this work, known good. The work is on the branch `modes-and-debugger`, one commit per milestone, each with a passing suite.
+- `main`, with the two modes, the canvas animation and watching runs merged from `modes-and-debugger`. Every commit is a working tree with a passing suite. The tag `checkpoint/pre-modes` marks `main` as it was before this work.
 
 ## Next major steps
 
