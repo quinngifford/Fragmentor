@@ -24,6 +24,10 @@ import { requireSnapshot, ui } from "./state.js";
  * diagram rebuilds them. That is not an optimisation — an element replaced
  * between two clicks can never receive a double-click, and a dragged element
  * that is replaced mid-gesture loses the pointer and stops following the mouse.
+ *
+ * Moving between diagrams is animated as a zoom, so the hierarchy reads as one
+ * drawing seen closer up or further away. Blocks the agent adds are brought in
+ * rather than simply being there, so the person can see what just changed.
  */
 
 let notify: (options: { redraw: boolean }) => void = () => {};
@@ -123,8 +127,316 @@ function busGeometry(graph: Graph, layout: Map<string, Point>, bus: Bus) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* The camera                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** Where the canvas is looking: the point of the diagram at its centre, and how large it is drawn. */
+interface Camera {
+  cx: number;
+  cy: number;
+  scale: number;
+}
+
+interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const lessMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function canvasSize(): { width: number; height: number } {
+  const rect = element("canvas-svg").getBoundingClientRect();
+  return { width: rect.width, height: rect.height };
+}
+
+function currentCamera(): Camera {
+  const { width, height } = canvasSize();
+  return { cx: (width / 2 - ui.panX) / ui.zoom, cy: (height / 2 - ui.panY) / ui.zoom, scale: ui.zoom };
+}
+
+function setCamera(camera: Camera): void {
+  const { width, height } = canvasSize();
+  ui.zoom = camera.scale;
+  ui.panX = width / 2 - camera.cx * camera.scale;
+  ui.panY = height / 2 - camera.cy * camera.scale;
+  applyViewport();
+}
+
+/** A camera that fills most of the canvas with one part of the diagram. */
+function cameraOn(box: Box): Camera {
+  const { width, height } = canvasSize();
+  return {
+    cx: box.x + box.width / 2,
+    cy: box.y + box.height / 2,
+    scale: 0.9 * Math.min(width / box.width, height / box.height),
+  };
+}
+
+/** Part of the way from one camera to another. Scale moves geometrically, which is how a zoom looks steady. */
+function between(a: Camera, b: Camera, t: number): Camera {
+  return {
+    cx: a.cx + (b.cx - a.cx) * t,
+    cy: a.cy + (b.cy - a.cy) * t,
+    scale: a.scale * Math.pow(b.scale / a.scale, t),
+  };
+}
+
+const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+function setFade(opacity: number): void {
+  element<SVGGElement>("viewport").style.opacity = String(opacity);
+}
+
+/**
+ * Runs `step` with eased progress from 0 to 1 over `duration`, for as long as
+ * `current` says nothing newer has taken over. Resolves true only if it ran
+ * to the end.
+ */
+function tween(duration: number, step: (t: number) => void, current: () => boolean): Promise<boolean> {
+  return new Promise((resolve) => {
+    const started = performance.now();
+    let finished = false;
+    const finish = (completed: boolean) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(fallback);
+      resolve(completed);
+    };
+
+    // A window that is not being painted gets no animation frames. Rather
+    // than leave a move half made, finish it without them.
+    const fallback = setTimeout(() => {
+      if (!current()) return finish(false);
+      step(1);
+      finish(true);
+    }, duration + 250);
+
+    const frame = (now: number) => {
+      if (finished) return;
+      if (!current()) return finish(false);
+      const progress = Math.min(1, (now - started) / duration);
+      step(ease(progress));
+      if (progress < 1) requestAnimationFrame(frame);
+      else finish(true);
+    };
+    requestAnimationFrame(frame);
+  });
+}
+
+/** Each new move, or fit, takes over from the one before it. */
+let moves = 0;
+let fits = 0;
+let moving = false;
+
+function diagramBounds(): Box | null {
+  if (!currentGraph || !currentLayout) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const node of currentGraph.nodes.values()) {
+    const point = currentLayout.get(node.key);
+    if (!point) continue;
+    const { height } = measure(node);
+    minX = Math.min(minX, point.x - 30);
+    minY = Math.min(minY, point.y - 20);
+    maxX = Math.max(maxX, point.x + NODE_W + 30);
+    maxY = Math.max(maxY, point.y + height + 34);
+  }
+
+  return Number.isFinite(minX) ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY } : null;
+}
+
+function fitCamera(): Camera | null {
+  const bounds = diagramBounds();
+  const { width, height } = canvasSize();
+  if (!bounds || !width || !height) return null;
+
+  // Fitting shrinks a diagram to make it visible; it never magnifies one, or a
+  // project with two small systems in it would open absurdly zoomed in.
+  const scale = Math.min(1, Math.max(0.25, Math.min(width / bounds.width, height / bounds.height)));
+  return { cx: bounds.x + bounds.width / 2, cy: bounds.y + bounds.height / 2, scale };
+}
+
+/**
+ * Brings the whole diagram into view. A move between diagrams fits at its
+ * end, so a fit asked for in the meantime is left to it.
+ */
+export function fitToView(animated = false): void {
+  if (moving) return;
+  const target = fitCamera();
+  if (!target) return;
+
+  const id = ++fits;
+  if (!animated || lessMotion()) {
+    setCamera(target);
+    return;
+  }
+  const start = currentCamera();
+  void tween(320, (t) => setCamera(between(start, target, t)), () => id === fits && !moving);
+}
+
+/** The canvas has no size until layout settles, so keep asking. */
+export function fitWhenReady(attempts: number): void {
+  const rect = element("canvas-svg").getBoundingClientRect();
+  if (rect.width > 0 && rect.height > 0) {
+    fitToView();
+    return;
+  }
+  if (attempts > 0) requestAnimationFrame(() => fitWhenReady(attempts - 1));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Moving between diagrams                                                     */
+/* -------------------------------------------------------------------------- */
+
+/** Whether `path` lies inside the diagram at `ancestor`, at any depth. */
+function isInside(path: string, ancestor: string): boolean {
+  return ancestor === PROJECT_VIEW ? path !== PROJECT_VIEW : path.startsWith(`${ancestor}/`);
+}
+
+/** The node in `ancestor`'s diagram that `path` lies inside: one of its children, or for the project, a system. */
+function nodeToward(ancestor: string, path: string): string {
+  return (ancestor === PROJECT_VIEW ? path : path.slice(ancestor.length + 1)).split("/")[0]!;
+}
+
+function nodeBox(key: string): Box | null {
+  const node = currentGraph?.nodes.get(key);
+  const point = currentLayout?.get(key);
+  if (!node || !point) return null;
+  return { x: point.x, y: point.y, width: NODE_W, height: measure(node).height };
+}
+
+/**
+ * Puts another diagram on the canvas. Going into a block zooms into it until
+ * it fills the canvas, and its own diagram takes over from there; coming back
+ * out zooms away from it into the diagram around it. A jump between unrelated
+ * diagrams simply fades.
+ */
+async function moveTo(path: string, arrive: () => void): Promise<void> {
+  const from = ui.view;
+  const id = ++moves;
+  fits += 1;
+  const current = () => id === moves;
+  const svg = element("canvas-svg");
+
+  const change = () => {
+    ui.view = path;
+    ui.selection.clear();
+    ui.selectedBus = null;
+    ui.userAdjusted = false;
+    arrive();
+    notify({ redraw: true });
+  };
+
+  const { width, height } = canvasSize();
+  if (path === from || lessMotion() || !currentGraph || !width || !height) {
+    moving = false;
+    svg.classList.remove("moving");
+    setFade(1);
+    change();
+    fitWhenReady(20);
+    return;
+  }
+
+  const down = isInside(path, from);
+  const up = isInside(from, path);
+  moving = true;
+  svg.classList.add("moving");
+
+  // Leave the diagram on screen: into the block the new one is inside, or
+  // back away from it.
+  const start = currentCamera();
+  const into = down ? nodeBox(nodeToward(from, path)) : null;
+  const leaveTo = into ? cameraOn(into) : { ...start, scale: start.scale * (up ? 0.55 : 1) };
+  const left = await tween(down || up ? 240 : 140, (t) => {
+    setCamera(between(start, leaveTo, t));
+    setFade(1 - t * t);
+  }, current);
+  if (!left) return;
+
+  change();
+
+  // Arrive: out of the block that was just left, or growing into place.
+  const target = fitCamera();
+  if (!target) {
+    moving = false;
+    svg.classList.remove("moving");
+    setFade(1);
+    return;
+  }
+  const outOf = up ? nodeBox(nodeToward(path, from)) : null;
+  const enterFrom = outOf ? cameraOn(outOf) : { ...target, scale: target.scale * (down ? 0.6 : 1) };
+  setCamera(enterFrom);
+  setFade(0);
+  await tween(down || up ? 300 : 160, (t) => {
+    setCamera(between(enterFrom, target, t));
+    setFade(t);
+  }, current);
+
+  if (current()) {
+    moving = false;
+    svg.classList.remove("moving");
+    setFade(1);
+  }
+}
+
+/** Opens a composite's diagram. `arrive` runs as it is put on screen, for choosing what to select there. */
+export function openDiagram(path: string, arrive: () => void = () => {}): void {
+  void moveTo(path, arrive);
+}
+
+/**
+ * Brings a block into view: a composite opens its own diagram, and a leaf is
+ * selected in its parent's.
+ */
+export function showBlock(path: string): void {
+  const block = ui.snapshot?.blocks[path];
+  if (!block) return;
+  if (block.kind === "composite") {
+    openDiagram(path);
+    return;
+  }
+
+  const parent = path.split("/").slice(0, -1).join("/") || PROJECT_VIEW;
+  const select = () => {
+    ui.selection.clear();
+    ui.selection.add(block.id);
+    ui.selectedBus = null;
+  };
+
+  if (parent !== ui.view) {
+    openDiagram(parent, select);
+    return;
+  }
+  select();
+  applySelection();
+  notify({ redraw: false });
+}
+
+/* -------------------------------------------------------------------------- */
 /* Drawing                                                                     */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * What each diagram held when it was last drawn, so that blocks and buses the
+ * agent adds can be told apart from those already there. Opening a project
+ * forgets it all: blocks that were there all along are simply there.
+ */
+const drawnBefore = new Map<string, { nodes: Set<string>; buses: Set<string> }>();
+let everythingArrives = false;
+
+/**
+ * Called when a project is opened. In a project the agent has not defined
+ * yet, the first diagram it writes arrives block by block.
+ */
+export function resetArrivals(projectIsEmpty: boolean): void {
+  drawnBefore.clear();
+  everythingArrives = projectIsEmpty;
+}
 
 function clearCanvas(): void {
   element("bus-layer").replaceChildren();
@@ -145,23 +457,8 @@ export function showCanvasMessage(text: string): void {
   element("canvas-wrap").append(note);
 }
 
-/**
- * Brings a block into view: a composite opens its own diagram, and a leaf is
- * selected in its parent's.
- */
-export function showBlock(path: string): void {
-  const block = ui.snapshot?.blocks[path];
-  if (!block) return;
-  if (block.kind === "composite") {
-    openDiagram(path);
-    return;
-  }
-  ui.view = path.split("/").slice(0, -1).join("/") || PROJECT_VIEW;
-  ui.selection.clear();
-  ui.selection.add(block.id);
-  ui.selectedBus = null;
-  notify({ redraw: true });
-}
+/** Blocks arriving together come in one after another, the way they were written. */
+const ARRIVAL_STAGGER_MS = 70;
 
 export function renderCanvas(): void {
   clearCanvas();
@@ -182,6 +479,10 @@ export function renderCanvas(): void {
   const nodeLayer = element("node-layer");
   const layout = layoutFor(graph, ui.view);
   currentLayout = layout;
+
+  const before = drawnBefore.get(ui.view) ?? (everythingArrives ? { nodes: new Set<string>(), buses: new Set<string>() } : null);
+  const arrivingNodes = before ? [...graph.nodes.keys()].filter((key) => !before.nodes.has(key)) : [];
+  const busDelay = Math.min(arrivingNodes.length, 12) * ARRIVAL_STAGGER_MS + 200;
 
   for (const bus of graph.buses.values()) {
     const geometry = busGeometry(graph, layout, bus);
@@ -206,6 +507,14 @@ export function renderCanvas(): void {
     }, group);
     label.textContent = bus.signals.length === 1 ? bus.signals[0]!.targetPort : `${bus.signals.length} signals`;
 
+    if (before && !before.buses.has(bus.id)) {
+      // Drawn along its length, once the blocks it joins have arrived. A path
+      // length of 1 lets the dash be measured without knowing the curve's.
+      group.classList.add("appearing");
+      group.style.animationDelay = `${busDelay}ms`;
+      line.setAttribute("pathLength", "1");
+    }
+
     hit.addEventListener("click", (event) => {
       event.stopPropagation();
       ui.selectedBus = bus.id;
@@ -220,14 +529,19 @@ export function renderCanvas(): void {
   for (const node of graph.nodes.values()) {
     const point = layout.get(node.key);
     if (!point) continue;
-    drawNode(graph, node, point, nodeLayer);
+    const arrival = arrivingNodes.indexOf(node.key);
+    drawNode(graph, node, point, nodeLayer, arrival === -1 ? null : Math.min(arrival, 12) * ARRIVAL_STAGGER_MS);
   }
+
+  drawnBefore.set(ui.view, { nodes: new Set(graph.nodes.keys()), buses: new Set(graph.buses.keys()) });
+  everythingArrives = false;
 
   applySelection();
   applyViewport();
 }
 
-function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element): void {
+/** `arrivalDelay` is null for a block that was already there, and otherwise when it should arrive. */
+function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, arrivalDelay: number | null): void {
   const { height, rightHeight } = measure(node);
   const group = svgEl("g", {
     class: "block-box",
@@ -242,14 +556,22 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element): 
     ? node.block.responsibility + (node.block.kind === "composite" ? "\n\nDouble-click to open this block's diagram." : "")
     : `${node.label} of ${graph.parent.name}`;
 
-  svgEl("rect", { x: 0, y: 0, width: NODE_W, height, rx: 3, class: "block-plate" }, group);
-  svgEl("rect", { x: 0, y: 0, width: NODE_W, height: HEAD_H, rx: 3, class: "block-head" }, group);
-  svgEl("line", { x1: 0, y1: HEAD_H, x2: NODE_W, y2: HEAD_H, class: "block-divider" }, group);
-  svgEl("text", { x: 10, y: 15, class: "block-name" }, group).textContent = node.label;
-  svgEl("text", { x: 10, y: 27, class: "block-kind" }, group).textContent = node.sublabel;
+  // Everything drawn sits in its own group, so an arrival can scale it
+  // without disturbing the position the outer group holds.
+  const body = svgEl("g", { class: "block-body" }, group);
+  if (arrivalDelay !== null) {
+    body.classList.add("appearing");
+    body.style.animationDelay = `${arrivalDelay}ms`;
+  }
+
+  svgEl("rect", { x: 0, y: 0, width: NODE_W, height, rx: 3, class: "block-plate" }, body);
+  svgEl("rect", { x: 0, y: 0, width: NODE_W, height: HEAD_H, rx: 3, class: "block-head" }, body);
+  svgEl("line", { x1: 0, y1: HEAD_H, x2: NODE_W, y2: HEAD_H, class: "block-divider" }, body);
+  svgEl("text", { x: 10, y: 15, class: "block-name" }, body).textContent = node.label;
+  svgEl("text", { x: 10, y: 27, class: "block-kind" }, body).textContent = node.sublabel;
 
   if (node.child?.mode === "each" && node.child.eachOver) {
-    svgEl("text", { x: NODE_W - 10, y: 15, class: "each-badge", "text-anchor": "end" }, group)
+    svgEl("text", { x: NODE_W - 10, y: 15, class: "each-badge", "text-anchor": "end" }, body)
       .textContent = `× each ${node.child.eachOver}`;
   }
 
@@ -265,12 +587,12 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element): 
       d: `M 6 ${y + 2} L 1 ${y + 2} L 1 ${y + groupHeight - 2} L 6 ${y + groupHeight - 2}`,
       class: "group-bracket",
       stroke: colour,
-    }, group);
-    svgEl("circle", { cx: 0, cy: y + groupHeight / 2, r: 3.5, class: "bus-dot", fill: "#0d1113", stroke: colour }, group);
-    svgEl("text", { x: 11, y: y + 10, class: "group-label", fill: colour }, group).textContent = `from ${sourceLabel}`;
+    }, body);
+    svgEl("circle", { cx: 0, cy: y + groupHeight / 2, r: 3.5, class: "bus-dot", fill: "#0d1113", stroke: colour }, body);
+    svgEl("text", { x: 11, y: y + 10, class: "group-label", fill: colour }, body).textContent = `from ${sourceLabel}`;
 
     busGroup.signals.forEach((signal, i) => {
-      svgEl("text", { x: 15, y: y + GROUP_HEAD_H + i * ROW_H + 11, class: "port-label" }, group)
+      svgEl("text", { x: 15, y: y + GROUP_HEAD_H + i * ROW_H + 11, class: "port-label" }, body)
         .textContent = signal.targetPort;
     });
 
@@ -280,7 +602,7 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element): 
   // Right edge: everything the block produces leaves on one bus.
   if (node.outputs.length > 0) {
     const top = HEAD_H + BODY_PAD;
-    svgEl("text", { x: NODE_W - 15, y: top + 10, class: "bus-out-label", "text-anchor": "end" }, group)
+    svgEl("text", { x: NODE_W - 15, y: top + 10, class: "bus-out-label", "text-anchor": "end" }, body)
       .textContent = "bus out";
     node.outputs.forEach((port, i) => {
       svgEl("text", {
@@ -288,16 +610,16 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element): 
         y: top + GROUP_HEAD_H + i * ROW_H + 11,
         class: "port-label",
         "text-anchor": "end",
-      }, group).textContent = port.name;
+      }, body).textContent = port.name;
     });
-    svgEl("circle", { cx: NODE_W, cy: top + rightHeight / 2, r: 4, class: "bus-dot", fill: "#0d1113", stroke: "#2b8d5c" }, group);
+    svgEl("circle", { cx: NODE_W, cy: top + rightHeight / 2, r: 4, class: "bus-dot", fill: "#0d1113", stroke: "#2b8d5c" }, body);
   }
 
   node.capabilities.forEach((cap, i) => {
     const cx = 26 + i * 58;
-    svgEl("line", { x1: cx, y1: height, x2: cx, y2: height + 11, class: "cap-line" }, group);
-    svgEl("circle", { cx, cy: height + 14, r: 3.5, class: "cap-dot" }, group);
-    svgEl("text", { x: cx + 8, y: height + 17.5, class: "port-label" }, group).textContent = cap.name;
+    svgEl("line", { x1: cx, y1: height, x2: cx, y2: height + 11, class: "cap-line" }, body);
+    svgEl("circle", { cx, cy: height + 14, r: 3.5, class: "cap-dot" }, body);
+    svgEl("text", { x: cx + 8, y: height + 17.5, class: "port-label" }, body).textContent = cap.name;
   });
 
   nodeElements.set(node.key, group);
@@ -421,15 +743,6 @@ function attachNodeBehaviour(group: SVGGElement, node: GraphNode): void {
   });
 }
 
-export function openDiagram(path: string): void {
-  ui.view = path;
-  ui.selection.clear();
-  ui.selectedBus = null;
-  ui.userAdjusted = false;
-  notify({ redraw: true });
-  fitWhenReady(20);
-}
-
 export function setUpCanvasGestures(): void {
   const svg = element<SVGSVGElement>("canvas-svg");
   let pan: { x: number; y: number; panX: number; panY: number; moved: boolean } | null = null;
@@ -486,45 +799,6 @@ export function zoomAbout(px: number, py: number, factor: number): void {
   applyViewport();
 }
 
-export function fitToView(): void {
-  if (!currentGraph || !currentLayout) return;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-
-  for (const node of currentGraph.nodes.values()) {
-    const point = currentLayout.get(node.key);
-    if (!point) continue;
-    const { height } = measure(node);
-    minX = Math.min(minX, point.x - 30);
-    minY = Math.min(minY, point.y - 20);
-    maxX = Math.max(maxX, point.x + NODE_W + 30);
-    maxY = Math.max(maxY, point.y + height + 34);
-  }
-
-  const rect = element("canvas-svg").getBoundingClientRect();
-  if (!rect.width || !rect.height || !Number.isFinite(minX)) return;
-
-  // Fitting shrinks a diagram to make it visible; it never magnifies one, or a
-  // project with two small systems in it would open absurdly zoomed in.
-  const zoom = Math.min(1, Math.max(0.25, Math.min(rect.width / (maxX - minX), rect.height / (maxY - minY))));
-  ui.zoom = zoom;
-  ui.panX = (rect.width - (maxX - minX) * zoom) / 2 - minX * zoom;
-  ui.panY = (rect.height - (maxY - minY) * zoom) / 2 - minY * zoom;
-  applyViewport();
-}
-
-/** The canvas has no size until layout settles, so keep asking. */
-export function fitWhenReady(attempts: number): void {
-  const rect = element("canvas-svg").getBoundingClientRect();
-  if (rect.width > 0 && rect.height > 0) {
-    fitToView();
-    return;
-  }
-  if (attempts > 0) requestAnimationFrame(() => fitWhenReady(attempts - 1));
-}
-
 export function watchCanvasSize(): void {
   if (typeof ResizeObserver !== "function") return;
   new ResizeObserver(() => {
@@ -541,5 +815,5 @@ export function resetLayout(): void {
   ui.userAdjusted = false;
   notify({ redraw: true });
   void window.fragmentor.saveLayout({ dir: snapshot.dir, viewPath: ui.view, positions: {} });
-  fitToView();
+  fitToView(true);
 }

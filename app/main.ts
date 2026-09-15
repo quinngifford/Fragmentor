@@ -457,9 +457,9 @@ const INTERACTIONS = `
     .find((node) => node.textContent.includes("load-postings"));
   if (!leaf) return { stage: "no-leaf", drawn };
   leaf.click();
-  await wait(300);
 
-  const first = editor();
+  // Its parent's diagram opens with a zoom, so wait for the block to arrive in the inspector.
+  const first = await until(() => editor());
   if (!first) return { stage: "no-editor", drawn };
   const original = first.value;
   // Opening a file is not editing it, whatever line endings it was saved with.
@@ -556,12 +556,16 @@ const INTERACTIONS = `
     return moved ? (restored ? "moved" : "moved but not restored") : "DID NOT MOVE";
   });
 
+  // Opening a composite moves into it with a zoom, and ends on its diagram.
   const openedByDoubleClick = await attempt(async () => {
     const composite = nodeOf("score-posting");
     if (!composite) return "no composite to open";
+    const moving = () => document.getElementById("canvas-svg").classList.contains("moving");
     composite.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-    await wait(700);
-    return text('.crumb[aria-current="true"]') || "no current crumb";
+    const zoomed = Boolean(await until(moving, 400));
+    await until(() => !moving(), 3000);
+    const crumb = text('.crumb[aria-current="true"]') || "no current crumb";
+    return zoomed ? crumb : crumb + " (without zooming)";
   });
 
   // Finish on a block that has saved tests, scrolled to them, so the
@@ -651,6 +655,14 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
     [
       "a visual project hides what only generated code has, and shows the code a block points at",
       value("visual", "generateHidden") === true && value("visual", "linked") === true && value("visual", "noBench") === true,
+    ],
+    ["opening a block zooms into it and ends on its diagram", value("interface", "openedByDoubleClick") === "score-posting"],
+    [
+      "blocks the agent writes arrive animated, and nothing else does",
+      Number(value("appeared", "arrived")) > 0 &&
+        value("renamed", "arriving") === 0 &&
+        JSON.stringify(value("added", "arriving")) === JSON.stringify(["audit-log"]) &&
+        value("added", "inTree") === true,
     ],
   ];
 
@@ -745,7 +757,8 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
         await cp(path.join(repoRoot, "examples", "job-ranker"), check.projectDir, { recursive: true });
         await run("appeared", `
           const blocks = await until(() => document.querySelectorAll(".block-box").length);
-          return { appeared: blocks > 0, blocks };
+          // Everything in a project the agent has only just written is new, so it arrives.
+          return { appeared: blocks > 0, blocks, arrived: document.querySelectorAll(".block-body.appearing").length };
         `);
 
         await run("interface", INTERACTIONS);
@@ -757,8 +770,33 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
         await writeFile(loadPostings, JSON.stringify(renamed, null, 2), "utf8");
         await run("renamed", `
           const renamed = await until(() => text('.block-box[data-key="load-postings"] .block-name') === "Load Postings (renamed on disk)");
-          return { renamed, keptView: text('.crumb[aria-current="true"]'), keptSelection: text("#inspector h2") };
+          return {
+            renamed,
+            keptView: text('.crumb[aria-current="true"]'),
+            keptSelection: text("#inspector h2"),
+            // A block that was already there is not new, whatever changed about it.
+            arriving: document.querySelectorAll(".block-body.appearing").length,
+          };
         `);
+
+        // The agent adds a block to the diagram on screen. It has no ports, so
+        // the diagram stays free of errors for the steps that count them.
+        const auditLog = inProject("blocks", "rank-jobs", "audit-log");
+        await mkdir(auditLog, { recursive: true });
+        await writeFile(path.join(auditLog, "block.json"), JSON.stringify({ responsibility: "Record what was ranked." }), "utf8");
+        const rankJobsFile = inProject("blocks", "rank-jobs", "block.json");
+        const withAudit = JSON.parse(await readFile(rankJobsFile, "utf8")) as { children: unknown[] };
+        withAudit.children.push("audit-log");
+        await writeFile(rankJobsFile, JSON.stringify(withAudit, null, 2), "utf8");
+        await run("added", `
+          const added = Boolean(await until(() => document.querySelector('.block-box[data-key="audit-log"]')));
+          return {
+            added,
+            arriving: [...document.querySelectorAll(".block-body.appearing")].map((body) => body.parentElement.dataset.key),
+            inTree: [...document.querySelectorAll(".tree .node.appearing")].some((node) => node.textContent.includes("audit-log")),
+          };
+        `);
+        await capture(window, "self-check-added");
 
         // The agent is caught halfway through writing a file, then finishes it.
         const rankResults = inProject("blocks", "rank-jobs", "rank-results", "block.json");

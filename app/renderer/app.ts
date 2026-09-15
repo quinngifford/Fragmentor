@@ -7,6 +7,7 @@ import {
   onCanvasChange,
   openDiagram,
   renderCanvas,
+  resetArrivals,
   resetLayout,
   setUpCanvasGestures,
   showBlock,
@@ -37,6 +38,13 @@ function el<K extends keyof HTMLElementTagNameMap>(
   if (text !== undefined) node.textContent = text;
   return node;
 }
+
+/**
+ * The blocks the hierarchy showed last time, so that one the agent adds stands
+ * out wherever it is. Null just after a project is opened, when nothing on
+ * screen is new to the person.
+ */
+let treeBefore: Set<string> | null = null;
 
 /* -------------------------------------------------------------------------- */
 /* Opening projects                                                            */
@@ -70,6 +78,13 @@ function show(load: ProjectLoad, opening: boolean): void {
     ui.runs.clear();
     ui.caseResults.clear();
     ui.status = null;
+
+    // In a project the agent has not started on, everything it writes is new
+    // and arrives as it is written. In any other, what is there already is
+    // simply there.
+    const empty = load.snapshot === null || load.snapshot.systems.length === 0;
+    resetArrivals(empty);
+    treeBefore = empty ? new Set() : null;
   }
 
   if (!load.snapshot) {
@@ -103,8 +118,12 @@ function show(load: ProjectLoad, opening: boolean): void {
   }
 
   render();
-  // Keep whatever the agent added in view, unless the person has arranged the view themselves.
-  if (!ui.userAdjusted) fitWhenReady(20);
+  // Keep whatever the agent added in view, unless the person has arranged the
+  // view themselves. Once the diagram is on screen, it eases over rather than jumping.
+  if (!ui.userAdjusted) {
+    if (firstSight) fitWhenReady(20);
+    else fitToView(true);
+  }
 }
 
 async function chooseProject(): Promise<void> {
@@ -276,6 +295,9 @@ function renderTree(): void {
   if (!ui.snapshot) return;
 
   const snapshot = requireSnapshot();
+  const before = treeBefore;
+  const shown = new Set<string>();
+
   const walk = (path: string, depth: number) => {
     const block = snapshot.blocks[path];
     if (!block) return;
@@ -286,6 +308,8 @@ function renderTree(): void {
     button.dataset.path = path;
     button.style.paddingLeft = `${8 + depth * 14}px`;
     button.append(el("span", "glyph", block.kind === "composite" ? "▣" : "▫"), el("span", "label", block.id));
+    if (before && !before.has(path)) button.classList.add("appearing");
+    shown.add(path);
 
     // A system root says what language it is, since that is what differs.
     if (depth === 0) {
@@ -300,6 +324,7 @@ function renderTree(): void {
   };
 
   for (const system of snapshot.systems) walk(system.rootBlock, 0);
+  treeBefore = shown;
 }
 
 function renderStatus(): void {
@@ -434,7 +459,7 @@ function wireToolbar(): void {
   });
   element("zoom-fit").addEventListener("click", () => {
     ui.userAdjusted = false;
-    fitToView();
+    fitToView(true);
   });
   element("layout-reset").addEventListener("click", resetLayout);
 }

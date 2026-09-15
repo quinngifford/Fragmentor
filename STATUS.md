@@ -2,7 +2,7 @@
 
 ## Current focus
 
-Projects now have two modes, chosen when they are created along with the granularity and optionally the language. The agent guide is a third of its old length, and the code of blocks with children is generated. Next: animated navigation and block appearance on the canvas, then watching values flow through a running block, with breakpoints.
+Projects have two modes, chosen when they are created along with the granularity and optionally the language. The agent guide is a third of its old length, the code of blocks with children is generated, and the canvas now moves between diagrams with a zoom and brings in blocks as the agent writes them. Next: watching values flow through a running block, with breakpoints.
 
 ## Working
 
@@ -15,11 +15,11 @@ Projects now have two modes, chosen when they are created along with the granula
 - **Language packs.** TypeScript is generated, typechecked and run. Python gets contracts and composite code, but is not checked or run.
 - **Running blocks and saved tests.** A block runs in a separate process against given values, with substitutes for its capabilities, checked against its contract on both sides. Tests live in `cases.json` beside each block.
 - **Desktop application.** Opens a project, draws its diagram and redraws it as the agent works, keeping the view and selection. Problems are listed against their blocks, a half-written file shows a banner over the last good diagram, and unsaved edits warn when the file changes underneath them. Leaf code can be edited; generated code is read-only.
-- **The application checks itself.** `npm run check:app` plays an agent against a throwaway project, from the new-project form through a switch to visual mode, and saves screenshots to `dist/self-check*.png`. The command fails if any step fails.
+- **Canvas motion.** Opening a block zooms into it until its own diagram takes over, and going back up zooms out of it into the diagram around it; unrelated jumps fade. Blocks and buses the agent adds are brought in one after another, and new blocks flash in the hierarchy. Opening a project animates nothing, and the system's reduced-motion setting turns it all off.
+- **The application checks itself.** `npm run check:app` plays an agent against a throwaway project: the new-project form, the agent's first system arriving, a block added while the person watches, zooming into a block, a switch to visual mode, and the older checks. It saves screenshots to `dist/self-check*.png`, and the command fails if any step fails.
 
 ## Not built yet
 
-- Zoom animation between levels, and blocks animating in as the agent creates them.
 - Recording the values on wires, watching them flow, and breakpoints.
 - Showing code problems in the application. Only `fragmentor check` reports them.
 - Running or checking Python code.
@@ -32,6 +32,7 @@ Projects now have two modes, chosen when they are created along with the granula
 - **Packages can reach the outside world** without a capability. Only Node's built-in modules are refused.
 - **Visual pointers are found by name, not by parsing.** A pointer to a name that only appears in a comment still passes.
 - **Python module resolution is unsettled.** Generated Python composites assume a block's folder is on the path and its children are packages beneath it. Nothing runs Python yet, so nothing depends on the answer.
+- **The animations are checked for happening, not for how they look.** The self-check confirms that moves and arrivals take place; whether they feel right needs a person.
 - **The `fragmentor` command needs `npm link` once.** Without it an agent cannot find the command. The guide tells the agent to ask for it.
 - **A redraw takes the cursor out of the code editor.** The unsaved text is kept, but the focus and cursor position are not.
 - **An edit conflict is warned about, not prevented.** Saving over a file the agent has since changed replaces the agent's change.
@@ -45,6 +46,7 @@ Projects now have two modes, chosen when they are created along with the granula
 ## Human verification needed
 
 - **Starting a project in both modes.** Run `npm run app`, choose **New project…**, and try each mode in an empty folder and in a folder holding some code. Then open Claude Code or Codex in the folder and ask for a small program (structured) or a diagram of the code (visual). Things to judge: whether the form is clear, whether the agent follows the guide, and whether the diagram keeps up.
+- **How the canvas moves.** Double-click into blocks and use the breadcrumbs to come back out, and watch blocks arrive while an agent works. Things to judge: whether the zoom reads as going inside a block, and whether arrivals help or distract.
 - **The application in ordinary use.** Running a block from the test bench; whether dragging, zooming and the code panel feel right.
 
 ## Current checkpoint
@@ -53,10 +55,9 @@ Projects now have two modes, chosen when they are created along with the granula
 
 ## Next major steps
 
-1. Canvas animation: zoom into a block and back out of it, and animate blocks and wires in as the agent creates them.
-2. Watching dataflow: record every block call in a run, replay it along the wires, and pause the run at breakpoints.
-3. Run both modes with a real agent, and tighten `FRAGMENTOR.md` wherever the agent goes wrong.
-4. Show everything `fragmentor check` finds in the application, code problems included.
+1. Watching dataflow: record every block call in a run, replay it along the wires, and pause the run at breakpoints.
+2. Run both modes with a real agent, and tighten `FRAGMENTOR.md` wherever the agent goes wrong.
+3. Show everything `fragmentor check` finds in the application, code problems included.
 
 ## Status-file rule
 
