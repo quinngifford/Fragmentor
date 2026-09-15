@@ -51,7 +51,7 @@ Fragmentor has been restructured around external coding agents. It no longer con
 
 ## Current checkpoint
 
-- Branch `agent-workflow`, off `main`. `main` is the last checkpoint before the restructure. Every commit is a working tree with a passing suite.
+- `main`, with the restructure around external agents merged. Every commit is a working tree with a passing suite.
 
 ## Next major steps
 
