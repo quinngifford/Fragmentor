@@ -180,7 +180,7 @@ export async function emitProject(project: Project): Promise<EmitResult> {
     await write(path.join(node.dir, pack.contractFile), pack.contractSource({ block: node.block, blockPath: node.path }));
 
     const implFile = path.join(node.dir, pack.implFile);
-    const existing = await readIfPresent(implFile);
+    const existing = (await readIfPresent(implFile))?.replace(/\r\n/g, "\n") ?? null;
 
     if (node.block.kind === "composite") {
       // A diagram with errors in it has no code to become. The errors are
@@ -188,17 +188,23 @@ export async function emitProject(project: Project): Promise<EmitResult> {
       const children = new Map(node.children.map((child) => [child.block.id, child.block]));
       if (validateComposite(node.block, children).some((diagnostic) => diagnostic.severity === "error")) continue;
 
-      if (existing === null || isGeneratedSource(existing) || pack.isUnimplemented(existing)) {
+      // Only code Fragmentor generated, or the starting point it created and
+      // nobody has touched since, is Fragmentor's to replace.
+      if (existing === null || isGeneratedSource(existing) || existing === pack.implScaffold(node.block)) {
         await write(implFile, pack.compositeSource(node.block));
       } else {
         problems.push(
           `"${node.block.name}" has children, so Fragmentor writes its code, but ${relative(implFile)} holds code someone wrote. Move that code into its children, then delete the file so it can be generated.`,
         );
       }
-    } else if (existing === null || isGeneratedSource(existing)) {
-      // A new leaf, or one that had children until now: either way there is
-      // no one's work in the file, and it needs a starting point.
+    } else if (existing === null) {
       await write(implFile, pack.implScaffold(node.block));
+    } else if (isGeneratedSource(existing)) {
+      // It had children until now. The file may already hold the agent's new
+      // code beneath the old first line, so it is pointed out, not replaced.
+      problems.push(
+        `"${node.block.name}" has no children now, so its code is the agent's to write, but ${relative(implFile)} still starts with Fragmentor's "Generated" line. Write the block's own code there, without that line.`,
+      );
     } else {
       skipped.push(relative(implFile));
     }

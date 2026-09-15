@@ -250,4 +250,57 @@ describe("watching a run", () => {
     // Nor is it part of how long the run took.
     expect(result.durationMs).toBeLessThan(3000);
   }, 30_000);
+
+  it("lets calls go on once their breakpoint is taken away", async () => {
+    const events: RunEvent[] = [];
+    const { control, outcome } = startRun({
+      projectDir,
+      blockPath: "rank-jobs",
+      input,
+      breakpoints: ["rank-jobs/score-posting"],
+      onEvent: (event) => {
+        events.push(event);
+        if (event.type !== "paused") return;
+        // All four postings are waiting at the breakpoint by now.
+        control.setBreakpoints([]);
+        control.resume("continue");
+      },
+    });
+
+    expect((await outcome).ok).toBe(true);
+    expect(events.filter((event) => event.type === "paused")).toHaveLength(1);
+  }, 30_000);
+
+  it("steps into the call it lets go, ahead of the calls still waiting", async () => {
+    const events: RunEvent[] = [];
+    const heldAt: (string | null)[] = [];
+    let stepped = false;
+    const { control, outcome } = startRun({
+      projectDir,
+      blockPath: "rank-jobs",
+      input,
+      breakpoints: ["rank-jobs/score-posting"],
+      onEvent: (event) => {
+        events.push(event);
+        if (event.type !== "paused") return;
+        const block = blockOf(events, event.id);
+        heldAt.push(block);
+        if (!stepped) {
+          stepped = true;
+          control.resume("step");
+        } else if (block === "rank-jobs/score-posting/normalize-text") {
+          control.setBreakpoints([]);
+          control.resume("continue");
+        }
+      },
+    });
+
+    expect((await outcome).ok).toBe(true);
+    expect(heldAt.at(-1)).toBe("rank-jobs/score-posting/normalize-text");
+
+    // It went into the posting that was let go, not another one still waiting.
+    const firstScorer = callsIn(events).find((call) => call.block === "rank-jobs/score-posting")!;
+    const heldNormaliser = callsIn(events).find((call) => call.block === "rank-jobs/score-posting/normalize-text")!;
+    expect(heldNormaliser.parent).toBe(firstScorer.id);
+  }, 30_000);
 });

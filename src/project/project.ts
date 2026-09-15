@@ -136,9 +136,17 @@ export function manifestPath(projectDir: string): string {
   return path.join(projectDir, MANIFEST_FILE);
 }
 
-/** Where a block's folder lives, given its path from the blocks root. */
+/**
+ * Where a block's folder lives, given its path from the blocks root. A path is
+ * block ids joined by `/`, and anything else — `..` above all, arriving from
+ * the window — is refused rather than followed out of the project.
+ */
 export function blockDir(projectDir: string, blockPath: string): string {
-  return path.join(blocksRoot(projectDir), ...blockPath.split("/"));
+  const segments = blockPath.split("/");
+  if (!segments.every((segment) => blockIdPattern.test(segment))) {
+    throw new Error(`"${blockPath}" is not a block path: it should be block ids joined by "/".`);
+  }
+  return path.join(blocksRoot(projectDir), ...segments);
 }
 
 /** The system a block belongs to, identified by the first segment of its path. */

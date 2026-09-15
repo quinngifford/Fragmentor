@@ -32,7 +32,9 @@ Projects have two modes, chosen when they are created along with the granularity
 - **Packages can reach the outside world** without a capability. Only Node's built-in modules are refused.
 - **Visual pointers are found by name, not by parsing.** A pointer to a name that only appears in a comment still passes.
 - **Watching has limits.** A run records its first 2000 block calls, and a value larger than about 200 KB is described rather than shown. Breakpoints last until the project is closed; they are not saved with it.
-- **Stepping follows whichever block starts next.** When several calls are held at once, as with a block run once per item, Step and Continue take them in turn, so the next pause may be another item rather than a block inside the one just released.
+- **Held calls take turns.** When several calls are held at once, as with a block run once per item, Continue lets go of one at a time while the breakpoint stays set; taking the breakpoint away lets the rest go too. Step goes into the call it lets go.
+- **Inside a block run more than once, the call shown is chosen per diagram.** Choosing a call of a block does not choose the matching calls of the blocks inside it, which start from their first call.
+- **A value on a very short wire can sit partly under the block it feeds.**
 - **Python module resolution is unsettled.** Generated Python composites assume a block's folder is on the path and its children are packages beneath it. Nothing runs Python yet, so nothing depends on the answer.
 - **The animations are checked for happening, not for how they look.** The self-check confirms that moves, arrivals, pauses and wire values happen; whether they feel right needs a person.
 - **The `fragmentor` command needs `npm link` once.** Without it an agent cannot find the command. The guide tells the agent to ask for it.

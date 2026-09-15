@@ -14,7 +14,8 @@ export interface WatchedCall {
   input: unknown;
   output?: unknown;
   error?: string;
-  state: "running" | "paused" | "returned" | "threw";
+  /** "stopped" is a call the run ended before it could finish. */
+  state: "running" | "paused" | "returned" | "threw" | "stopped";
 }
 
 /**
@@ -31,6 +32,8 @@ export interface Watch {
   played: number;
   /** Every call, as of the events shown so far. */
   calls: Map<number, WatchedCall>;
+  /** The call Continue and Step act on, when the run is held. Others may be waiting behind it. */
+  heldId: number | null;
   /** Set when the run has ended. */
   outcome: RunOutcome | null;
   /** Which call of a block to show inside its diagram when it ran more than once, by block path. */

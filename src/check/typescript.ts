@@ -11,14 +11,14 @@ import type { LoadedBlock, Project } from "../project/project.js";
  * The code is typechecked against the generated contracts, so a leaf that
  * returns the wrong shape fails here before anything runs. Contracts import
  * zod, which a project may well not have installed, so the checker lends it
- * Fragmentor's copy. Any other package a block imports is found where the
- * project installed it, exactly as it is when the block runs.
+ * Fragmentor's copy.
  *
  * What each block imports is checked as well, because the test runner
- * compiles each implementation into a folder of its own: types, which
- * disappear when it is compiled, its own children's code, and packages. Not
- * Node's built-in modules, though, which reach the files, the network and the
- * process directly — that is what capabilities are for.
+ * compiles each implementation into a folder of its own and runs it from
+ * there: types, which disappear when it is compiled, its own children's code,
+ * and packages installed in the project itself, which is the one place the
+ * runner looks. Not Node's built-in modules, though, which reach the files,
+ * the network and the process directly — that is what capabilities are for.
  */
 
 export interface CodeProblem {
@@ -57,6 +57,12 @@ function isPackage(specifier: string): boolean {
   return !specifier.startsWith(".") && !specifier.startsWith("/") && !path.isAbsolute(specifier);
 }
 
+/** A package's name as installed: `lodash` for `lodash/fp`, `@scope/tool` for `@scope/tool/extra`. */
+function packageName(specifier: string): string {
+  const parts = specifier.split("/");
+  return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
+}
+
 function at(file: string, source: ts.SourceFile, position: number): Omit<CodeProblem, "message"> {
   const { line, character } = source.getLineAndCharacterOfPosition(position);
   return { file, line: line + 1, column: character + 1 };
@@ -77,7 +83,7 @@ function importsOnlyTypes(statement: ts.ImportDeclaration): boolean {
   );
 }
 
-function importProblems(node: LoadedBlock, file: string, source: ts.SourceFile): CodeProblem[] {
+function importProblems(node: LoadedBlock, file: string, source: ts.SourceFile, projectDir: string): CodeProblem[] {
   const compiledName = getPack("typescript").implFile.replace(/\.ts$/, ".js");
   const children = new Set(node.block.children.map((child) => `./${child.block}/${compiledName}`));
 
@@ -87,14 +93,25 @@ function importProblems(node: LoadedBlock, file: string, source: ts.SourceFile):
 
     const specifier = statement.moduleSpecifier.text;
     if (children.has(specifier) || importsOnlyTypes(statement)) continue;
-    if (isPackage(specifier) && !isBuiltin(specifier)) continue;
+    const where = at(file, source, statement.getStart(source));
 
-    problems.push({
-      ...at(file, source, statement.getStart(source)),
-      message: isBuiltin(specifier)
-        ? `"${node.block.name}" imports "${specifier}", one of Node's built-in modules. A block reaches files, the network and the process only through its capabilities, so declare a capability instead.`
-        : `"${node.block.name}" imports values from "${specifier}", which will not run: a block can import types, its own children's code, and packages installed in the project, and nothing else. Use \`import type\` for types, and a capability for anything outside the block.`,
-    });
+    if (isBuiltin(specifier)) {
+      problems.push({
+        ...where,
+        message: `"${node.block.name}" imports "${specifier}", one of Node's built-in modules. A block reaches files, the network and the process only through its capabilities, so declare a capability instead.`,
+      });
+    } else if (!isPackage(specifier)) {
+      problems.push({
+        ...where,
+        message: `"${node.block.name}" imports values from "${specifier}", which will not run: a block can import types, its own children's code, and packages installed in the project, and nothing else. Use \`import type\` for types, and a capability for anything outside the block.`,
+      });
+    } else if (!existsSync(path.join(projectDir, "node_modules", packageName(specifier)))) {
+      // Found anywhere else, it would typecheck and still fail to run.
+      problems.push({
+        ...where,
+        message: `"${node.block.name}" imports "${specifier}", which is not installed in the project, so it will not run. Install it in the project folder: npm install ${packageName(specifier)}`,
+      });
+    }
   }
   return problems;
 }
@@ -121,7 +138,7 @@ export function checkSystemCode(project: Project, rootBlock: string): CodeProble
 
   for (const [file, node] of files) {
     const source = program.getSourceFile(file);
-    if (source) problems.push(...importProblems(node, relative(file), source));
+    if (source) problems.push(...importProblems(node, relative(file), source, project.dir));
   }
 
   return problems;

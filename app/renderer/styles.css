@@ -483,6 +483,8 @@ pre.code {
 .block-box[data-run="done"] .block-plate { stroke: var(--signal-dim); stroke-width: 1.5; }
 .block-box[data-run="failed"] .block-plate { stroke: var(--bad); stroke-width: 2; }
 .block-box[data-run="paused"] .block-plate { stroke: var(--effect); stroke-width: 2.5; }
+.block-box[data-run="stopped"] .block-plate { stroke: var(--pending); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.block-box[data-run="stopped"] .run-note { fill: var(--pending); }
 
 .run-note { font-family: var(--mono); font-size: 9px; letter-spacing: 0.04em; fill: var(--signal-dim); pointer-events: none; }
 .block-box[data-run="running"] .run-note { fill: var(--signal); }

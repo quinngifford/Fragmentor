@@ -71,7 +71,11 @@ function settingsFrom(options: Map<string, string>): NewProjectSettings | string
   if (![1, 2, 3, 4, 5].includes(granularity)) {
     return "fragmentor init needs --granularity, from 1 (a few large blocks) to 5 (many small ones).";
   }
-  return { mode, granularity: granularity as NewProjectSettings["granularity"], language: options.get("language") ?? null };
+  const language = options.get("language") ?? null;
+  if (mode === "structured" && language !== null && !isKnownLanguage(language)) {
+    return `Fragmentor cannot generate ${language} code. For a structured project use --language typescript or --language python, or leave it to the agent.`;
+  }
+  return { mode, granularity: granularity as NewProjectSettings["granularity"], language };
 }
 
 async function init(dir: string, options: Map<string, string>): Promise<number> {

@@ -115,25 +115,46 @@ let stepping = false;
 
 /**
  * Calls held at a breakpoint. Several can arrive at once — a child run once
- * per item is called for every item together — so they wait their turn, and
- * only the first is reported as paused.
+ * per item is called for every item together — so they wait their turn. The
+ * first is the one reported as paused and the one a resume lets go, and each
+ * time a different call comes first, that is reported.
  */
 const held = [];
 
-function hold(id) {
+function reportFirst() {
+  if (held.length > 0) send({ type: "paused", id: held[0].id });
+}
+
+function hold(id, blockPath, ahead) {
   return new Promise((release) => {
-    held.push({ id, release });
-    if (held.length === 1) send({ type: "paused", id });
+    const entry = { id, blockPath, release };
+    // A step goes into the call it let go, so what that call starts comes
+    // next, ahead of the calls still waiting their turn.
+    if (ahead) held.unshift(entry);
+    else held.push(entry);
+    if (ahead || held.length === 1) reportFirst();
   });
+}
+
+function letGo(entry) {
+  send({ type: "resumed", id: entry.id });
+  entry.release();
 }
 
 function releaseNext(mode) {
   const next = held.shift();
   if (!next) return;
   stepping = mode === "step";
-  send({ type: "resumed", id: next.id });
-  next.release();
-  if (held.length > 0) send({ type: "paused", id: held[0].id });
+  letGo(next);
+  if (mode === "continue") {
+    // Calls held by an earlier step, or at a breakpoint that has since been
+    // taken away, have nothing left to wait for.
+    for (const entry of held.filter((each) => !breakpoints.has(each.blockPath))) {
+      held.splice(held.indexOf(entry), 1);
+      letGo(entry);
+    }
+  }
+  reportFirst();
 }
 
 function traced(blockPath, fn) {
@@ -145,8 +166,9 @@ function traced(blockPath, fn) {
     if (recorded) {
       send({ type: "call", id, parent: within.getStore() ?? null, block: blockPath, input: recordable(input), at: at() });
       if (stepping || breakpoints.has(blockPath)) {
+        const ahead = stepping;
         stepping = false;
-        await hold(id);
+        await hold(id, blockPath, ahead);
       }
     }
 

@@ -89,6 +89,13 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
       );
       return;
     }
+    if (child.block === parent.id) {
+      error(
+        `"${parent.name}" has a child with its own id, "${child.block}". Give the child another id: the two would have the same function and type names.`,
+        `children[${i}]`,
+      );
+      return;
+    }
     if (seen.has(child.block)) {
       error(`"${parent.name}" lists the child block "${child.block}" more than once.`, `children[${i}]`);
       return;

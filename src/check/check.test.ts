@@ -168,6 +168,27 @@ ${LEAF_SIGNATURE} {
     );
   });
 
+  it("reports a package the project has not installed, which the runner would not find", async () => {
+    // zod typechecks, because the checker lends contracts Fragmentor's copy,
+    // but a block that uses it itself needs the project to have it.
+    await writeFile(
+      file("rank-jobs", "extract-profile-keywords", "impl.ts"),
+      `${LEAF_HEADER}
+import { z } from "zod";
+
+${LEAF_SIGNATURE} {
+  return { keywords: z.array(z.string()).parse(input.profile.skills) };
+}
+`,
+      "utf8",
+    );
+
+    const report = await checkProject(dir);
+    expect(report.systems[0]!.codeProblems).toEqual([
+      expect.objectContaining({ line: 2, message: expect.stringContaining('imports "zod", which is not installed in the project') }),
+    ]);
+  });
+
   it("reports a wiring problem as an error", async () => {
     const blockFile = file("rank-jobs", "block.json");
     const block = JSON.parse(await readFile(blockFile, "utf8")) as { wires: string[] };

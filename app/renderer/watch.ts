@@ -53,12 +53,13 @@ function frameOf(watch: Watch, blockPath: string): WatchedCall | null {
   return calls[Math.min(watch.frames.get(blockPath) ?? 0, calls.length - 1)]!;
 }
 
-function record(calls: Map<number, WatchedCall>, event: RunEvent): void {
+/** Shows one more event. */
+function play(watch: Watch, event: RunEvent): void {
   if (event.type === "call") {
-    calls.set(event.id, { id: event.id, parent: event.parent, block: event.block, input: event.input, state: "running" });
+    watch.calls.set(event.id, { id: event.id, parent: event.parent, block: event.block, input: event.input, state: "running" });
     return;
   }
-  const call = calls.get(event.id);
+  const call = watch.calls.get(event.id);
   if (!call) return;
   if (event.type === "return") {
     call.output = event.output;
@@ -66,8 +67,23 @@ function record(calls: Map<number, WatchedCall>, event: RunEvent): void {
   } else if (event.type === "throw") {
     call.error = event.error;
     call.state = "threw";
+  } else if (event.type === "paused") {
+    call.state = "paused";
+    watch.heldId = event.id;
   } else {
-    call.state = event.type === "paused" ? "paused" : "running";
+    call.state = "running";
+    if (watch.heldId === event.id) watch.heldId = null;
+  }
+}
+
+/**
+ * Once a run has ended and been shown to the end, a call still running or
+ * held never finished: the run was stopped, or failed around it.
+ */
+function settleUnfinished(watch: Watch): void {
+  watch.heldId = null;
+  for (const call of watch.calls.values()) {
+    if (call.state === "running" || call.state === "paused") call.state = "stopped";
   }
 }
 
@@ -124,16 +140,11 @@ export function preview(value: unknown): string {
   return "{…}";
 }
 
-function nodeRun(calls: WatchedCall[]): { state: "running" | "paused" | "done" | "failed"; note: string } {
+function nodeRun(calls: WatchedCall[]): { state: "running" | "paused" | "done" | "failed" | "stopped"; note: string } {
   const finished = calls.filter((call) => call.state === "returned").length;
-  const state = calls.some((call) => call.state === "paused")
-    ? "paused"
-    : calls.some((call) => call.state === "threw")
-      ? "failed"
-      : calls.some((call) => call.state === "running")
-        ? "running"
-        : "done";
-  if (state === "paused" || state === "failed") return { state, note: state };
+  const has = (state: WatchedCall["state"]) => calls.some((call) => call.state === state);
+  const state = has("paused") ? "paused" : has("threw") ? "failed" : has("stopped") ? "stopped" : has("running") ? "running" : "done";
+  if (state === "paused" || state === "failed" || state === "stopped") return { state, note: state };
   return { state, note: calls.length > 1 ? `${finished} of ${calls.length}` : state };
 }
 
@@ -146,8 +157,9 @@ function overlayFor(watch: Watch, graph: Graph): RunOverlay {
   if (!frame) return overlay;
 
   if (graph.nodes.has("input")) overlay.nodes.set("input", { state: "done", note: "" });
-  if (graph.nodes.has("output") && (frame.state === "returned" || frame.state === "threw")) {
-    overlay.nodes.set("output", { state: frame.state === "returned" ? "done" : "failed", note: "" });
+  if (graph.nodes.has("output") && frame.state !== "running" && frame.state !== "paused") {
+    const state = frame.state === "returned" ? "done" : frame.state === "stopped" ? "stopped" : "failed";
+    overlay.nodes.set("output", { state, note: "" });
   }
 
   for (const bus of graph.buses.values()) {
@@ -227,27 +239,36 @@ function follow(watch: Watch, id: number): void {
 function playNext(watch: Watch): void {
   const graph = graphInView();
   const pulses: string[] = [];
-  let held: number | null = null;
   let played = 0;
 
   do {
     const event = watch.events[watch.played]!;
     watch.played += 1;
     played += 1;
-    record(watch.calls, event);
+    play(watch, event);
     if (graph) pulses.push(...pulsesFor(event, watch, graph));
-    if (event.type === "paused") held = event.id;
   } while (watch.played < watch.events.length && pace(watch.events[watch.played]!, watch) === 0 && played < 500);
 
   paint(pulses);
-  if (held !== null && watch.calls.get(held)?.state === "paused") follow(watch, held);
+  // Follow the run to where it is held, while it is really held there. A
+  // replay of a finished run stays where the person put it.
+  if (!watch.outcome && watch.heldId !== null && watch.calls.get(watch.heldId)?.state === "paused") follow(watch, watch.heldId);
 }
 
 function schedule(): void {
   const watch = ui.watch;
   if (!watch || timer !== undefined) return;
+
   if (watch.played >= watch.events.length) {
-    renderRunBar();
+    // Shown to the end. Once the run itself has ended too, whatever never
+    // finished was cut short, and the panels can show how it all came out.
+    if (watch.outcome) {
+      settleUnfinished(watch);
+      paint();
+      notify();
+    } else {
+      renderRunBar();
+    }
     return;
   }
 
@@ -259,8 +280,6 @@ function schedule(): void {
     if (ui.watch !== watch) return;
     playNext(watch);
     schedule();
-    // The end of the run is also the end of its playback.
-    if (watch.outcome && watch.played >= watch.events.length) notify();
   }, delay);
 }
 
@@ -270,7 +289,8 @@ function command(watch: Watch, instruction: RunCommand): void {
 
 function skip(watch: Watch): void {
   stopPlayback();
-  while (watch.played < watch.events.length) record(watch.calls, watch.events[watch.played++]!);
+  while (watch.played < watch.events.length) play(watch, watch.events[watch.played++]!);
+  settleUnfinished(watch);
   paint();
   notify();
 }
@@ -279,6 +299,7 @@ function replay(watch: Watch): void {
   stopPlayback();
   watch.played = 0;
   watch.calls = new Map();
+  watch.heldId = null;
   paint();
   schedule();
 }
@@ -308,6 +329,7 @@ export async function runWatched(block: SnapshotBlock, input: unknown): Promise<
     events: [],
     played: 0,
     calls: new Map(),
+    heldId: null,
     outcome: null,
     frames: new Map(),
   };
@@ -328,7 +350,6 @@ export async function runWatched(block: SnapshotBlock, input: unknown): Promise<
       ? result.value
       : { ok: false, error: result.error, inputProblems: [], outputProblems: [], logs: [], durationMs: 0 };
     schedule();
-    renderRunBar();
   }
   return result;
 }
@@ -375,11 +396,12 @@ function renderRunBar(): void {
 
   const blocks = ui.snapshot?.blocks ?? {};
   const name = blocks[watch.blockPath]?.name ?? watch.blockPath;
-  const held = [...watch.calls.values()].find((call) => call.state === "paused");
+  // Only a run that is still going can be held; a replay shows pauses as they were.
+  const held = !watch.outcome && watch.heldId !== null ? watch.calls.get(watch.heldId) : undefined;
   const state = el("span", "run-state");
   const buttons: HTMLButtonElement[] = [];
 
-  if (held) {
+  if (held?.state === "paused") {
     const turns = callsOf(watch, held.block);
     const which = turns.length > 1 ? ` (call ${turns.indexOf(held) + 1} of ${turns.length})` : "";
     state.textContent = `Paused before ${blocks[held.block]?.name ?? held.block}${which}`;
@@ -425,6 +447,12 @@ function json(value: unknown): string {
   const text = JSON.stringify(value, null, 2) ?? "nothing";
   return text.length > 4000 ? `${text.slice(0, 4000)}\n…` : text;
 }
+
+const STILL_GOING: Partial<Record<WatchedCall["state"], string>> = {
+  paused: "Held at its breakpoint. Use Continue or Step above the diagram.",
+  running: "Still running.",
+  stopped: "The run ended before this call finished.",
+};
 
 /** Pausing at a block, and what it received and returned in the run on the diagram. */
 export function watchSection(block: SnapshotBlock): HTMLElement | null {
@@ -481,9 +509,7 @@ export function watchSection(block: SnapshotBlock): HTMLElement | null {
   } else if (call.state === "threw") {
     node.append(el("h4", "watch-label bad", "Failed"), el("pre", "code", call.error ?? ""));
   } else {
-    node.append(
-      el("p", "bench-note", call.state === "paused" ? "Held at its breakpoint. Use Continue or Step above the diagram." : "Still running."),
-    );
+    node.append(el("p", "bench-note", STILL_GOING[call.state] ?? ""));
   }
   return node;
 }

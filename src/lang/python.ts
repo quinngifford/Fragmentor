@@ -148,7 +148,7 @@ function compositeSource(block: Block): string {
   }
 
   for (const step of plan.steps) {
-    const call = `${snakeCase(step.child)}(${modelName(step.child, "Input")}(${keywords(step.args)}), caps)`;
+    const call = `${step.callee}(${modelName(step.child, "Input")}(${keywords(step.args)}), caps)`;
     const lines: string[] = [];
     if (step.each) {
       const gather = `await asyncio.gather(*(${call} for ${step.each.item} in ${step.each.over}))`;
@@ -170,9 +170,9 @@ function compositeSource(block: Block): string {
     ``,
     ...(plan.steps.some((step) => step.each) ? [`import asyncio`, ``] : []),
     `from contract import ${modelName(block.id, "Input")}, ${modelName(block.id, "Output")}, ${modelName(block.id, "Caps")}`,
-    ...block.children.flatMap((child) => [
-      `from ${snakeCase(child.block)}.contract import ${modelName(child.block, "Input")}`,
-      `from ${snakeCase(child.block)}.impl import ${snakeCase(child.block)}`,
+    ...plan.callees.flatMap(({ child, name, local }) => [
+      `from ${snakeCase(child)}.contract import ${modelName(child, "Input")}`,
+      `from ${snakeCase(child)}.impl import ${name === local ? name : `${name} as ${local}`}`,
     ]),
     ``,
     ``,

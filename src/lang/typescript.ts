@@ -102,7 +102,7 @@ function compositeSource(block: Block): string {
   if (plan.inputs.length > 0) paragraphs.push(`  const ${object(plan.inputs)} = input;`);
 
   for (const step of plan.steps) {
-    const call = `${camelCase(step.child)}(${object(step.args)}, caps)`;
+    const call = `${step.callee}(${object(step.args)}, caps)`;
     if (!step.each) {
       paragraphs.push(step.outputs.length > 0 ? `  const ${object(step.outputs)} = await ${call};` : `  await ${call};`);
       continue;
@@ -122,7 +122,9 @@ function compositeSource(block: Block): string {
   return [
     GENERATED,
     `import type { ${input}, ${output}, ${caps} } from "./contract.js";`,
-    ...block.children.map((child) => `import { ${camelCase(child.block)} } from "./${child.block}/impl.js";`),
+    ...plan.callees.map(
+      ({ child, name, local }) => `import { ${name === local ? name : `${name} as ${local}`} } from "./${child}/impl.js";`,
+    ),
     ``,
     `/** ${block.responsibility} */`,
     `export async function ${camelCase(block.id)}(input: ${input}, caps: ${caps}): Promise<${output}> {`,

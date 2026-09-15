@@ -158,6 +158,14 @@ describe("project round trip", () => {
   });
 });
 
+describe("block paths", () => {
+  it("refuse anything that could lead outside the blocks folder", () => {
+    expect(() => blockDir(dir, "rank-jobs/../../../elsewhere")).toThrow(/is not a block path/);
+    expect(() => blockDir(dir, "rank-jobs/..")).toThrow(/is not a block path/);
+    expect(blockDir(dir, "rank-jobs/score-posting")).toBe(path.join(dir, "blocks", "rank-jobs", "score-posting"));
+  });
+});
+
 describe("project settings", () => {
   it("may have no systems yet, while it waits for the agent to define them", async () => {
     await writeManifestJson({ name: "Waiting", mode: "structured", granularity: { level: 2 } });

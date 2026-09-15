@@ -200,6 +200,35 @@ describe("the Python pack", () => {
   });
 });
 
+describe("a composite whose child's name is already taken", () => {
+  // Every block's capabilities arrive as `caps`, so a child called that
+  // cannot be called by its own name.
+  const wrap = blockFromFile(
+    {
+      responsibility: "Wraps a block whose name the generated code already uses.",
+      inputs: { value: "number" },
+      outputs: { doubled: "number" },
+      children: ["caps"],
+      wires: ["input.value -> caps.value", "caps.doubled -> output.doubled"],
+    },
+    "wrap",
+  );
+
+  it("calls it by another name in TypeScript", () => {
+    const source = getPack("typescript").compositeSource(wrap);
+    expect(typeScriptErrors(source)).toEqual([]);
+    expect(source).toContain('import { caps as capsBlock } from "./caps/impl.js";');
+    expect(source).toContain("const { doubled } = await capsBlock({ value }, caps);");
+  });
+
+  it("calls it by another name in Python", () => {
+    const source = getPack("python").compositeSource(wrap);
+    expect(source).toContain("from caps.impl import caps as caps_block");
+    expect(source).toContain("await caps_block(CapsInput(value=input_value), caps)");
+    expect(pythonErrors(source)).toBe("");
+  });
+});
+
 describe("the two packs on the same block", () => {
   it("differ exactly where the languages differ", () => {
     const typescript = getPack("typescript");

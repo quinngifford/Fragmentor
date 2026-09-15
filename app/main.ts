@@ -389,16 +389,20 @@ function registerHandlers(): void {
         },
       });
 
-      // A run held at a breakpoint would otherwise wait for ever on a window
-      // that has gone.
+      // A run held at a breakpoint would otherwise wait for ever on a page
+      // that has gone: closed, reloaded or crashed.
       const stop = () => control.stop();
       contents.once("destroyed", stop);
+      contents.once("did-start-loading", stop);
+      contents.once("render-process-gone", stop);
       liveRuns.set(request.runId, control);
       try {
         return ok(await outcome);
       } finally {
         liveRuns.delete(request.runId);
         contents.removeListener("destroyed", stop);
+        contents.removeListener("did-start-loading", stop);
+        contents.removeListener("render-process-gone", stop);
       }
     } catch (error) {
       return failed(error);
@@ -714,6 +718,13 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("cleared", "breakpoints") === 0,
     ],
     [
+      "a held run can be stopped, and the diagram shows what it cut short",
+      value("stopped", "paused") === true &&
+        value("stopped", "ended") === true &&
+        Number(value("stopped", "cutShort")) >= 1 &&
+        value("stopped", "canReplay") === true,
+    ],
+    [
       "blocks the agent writes arrive animated, and nothing else does",
       Number(value("appeared", "arrived")) > 0 &&
         value("renamed", "arriving") === 0 &&
@@ -872,6 +883,32 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
           };
         `);
         await capture(window, "self-check-watched");
+
+        // The person runs it again, and stops it while it is held.
+        await run("stopped", `
+          const root = [...document.querySelectorAll(".tree .node")]
+            .find((node) => (node.querySelector(".label") || {}).textContent === "rank-jobs");
+          if (!root) return { paused: false, stage: "no rank-jobs in the tree" };
+          root.click();
+          await wait(300);
+
+          const runButton = await until(() => [...document.querySelectorAll(".bench .btn")]
+            .find((button) => button.textContent === "Run block" && !button.disabled));
+          if (!runButton) return { paused: false, stage: "no run button" };
+          runButton.click();
+
+          const paused = Boolean(await until(() => /Paused before/.test(text("#run-bar")), 20000));
+          const stop = [...document.querySelectorAll("#run-bar button")].find((button) => button.textContent === "Stop");
+          if (stop) stop.click();
+          const ended = Boolean(await until(() => /was stopped/.test(text("#run-bar")), 10000));
+          return {
+            paused,
+            ended,
+            runBar: text("#run-bar"),
+            cutShort: document.querySelectorAll('.block-box[data-run="stopped"]').length,
+            canReplay: [...document.querySelectorAll("#run-bar button")].some((button) => button.textContent === "Replay"),
+          };
+        `);
 
         // Take the run and the breakpoint off again, and go back to the block
         // the later steps expect, so nothing after this depends on them.

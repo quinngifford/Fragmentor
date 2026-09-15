@@ -21,8 +21,18 @@ export interface Binding {
   variable: string;
 }
 
+export interface Callee {
+  child: string;
+  /** The function the child's module exports. */
+  name: string;
+  /** What the composite calls it: its own name, unless that name is taken. */
+  local: string;
+}
+
 export interface Step {
   child: string;
+  /** The name the child's function is called by here. */
+  callee: string;
   /** For a child called once per item: the input it iterates over, the variable holding the array, and the name for one item. */
   each: { port: string; over: string; item: string } | null;
   /** Its inputs, each taken from a variable. The input it iterates over takes the item. */
@@ -34,6 +44,8 @@ export interface Step {
 }
 
 export interface CompositePlan {
+  /** Every child's function, in the order the children are listed. */
+  callees: Callee[];
   /** The composite's own inputs that something uses. */
   inputs: Binding[];
   steps: Step[];
@@ -58,11 +70,7 @@ const keyOf = (source: WireSource) => (source.from === "input" ? `input.${source
 
 /** Assumes the composite passed validation: every input is wired once and nothing loops. */
 export function planComposite(block: Block, naming: Naming): CompositePlan {
-  const taken = new Set<string>([
-    ...naming.reserved,
-    naming.functionName(block.id),
-    ...block.children.map((child) => naming.functionName(child.block)),
-  ]);
+  const taken = new Set<string>([...naming.reserved, naming.functionName(block.id)]);
 
   /** The first of these names that is free, or the last with a number on the end. */
   const claim = (...preferred: string[]): string => {
@@ -80,6 +88,15 @@ export function planComposite(block: Block, naming: Naming): CompositePlan {
       }
     }
   };
+
+  // Children's functions are named before any variable, so no variable can
+  // hide one. A child whose name is already taken — by a name the generated
+  // code uses, such as `caps` — is imported under another.
+  const callees = block.children.map((child): Callee => {
+    const name = naming.functionName(child.block);
+    return { child: child.block, name, local: claim(name, naming.qualified(child.block, "block")) };
+  });
+  const calleeOf = new Map(callees.map((callee) => [callee.child, callee.local]));
 
   /** The variable holding each source a wire starts from. */
   const holding = new Map<string, string>();
@@ -120,7 +137,14 @@ export function planComposite(block: Block, naming: Naming): CompositePlan {
     }
 
     const results = outputs.length > 0 ? naming.results(id, ref.mode === "each") : null;
-    steps.push({ child: id, each, args, outputs, result: results === null ? null : claim(results) });
+    steps.push({
+      child: id,
+      callee: calleeOf.get(id)!,
+      each,
+      args,
+      outputs,
+      result: results === null ? null : claim(results),
+    });
   }
 
   const returns = Object.keys(block.outputs).map((port) => {
@@ -128,5 +152,5 @@ export function planComposite(block: Block, naming: Naming): CompositePlan {
     return { port, variable: holding.get(keyOf(wire.source))! };
   });
 
-  return { inputs, steps, returns };
+  return { callees, inputs, steps, returns };
 }

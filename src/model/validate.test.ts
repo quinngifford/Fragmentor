@@ -130,6 +130,16 @@ describe("validateComposite", () => {
     );
   });
 
+  it("refuses a child with its parent's own id, whose names would clash with the parent's", () => {
+    const { parent, children } = straightLine();
+    parent.children.push({ block: "rank-posting", mode: "once" });
+    children.set("rank-posting", makeBlock({ id: "rank-posting" }));
+
+    expect(errors(validateComposite(parent, children))).toContainEqual(
+      expect.stringContaining('has a child with its own id, "rank-posting"'),
+    );
+  });
+
   it("refuses children for a block the person pinned as a leaf", () => {
     const { parent, children } = straightLine();
     parent.pinnedAsLeaf = true;

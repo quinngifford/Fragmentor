@@ -150,7 +150,7 @@ export function applyBreakpoints(): void {
 
 /** A run laid over the diagram on screen: how each block is doing, and what each bus carried. */
 export interface RunOverlay {
-  nodes: Map<string, { state: "running" | "paused" | "done" | "failed"; note: string }>;
+  nodes: Map<string, { state: "running" | "paused" | "done" | "failed" | "stopped"; note: string }>;
   /** Buses whose values are known, with the label to show on each. */
   buses: Map<string, string>;
 }
