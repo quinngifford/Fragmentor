@@ -6,7 +6,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
 import { CHANNELS } from "./ipc.js";
-import type { ProjectLoad, Result, RunBlockRequest, SaveCasesRequest, SaveLayoutRequest, WriteImplRequest } from "./ipc.js";
+import type {
+  ProjectLoad,
+  Result,
+  RunCommand,
+  SaveCasesRequest,
+  SaveLayoutRequest,
+  WatchRunRequest,
+  WriteImplRequest,
+} from "./ipc.js";
 import { projectSnapshot } from "../src/project/snapshot.js";
 import { saveViewLayout } from "../src/project/layout.js";
 import { blockDir, loadProject, manifestPath, systemOf } from "../src/project/project.js";
@@ -15,8 +23,8 @@ import { emitProject, startProject } from "../src/codegen/emit.js";
 import type { EmitResult, NewProjectSettings } from "../src/codegen/emit.js";
 import { GUIDE_FILE } from "../src/codegen/guide.js";
 import { resolveInside } from "../src/project/safePath.js";
-import { runBlock, runCases } from "../src/run/run.js";
-import type { CaseResult, RunOutcome } from "../src/run/run.js";
+import { runCases, startRun } from "../src/run/run.js";
+import type { CaseResult, RunControl, RunOutcome } from "../src/run/run.js";
 import { saveCases } from "../src/run/cases.js";
 
 /**
@@ -363,12 +371,48 @@ function registerHandlers(): void {
     }
   });
 
-  ipcMain.handle(CHANNELS.runBlock, async (_event, request: RunBlockRequest): Promise<Result<RunOutcome>> => {
+  /** Runs being watched, so the window can steer them while they go. */
+  const liveRuns = new Map<string, RunControl>();
+  const paths = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+
+  ipcMain.handle(CHANNELS.watchRun, async (event, request: WatchRunRequest): Promise<Result<RunOutcome>> => {
     try {
-      return ok(await runBlock({ projectDir: request.dir, blockPath: request.blockPath, input: request.input }));
+      const contents = event.sender;
+      const { control, outcome } = startRun({
+        projectDir: request.dir,
+        blockPath: request.blockPath,
+        input: request.input,
+        breakpoints: paths(request.breakpoints),
+        onEvent: (runEvent) => {
+          if (!contents.isDestroyed()) contents.send(CHANNELS.runEvent, request.runId, runEvent);
+        },
+      });
+
+      // A run held at a breakpoint would otherwise wait for ever on a window
+      // that has gone.
+      const stop = () => control.stop();
+      contents.once("destroyed", stop);
+      liveRuns.set(request.runId, control);
+      try {
+        return ok(await outcome);
+      } finally {
+        liveRuns.delete(request.runId);
+        contents.removeListener("destroyed", stop);
+      }
     } catch (error) {
       return failed(error);
     }
+  });
+
+  ipcMain.handle(CHANNELS.controlRun, async (_event, runId: string, command: RunCommand): Promise<Result<null>> => {
+    const control = liveRuns.get(runId);
+    if (control && command && typeof command === "object") {
+      if (command.type === "resume") control.resume(command.mode === "step" ? "step" : "continue");
+      else if (command.type === "stop") control.stop();
+      else if (command.type === "breakpoints") control.setBreakpoints(paths(command.paths));
+    }
+    return ok(null);
   });
 
   ipcMain.handle(CHANNELS.saveCases, async (_event, request: SaveCasesRequest): Promise<Result<null>> => {
@@ -658,6 +702,18 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
     ],
     ["opening a block zooms into it and ends on its diagram", value("interface", "openedByDoubleClick") === "score-posting"],
     [
+      "a run stops at a breakpoint with what reached the block on its wires, then runs on to the end",
+      value("paused", "breakpointSet") === true &&
+        value("paused", "paused") === true &&
+        value("paused", "heldAt") === "score-posting" &&
+        /\[4\]/.test(String(value("paused", "wire"))) &&
+        value("watched", "finished") === true &&
+        Number(value("watched", "done")) >= 4 &&
+        Number(value("watched", "carried")) >= 5 &&
+        value("cleared", "cleared") === true &&
+        value("cleared", "breakpoints") === 0,
+    ],
+    [
       "blocks the agent writes arrive animated, and nothing else does",
       Number(value("appeared", "arrived")) > 0 &&
         value("renamed", "arriving") === 0 &&
@@ -763,6 +819,75 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
 
         await run("interface", INTERACTIONS);
         await capture(window, "self-check");
+
+        // The person sets a breakpoint and watches a run of the system stop there.
+        await run("paused", `
+          const root = [...document.querySelectorAll(".tree .node")]
+            .find((node) => (node.querySelector(".label") || {}).textContent === "rank-jobs");
+          if (!root) return { paused: false, stage: "no rank-jobs in the tree" };
+          root.click();
+          await wait(300);
+
+          const toggle = await until(() => document.querySelector('.block-box[data-key="score-posting"] .breakpoint-hit'));
+          if (!toggle) return { paused: false, stage: "no breakpoint to set" };
+          toggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          const breakpointSet = document.querySelector('.block-box[data-key="score-posting"]').dataset.breakpoint === "true";
+
+          const runButton = await until(() => [...document.querySelectorAll(".bench .btn")]
+            .find((button) => button.textContent === "Run block" && !button.disabled));
+          if (!runButton) return { breakpointSet, paused: false, stage: "no run button" };
+          runButton.click();
+
+          const paused = Boolean(await until(() => /Paused before Score Posting/.test(text("#run-bar")), 20000));
+          const held = document.querySelector('.block-box[data-run="paused"]');
+          return {
+            breakpointSet,
+            paused,
+            heldAt: held ? held.dataset.key : null,
+            wire: text('.bus-group[data-bus="load-postings->score-posting"] .bus-count'),
+            inspector: text("#inspector h2"),
+            runBar: text("#run-bar"),
+          };
+        `);
+        await capture(window, "self-check-paused");
+
+        await run("watched", `
+          const next = () => [...document.querySelectorAll("#run-bar button")].find((button) => button.textContent === "Continue");
+          for (let i = 0; i < 24; i += 1) {
+            const button = next();
+            if (button) {
+              button.click();
+              await wait(500);
+              continue;
+            }
+            if (/finished|failed|stopped/.test(text("#run-bar"))) break;
+            await wait(300);
+          }
+          const finished = Boolean(await until(() => /finished/.test(text("#run-bar")), 20000));
+          return {
+            finished,
+            runBar: text("#run-bar"),
+            done: document.querySelectorAll('.block-box[data-run="done"]').length,
+            carried: document.querySelectorAll('.bus-group[data-carried="true"]').length,
+          };
+        `);
+        await capture(window, "self-check-watched");
+
+        // Take the run and the breakpoint off again, and go back to the block
+        // the later steps expect, so nothing after this depends on them.
+        await run("cleared", `
+          const clear = [...document.querySelectorAll("#run-bar button")].find((button) => button.textContent === "Clear");
+          if (clear) clear.click();
+          const toggle = document.querySelector('.block-box[data-key="score-posting"] .breakpoint-hit');
+          if (toggle) toggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          const keywords = [...document.querySelectorAll(".tree .node")].find((node) => node.textContent.includes("extract-profile-keywords"));
+          if (keywords) keywords.click();
+          await wait(300);
+          return {
+            cleared: document.getElementById("run-bar").hidden,
+            breakpoints: document.querySelectorAll('.block-box[data-breakpoint="true"]').length,
+          };
+        `);
 
         // The agent renames a block.
         const loadPostings = inProject("blocks", "rank-jobs", "load-postings", "block.json");

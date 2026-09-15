@@ -5,6 +5,7 @@ import { busColour, connectionCode } from "./graph.js";
 import type { Bus, Graph } from "./graph.js";
 import { graphInView, openDiagram, showBlock } from "./canvas.js";
 import { benchSections } from "./bench.js";
+import { busWatchSection, watchSection } from "./watch.js";
 
 let notify: () => void = () => {};
 export function onInspectorChange(callback: () => void): void {
@@ -283,7 +284,11 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
     return;
   }
   panel.append(codeSection(block));
-  for (const section of benchSections(block)) panel.append(section);
+  const [bench, cases] = benchSections(block);
+  panel.append(bench);
+  const watching = watchSection(block);
+  if (watching) panel.append(watching);
+  panel.append(cases);
 }
 
 function busPanel(panel: HTMLElement, graph: Graph, bus: Bus): void {
@@ -308,6 +313,9 @@ function busPanel(panel: HTMLElement, graph: Graph, bus: Bus): void {
   }
   carries.append(list);
   panel.append(carries);
+
+  const run = busWatchSection(bus, graph);
+  if (run) panel.append(run);
 
   // A visual diagram describes code written some other way, so there is no
   // generated call to show for it.

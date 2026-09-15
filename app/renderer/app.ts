@@ -19,6 +19,7 @@ import { onInspectorChange, renderInspector } from "./inspector.js";
 import { onBenchChange } from "./bench.js";
 import { PROJECT_VIEW } from "./graph.js";
 import { askForProjectSettings } from "./newproject.js";
+import { onWatchChange, resetWatching, setUpWatching } from "./watch.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
 
@@ -85,6 +86,8 @@ function show(load: ProjectLoad, opening: boolean): void {
     const empty = load.snapshot === null || load.snapshot.systems.length === 0;
     resetArrivals(empty);
     treeBefore = empty ? new Set() : null;
+    // A run, and the places runs pause, belong to the project they were set in.
+    resetWatching();
   }
 
   if (!load.snapshot) {
@@ -478,6 +481,8 @@ try {
   onCanvasChange(({ redraw }) => (redraw ? render() : renderPanels()));
   onInspectorChange(render);
   onBenchChange(render);
+  // A run being watched moves on by itself; the panels follow it.
+  onWatchChange(renderPanels);
   // The agent works in the same folder; follow what it does.
   window.fragmentor.onProjectChanged((dir) => {
     if (dir === ui.dir) void reload();
@@ -485,6 +490,7 @@ try {
   wireToolbar();
   setUpCanvasGestures();
   watchCanvasSize();
+  setUpWatching();
   render();
   void renderWelcome();
 } catch (error) {

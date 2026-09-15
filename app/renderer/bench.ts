@@ -3,6 +3,7 @@ import type { SnapshotBlock } from "../../src/project/snapshot.js";
 import type { TestCase } from "../../src/run/cases.js";
 import type { CaseResult } from "../../src/run/run.js";
 import { requireSnapshot, ui } from "./state.js";
+import { runWatched } from "./watch.js";
 
 /**
  * The test bench: enter values, run the block, see what came back.
@@ -11,6 +12,9 @@ import { requireSnapshot, ui } from "./state.js";
  * contract rather than being written separately and drifting from it. What is
  * typed is kept per block, because running redraws the panel and losing the
  * values every time would make the bench useless.
+ *
+ * Every run from here is watched: the diagram plays back what each block
+ * received and returned, and stops at any breakpoint on the way.
  */
 
 let notify: () => void = () => {};
@@ -184,7 +188,7 @@ function resultPanel(block: SnapshotBlock): HTMLElement | null {
   }
 
   if (!outcome.ok) {
-    panel.append(problemList("The block failed", [outcome.error ?? "No reason given."], "bad"));
+    panel.append(problemList(outcome.stopped ? "The run was stopped" : "The block failed", [outcome.error ?? "No reason given."], "bad"));
   } else {
     const output = el("pre", "code", JSON.stringify(outcome.output, null, 2));
     panel.append(el("h4", "good", `Output — ${outcome.durationMs} ms`), output);
@@ -199,6 +203,33 @@ function resultPanel(block: SnapshotBlock): HTMLElement | null {
   }
 
   return panel;
+}
+
+/** Whether the bench can run this block at all, and if not, why not. */
+function whyNotRunnable(block: SnapshotBlock): string | null {
+  if (!block.implemented) return "This block has no implementation yet, so there is nothing to run.";
+  if (block.language !== "typescript") return `Fragmentor cannot run ${block.language} blocks yet.`;
+  return null;
+}
+
+/** Runs a block from the bench, with the diagram following the run. */
+async function runFromBench(block: SnapshotBlock, input: unknown): Promise<void> {
+  ui.running.add(block.path);
+  ui.runs.delete(block.path);
+  notify();
+
+  const result = await runWatched(block, input);
+  ui.running.delete(block.path);
+
+  if (!result.ok) {
+    ui.status = { text: `Could not run ${block.path}: ${result.error}`, tone: "bad" };
+  } else {
+    ui.runs.set(block.path, result.value);
+    ui.status = result.value.ok
+      ? { text: `${block.name} ran in ${result.value.durationMs} ms.`, tone: "good" }
+      : { text: result.value.stopped ? `${block.name} was stopped.` : `${block.name} did not finish.`, tone: "bad" };
+  }
+  notify();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -234,6 +265,15 @@ function caseRow(block: SnapshotBlock, testCase: TestCase, result: CaseResult | 
 
   const actions = el("div", "case-actions");
 
+  const watch = el("button", undefined, "Watch");
+  watch.title = "Run this test's input with the diagram following along.";
+  watch.disabled = whyNotRunnable(block) !== null || ui.running.has(block.path);
+  watch.addEventListener("click", () => {
+    const input = structuredClone(testCase.input) as Draft;
+    ui.benchInputs.set(block.path, input);
+    void runFromBench(block, structuredClone(input));
+  });
+
   const load = el("button", undefined, "Load");
   load.title = "Put this test's input into the form above.";
   load.addEventListener("click", () => {
@@ -247,7 +287,7 @@ function caseRow(block: SnapshotBlock, testCase: TestCase, result: CaseResult | 
     void writeCases(block, block.cases.filter((entry) => entry.name !== testCase.name));
   });
 
-  actions.append(load, remove);
+  actions.append(watch, load, remove);
   row.append(actions);
   return row;
 }
@@ -390,19 +430,13 @@ export function benchSection(block: SnapshotBlock): HTMLElement {
   }
 
   const run = el("button", "btn", "Run block");
-  const note = el("p", "bench-note");
-
-  if (!block.implemented) {
-    run.disabled = true;
-    note.textContent = "This block has no implementation yet, so there is nothing to run.";
-  } else if (block.language !== "typescript") {
-    run.disabled = true;
-    note.textContent = `Fragmentor cannot run ${block.language} blocks yet.`;
-  } else {
-    note.textContent = "Runs the real block in a separate process, with substitutes for its capabilities.";
-  }
-
-  run.disabled = run.disabled || ui.running.has(block.path);
+  const unrunnable = whyNotRunnable(block);
+  const note = el(
+    "p",
+    "bench-note",
+    unrunnable ?? "Runs the real block in a separate process, with substitutes for its capabilities, and plays the run back on the diagram.",
+  );
+  run.disabled = unrunnable !== null || ui.running.has(block.path);
 
   run.addEventListener("click", () => {
     if (node.querySelector('[data-invalid="true"]')) {
@@ -410,30 +444,7 @@ export function benchSection(block: SnapshotBlock): HTMLElement {
       notify();
       return;
     }
-
-    void (async () => {
-      ui.running.add(block.path);
-      ui.runs.delete(block.path);
-      notify();
-
-      const result = await window.fragmentor.runBlock({
-        dir: requireSnapshot().dir,
-        blockPath: block.path,
-        input: { ...draft },
-      });
-
-      ui.running.delete(block.path);
-
-      if (!result.ok) {
-        ui.status = { text: `Could not run ${block.path}: ${result.error}`, tone: "bad" };
-      } else {
-        ui.runs.set(block.path, result.value);
-        ui.status = result.value.ok
-          ? { text: `${block.name} ran in ${result.value.durationMs} ms.`, tone: "good" }
-          : { text: `${block.name} did not finish.`, tone: "bad" };
-      }
-      notify();
-    })();
+    void runFromBench(block, { ...draft });
   });
 
   node.append(run, note);
@@ -444,7 +455,7 @@ export function benchSection(block: SnapshotBlock): HTMLElement {
   return node;
 }
 
-/** The bench and its saved tests, which the inspector shows together. */
-export function benchSections(block: SnapshotBlock): HTMLElement[] {
+/** The bench and the block's saved tests, which the inspector shows with the run between them. */
+export function benchSections(block: SnapshotBlock): [bench: HTMLElement, cases: HTMLElement] {
   return [benchSection(block), casesSection(block)];
 }

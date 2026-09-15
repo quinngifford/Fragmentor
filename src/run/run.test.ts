@@ -1,7 +1,12 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { runBlock } from "./run.js";
+import { runBlock, startRun } from "./run.js";
+import type { RunEvent } from "./run.js";
+
+type Call = Extract<RunEvent, { type: "call" }>;
+const callsIn = (events: RunEvent[]) => events.filter((event): event is Call => event.type === "call");
+const blockOf = (events: RunEvent[], id: number) => callsIn(events).find((call) => call.id === id)?.block ?? null;
 
 /**
  * These run the example project's real code in a real subprocess. They are the
@@ -120,4 +125,129 @@ describe("a language that cannot run yet", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain("cannot run Python blocks yet");
   });
+});
+
+describe("watching a run", () => {
+  const input = { sourcePath: "postings.json", profile };
+
+  it("reports every block call beneath a composite, each with the call it came from", async () => {
+    const events: RunEvent[] = [];
+    const result = await runBlock({ projectDir, blockPath: "rank-jobs", input, onEvent: (event) => events.push(event) });
+    expect(result.ok).toBe(true);
+
+    const of = (block: string) => callsIn(events).filter((call) => call.block === block);
+    const root = of("rank-jobs")[0]!;
+    expect(root).toMatchObject({ parent: null, input });
+    expect(of("rank-jobs/load-postings")).toHaveLength(1);
+    expect(of("rank-jobs/score-posting")).toHaveLength(4);
+    expect(of("rank-jobs/score-posting").every((call) => call.parent === root.id)).toBe(true);
+
+    // Each posting's scorer is the parent of the normaliser that ran for it.
+    const scorers = new Set(of("rank-jobs/score-posting").map((call) => call.id));
+    expect(of("rank-jobs/score-posting/normalize-text").map((call) => scorers.has(call.parent!))).toEqual([true, true, true, true]);
+
+    // What load-postings returned is exactly what went down the wire to the scorers, one posting each.
+    const loaded = of("rank-jobs/load-postings")[0]!;
+    const returned = events.find((event) => event.type === "return" && event.id === loaded.id) as Extract<RunEvent, { type: "return" }>;
+    const postings = (returned.output as { postings: unknown[] }).postings;
+    expect(of("rank-jobs/score-posting").map((call) => (call.input as { posting: unknown }).posting)).toEqual(postings);
+  }, 30_000);
+
+  it("records nothing, and pauses nowhere, when nobody is watching", async () => {
+    const result = await runBlock({ projectDir, blockPath: "rank-jobs", input, breakpoints: ["rank-jobs/load-postings"] });
+    expect(result.ok).toBe(true);
+  }, 30_000);
+
+  it("holds a run at a breakpoint until it is told to go on", async () => {
+    const events: RunEvent[] = [];
+    let returnedWhileHeld: boolean | null = null;
+    const { control, outcome } = startRun({
+      projectDir,
+      blockPath: "rank-jobs",
+      input,
+      breakpoints: ["rank-jobs/rank-results"],
+      onEvent: (event) => {
+        events.push(event);
+        if (event.type !== "paused") return;
+        returnedWhileHeld = events.some((each) => each.type === "return" && each.id === event.id);
+        setTimeout(() => control.resume("continue"), 50);
+      },
+    });
+
+    expect((await outcome).ok).toBe(true);
+    const held = events.filter((event) => event.type === "paused").map((event) => blockOf(events, event.id));
+    expect(held).toEqual(["rank-jobs/rank-results"]);
+    expect(returnedWhileHeld).toBe(false);
+  }, 30_000);
+
+  it("steps from a block to the next one that starts", async () => {
+    const events: RunEvent[] = [];
+    const heldAt: (string | null)[] = [];
+    const { control, outcome } = startRun({
+      projectDir,
+      blockPath: "rank-jobs",
+      input,
+      breakpoints: ["rank-jobs"],
+      onEvent: (event) => {
+        events.push(event);
+        if (event.type !== "paused") return;
+        heldAt.push(blockOf(events, event.id));
+        control.resume(heldAt.length === 1 ? "step" : "continue");
+      },
+    });
+
+    expect((await outcome).ok).toBe(true);
+    expect(heldAt).toEqual(["rank-jobs", "rank-jobs/load-postings"]);
+  }, 30_000);
+
+  it("holds every call of a block run once per item, one at a time", async () => {
+    const events: RunEvent[] = [];
+    const { control, outcome } = startRun({
+      projectDir,
+      blockPath: "rank-jobs",
+      input,
+      breakpoints: ["rank-jobs/score-posting"],
+      onEvent: (event) => {
+        events.push(event);
+        if (event.type === "paused") setTimeout(() => control.resume("continue"), 10);
+      },
+    });
+
+    expect((await outcome).ok).toBe(true);
+    const held = events.filter((event) => event.type === "paused").map((event) => event.id);
+    expect(held).toHaveLength(4);
+    expect(new Set(held).size).toBe(4);
+  }, 30_000);
+
+  it("stops a held run, and says it was stopped", async () => {
+    const { control, outcome } = startRun({
+      projectDir,
+      blockPath: "rank-jobs",
+      input,
+      breakpoints: ["rank-jobs/load-postings"],
+      onEvent: (event) => {
+        if (event.type === "paused") control.stop();
+      },
+    });
+
+    expect(await outcome).toMatchObject({ ok: false, stopped: true });
+  }, 30_000);
+
+  it("does not count time held at a breakpoint against the time limit", async () => {
+    const { control, outcome } = startRun({
+      projectDir,
+      blockPath: "rank-jobs/extract-profile-keywords",
+      input: { profile },
+      timeoutMs: 3000,
+      breakpoints: ["rank-jobs/extract-profile-keywords"],
+      onEvent: (event) => {
+        if (event.type === "paused") setTimeout(() => control.resume("continue"), 3500);
+      },
+    });
+
+    const result = await outcome;
+    expect(result.ok).toBe(true);
+    // Nor is it part of how long the run took.
+    expect(result.durationMs).toBeLessThan(3000);
+  }, 30_000);
 });

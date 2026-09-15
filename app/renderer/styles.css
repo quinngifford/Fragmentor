@@ -468,7 +468,122 @@ pre.code {
   from, 25% { background: var(--signal-deep); color: var(--signal); }
 }
 
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+/* ---- watching a run ---- */
+
+.block-box[data-run="running"] .block-plate {
+  stroke: var(--signal);
+  stroke-width: 2;
+  animation: block-running 900ms ease-in-out infinite alternate;
+}
+
+@keyframes block-running {
+  to { stroke: var(--signal-dim); }
+}
+
+.block-box[data-run="done"] .block-plate { stroke: var(--signal-dim); stroke-width: 1.5; }
+.block-box[data-run="failed"] .block-plate { stroke: var(--bad); stroke-width: 2; }
+.block-box[data-run="paused"] .block-plate { stroke: var(--effect); stroke-width: 2.5; }
+
+.run-note { font-family: var(--mono); font-size: 9px; letter-spacing: 0.04em; fill: var(--signal-dim); pointer-events: none; }
+.block-box[data-run="running"] .run-note { fill: var(--signal); }
+.block-box[data-run="paused"] .run-note { fill: var(--effect); }
+.block-box[data-run="failed"] .run-note { fill: var(--bad); }
+
+.bus-group[data-carried="true"] .bus { opacity: 0.9; }
+/* A value on a wire is edged in the ground colour, so it stays readable where it crosses other lines. */
+.bus-group[data-carried="true"] .bus-count {
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--ground);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+/* Data travelling along a wire: a short bright dash running from end to end. */
+.bus-pulse {
+  fill: none;
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-dasharray: 0.1 1.2;
+  stroke-dashoffset: 0.1;
+  pointer-events: none;
+  animation: pulse-travel 520ms cubic-bezier(0.4, 0, 0.6, 1) forwards;
+}
+
+@keyframes pulse-travel {
+  from { stroke-dashoffset: 0.1; }
+  to { stroke-dashoffset: -1; }
+}
+
+/* A breakpoint sits beside a block's name: faint on hover, red when set. */
+.breakpoint-hit { fill: transparent; cursor: pointer; }
+.breakpoint-dot { fill: transparent; stroke: transparent; stroke-width: 1.5; pointer-events: none; }
+.block-box:hover .breakpoint-dot { stroke: var(--ink-faint); }
+.breakpoint:hover .breakpoint-dot { stroke: var(--bad); }
+.block-box[data-breakpoint="true"] .breakpoint-dot { fill: var(--bad); stroke: var(--bad); }
+
+.run-bar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 28px);
+  padding: 5px 6px 5px 12px;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink);
+}
+
+.run-bar[hidden] { display: none; }
+.run-state { margin-right: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-state[data-tone="paused"] { color: var(--effect); }
+.run-state[data-tone="good"] { color: var(--signal); }
+.run-state[data-tone="bad"] { color: var(--bad); }
+
+.run-btn {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 9px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule-bright);
+  background: none;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.run-btn:hover { color: var(--ink); background: var(--panel-high); }
+.run-btn:disabled { color: var(--ink-faint); cursor: default; background: none; }
+
+.watch-section { display: flex; flex-direction: column; gap: 8px; }
+.watch-toggle { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--ink-dim); cursor: pointer; }
+.watch-toggle input { margin: 0; accent-color: var(--bad); }
+.call-picker { display: flex; gap: 8px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
+
+.watch-label {
+  margin: 4px 0 0;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--ink-faint);
+}
+
+.watch-label.good { color: var(--signal); }
+.watch-label.bad { color: var(--bad); }
+.watch-section pre.code { max-height: 240px; overflow: auto; white-space: pre-wrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+  .bus-pulse { display: none; }
+}
 
 /* A system root in the hierarchy says which language it targets. */
 .node .lang {

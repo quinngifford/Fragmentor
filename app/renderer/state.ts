@@ -1,16 +1,47 @@
 import type { ProjectSnapshot } from "../../src/project/snapshot.js";
-import type { CaseResult, RunOutcome } from "../../src/run/run.js";
+import type { CaseResult, RunEvent, RunOutcome } from "../../src/run/run.js";
 
 /**
  * What the interface is currently showing. Kernel types are imported for their
  * shapes only — no kernel code runs in the renderer, which has no filesystem.
  */
 
+/** One block call in a watched run, as far as the playback has shown it. */
+export interface WatchedCall {
+  id: number;
+  parent: number | null;
+  block: string;
+  input: unknown;
+  output?: unknown;
+  error?: string;
+  state: "running" | "paused" | "returned" | "threw";
+}
+
+/**
+ * A run shown on the canvas. It is played back at a pace a person can follow,
+ * so what is on screen can be behind what has happened; everything shown is
+ * derived from the events played so far.
+ */
+export interface Watch {
+  runId: string;
+  /** The block that was run. */
+  blockPath: string;
+  events: RunEvent[];
+  /** How many of the events have been shown. */
+  played: number;
+  /** Every call, as of the events shown so far. */
+  calls: Map<number, WatchedCall>;
+  /** Set when the run has ended. */
+  outcome: RunOutcome | null;
+  /** Which call of a block to show inside its diagram when it ran more than once, by block path. */
+  frames: Map<string, number>;
+}
+
 export interface UiState {
   snapshot: ProjectSnapshot | null;
   /** The folder open as a project, even while it holds nothing readable. */
   dir: string | null;
-  /** True while the folder is waiting for an agent to write fragmentor.json. */
+  /** True while the agent has not defined a system yet. */
   waiting: boolean;
   /** Why the newest version of the project could not be read. The last good snapshot stays on screen. */
   loadError: string | null;
@@ -46,6 +77,10 @@ export interface UiState {
   runningCases: Set<string>;
   /** The name being typed for a new test, per block. */
   caseNames: Map<string, string>;
+  /** Blocks a watched run pauses before, by path. */
+  breakpoints: Set<string>;
+  /** The run on the canvas, if there is one. */
+  watch: Watch | null;
   status: { text: string; tone: "info" | "good" | "bad" } | null;
 }
 
@@ -71,6 +106,8 @@ export const ui: UiState = {
   caseResults: new Map(),
   runningCases: new Set(),
   caseNames: new Map(),
+  breakpoints: new Set(),
+  watch: null,
   status: null,
 };
 

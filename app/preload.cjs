@@ -20,7 +20,9 @@ const CHANNELS = {
   emitCode: "codegen:emit",
   revealBlock: "block:reveal",
   revealCode: "code:reveal",
-  runBlock: "block:run",
+  watchRun: "run:start",
+  controlRun: "run:control",
+  runEvent: "run:event",
   saveCases: "block:save-cases",
   runCases: "block:run-cases",
 };
@@ -30,7 +32,7 @@ contextBridge.exposeInMainWorld("fragmentor", {
   newProject: (settings) => ipcRenderer.invoke(CHANNELS.newProject, settings),
   loadProject: (dir) => ipcRenderer.invoke(CHANNELS.loadProject, dir),
   readProject: (dir) => ipcRenderer.invoke(CHANNELS.readProject, dir),
-  // Only the folder is passed on, never the event, which would expose the sender.
+  // Only the data is passed on, never the event, which would expose the sender.
   onProjectChanged: (callback) => {
     ipcRenderer.on(CHANNELS.projectChanged, (_event, dir) => callback(dir));
   },
@@ -41,7 +43,11 @@ contextBridge.exposeInMainWorld("fragmentor", {
   emitCode: (dir) => ipcRenderer.invoke(CHANNELS.emitCode, dir),
   revealBlock: (dir, blockPath) => ipcRenderer.invoke(CHANNELS.revealBlock, dir, blockPath),
   revealCode: (dir, file) => ipcRenderer.invoke(CHANNELS.revealCode, dir, file),
-  runBlock: (request) => ipcRenderer.invoke(CHANNELS.runBlock, request),
+  watchRun: (request) => ipcRenderer.invoke(CHANNELS.watchRun, request),
+  controlRun: (runId, command) => ipcRenderer.invoke(CHANNELS.controlRun, runId, command),
+  onRunEvent: (callback) => {
+    ipcRenderer.on(CHANNELS.runEvent, (_event, runId, runEvent) => callback(runId, runEvent));
+  },
   saveCases: (request) => ipcRenderer.invoke(CHANNELS.saveCases, request),
   runCases: (dir, blockPath) => ipcRenderer.invoke(CHANNELS.runCases, dir, blockPath),
 });

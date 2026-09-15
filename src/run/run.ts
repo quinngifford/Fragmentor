@@ -4,11 +4,13 @@ import type { PortType } from "../model/types.js";
 import { loadProject, systemOf } from "../project/project.js";
 import type { LoadedBlock, LoadedSystem, Project } from "../project/project.js";
 import type { LanguagePack } from "../lang/pack.js";
-import { compileSystem, runCompiledBlock } from "./typescript.js";
-import type { CompiledSystem } from "./typescript.js";
+import { compileSystem, startCompiledBlock } from "./typescript.js";
+import type { CompiledRun, CompiledSystem, RunEvent } from "./typescript.js";
 import { hasExpectation, loadCases } from "./cases.js";
 import type { TestCase } from "./cases.js";
 import { compareValues } from "./compare.js";
+
+export type { RunEvent } from "./typescript.js";
 
 /**
  * Running blocks.
@@ -17,6 +19,11 @@ import { compareValues } from "./compare.js";
  * the input is checked before anything runs, so a mistyped value is a message
  * instead of a crash, and the output is checked afterwards, so a block that
  * quietly returns the wrong shape is caught rather than believed.
+ *
+ * A run can also be watched. Every block call beneath the one being run is
+ * reported as it happens, which is what lets the diagram show the value on
+ * each wire, and a call can be held at a breakpoint until the person lets it
+ * go on.
  */
 
 export interface RunRequest {
@@ -24,6 +31,19 @@ export interface RunRequest {
   blockPath: string;
   input: unknown;
   timeoutMs?: number;
+  /** Hears every block call as it happens. Without it nothing is recorded, and breakpoints are ignored. */
+  onEvent?: (event: RunEvent) => void;
+  /** Blocks to pause before, by path. */
+  breakpoints?: string[];
+}
+
+/** Steers a run that is under way. */
+export interface RunControl {
+  /** Lets the call held at a breakpoint go on. With "step", the next block to start is held too. */
+  resume(mode: "continue" | "step"): void;
+  setBreakpoints(paths: string[]): void;
+  /** Ends the run where it is. */
+  stop(): void;
 }
 
 export interface RunOutcome {
@@ -36,6 +56,8 @@ export interface RunOutcome {
   outputProblems: string[];
   logs: string[];
   durationMs: number;
+  /** True when the run was stopped before it finished. */
+  stopped?: boolean;
 }
 
 export type CaseStatus = "passed" | "failed" | "unchecked" | "error";
@@ -74,6 +96,10 @@ interface Prepared {
 /** Everything needed to run a block, or the reason it cannot be run. */
 async function prepare(projectDir: string, blockPath: string): Promise<Prepared | { error: string }> {
   const project = await loadProject(projectDir);
+  if (project.manifest.mode === "visual") {
+    return { error: "This is a visual project: Fragmentor draws its code but never runs it." };
+  }
+
   const node = project.byPath.get(blockPath);
   if (!node) return { error: `There is no block at ${blockPath}.` };
 
@@ -88,6 +114,13 @@ async function prepare(projectDir: string, blockPath: string): Promise<Prepared 
   return { project, node, system, pack };
 }
 
+interface Watching {
+  onEvent: ((event: RunEvent) => void) | undefined;
+  breakpoints: string[];
+  /** Hands over the run once it has started, so it can be steered. */
+  attach(run: CompiledRun): void;
+}
+
 /** One execution against an already-compiled system. */
 async function executeOnce(
   prepared: Prepared,
@@ -95,6 +128,7 @@ async function executeOnce(
   blockPath: string,
   input: unknown,
   timeoutMs: number,
+  watching?: Watching,
 ): Promise<RunOutcome> {
   const { node, pack, project } = prepared;
 
@@ -103,11 +137,30 @@ async function executeOnce(
     return failure("The values given do not match what this block accepts.", { inputProblems });
   }
 
+  // A run held at a breakpoint is waiting for the person, so that time is not
+  // part of how long it took.
+  let heldFor = 0;
+  let heldSince: number | null = null;
+  const hear = watching?.onEvent;
+  const onEvent = hear
+    ? (event: RunEvent) => {
+        if (event.type === "paused" && heldSince === null) heldSince = Date.now();
+        if (event.type === "resumed" && heldSince !== null) {
+          heldFor += Date.now() - heldSince;
+          heldSince = null;
+        }
+        hear(event);
+      }
+    : undefined;
+
   const started = Date.now();
-  const result = await runCompiledBlock({
+  const run = startCompiledBlock({
     compiledDir: compiled.dir,
     blockPath,
     functionName: pack.functionName(node.block.id),
+    blocks: [...project.byPath.values()]
+      .filter((each) => each.path === blockPath || each.path.startsWith(`${blockPath}/`))
+      .map((each) => ({ path: each.path, functionName: pack.functionName(each.block.id) })),
     capabilities: Object.entries(node.block.capabilities).map(([name, cap]) => ({
       name,
       capability: cap.capability,
@@ -115,9 +168,14 @@ async function executeOnce(
     projectDir: project.dir,
     input,
     timeoutMs,
+    onEvent,
+    breakpoints: watching?.breakpoints,
   });
+  watching?.attach(run);
+  const result = await run.result;
 
-  const durationMs = Date.now() - started;
+  const ended = Date.now();
+  const durationMs = ended - started - heldFor - (heldSince === null ? 0 : ended - heldSince);
   if (!result.ok) {
     return {
       ok: false,
@@ -126,6 +184,7 @@ async function executeOnce(
       outputProblems: [],
       logs: result.logs,
       durationMs,
+      ...(result.stopped ? { stopped: true } : {}),
     };
   }
 
@@ -139,16 +198,52 @@ async function executeOnce(
   };
 }
 
-export async function runBlock(request: RunRequest): Promise<RunOutcome> {
-  const prepared = await prepare(request.projectDir, request.blockPath);
-  if ("error" in prepared) return failure(prepared.error);
+/**
+ * Starts a run and hands back the means to steer it: resume it from a
+ * breakpoint, change its breakpoints, or stop it. The outcome arrives when the
+ * run ends, however it ends.
+ */
+export function startRun(request: RunRequest): { control: RunControl; outcome: Promise<RunOutcome> } {
+  let run: CompiledRun | null = null;
+  let stopped = false;
+  let breakpoints = request.breakpoints ?? [];
 
-  const compiled = await compileSystem(prepared.project, prepared.system.rootBlock);
-  try {
-    return await executeOnce(prepared, compiled, request.blockPath, request.input, request.timeoutMs ?? 15_000);
-  } finally {
-    await compiled.dispose();
-  }
+  const control: RunControl = {
+    resume: (mode) => run?.resume(mode),
+    setBreakpoints: (paths) => {
+      breakpoints = paths;
+      run?.setBreakpoints(paths);
+    },
+    stop: () => {
+      stopped = true;
+      run?.stop();
+    },
+  };
+
+  const outcome = (async (): Promise<RunOutcome> => {
+    const prepared = await prepare(request.projectDir, request.blockPath);
+    if ("error" in prepared) return failure(prepared.error);
+
+    const compiled = await compileSystem(prepared.project, prepared.system.rootBlock);
+    try {
+      if (stopped) return failure("The run was stopped before it started.", { stopped: true });
+      return await executeOnce(prepared, compiled, request.blockPath, request.input, request.timeoutMs ?? 15_000, {
+        onEvent: request.onEvent,
+        breakpoints,
+        attach: (started) => {
+          run = started;
+        },
+      });
+    } finally {
+      await compiled.dispose();
+    }
+  })();
+
+  return { control, outcome };
+}
+
+export async function runBlock(request: RunRequest): Promise<RunOutcome> {
+  return startRun(request).outcome;
 }
 
 /**

@@ -1,4 +1,5 @@
 import type { Point } from "../../src/project/layout.js";
+import type { SnapshotBlock } from "../../src/project/snapshot.js";
 import {
   BODY_PAD,
   GROUP_HEAD_H,
@@ -28,11 +29,25 @@ import { requireSnapshot, ui } from "./state.js";
  * Moving between diagrams is animated as a zoom, so the hierarchy reads as one
  * drawing seen closer up or further away. Blocks the agent adds are brought in
  * rather than simply being there, so the person can see what just changed.
+ * A run being watched is laid over the drawing in the same way: as attributes
+ * on what is already drawn.
  */
 
 let notify: (options: { redraw: boolean }) => void = () => {};
 export function onCanvasChange(callback: (options: { redraw: boolean }) => void): void {
   notify = callback;
+}
+
+let drawn: () => void = () => {};
+/** Called whenever a diagram has been drawn afresh, so anything laid over it can be put back. */
+export function onCanvasDrawn(callback: () => void): void {
+  drawn = callback;
+}
+
+let breakpointToggled: (blockPath: string) => void = () => {};
+/** Called when the person clicks a block's breakpoint. */
+export function onBreakpointToggle(callback: (blockPath: string) => void): void {
+  breakpointToggled = callback;
 }
 
 let currentGraph: Graph | null = null;
@@ -124,6 +139,55 @@ function busGeometry(graph: Graph, layout: Map<string, Point>, bus: Bus) {
     path: curve(start, end),
     middle: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 - 6 },
   };
+}
+
+export function applyBreakpoints(): void {
+  for (const [key, group] of nodeElements) {
+    const blockPath = currentGraph?.nodes.get(key)?.block?.path;
+    group.dataset.breakpoint = String(blockPath !== undefined && ui.breakpoints.has(blockPath));
+  }
+}
+
+/** A run laid over the diagram on screen: how each block is doing, and what each bus carried. */
+export interface RunOverlay {
+  nodes: Map<string, { state: "running" | "paused" | "done" | "failed"; note: string }>;
+  /** Buses whose values are known, with the label to show on each. */
+  buses: Map<string, string>;
+}
+
+/**
+ * Shows a run on what is already drawn. `pulses` are buses that data has
+ * just travelled along, each sent a pulse of light from end to end.
+ */
+export function applyRunOverlay(overlay: RunOverlay | null, pulses: string[] = []): void {
+  for (const [key, group] of nodeElements) {
+    const run = overlay?.nodes.get(key);
+    if (run) group.dataset.run = run.state;
+    else delete group.dataset.run;
+    const note = group.querySelector(".run-note");
+    if (note) note.textContent = run?.note ?? "";
+  }
+
+  for (const [id, drawn] of busElements) {
+    const label = overlay?.buses.get(id);
+    drawn.group.dataset.carried = String(label !== undefined);
+    drawn.label.textContent = label ?? drawn.label.dataset.plain ?? "";
+  }
+
+  const layer = element("pulse-layer");
+  for (const id of pulses) {
+    const line = busElements.get(id)?.paths[0];
+    if (!line) continue;
+    const pulse = svgEl("path", {
+      d: line.getAttribute("d") ?? "",
+      class: "bus-pulse",
+      stroke: line.getAttribute("stroke") ?? "#4fe38f",
+      pathLength: 1,
+    }, layer);
+    pulse.addEventListener("animationend", () => pulse.remove());
+    // Where animation is turned off, nothing ends it.
+    window.setTimeout(() => pulse.remove(), 1500);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -440,6 +504,7 @@ export function resetArrivals(projectIsEmpty: boolean): void {
 
 function clearCanvas(): void {
   element("bus-layer").replaceChildren();
+  element("pulse-layer").replaceChildren();
   element("node-layer").replaceChildren();
   nodeElements.clear();
   busElements.clear();
@@ -489,7 +554,7 @@ export function renderCanvas(): void {
     if (!geometry) continue;
 
     const colour = busColour(graph, ui.view, bus);
-    const group = svgEl("g", { class: "bus-group" }, busLayer);
+    const group = svgEl("g", { class: "bus-group", "data-bus": bus.id }, busLayer);
 
     const line = svgEl("path", { d: geometry.path, class: "bus", stroke: colour }, group);
     const hit = svgEl("path", { d: geometry.path, class: "bus-hit" }, group);
@@ -506,6 +571,8 @@ export function renderCanvas(): void {
       fill: colour,
     }, group);
     label.textContent = bus.signals.length === 1 ? bus.signals[0]!.targetPort : `${bus.signals.length} signals`;
+    // Kept, so the label can go back to it once a run is taken off the diagram.
+    label.dataset.plain = label.textContent;
 
     if (before && !before.buses.has(bus.id)) {
       // Drawn along its length, once the blocks it joins have arrived. A path
@@ -537,7 +604,14 @@ export function renderCanvas(): void {
   everythingArrives = false;
 
   applySelection();
+  applyBreakpoints();
   applyViewport();
+  drawn();
+}
+
+/** Only TypeScript blocks in a structured project run, so only they can be paused. */
+function canPause(block: SnapshotBlock): boolean {
+  return ui.snapshot?.mode === "structured" && block.language === "typescript";
 }
 
 /** `arrivalDelay` is null for a block that was already there, and otherwise when it should arrive. */
@@ -569,6 +643,8 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
   svgEl("line", { x1: 0, y1: HEAD_H, x2: NODE_W, y2: HEAD_H, class: "block-divider" }, body);
   svgEl("text", { x: 10, y: 15, class: "block-name" }, body).textContent = node.label;
   svgEl("text", { x: 10, y: 27, class: "block-kind" }, body).textContent = node.sublabel;
+  // How the block is doing in a run being watched; empty otherwise.
+  svgEl("text", { x: NODE_W - 10, y: 27, class: "run-note", "text-anchor": "end" }, body);
 
   if (node.child?.mode === "each" && node.child.eachOver) {
     svgEl("text", { x: NODE_W - 10, y: 15, class: "each-badge", "text-anchor": "end" }, body)
@@ -621,6 +697,21 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
     svgEl("circle", { cx, cy: height + 14, r: 3.5, class: "cap-dot" }, body);
     svgEl("text", { x: cx + 8, y: height + 17.5, class: "port-label" }, body).textContent = cap.name;
   });
+
+  // Beside the block's name: where a run can be told to pause before it.
+  if (node.block && canPause(node.block)) {
+    const blockPath = node.block.path;
+    const breakpoint = svgEl("g", { class: "breakpoint", transform: `translate(-12 ${HEAD_H / 2})` }, group);
+    svgEl("title", {}, breakpoint).textContent = "Pause here: a run stops before this block, so you can see what reaches it.";
+    const hit = svgEl("circle", { r: 9, class: "breakpoint-hit" }, breakpoint);
+    svgEl("circle", { r: 4.5, class: "breakpoint-dot" }, breakpoint);
+    hit.addEventListener("pointerdown", (event) => event.stopPropagation());
+    hit.addEventListener("dblclick", (event) => event.stopPropagation());
+    hit.addEventListener("click", (event) => {
+      event.stopPropagation();
+      breakpointToggled(blockPath);
+    });
+  }
 
   nodeElements.set(node.key, group);
   attachNodeBehaviour(group, node);

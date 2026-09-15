@@ -1,7 +1,7 @@
 import type { ProjectSnapshot } from "../src/project/snapshot.js";
 import type { Point } from "../src/project/layout.js";
 import type { EmitResult, NewProjectSettings } from "../src/codegen/emit.js";
-import type { CaseResult, RunOutcome } from "../src/run/run.js";
+import type { CaseResult, RunEvent, RunOutcome } from "../src/run/run.js";
 import type { TestCase } from "../src/run/cases.js";
 
 /**
@@ -25,7 +25,9 @@ export const CHANNELS = {
   emitCode: "codegen:emit",
   revealBlock: "block:reveal",
   revealCode: "code:reveal",
-  runBlock: "block:run",
+  watchRun: "run:start",
+  controlRun: "run:control",
+  runEvent: "run:event",
   saveCases: "block:save-cases",
   runCases: "block:run-cases",
 } as const;
@@ -51,11 +53,21 @@ export interface SaveLayoutRequest {
   positions: Record<string, Point>;
 }
 
-export interface RunBlockRequest {
+export interface WatchRunRequest {
+  /** Chosen by the window, so it can tell this run's events from any other's. */
+  runId: string;
   dir: string;
   blockPath: string;
   input: unknown;
+  /** Blocks to pause before, by path. */
+  breakpoints: string[];
 }
+
+/** What the person can tell a watched run to do. */
+export type RunCommand =
+  | { type: "resume"; mode: "continue" | "step" }
+  | { type: "breakpoints"; paths: string[] }
+  | { type: "stop" };
 
 export interface SaveCasesRequest {
   dir: string;
@@ -90,8 +102,12 @@ export interface FragmentorApi {
   revealBlock(dir: string, blockPath: string): Promise<Result<null>>;
   /** Shows a file a visual block points at, given relative to the project. */
   revealCode(dir: string, file: string): Promise<Result<null>>;
-  /** Runs one block against the given input and reports what happened. */
-  runBlock(request: RunBlockRequest): Promise<Result<RunOutcome>>;
+  /** Runs a block, reporting every block call beneath it to onRunEvent as it happens. Resolves when the run ends. */
+  watchRun(request: WatchRunRequest): Promise<Result<RunOutcome>>;
+  /** Resumes, re-aims or stops a watched run. */
+  controlRun(runId: string, command: RunCommand): Promise<Result<null>>;
+  /** Called with each event of every watched run. */
+  onRunEvent(callback: (runId: string, event: RunEvent) => void): void;
   /** Replaces the tests saved for a block. */
   saveCases(request: SaveCasesRequest): Promise<Result<null>>;
   /** Runs every saved test for a block. */

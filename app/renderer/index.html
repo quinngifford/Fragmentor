@@ -33,7 +33,7 @@
 
         <div class="canvas-wrap" id="canvas-wrap">
           <svg id="canvas-svg">
-            <g id="viewport"><g id="bus-layer"></g><g id="node-layer"></g></g>
+            <g id="viewport"><g id="bus-layer"></g><g id="pulse-layer"></g><g id="node-layer"></g></g>
           </svg>
 
           <div class="zoom-bar">
@@ -47,6 +47,8 @@
           <div class="hint">drag to move &middot; ctrl-click to multi-select &middot; scroll to zoom</div>
 
           <div class="load-error" id="load-error" role="alert" hidden></div>
+
+          <div class="run-bar" id="run-bar" role="status" hidden></div>
 
           <section class="welcome" id="welcome">
             <h1>Fragmentor</h1>
