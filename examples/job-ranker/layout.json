@@ -9,5 +9,52 @@
       "y": 143
     }
   },
-  "rank-jobs": {}
+  "rank-jobs": {
+    "input": {
+      "x": 0,
+      "y": 63
+    },
+    "load-postings": {
+      "x": 257,
+      "y": -130
+    },
+    "extract-profile-keywords": {
+      "x": 325,
+      "y": 289
+    },
+    "score-posting": {
+      "x": 636,
+      "y": 84
+    },
+    "rank-results": {
+      "x": 900,
+      "y": -179
+    },
+    "output": {
+      "x": 1200,
+      "y": 72
+    }
+  },
+  "rank-jobs/score-posting": {
+    "input": {
+      "x": 0,
+      "y": 11
+    },
+    "normalize-text": {
+      "x": 364,
+      "y": -201
+    },
+    "match-keywords": {
+      "x": 631,
+      "y": 223
+    },
+    "compute-relevance": {
+      "x": 900,
+      "y": 11
+    },
+    "output": {
+      "x": 1200,
+      "y": 11
+    }
+  }
 }
