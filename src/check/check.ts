@@ -1,5 +1,6 @@
 import { emitProject } from "../codegen/emit.js";
 import type { EmitResult } from "../codegen/emit.js";
+import type { Mode } from "../model/block.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
 import { loadProject } from "../project/project.js";
 import type { ProjectDiagnostic } from "../project/project.js";
@@ -10,16 +11,18 @@ import type { CodeProblem } from "./typescript.js";
 /**
  * Everything Fragmentor can say about whether a project is sound, in one pass.
  *
- * This is what the coding agent runs after each change. Contracts are
- * regenerated first, so the code is checked against the diagram as it is now
- * rather than as it was when someone last remembered to generate them.
+ * This is what the coding agent runs after each change. Contracts and
+ * composites are regenerated first, so the code is checked against the
+ * diagram as it is now rather than as it was when someone last remembered to
+ * generate them. A visual project has no code of Fragmentor's to check: what
+ * is checked there is the diagram, and that it points at code that exists.
  */
 
 export interface SystemCheck {
   rootBlock: string;
   language: string;
   displayName: string;
-  /** False when Fragmentor cannot check code in this language yet. */
+  /** False when Fragmentor cannot check code in this language yet, or does not check it at all. */
   codeChecked: boolean;
   codeProblems: CodeProblem[];
 }
@@ -27,14 +30,18 @@ export interface SystemCheck {
 export interface CheckReport {
   name: string;
   dir: string;
+  mode: Mode;
   blockCount: number;
   /** Problems with the diagram, and with the files that sit beside it. */
   problems: ProjectDiagnostic[];
   generated: EmitResult;
   systems: SystemCheck[];
-  /** Blocks whose implementation is still the untouched starting point. */
+  /**
+   * Blocks whose implementation is still the untouched starting point, or in
+   * a visual project, blocks not yet linked to the code they stand for.
+   */
   unimplemented: string[];
-  /** Blocks with no saved tests. */
+  /** Blocks with no saved tests. Always empty in a visual project, which has none. */
   untested: string[];
   /** Errors of every kind. Warnings and unfinished work are not errors. */
   errorCount: number;
@@ -42,18 +49,19 @@ export interface CheckReport {
 
 export async function checkProject(projectDir: string): Promise<CheckReport> {
   const project = await loadProject(projectDir);
+  const visual = project.manifest.mode === "visual";
   const generated = await emitProject(project);
   // Read after generating, so blocks that were only just given an
   // implementation file are counted.
   const snapshot = await projectSnapshot(projectDir);
 
   const systems: SystemCheck[] = project.systems.map((system) => {
-    const pack = isKnownLanguage(system.language) ? getPack(system.language) : null;
+    const pack = !visual && isKnownLanguage(system.language) ? getPack(system.language) : null;
     const codeChecked = pack?.canCheck ?? false;
     return {
       rootBlock: system.rootBlock,
       language: system.language,
-      displayName: pack?.displayName ?? system.language,
+      displayName: pack?.displayName ?? (system.language || "unspecified"),
       codeChecked,
       codeProblems: codeChecked ? checkSystemCode(project, system.rootBlock) : [],
     };
@@ -68,12 +76,13 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
   return {
     name: snapshot.name,
     dir: snapshot.dir,
+    mode: project.manifest.mode,
     blockCount: blocks.length,
     problems: snapshot.diagnostics,
     generated,
     systems,
     unimplemented: blocks.filter((block) => !block.implemented).map((block) => block.path),
-    untested: blocks.filter((block) => block.cases.length === 0).map((block) => block.path),
+    untested: visual ? [] : blocks.filter((block) => block.cases.length === 0).map((block) => block.path),
     errorCount,
   };
 }

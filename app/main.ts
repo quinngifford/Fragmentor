@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, watch, writeFileSync } from "node:fs";
 import type { FSWatcher } from "node:fs";
-import { access, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,14 +10,14 @@ import type { ProjectLoad, Result, RunBlockRequest, SaveCasesRequest, SaveLayout
 import { projectSnapshot } from "../src/project/snapshot.js";
 import { saveViewLayout } from "../src/project/layout.js";
 import { blockDir, loadProject, manifestPath, systemOf } from "../src/project/project.js";
-import { getPack } from "../src/lang/index.js";
-import { emitProject, writeAgentFiles } from "../src/codegen/emit.js";
+import { getPack, isKnownLanguage } from "../src/lang/index.js";
+import { emitProject, startProject } from "../src/codegen/emit.js";
+import type { EmitResult, NewProjectSettings } from "../src/codegen/emit.js";
 import { GUIDE_FILE } from "../src/codegen/guide.js";
 import { resolveInside } from "../src/project/safePath.js";
 import { runBlock, runCases } from "../src/run/run.js";
 import type { CaseResult, RunOutcome } from "../src/run/run.js";
 import { saveCases } from "../src/run/cases.js";
-import type { EmitResult } from "../src/codegen/emit.js";
 
 /**
  * The main process owns everything with side effects: the window, the disk,
@@ -99,7 +99,7 @@ async function rememberProject(dir: string): Promise<void> {
 
 /**
  * Reads a folder as a project. The ordinary states an agent leaves a folder in
- * — nothing defined yet, or a file half written — are reported, not thrown.
+ * — no system defined yet, or a file half written — are reported, not thrown.
  */
 async function readProject(dir: string): Promise<ProjectLoad> {
   const resolved = path.resolve(dir);
@@ -107,19 +107,37 @@ async function readProject(dir: string): Promise<ProjectLoad> {
   if (!info?.isDirectory()) throw new Error(`${resolved} is not a folder that exists.`);
 
   if (!(await exists(manifestPath(resolved)))) {
-    // A folder started with New project holds the guide and is waiting for an
-    // agent to define the system. Any other folder is simply not a project.
-    if (!(await exists(path.join(resolved, GUIDE_FILE)))) {
-      throw new Error(`There is no Fragmentor project in ${resolved}. Use New project… to start one there.`);
-    }
-    return { dir: resolved, snapshot: null, hasManifest: false, error: null };
+    throw new Error(`There is no Fragmentor project in ${resolved}. Use New project… to start one there.`);
   }
 
   try {
-    return { dir: resolved, snapshot: await projectSnapshot(resolved), hasManifest: true, error: null };
+    return { dir: resolved, snapshot: await projectSnapshot(resolved), error: null };
   } catch (error) {
-    return { dir: resolved, snapshot: null, hasManifest: true, error: messageOf(error) };
+    return { dir: resolved, snapshot: null, error: messageOf(error) };
   }
+}
+
+/** Whether a folder holds anything of its own. Hidden entries such as `.git` do not count. */
+async function holdsFiles(dir: string): Promise<boolean> {
+  return (await readdir(dir)).some((name) => !name.startsWith("."));
+}
+
+/** The settings as the window sent them. The window is not trusted to send sensible ones. */
+function settingsFrom(raw: unknown): NewProjectSettings {
+  const value = (raw ?? {}) as Partial<Record<keyof NewProjectSettings, unknown>>;
+  if (value.mode !== "structured" && value.mode !== "visual") {
+    throw new Error("Choose whether Fragmentor structures the code or only draws it.");
+  }
+  if (typeof value.granularity !== "number" || ![1, 2, 3, 4, 5].includes(value.granularity)) {
+    throw new Error("Choose how finely to divide the work, from 1 to 5.");
+  }
+
+  const language = typeof value.language === "string" && value.language.trim() ? value.language.trim().slice(0, 40) : null;
+  if (value.mode === "structured" && language !== null && !isKnownLanguage(language)) {
+    throw new Error(`Fragmentor cannot generate ${language} code. Choose TypeScript or Python, or leave it to the agent.`);
+  }
+
+  return { mode: value.mode, granularity: value.granularity as NewProjectSettings["granularity"], language };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -209,28 +227,50 @@ function registerHandlers(): void {
     }
   });
 
-  ipcMain.handle(CHANNELS.newProject, async (event): Promise<Result<ProjectLoad | null>> => {
+  ipcMain.handle(CHANNELS.newProject, async (event, raw: unknown): Promise<Result<ProjectLoad | null>> => {
     try {
+      const settings = settingsFrom(raw);
       const dir = await pickFolder(event.sender, {
         properties: ["openDirectory", "createDirectory"],
-        title: "Choose a folder for the new project",
+        title: "Choose the project's folder: an empty one, or one holding code",
         buttonLabel: "Start project here",
       });
       if (!dir) return ok(null);
 
+      if (await exists(manifestPath(dir))) {
+        throw new Error(`${dir} is already a Fragmentor project. Open it with Open project… instead.`);
+      }
+
+      const window = BrowserWindow.fromWebContents(event.sender);
+      const ask = (options: Electron.MessageBoxOptions) =>
+        window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options);
+
+      // Structured mode rebuilds whatever code is already there. That is what
+      // the person asked for, but it should never come as a surprise.
+      if (settings.mode === "structured" && (await holdsFiles(dir))) {
+        const { response } = await ask({
+          type: "warning",
+          buttons: ["Rebuild it as blocks", "Cancel"],
+          defaultId: 1,
+          cancelId: 1,
+          message: "Your agent will rebuild the code in this folder as blocks",
+          detail:
+            "In structured mode the agent moves this folder's code into Fragmentor blocks, and deletes the old files once the blocks pass their tests. Commit the code to version control first, so every change can be undone.\n\nTo only see how the code works, cancel and choose Visual instead. Visual mode never changes the code.",
+        });
+        if (response !== 0) return ok(null);
+      }
+
       // The guide is what tells an agent opened in this folder what to do.
-      const { withoutGuide } = await writeAgentFiles(dir);
+      const { withoutGuide } = await startProject(dir, settings);
       if (withoutGuide.length > 0) {
         // Those files are the person's, so they are left alone, but an agent
         // reading them would never learn the guide is there.
         const files = withoutGuide.join(" and ");
-        const options: Electron.MessageBoxOptions = {
+        await ask({
           type: "info",
           message: `Point ${files} at Fragmentor's rules`,
           detail: `This folder already had ${files}, and Fragmentor never changes files like that. Add a line so your agent reads ${GUIDE_FILE}: "@${GUIDE_FILE}" in CLAUDE.md, or "Read ${GUIDE_FILE} before changing anything." in AGENTS.md.`,
-        };
-        const window = BrowserWindow.fromWebContents(event.sender);
-        await (window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options));
+        });
       }
       return ok(await openProject(event.sender, dir));
     } catch (error) {
@@ -290,6 +330,12 @@ function registerHandlers(): void {
       const project = await loadProject(request.dir);
       const system = systemOf(project, request.blockPath);
       if (!system) throw new Error(`"${request.blockPath}" is not part of any system in this project.`);
+      // Generated code is rewritten from the diagram, so an edit to it would
+      // be lost, and a visual project's code is not Fragmentor's to change.
+      if (project.manifest.mode === "visual") throw new Error("A visual project's code is never changed from Fragmentor.");
+      if (project.byPath.get(request.blockPath)?.block.kind === "composite") {
+        throw new Error(`"${request.blockPath}" has children, so its code is generated from the diagram.`);
+      }
 
       const target = resolveInside(blockDir(request.dir, request.blockPath), getPack(system.language).implFile);
       await writeFile(target, request.contents, "utf8");
@@ -346,6 +392,15 @@ function registerHandlers(): void {
   ipcMain.handle(CHANNELS.revealBlock, async (_event, dir: string, blockPath: string): Promise<Result<null>> => {
     try {
       shell.showItemInFolder(resolveInside(blockDir(dir, blockPath), "block.json"));
+      return ok(null);
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  ipcMain.handle(CHANNELS.revealCode, async (_event, dir: string, file: string): Promise<Result<null>> => {
+    try {
+      shell.showItemInFolder(resolveInside(dir, file));
       return ok(null);
     } catch (error) {
       return failed(error);
@@ -560,6 +615,13 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
   const value = (label: string, key: string) => report[label]?.[key];
 
   const checks: [string, boolean][] = [
+    [
+      "a new project asks for a mode and a granularity before it will go on",
+      value("dialog", "blockedAtFirst") === true &&
+        value("dialog", "blockedWithoutLevel") === true &&
+        value("dialog", "ready") === true &&
+        value("dialogClosed", "closed") === true,
+    ],
     ["a new project waits for its agent", value("waiting", "waiting") === true],
     ["the diagram appears once the agent writes the project", value("appeared", "appeared") === true],
     [
@@ -585,6 +647,10 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
     [
       "the inspector lists what the checks found, and the status bar counts it",
       value("problems", "listed") === true && value("problems", "counted") === true,
+    ],
+    [
+      "a visual project hides what only generated code has, and shows the code a block points at",
+      value("visual", "generateHidden") === true && value("visual", "linked") === true && value("visual", "noBench") === true,
     ],
   ];
 
@@ -635,14 +701,42 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
       const inProject = (...parts: string[]) => path.join(check.projectDir, ...parts);
 
       try {
-        // New project: an empty folder holding only the agent's instructions.
-        await writeAgentFiles(check.projectDir);
+        // The person asks for a new project. The form will not go on until they
+        // have chosen a mode and a granularity. It is cancelled before the
+        // folder picker, which the check cannot answer.
+        await run("dialog", `
+          document.getElementById("new-project").click();
+          const dialog = await until(() => document.querySelector("dialog.new-project[open]"));
+          if (!dialog) return { opened: false };
+          const create = [...dialog.querySelectorAll(".dialog-actions .btn")].find((b) => b.textContent.startsWith("Choose folder"));
+          const blockedAtFirst = create.disabled;
+          dialog.querySelector('input[name="mode"][value="visual"]').click();
+          const blockedWithoutLevel = create.disabled;
+          dialog.querySelector('input[name="granularity"][value="3"]').click();
+          return {
+            opened: true,
+            blockedAtFirst,
+            blockedWithoutLevel,
+            ready: !create.disabled,
+            languageIsFree: Boolean(dialog.querySelector(".language-slot input[list]")),
+            levelText: text("dialog.new-project .dialog-note"),
+          };
+        `);
+        await capture(window, "self-check-dialog");
+        await run("dialogClosed", `
+          [...document.querySelectorAll("dialog.new-project .btn")].find((b) => b.textContent === "Cancel").click();
+          await wait(200);
+          return { closed: !document.querySelector("dialog.new-project") };
+        `);
+
+        // New project: what the person chose, and no system for the agent to have defined yet.
+        await startProject(check.projectDir, { mode: "structured", granularity: 3, language: "typescript" });
         await run("waiting", `
           await wait(400);
           const link = [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.projectDir)});
           if (!link) return { waiting: false, links: [...document.querySelectorAll(".welcome-link")].map((b) => b.title || b.textContent) };
           link.click();
-          const waiting = await until(() => /fragmentor\\.json/.test(text(".canvas-empty")));
+          const waiting = await until(() => /FRAGMENTOR\\.md/.test(text(".canvas-empty")));
           return { waiting, note: text(".canvas-empty").slice(0, 120) };
         `);
         await capture(window, "self-check-waiting");
@@ -718,6 +812,27 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
           return { listed: Boolean(problem), problem, counted: /errors 1/.test(text("#status")) };
         `);
         await capture(window, "self-check-problems");
+
+        // The project becomes a visual one, and a block is pointed at a file.
+        const manifestFile = inProject("fragmentor.json");
+        await writeFile(manifestFile, JSON.stringify({ ...JSON.parse(await readFile(manifestFile, "utf8")), mode: "visual" }, null, 2), "utf8");
+        const pointed = inProject("blocks", "rank-jobs", "load-postings", "block.json");
+        await writeFile(pointed, JSON.stringify({ ...JSON.parse(await readFile(pointed, "utf8")), code: "postings.json" }, null, 2), "utf8");
+        await run("visual", `
+          const generateHidden = Boolean(await until(() => document.getElementById("generate-code").hidden));
+          const block = await until(() => document.querySelector('.block-box[data-key="load-postings"]'));
+          if (!block) return { generateHidden, linked: false };
+          block.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 9, clientX: 5, clientY: 5, isPrimary: true }));
+          window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 9, clientX: 5, clientY: 5 }));
+          const where = await until(() => text(".code-where"));
+          return {
+            generateHidden,
+            linked: /postings\\.json/.test(where),
+            noBench: !document.querySelector(".bench"),
+            mode: text(".status .mode-tag"),
+          };
+        `);
+        await capture(window, "self-check-visual");
 
         console.log(JSON.stringify(report, null, 2));
 

@@ -10,9 +10,22 @@ import type { PortType } from "./types.js";
  * its tests pass. Those are facts about the working tree and the last test
  * run, and storing them here would create a second source of truth that could
  * disagree with reality. They are derived instead.
+ *
+ * The file is as small as an agent can write it. The folder gives a block its
+ * id, having children is what makes it a composite, a port can be written as
+ * just its type, and anything empty can be left out.
  */
 
 export type BlockKind = "leaf" | "composite";
+
+/**
+ * How a project relates to its code. In `structured` mode the diagram is a
+ * specification: Fragmentor generates the code between blocks, checks the
+ * rest against it, and runs it. In `visual` mode the diagram is a picture of
+ * code Fragmentor never touches, so its types are free text and nothing is
+ * enforced beyond the diagram holding together.
+ */
+export type Mode = "structured" | "visual";
 
 export interface Port {
   type: PortType;
@@ -72,6 +85,8 @@ export interface Block {
   wires: Wire[];
   /** The user has declared this block will not be decomposed further. */
   pinnedAsLeaf: boolean;
+  /** Visual mode only: the file or folder, optionally `#name`, that this block stands for. */
+  code?: string;
 }
 
 /** Block ids are folder names, so they are kebab-case and filesystem-safe. */
@@ -98,33 +113,36 @@ const typeExpression = z.string().transform((value, ctx): PortType => {
   return parsed.type;
 });
 
-const portSchema = z
-  .object({
-    type: typeExpression,
-    description: z.string().optional(),
-  })
-  .strict();
+/** In visual mode a type is shown as the code writes it, and never checked. */
+const typeText = z
+  .string()
+  .min(1, "a type cannot be empty")
+  .transform((text): PortType => ({ kind: "text", text }));
 
-const capabilityPortSchema = z
-  .object({
-    capability: z.string().min(1),
-    description: z.string().optional(),
-  })
-  .strict();
+/** Lets something usually written in full be written as just its main field. */
+function orJust(field: string) {
+  return (value: unknown) => (typeof value === "string" ? { [field]: value } : value);
+}
+
+function portSchema(mode: Mode) {
+  return z.preprocess(
+    orJust("type"),
+    z.object({ type: mode === "visual" ? typeText : typeExpression, description: z.string().optional() }).strict(),
+  );
+}
+
+const capabilityPortSchema = z.preprocess(
+  orJust("capability"),
+  z.object({ capability: z.string().min(1), description: z.string().optional() }).strict(),
+);
 
 const childRefSchema = z
-  .object({
-    block: blockId,
-    mode: z.enum(["once", "each"]).default("once"),
-    eachOver: portName.optional(),
-  })
-  .strict()
-  .refine((c) => c.mode !== "each" || c.eachOver !== undefined, {
-    message: "a child invoked with mode 'each' must name the input port it iterates over via 'eachOver'",
-  })
-  .refine((c) => c.mode !== "once" || c.eachOver === undefined, {
-    message: "'eachOver' only applies to children invoked with mode 'each'",
-  });
+  .preprocess(orJust("block"), z.object({ block: blockId, each: portName.optional() }).strict())
+  .transform((child): ChildRef =>
+    child.each === undefined
+      ? { block: child.block, mode: "once" }
+      : { block: child.block, mode: "each", eachOver: child.each },
+  );
 
 /**
  * Wires are written as `source -> destination`, where an endpoint is either
@@ -208,51 +226,113 @@ const wireSchema = z.string().transform((value, ctx): Wire => {
   return parsed.wire;
 });
 
-export const blockSchema = z
-  .object({
-    id: blockId,
-    name: z.string().min(1),
-    responsibility: z.string().min(1, "every block must state what it is responsible for"),
-    kind: z.enum(["leaf", "composite"]),
-    inputs: z.record(portName, portSchema).default({}),
-    outputs: z.record(portName, portSchema).default({}),
-    capabilities: z.record(portName, capabilityPortSchema).default({}),
-    children: z.array(childRefSchema).default([]),
-    wires: z.array(wireSchema).default([]),
-    pinnedAsLeaf: z.boolean().default(false),
-  })
-  .strict()
-  .refine((b) => b.kind === "composite" || b.children.length === 0, {
-    message: "a leaf block cannot declare children",
-    path: ["children"],
-  })
-  .refine((b) => b.kind === "composite" || b.wires.length === 0, {
-    message: "a leaf block cannot declare wires",
-    path: ["wires"],
-  }) as unknown as z.ZodType<Block>;
+function blockFileSchema(mode: Mode) {
+  return z
+    .object({
+      name: z.string().min(1).optional(),
+      responsibility: z.string().min(1, "every block must state what it is responsible for"),
+      code: z.string().min(1).optional(),
+      inputs: z.record(portName, portSchema(mode)).default({}),
+      outputs: z.record(portName, portSchema(mode)).default({}),
+      capabilities: z.record(portName, capabilityPortSchema).default({}),
+      children: z.array(childRefSchema).default([]),
+      wires: z.array(wireSchema).default([]),
+      pinnedAsLeaf: z.boolean().default(false),
+    })
+    .strict()
+    .refine((file) => file.children.length > 0 || file.wires.length === 0, {
+      message: "a block with no children cannot have wires",
+      path: ["wires"],
+    })
+    .refine((file) => mode === "visual" || file.code === undefined, {
+      message: `"code" is only for visual mode. In structured mode a block's code is the implementation file in its folder.`,
+      path: ["code"],
+    });
+}
 
-/** The JSON form of a block, with port types written as expressions. */
-export function blockToFileShape(block: Block): unknown {
+/** `price-order` -> `Price Order`: the label a block gets when its file does not give one. */
+export function nameFromId(id: string): string {
+  return id
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+/**
+ * Reads the contents of a block.json as the block in folder `id`. Each problem
+ * says where it is, e.g. `inputs.order.type: Unknown type "Order"`, because
+ * whoever wrote the file has to find it.
+ */
+export function parseBlockFile(
+  raw: unknown,
+  id: string,
+  mode: Mode = "structured",
+): { ok: true; block: Block } | { ok: false; problems: string[] } {
+  if (!blockIdPattern.test(id)) {
+    return { ok: false, problems: [`the folder name "${id}" must be kebab-case (lowercase letters, digits, single hyphens)`] };
+  }
+
+  const parsed = blockFileSchema(mode).safeParse(raw);
+  if (!parsed.success) {
+    return { ok: false, problems: parsed.error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`) };
+  }
+
+  const file = parsed.data;
+  const block: Block = {
+    id,
+    name: file.name ?? nameFromId(id),
+    responsibility: file.responsibility,
+    kind: file.children.length > 0 ? "composite" : "leaf",
+    inputs: file.inputs,
+    outputs: file.outputs,
+    capabilities: file.capabilities,
+    children: file.children,
+    wires: file.wires,
+    pinnedAsLeaf: file.pinnedAsLeaf,
+  };
+  if (file.code !== undefined) block.code = file.code;
+  return { ok: true, block };
+}
+
+/** The same, for a file already known to be valid, such as an example written in code. */
+export function blockFromFile(raw: unknown, id: string, mode: Mode = "structured"): Block {
+  const result = parseBlockFile(raw, id, mode);
+  if (!result.ok) throw new Error(`"${id}" is not a valid block:\n  ${result.problems.join("\n  ")}`);
+  return result.block;
+}
+
+/** The smallest block.json that reads back as the same block. */
+export function blockToFileShape(block: Block): Record<string, unknown> {
   const ports = (record: Record<string, Port>) =>
     Object.fromEntries(
       Object.entries(record).map(([name, port]) => [
         name,
-        port.description ? { type: describeType(port.type), description: port.description } : { type: describeType(port.type) },
+        port.description ? { type: describeType(port.type), description: port.description } : describeType(port.type),
       ]),
     );
 
-  return {
-    id: block.id,
-    name: block.name,
-    responsibility: block.responsibility,
-    kind: block.kind,
-    inputs: ports(block.inputs),
-    outputs: ports(block.outputs),
-    capabilities: block.capabilities,
-    children: block.children,
-    wires: block.wires.map(formatWire),
-    pinnedAsLeaf: block.pinnedAsLeaf,
-  };
+  const capabilities = Object.fromEntries(
+    Object.entries(block.capabilities).map(([name, cap]) => [
+      name,
+      cap.description ? { capability: cap.capability, description: cap.description } : cap.capability,
+    ]),
+  );
+
+  const file: Record<string, unknown> = {};
+  if (block.name !== nameFromId(block.id)) file.name = block.name;
+  file.responsibility = block.responsibility;
+  if (block.code !== undefined) file.code = block.code;
+  if (Object.keys(block.inputs).length > 0) file.inputs = ports(block.inputs);
+  if (Object.keys(block.outputs).length > 0) file.outputs = ports(block.outputs);
+  if (Object.keys(block.capabilities).length > 0) file.capabilities = capabilities;
+  if (block.children.length > 0) {
+    file.children = block.children.map((child) =>
+      child.mode === "each" ? { block: child.block, each: child.eachOver } : child.block,
+    );
+  }
+  if (block.wires.length > 0) file.wires = block.wires.map(formatWire);
+  if (block.pinnedAsLeaf) file.pinnedAsLeaf = true;
+  return file;
 }
 
 /** `rank-jobs` -> `rankJobs`. The block's exported function name. */

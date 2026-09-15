@@ -1,26 +1,11 @@
 {
-  "id": "rank-results",
-  "name": "Rank Results",
   "responsibility": "Combine postings with their scores and reasons and order them best first.",
-  "kind": "leaf",
   "inputs": {
-    "postings": {
-      "type": "{ title: string; company: string; description: string }[]"
-    },
-    "scores": {
-      "type": "number[]"
-    },
-    "reasons": {
-      "type": "string[][]"
-    }
+    "postings": "{ title: string; company: string; description: string }[]",
+    "scores": "number[]",
+    "reasons": "string[][]"
   },
   "outputs": {
-    "ranked": {
-      "type": "{ title: string; company: string; score: number; reasons: string[] }[]"
-    }
-  },
-  "capabilities": {},
-  "children": [],
-  "wires": [],
-  "pinnedAsLeaf": false
+    "ranked": "{ title: string; company: string; score: number; reasons: string[] }[]"
+  }
 }

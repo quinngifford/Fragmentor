@@ -1,19 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { blockSchema, blockToFileShape, formatWire, functionNameOf, parseWireText, typeStemOf } from "./block.js";
+import {
+  blockFromFile,
+  blockToFileShape,
+  formatWire,
+  functionNameOf,
+  parseBlockFile,
+  parseWireText,
+  typeStemOf,
+} from "./block.js";
+import type { Mode } from "./block.js";
 import { describeType, typesEqual } from "./types.js";
 import { t } from "./testing.js";
 
-const minimal = {
-  id: "score-posting",
-  name: "Score Posting",
-  responsibility: "Rate how well a posting matches the profile.",
-  kind: "leaf",
-};
+const minimal = { responsibility: "Rate how well a posting matches the profile." };
 
-describe("blockSchema", () => {
-  it("fills in the empty parts of a minimal leaf", () => {
-    const block = blockSchema.parse(minimal);
-    expect(block).toMatchObject({
+/** What is wrong with a file, as the loader would report it. */
+function problemsWith(raw: unknown, mode: Mode = "structured"): string[] {
+  const result = parseBlockFile(raw, "score-posting", mode);
+  return result.ok ? [] : result.problems;
+}
+
+describe("reading a block file", () => {
+  it("fills in everything a minimal leaf leaves out, taking its id from its folder", () => {
+    expect(blockFromFile(minimal, "score-posting")).toEqual({
+      id: "score-posting",
+      name: "Score Posting",
+      responsibility: minimal.responsibility,
+      kind: "leaf",
       inputs: {},
       outputs: {},
       capabilities: {},
@@ -24,58 +37,71 @@ describe("blockSchema", () => {
   });
 
   it("requires a stated responsibility", () => {
-    const result = blockSchema.safeParse({ ...minimal, responsibility: "" });
-    expect(result.success).toBe(false);
+    expect(problemsWith({})).toEqual([expect.stringMatching(/^responsibility: /)]);
+    expect(problemsWith({ responsibility: "" })).toEqual([
+      "responsibility: every block must state what it is responsible for",
+    ]);
   });
 
-  it("rejects block ids that are not kebab-case", () => {
+  it("refuses a folder name that is not kebab-case", () => {
     for (const id of ["ScorePosting", "score_posting", "score--posting", "-score", "1score"]) {
-      expect(blockSchema.safeParse({ ...minimal, id }).success, id).toBe(false);
+      expect(parseBlockFile(minimal, id).ok, id).toBe(false);
     }
   });
 
   it("rejects port names that could not be variables", () => {
-    const result = blockSchema.safeParse({
-      ...minimal,
-      inputs: { "not-an-identifier": { type: "string" } },
+    expect(problemsWith({ ...minimal, inputs: { "not-an-identifier": "string" } })).not.toEqual([]);
+  });
+
+  it("says where a port type it cannot read is", () => {
+    expect(problemsWith({ ...minimal, inputs: { posting: "Posting[]" } })).toEqual([
+      expect.stringMatching(/^inputs\.posting\.type: Unknown type "Posting"/),
+    ]);
+  });
+
+  it("rejects fields it does not know, including ones the format no longer has", () => {
+    expect(problemsWith({ ...minimal, colour: "green" })).not.toEqual([]);
+    expect(problemsWith({ ...minimal, id: "score-posting", kind: "leaf" })).not.toEqual([]);
+  });
+
+  it("is a composite exactly when it has children", () => {
+    expect(blockFromFile({ ...minimal, children: ["child"] }, "rank").kind).toBe("composite");
+    expect(blockFromFile(minimal, "rank").kind).toBe("leaf");
+  });
+
+  it("will not let a block without children have wires", () => {
+    expect(problemsWith({ ...minimal, wires: ["input.a -> output.b"] })).toEqual([
+      "wires: a block with no children cannot have wires",
+    ]);
+  });
+
+  it("reads a child written as its id as running once, and one with `each` as running per item", () => {
+    const block = blockFromFile({ ...minimal, children: ["load", { block: "score", each: "posting" }] }, "rank");
+    expect(block.children).toEqual([
+      { block: "load", mode: "once" },
+      { block: "score", mode: "each", eachOver: "posting" },
+    ]);
+  });
+
+  it("reads ports and capabilities written as just their type, or in full with a description", () => {
+    const block = blockFromFile(
+      {
+        ...minimal,
+        inputs: { title: "string", salary: { type: "number", description: "Per year." } },
+        capabilities: { files: "FileSystem", log: { capability: "Logger", description: "Progress." } },
+      },
+      "score-posting",
+    );
+
+    expect(block.inputs).toEqual({ title: { type: t.string }, salary: { type: t.number, description: "Per year." } });
+    expect(block.capabilities).toEqual({
+      files: { capability: "FileSystem" },
+      log: { capability: "Logger", description: "Progress." },
     });
-    expect(result.success).toBe(false);
-  });
-
-  it("explains a port type it cannot read", () => {
-    const result = blockSchema.safeParse({ ...minimal, inputs: { posting: { type: "Posting[]" } } });
-    expect(result.success).toBe(false);
-    expect(result.success === false && JSON.stringify(result.error.issues)).toContain("Unknown type");
-  });
-
-  it("rejects unknown fields rather than silently ignoring them", () => {
-    const result = blockSchema.safeParse({ ...minimal, colour: "green" });
-    expect(result.success).toBe(false);
-  });
-
-  it("will not let a leaf declare children", () => {
-    const result = blockSchema.safeParse({ ...minimal, children: [{ block: "child" }] });
-    expect(result.success).toBe(false);
-  });
-
-  it("requires an iterated child to say what it iterates over", () => {
-    const composite = { ...minimal, kind: "composite" };
-    expect(blockSchema.safeParse({ ...composite, children: [{ block: "child", mode: "each" }] }).success).toBe(false);
-    expect(
-      blockSchema.safeParse({ ...composite, children: [{ block: "child", mode: "each", eachOver: "item" }] }).success,
-    ).toBe(true);
-  });
-
-  it("defaults a child invocation to running once", () => {
-    const block = blockSchema.parse({ ...minimal, kind: "composite", children: [{ block: "child" }] });
-    expect(block.children[0]).toEqual({ block: "child", mode: "once" });
   });
 
   it("reads a nested port type written as an expression", () => {
-    const block = blockSchema.parse({
-      ...minimal,
-      inputs: { postings: { type: "{ title: string; salary?: number }[]" } },
-    });
+    const block = blockFromFile({ ...minimal, inputs: { postings: "{ title: string; salary?: number }[]" } }, "score-posting");
 
     expect(block.inputs.postings!.type).toEqual({
       kind: "array",
@@ -90,21 +116,51 @@ describe("blockSchema", () => {
     expect(describeType(block.inputs.postings!.type)).toBe("{ title: string; salary?: number }[]");
   });
 
-  it("writes back exactly what it read", () => {
-    const source = {
-      ...minimal,
-      kind: "leaf",
-      inputs: { postings: { type: "{ title: string; salary?: number }[]", description: "Postings to score." } },
-      outputs: { score: { type: "number" } },
-      capabilities: {},
-      children: [],
-      wires: [],
-      pinnedAsLeaf: false,
+  it("writes back exactly what it read, in the smallest form", () => {
+    const leaf = {
+      name: "Scorer",
+      responsibility: minimal.responsibility,
+      inputs: {
+        postings: { type: "{ title: string; salary?: number }[]", description: "Postings to score." },
+        weight: "number",
+      },
+      outputs: { score: "number" },
+      capabilities: { files: "FileSystem" },
     };
+    expect(blockToFileShape(blockFromFile(leaf, "score-posting"))).toEqual(leaf);
 
-    const written = blockToFileShape(blockSchema.parse(source)) as typeof source;
-    expect(written.inputs).toEqual(source.inputs);
-    expect(written.outputs).toEqual(source.outputs);
+    const composite = {
+      responsibility: "Doubles each value.",
+      inputs: { values: "number[]" },
+      outputs: { doubled: "number[]" },
+      children: [{ block: "double", each: "value" }],
+      wires: ["input.values -> double.value", "double.result -> output.doubled"],
+      pinnedAsLeaf: true,
+    };
+    expect(blockToFileShape(blockFromFile(composite, "double-all"))).toEqual(composite);
+  });
+
+  it("leaves out a name that only repeats the id", () => {
+    expect(blockToFileShape(blockFromFile({ ...minimal, name: "Score Posting" }, "score-posting"))).toEqual(minimal);
+  });
+});
+
+describe("a visual block", () => {
+  it("keeps types as the code writes them, without reading them", () => {
+    const block = blockFromFile(
+      { ...minimal, code: "src/score.ts#score", inputs: { posting: "Posting" }, outputs: { score: "Promise<number>" } },
+      "score-posting",
+      "visual",
+    );
+
+    expect(block.inputs.posting!.type).toEqual({ kind: "text", text: "Posting" });
+    expect(describeType(block.outputs.score!.type)).toBe("Promise<number>");
+    expect(block.code).toBe("src/score.ts#score");
+    expect(blockToFileShape(block)).toMatchObject({ code: "src/score.ts#score", inputs: { posting: "Posting" } });
+  });
+
+  it("is the only kind that says where its code is", () => {
+    expect(problemsWith({ ...minimal, code: "src/score.ts" })).toEqual([expect.stringContaining("only for visual mode")]);
   });
 });
 
@@ -152,16 +208,16 @@ describe("wire syntax", () => {
   }
 
   it("reads a wire off a composite block file", () => {
-    const block = blockSchema.parse({
-      id: "parent",
-      name: "Parent",
-      responsibility: "Wraps a child.",
-      kind: "composite",
-      inputs: { value: { type: "number" } },
-      outputs: { doubled: { type: "number" } },
-      children: [{ block: "double" }],
-      wires: ["input.value -> double.value", "double.result -> output.doubled"],
-    });
+    const block = blockFromFile(
+      {
+        responsibility: "Wraps a child.",
+        inputs: { value: "number" },
+        outputs: { doubled: "number" },
+        children: ["double"],
+        wires: ["input.value -> double.value", "double.result -> output.doubled"],
+      },
+      "parent",
+    );
 
     expect(block.wires[0]).toEqual({
       source: { from: "input", port: "value" },

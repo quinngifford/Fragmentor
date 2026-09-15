@@ -94,6 +94,7 @@ function projectAsBlock(): SnapshotBlock {
     files: { impl: "", contract: "" },
     implemented: false,
     cases: [],
+    code: null,
   };
 }
 

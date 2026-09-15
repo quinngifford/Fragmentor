@@ -1,6 +1,11 @@
 {
   "name": "Job Relevance Ranker",
   "goal": "Read job postings from a local file, score each one against a candidate profile, and return them ordered from most to least relevant with a short explanation for each score.",
+  "mode": "structured",
+  "granularity": {
+    "level": 3,
+    "maxDepth": 4
+  },
   "systems": [
     {
       "rootBlock": "rank-jobs",
@@ -10,9 +15,5 @@
       "rootBlock": "embed-postings",
       "language": "python"
     }
-  ],
-  "granularity": {
-    "level": 3,
-    "maxDepth": 4
-  }
+  ]
 }

@@ -1,23 +1,10 @@
 {
-  "id": "compute-relevance",
-  "name": "Compute Relevance",
   "responsibility": "Turn keyword match counts into a relevance score and a short reason for each contribution.",
-  "kind": "leaf",
   "inputs": {
-    "matches": {
-      "type": "{ keyword: string; count: number }[]"
-    }
+    "matches": "{ keyword: string; count: number }[]"
   },
   "outputs": {
-    "score": {
-      "type": "number"
-    },
-    "reasons": {
-      "type": "string[]"
-    }
-  },
-  "capabilities": {},
-  "children": [],
-  "wires": [],
-  "pinnedAsLeaf": false
+    "score": "number",
+    "reasons": "string[]"
+  }
 }

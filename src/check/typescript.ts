@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { createRequire } from "node:module";
+import { builtinModules, createRequire } from "node:module";
 import path from "node:path";
 import ts from "typescript";
 import { getPack } from "../lang/index.js";
@@ -9,15 +9,16 @@ import type { LoadedBlock, Project } from "../project/project.js";
  * Checking a TypeScript system's code against its diagram.
  *
  * The code is typechecked against the generated contracts, so a leaf that
- * returns the wrong shape, or a composite that hands a child the wrong value,
- * fails here before anything runs. A project lives in a folder of its own with
- * nothing installed, yet its contracts import zod, so the checker lends it
- * Fragmentor's copy.
+ * returns the wrong shape fails here before anything runs. Contracts import
+ * zod, which a project may well not have installed, so the checker lends it
+ * Fragmentor's copy. Any other package a block imports is found where the
+ * project installed it, exactly as it is when the block runs.
  *
- * Lending zod means code can typecheck that will not run, because the test
- * runner compiles each implementation on its own with nothing installed. So
- * what each block imports is checked as well: types, which disappear when it
- * is compiled, and its own children's code, and nothing else.
+ * What each block imports is checked as well, because the test runner
+ * compiles each implementation into a folder of its own: types, which
+ * disappear when it is compiled, its own children's code, and packages. Not
+ * Node's built-in modules, though, which reach the files, the network and the
+ * process directly — that is what capabilities are for.
  */
 
 export interface CodeProblem {
@@ -44,6 +45,17 @@ const OPTIONS: ts.CompilerOptions = {
   types: [],
   paths: { zod: [zodDir] },
 };
+
+const BUILTINS = new Set(builtinModules);
+
+function isBuiltin(specifier: string): boolean {
+  return specifier.startsWith("node:") || BUILTINS.has(specifier.split("/")[0]!);
+}
+
+/** A bare name such as `lodash` or `@scope/tool`, as opposed to a path. */
+function isPackage(specifier: string): boolean {
+  return !specifier.startsWith(".") && !specifier.startsWith("/") && !path.isAbsolute(specifier);
+}
 
 function at(file: string, source: ts.SourceFile, position: number): Omit<CodeProblem, "message"> {
   const { line, character } = source.getLineAndCharacterOfPosition(position);
@@ -75,10 +87,13 @@ function importProblems(node: LoadedBlock, file: string, source: ts.SourceFile):
 
     const specifier = statement.moduleSpecifier.text;
     if (children.has(specifier) || importsOnlyTypes(statement)) continue;
+    if (isPackage(specifier) && !isBuiltin(specifier)) continue;
 
     problems.push({
       ...at(file, source, statement.getStart(source)),
-      message: `"${node.block.name}" imports values from "${specifier}", which will not run: a block can import types and its own children's code, and nothing else. Use \`import type\` for types, and a capability for anything outside the block.`,
+      message: isBuiltin(specifier)
+        ? `"${node.block.name}" imports "${specifier}", one of Node's built-in modules. A block reaches files, the network and the process only through its capabilities, so declare a capability instead.`
+        : `"${node.block.name}" imports values from "${specifier}", which will not run: a block can import types, its own children's code, and packages installed in the project, and nothing else. Use \`import type\` for types, and a capability for anything outside the block.`,
     });
   }
   return problems;

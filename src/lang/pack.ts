@@ -40,8 +40,14 @@ export interface LanguagePack {
 
   /** The generated, never-hand-edited half of a block. */
   contractSource(request: ContractRequest): string;
-  /** The frame an implementation is written inside, created once. */
+  /** The frame a leaf's implementation is written inside, created once. */
   implScaffold(block: Block): string;
+  /**
+   * The whole of a composite's implementation, generated from its diagram. A
+   * composite does nothing but call its children, so there is nothing in it
+   * for anyone to write and nothing that can drift from the diagram.
+   */
+  compositeSource(block: Block): string;
   /** The shared capability declarations for a project. */
   capabilitiesSource(): string;
 

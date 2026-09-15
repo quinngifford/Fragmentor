@@ -1,10 +1,11 @@
-import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod/v4";
-import { blockIdPattern, blockSchema, blockToFileShape } from "../model/block.js";
-import type { Block } from "../model/block.js";
+import { blockIdPattern, blockToFileShape, parseBlockFile } from "../model/block.js";
+import type { Block, Mode } from "../model/block.js";
 import { validateComposite } from "../model/validate.js";
 import type { Diagnostic } from "../model/validate.js";
+import { resolveInside } from "./safePath.js";
 
 /**
  * A Fragmentor project is a directory whose folder structure is the block
@@ -26,6 +27,11 @@ import type { Diagnostic } from "../model/validate.js";
  *           block.json
  *       train-model/        <- another, possibly in another language
  *         block.json
+ *
+ * The person chooses the mode, the granularity and optionally the language
+ * when the project is created, and Fragmentor writes them into fragmentor.json.
+ * The agent fills in the rest, so a project with no systems yet is simply
+ * waiting for it.
  */
 
 export interface Granularity {
@@ -41,37 +47,48 @@ export interface Granularity {
 export interface SystemDeclaration {
   /** The block id at the root of this system, which is also its folder. */
   rootBlock: string;
-  /** The id of the language pack this system's code is written in. */
-  language: string;
+  /** The language this system's code is written in, when the project does not set one for every system. */
+  language?: string;
 }
 
 export interface Manifest {
   name: string;
   /** What the software being built is supposed to do, in the user's words. */
   goal: string;
-  systems: SystemDeclaration[];
+  mode: Mode;
+  /** The language the person chose for every system, if they chose one. */
+  language?: string;
   granularity: Granularity;
+  systems: SystemDeclaration[];
 }
 
 const systemSchema = z
   .object({
-    rootBlock: z.string().regex(blockIdPattern),
-    language: z.string().min(1),
+    rootBlock: z.string().regex(blockIdPattern, "must be kebab-case, because it names the system's folder"),
+    language: z.string().min(1).optional(),
   })
   .strict();
 
 export const manifestSchema = z
   .object({
     name: z.string().min(1),
-    goal: z.string().min(1),
-    systems: z.array(systemSchema).min(1, "a project needs at least one system"),
+    goal: z.string().default(""),
+    mode: z.enum(["structured", "visual"], {
+      error: `must be "structured" (Fragmentor generates, checks and runs the code) or "visual" (Fragmentor only draws it)`,
+    }),
+    language: z.string().min(1).optional(),
     granularity: z
-      .object({
-        level: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).default(3),
-        maxDepth: z.number().int().min(1).max(8).default(4),
-      })
-      .strict()
-      .default({ level: 3, maxDepth: 4 }),
+      .object(
+        {
+          level: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)], {
+            error: "must be a whole number from 1 to 5",
+          }),
+          maxDepth: z.number().int().min(1).max(8).default(4),
+        },
+        { error: `must say how finely to divide the work, for example { "level": 3 }` },
+      )
+      .strict(),
+    systems: z.array(systemSchema).default([]),
   })
   .strict()
   .refine((m) => new Set(m.systems.map((s) => s.rootBlock)).size === m.systems.length, {
@@ -90,6 +107,7 @@ export interface LoadedBlock {
 
 export interface LoadedSystem {
   rootBlock: string;
+  /** The system's own language, or the project's. Empty in a visual project that names none. */
   language: string;
   root: LoadedBlock;
 }
@@ -134,9 +152,17 @@ export function languageOf(project: Project, blockPath: string): string | undefi
   return systemOf(project, blockPath)?.language;
 }
 
-export async function loadProject(projectDir: string): Promise<Project> {
-  const manifestText = await readFile(manifestPath(projectDir), "utf8");
-  const raw: unknown = JSON.parse(manifestText);
+/** Reads fragmentor.json alone, which is enough to know how the project is set up. */
+export async function readManifest(projectDir: string): Promise<Manifest> {
+  const file = manifestPath(projectDir);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await readFile(file, "utf8"));
+  } catch (cause) {
+    throw new Error(`The project file at ${file} could not be read: ${cause instanceof Error ? cause.message : String(cause)}.`, {
+      cause,
+    });
+  }
 
   if (raw && typeof raw === "object" && "rootBlock" in raw && !("systems" in raw)) {
     throw new Error(
@@ -147,10 +173,13 @@ export async function loadProject(projectDir: string): Promise<Project> {
   const parsed = manifestSchema.safeParse(raw);
   if (!parsed.success) {
     const detail = parsed.error.issues.map((i) => `  ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
-    throw new Error(`The project file at ${manifestPath(projectDir)} is not valid:\n${detail}`);
+    throw new Error(`The project file at ${file} is not valid:\n${detail}`);
   }
-  const manifest = parsed.data;
+  return parsed.data;
+}
 
+export async function loadProject(projectDir: string): Promise<Project> {
+  const manifest = await readManifest(projectDir);
   const systems: LoadedSystem[] = [];
   const byPath = new Map<string, LoadedBlock>();
 
@@ -160,20 +189,30 @@ export async function loadProject(projectDir: string): Promise<Project> {
   };
 
   for (const declaration of manifest.systems) {
-    const root = await loadBlockTree(blockDir(projectDir, declaration.rootBlock), declaration.rootBlock);
-    systems.push({ rootBlock: declaration.rootBlock, language: declaration.language, root });
+    const language = declaration.language ?? manifest.language;
+    // Structured code is generated and checked in a language, so it has to be
+    // known. A visual project only shows it, and can manage without.
+    if (language === undefined && manifest.mode === "structured") {
+      throw new Error(
+        `fragmentor.json does not say what language the system "${declaration.rootBlock}" is written in. Add "language" to the system, or to the whole project.`,
+      );
+    }
+
+    const root = await loadBlockTree(blockDir(projectDir, declaration.rootBlock), declaration.rootBlock, manifest.mode);
+    systems.push({ rootBlock: declaration.rootBlock, language: language ?? "", root });
     index(root);
   }
 
   return { dir: projectDir, manifest, systems, byPath };
 }
 
-async function loadBlockTree(dir: string, blockPath: string): Promise<LoadedBlock> {
+async function loadBlockTree(dir: string, blockPath: string, mode: Mode): Promise<LoadedBlock> {
   const id = blockPath.split("/").at(-1)!;
+  const file = path.join(dir, BLOCK_FILE);
 
   let raw: unknown;
   try {
-    raw = JSON.parse(await readFile(path.join(dir, BLOCK_FILE), "utf8"));
+    raw = JSON.parse(await readFile(file, "utf8"));
   } catch (cause) {
     // Say why, because whoever wrote the file needs to know what to fix.
     const reason =
@@ -182,18 +221,12 @@ async function loadBlockTree(dir: string, blockPath: string): Promise<LoadedBloc
         : cause instanceof Error
           ? cause.message
           : String(cause);
-    throw new Error(`Could not read the block definition at ${path.join(dir, BLOCK_FILE)}: ${reason}.`, { cause });
+    throw new Error(`Could not read the block definition at ${file}: ${reason}.`, { cause });
   }
 
-  const parsed = blockSchema.safeParse(raw);
-  if (!parsed.success) {
-    const detail = parsed.error.issues.map((i) => `  ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
-    throw new Error(`The block definition at ${path.join(dir, BLOCK_FILE)} is not valid:\n${detail}`);
-  }
-
-  const block = parsed.data;
-  if (block.id !== id) {
-    throw new Error(`The block in folder "${id}" calls itself "${block.id}". A block's id must match its folder name.`);
+  const parsed = parseBlockFile(raw, id, mode);
+  if (!parsed.ok) {
+    throw new Error(`The block definition at ${file} is not valid:\n  ${parsed.problems.join("\n  ")}`);
   }
 
   // A block's folder can sit alongside things that are not blocks: __pycache__,
@@ -213,10 +246,10 @@ async function loadBlockTree(dir: string, blockPath: string): Promise<LoadedBloc
     } catch {
       continue;
     }
-    children.push(await loadBlockTree(childDir, `${blockPath}/${childId}`));
+    children.push(await loadBlockTree(childDir, `${blockPath}/${childId}`, mode));
   }
 
-  return { block, path: blockPath, dir, children };
+  return { block: parsed.block, path: blockPath, dir, children };
 }
 
 /**
@@ -226,11 +259,26 @@ async function loadBlockTree(dir: string, blockPath: string): Promise<LoadedBloc
 export function validateProject(project: Project): ProjectDiagnostic[] {
   const diagnostics: ProjectDiagnostic[] = [];
   const { maxDepth } = project.manifest.granularity;
+  const { mode, language } = project.manifest;
+
+  // In a visual project the language only describes existing code, which may
+  // well mix several; in a structured one the person's choice binds.
+  if (mode === "structured" && language !== undefined) {
+    for (const declaration of project.manifest.systems) {
+      if (declaration.language !== undefined && declaration.language !== language) {
+        diagnostics.push({
+          severity: "error",
+          blockPath: declaration.rootBlock,
+          message: `The system "${declaration.rootBlock}" is written in ${declaration.language}, but this project is set to ${language}, so every system in it uses ${language}.`,
+        });
+      }
+    }
+  }
 
   for (const node of project.byPath.values()) {
     const onDisk = new Map(node.children.map((child) => [child.block.id, child.block]));
 
-    for (const diagnostic of validateComposite(node.block, onDisk)) {
+    for (const diagnostic of validateComposite(node.block, onDisk, mode)) {
       diagnostics.push({ ...diagnostic, blockPath: node.path });
     }
 
@@ -278,4 +326,91 @@ export async function createProject(
   for (const root of rootBlocks) {
     await writeBlock(blockDir(projectDir, root.id), root);
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Where a visual block's code is                                              */
+/* -------------------------------------------------------------------------- */
+
+export interface CodeLocation {
+  /** The file or folder, relative to the project, with forward slashes. */
+  file: string;
+  symbol: string | null;
+  /** The line the symbol was found on, counting from 1. */
+  line: number | null;
+  /** The file's text, when the pointer names a file small enough to show. */
+  text: string | null;
+}
+
+/** Past this, a file is not read to find a name in it or to show it. */
+const LARGEST_SHOWN = 2_000_000;
+
+/**
+ * Finds what a visual block's `code` points at: `src/pricing.ts`, `src/pricing/`
+ * or `src/pricing.ts#priceOrder`. A pointer that leads nowhere is reported,
+ * because a diagram pointing at code that has moved is exactly the drift a
+ * visual project has to show.
+ */
+export async function locateCode(
+  projectDir: string,
+  pointer: string,
+): Promise<{ ok: true; location: CodeLocation } | { ok: false; problem: string }> {
+  const hash = pointer.indexOf("#");
+  const filePart = (hash === -1 ? pointer : pointer.slice(0, hash)).trim().replace(/\\/g, "/");
+  const symbol = hash === -1 ? null : pointer.slice(hash + 1).trim() || null;
+
+  let target: string;
+  try {
+    target = resolveInside(projectDir, filePart);
+  } catch {
+    return { ok: false, problem: `"${pointer}" points outside the project folder.` };
+  }
+
+  const info = await stat(target).catch(() => null);
+  if (!info) return { ok: false, problem: `"${filePart}" does not exist.` };
+  const file = path.relative(projectDir, target).split(path.sep).join("/") || ".";
+
+  if (info.isDirectory()) {
+    if (symbol) return { ok: false, problem: `"${filePart}" is a folder, so it cannot point at "${symbol}". Name the file it is in.` };
+    return { ok: true, location: { file, symbol: null, line: null, text: null } };
+  }
+  if (info.size > LARGEST_SHOWN) return { ok: true, location: { file, symbol, line: null, text: null } };
+
+  const text = (await readFile(target, "utf8")).replace(/\r\n/g, "\n");
+  if (!symbol) return { ok: true, location: { file, symbol: null, line: null, text } };
+
+  const line = findSymbol(text, symbol);
+  if (line === null) return { ok: false, problem: `"${filePart}" has nothing called "${symbol}".` };
+  return { ok: true, location: { file, symbol, line, text } };
+}
+
+const escapeForPattern = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Words that introduce a declaration, in the languages a visual project is likely to be written in. */
+const DECLARING = "function|def|class|fn|func|interface|type|const|let|var|struct|enum|trait|module|object|val|sub";
+
+/**
+ * The line a name is declared on, near enough for any language: `function
+ * priceOrder` or `priceOrder(order) {` beats a line that merely calls it. A
+ * dotted name such as `Cart.total` is found part by part, each after the last.
+ */
+function findSymbol(text: string, symbol: string): number | null {
+  const lines = text.split("\n");
+  let found = -1;
+
+  for (const part of symbol.split(".").filter(Boolean)) {
+    const name = escapeForPattern(part);
+    const word = new RegExp(`(^|[^A-Za-z0-9_$])${name}($|[^A-Za-z0-9_$])`);
+    const declared = new RegExp(`\\b(${DECLARING})\\s+\\*?\\s*${name}($|[^A-Za-z0-9_$])`);
+    const defined = new RegExp(`^\\s*((async|static|public|private|protected|export|default|override|readonly)\\s+)*\\*?${name}\\s*[(=:<]`);
+
+    const candidates: number[] = [];
+    lines.forEach((line, i) => {
+      if (i >= Math.max(found, 0) && word.test(line)) candidates.push(i);
+    });
+    if (candidates.length === 0) return null;
+    found = candidates.find((i) => declared.test(lines[i]!) || defined.test(lines[i]!)) ?? candidates[0]!;
+  }
+
+  return found === -1 ? null : found + 1;
 }

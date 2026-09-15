@@ -40,6 +40,7 @@ export function exampleFor(type: PortType, name?: string): unknown {
       return false;
     case "null":
     case "unknown":
+    case "text":
       return null;
     case "literal":
       return type.value;

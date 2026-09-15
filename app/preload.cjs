@@ -19,6 +19,7 @@ const CHANNELS = {
   saveLayout: "layout:save",
   emitCode: "codegen:emit",
   revealBlock: "block:reveal",
+  revealCode: "code:reveal",
   runBlock: "block:run",
   saveCases: "block:save-cases",
   runCases: "block:run-cases",
@@ -26,7 +27,7 @@ const CHANNELS = {
 
 contextBridge.exposeInMainWorld("fragmentor", {
   chooseProject: () => ipcRenderer.invoke(CHANNELS.chooseProject),
-  newProject: () => ipcRenderer.invoke(CHANNELS.newProject),
+  newProject: (settings) => ipcRenderer.invoke(CHANNELS.newProject, settings),
   loadProject: (dir) => ipcRenderer.invoke(CHANNELS.loadProject, dir),
   readProject: (dir) => ipcRenderer.invoke(CHANNELS.readProject, dir),
   // Only the folder is passed on, never the event, which would expose the sender.
@@ -39,6 +40,7 @@ contextBridge.exposeInMainWorld("fragmentor", {
   saveLayout: (request) => ipcRenderer.invoke(CHANNELS.saveLayout, request),
   emitCode: (dir) => ipcRenderer.invoke(CHANNELS.emitCode, dir),
   revealBlock: (dir, blockPath) => ipcRenderer.invoke(CHANNELS.revealBlock, dir, blockPath),
+  revealCode: (dir, file) => ipcRenderer.invoke(CHANNELS.revealCode, dir, file),
   runBlock: (request) => ipcRenderer.invoke(CHANNELS.runBlock, request),
   saveCases: (request) => ipcRenderer.invoke(CHANNELS.saveCases, request),
   runCases: (dir, blockPath) => ipcRenderer.invoke(CHANNELS.runCases, dir, blockPath),

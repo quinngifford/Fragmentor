@@ -1,38 +1,17 @@
 {
-  "id": "score-posting",
-  "name": "Score Posting",
   "responsibility": "Score a single posting against the profile keywords and explain the score.",
-  "kind": "composite",
   "inputs": {
-    "posting": {
-      "type": "{ title: string; company: string; description: string }"
-    },
-    "keywords": {
-      "type": "string[]"
-    }
+    "posting": "{ title: string; company: string; description: string }",
+    "keywords": "string[]"
   },
   "outputs": {
-    "score": {
-      "type": "number"
-    },
-    "reasons": {
-      "type": "string[]"
-    }
+    "score": "number",
+    "reasons": "string[]"
   },
-  "capabilities": {},
   "children": [
-    {
-      "block": "normalize-text",
-      "mode": "once"
-    },
-    {
-      "block": "match-keywords",
-      "mode": "once"
-    },
-    {
-      "block": "compute-relevance",
-      "mode": "once"
-    }
+    "normalize-text",
+    "match-keywords",
+    "compute-relevance"
   ],
   "wires": [
     "input.posting -> normalize-text.posting",
@@ -41,6 +20,5 @@
     "match-keywords.matches -> compute-relevance.matches",
     "compute-relevance.score -> output.score",
     "compute-relevance.reasons -> output.reasons"
-  ],
-  "pinnedAsLeaf": false
+  ]
 }

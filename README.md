@@ -16,9 +16,13 @@ npm link
 ## Use
 
 1. Start Fragmentor with `npm run app`.
-2. Choose **New project…** and pick an empty folder.
-3. Open your coding agent in that folder and tell it what you want built.
+2. Choose **New project…**. Decide what Fragmentor should do with the code and how finely to divide it, then pick a folder: an empty one, or one that already holds code.
+3. Open your coding agent in that folder and tell it what you want.
 
-The agent reads `FRAGMENTOR.md`, defines the blocks, writes the code and the tests, and runs `fragmentor check` and `fragmentor test` until both pass. The diagram updates as it works.
+In **structured** mode the agent reads `FRAGMENTOR.md`, defines the blocks, writes the code and the tests, and runs `fragmentor check` and `fragmentor test` until both pass. Fragmentor writes the code that connects the blocks. In a folder that already holds code, the agent rebuilds that code as blocks.
+
+In **visual** mode the agent maps the code already in the folder into a diagram, and never changes it.
+
+The diagram updates as the agent works.
 
 `PROJECT.md` describes what Fragmentor is for. `STATUS.md` describes where development stands.

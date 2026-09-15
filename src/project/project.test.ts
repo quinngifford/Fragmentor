@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { blockDir, createProject, loadProject, validateProject, writeBlock } from "./project.js";
+import { blockDir, createProject, loadProject, locateCode, validateProject, writeBlock } from "./project.js";
 import type { Manifest } from "./project.js";
 import { makeBlock, t } from "../model/testing.js";
 
@@ -11,8 +11,9 @@ let dir: string;
 const manifest: Manifest = {
   name: "Job Ranker",
   goal: "Rank job postings against a profile.",
-  systems: [{ rootBlock: "rank-jobs", language: "typescript" }],
+  mode: "structured",
   granularity: { level: 3, maxDepth: 4 },
+  systems: [{ rootBlock: "rank-jobs", language: "typescript" }],
 };
 
 beforeEach(async () => {
@@ -22,6 +23,8 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
+
+const writeManifestJson = (value: unknown) => writeFile(path.join(dir, "fragmentor.json"), JSON.stringify(value), "utf8");
 
 /** Root composite with one child that scores a posting. */
 async function writeSmallProject() {
@@ -117,22 +120,19 @@ describe("project round trip", () => {
     expect(validateProject(project)).toEqual([]);
   });
 
-  it("still reports a real block folder the diagram does not list", async () => {
+  it("gives a block the id of its folder, and a name made from it unless the file gives one", async () => {
     await writeSmallProject();
-    await writeBlock(blockDir(dir, "rank-jobs/stray"), makeBlock({ id: "stray" }));
+    await mkdir(blockDir(dir, "rank-jobs/extra-step"), { recursive: true });
+    await writeFile(path.join(blockDir(dir, "rank-jobs/extra-step"), "block.json"), JSON.stringify({ responsibility: "x" }), "utf8");
 
-    expect(validateProject(await loadProject(dir)).map((d) => d.message)).toContain(
-      'There is a folder for "stray" inside "Rank Jobs", but the diagram does not list it as a child.',
-    );
+    const block = (await loadProject(dir)).byPath.get("rank-jobs/extra-step")!.block;
+    expect(block.id).toBe("extra-step");
+    expect(block.name).toBe("Extra Step");
   });
 
   it("warns about a block deeper than the project allows", async () => {
     await writeSmallProject();
-    await writeFile(
-      path.join(dir, "fragmentor.json"),
-      JSON.stringify({ ...manifest, granularity: { level: 3, maxDepth: 1 } }),
-      "utf8",
-    );
+    await writeManifestJson({ ...manifest, granularity: { level: 3, maxDepth: 1 } });
 
     expect(validateProject(await loadProject(dir))).toEqual([
       {
@@ -150,52 +150,136 @@ describe("project round trip", () => {
     await expect(loadProject(dir)).rejects.toThrow(/Could not read the block definition at .*block\.json: .*JSON/s);
   });
 
+  it("explains what is wrong with an invalid block file", async () => {
+    await writeSmallProject();
+    await writeFile(path.join(blockDir(dir, "rank-jobs/score-posting"), "block.json"), JSON.stringify({ name: "Score" }), "utf8");
+
+    await expect(loadProject(dir)).rejects.toThrow(/responsibility/);
+  });
+});
+
+describe("project settings", () => {
+  it("may have no systems yet, while it waits for the agent to define them", async () => {
+    await writeManifestJson({ name: "Waiting", mode: "structured", granularity: { level: 2 } });
+
+    const project = await loadProject(dir);
+    expect(project.systems).toEqual([]);
+    expect(project.manifest).toEqual({
+      name: "Waiting",
+      goal: "",
+      mode: "structured",
+      granularity: { level: 2, maxDepth: 4 },
+      systems: [],
+    });
+  });
+
+  it("says what the person has to decide that a project file leaves out", async () => {
+    await writeManifestJson({ name: "Undecided", systems: [] });
+
+    await expect(loadProject(dir)).rejects.toThrow(/mode: must be "structured".*granularity: must say how finely/s);
+  });
+
   it("explains how to fix a project still using the old single-system manifest", async () => {
     await writeSmallProject();
-    await writeFile(
-      path.join(dir, "fragmentor.json"),
-      JSON.stringify({ name: "Old", goal: "Old shape.", rootBlock: "rank-jobs" }),
-      "utf8",
-    );
+    await writeManifestJson({ name: "Old", goal: "Old shape.", rootBlock: "rank-jobs" });
 
     await expect(loadProject(dir)).rejects.toThrow(/uses the old single-system manifest.*"language": "typescript"/s);
   });
 
   it("refuses two systems sharing a root block", async () => {
     await writeSmallProject();
-    await writeFile(
-      path.join(dir, "fragmentor.json"),
-      JSON.stringify({
-        name: "Twice",
-        goal: "Same root twice.",
-        systems: [
-          { rootBlock: "rank-jobs", language: "typescript" },
-          { rootBlock: "rank-jobs", language: "python" },
-        ],
-      }),
-      "utf8",
-    );
+    await writeManifestJson({
+      ...manifest,
+      systems: [
+        { rootBlock: "rank-jobs", language: "typescript" },
+        { rootBlock: "rank-jobs", language: "python" },
+      ],
+    });
 
     await expect(loadProject(dir)).rejects.toThrow(/two systems cannot share a root block/);
   });
 
-  it("refuses a block whose id disagrees with its folder", async () => {
+  it("gives each system the project's language unless it names its own", async () => {
     await writeSmallProject();
-    await writeBlock(blockDir(dir, "rank-jobs/score-posting"), makeBlock({ id: "renamed" }));
+    await writeManifestJson({ ...manifest, language: "typescript", systems: [{ rootBlock: "rank-jobs" }] });
 
-    await expect(loadProject(dir)).rejects.toThrow(
-      /The block in folder "score-posting" calls itself "renamed"/,
-    );
+    expect((await loadProject(dir)).systems[0]!.language).toBe("typescript");
   });
 
-  it("explains what is wrong with an invalid block file", async () => {
+  it("asks for a language when neither a structured system nor its project names one", async () => {
     await writeSmallProject();
+    await writeManifestJson({ ...manifest, systems: [{ rootBlock: "rank-jobs" }] });
+
+    await expect(loadProject(dir)).rejects.toThrow(/does not say what language the system "rank-jobs"/);
+  });
+
+  it("reports a structured system in another language than the one the person chose", async () => {
+    await writeSmallProject();
+    await writeManifestJson({ ...manifest, language: "python" });
+
+    expect(validateProject(await loadProject(dir)).map((d) => d.message)).toContain(
+      'The system "rank-jobs" is written in typescript, but this project is set to python, so every system in it uses python.',
+    );
+  });
+});
+
+describe("a visual project", () => {
+  it("reads blocks whose types are the code's own, which structured mode would refuse", async () => {
+    await writeManifestJson({ name: "Seen", mode: "visual", granularity: { level: 3 }, systems: [{ rootBlock: "serve" }] });
+    await mkdir(blockDir(dir, "serve"), { recursive: true });
     await writeFile(
-      path.join(blockDir(dir, "rank-jobs/score-posting"), "block.json"),
-      JSON.stringify({ id: "score-posting", name: "Score", kind: "leaf" }),
+      path.join(blockDir(dir, "serve"), "block.json"),
+      JSON.stringify({ responsibility: "Serves requests.", code: "src/server.ts#serve", inputs: { port: "Port" } }),
       "utf8",
     );
 
-    await expect(loadProject(dir)).rejects.toThrow(/responsibility/);
+    const project = await loadProject(dir);
+    expect(project.systems[0]!.language).toBe("");
+    expect(project.byPath.get("serve")!.block.inputs.port!.type).toEqual({ kind: "text", text: "Port" });
+  });
+});
+
+describe("locateCode", () => {
+  const source = [
+    'import { priceOrder } from "./order.js";',
+    "",
+    "export function priceOrders(orders) { return orders.map(priceOrder); }",
+    "export function priceOrder(order) { return 1; }",
+    "",
+    "class Cart {",
+    "  items = [];",
+    "  total() { return 0; }",
+    "}",
+  ].join("\n");
+
+  beforeEach(async () => {
+    await mkdir(path.join(dir, "src"), { recursive: true });
+    await writeFile(path.join(dir, "src", "pricing.ts"), source, "utf8");
+  });
+
+  it("finds where a name is declared, not where it is first mentioned", async () => {
+    const found = await locateCode(dir, "src/pricing.ts#priceOrder");
+    expect(found).toMatchObject({ ok: true, location: { file: "src/pricing.ts", symbol: "priceOrder", line: 4 } });
+  });
+
+  it("finds a method inside its class", async () => {
+    expect(await locateCode(dir, "src/pricing.ts#Cart.total")).toMatchObject({ ok: true, location: { line: 8 } });
+  });
+
+  it("accepts a file or a folder on its own", async () => {
+    expect(await locateCode(dir, "src/pricing.ts")).toMatchObject({ ok: true, location: { line: null, text: source } });
+    expect(await locateCode(dir, "src")).toMatchObject({ ok: true, location: { file: "src", text: null } });
+  });
+
+  it("says what is wrong with a pointer that leads nowhere", async () => {
+    expect(await locateCode(dir, "src/missing.ts")).toEqual({ ok: false, problem: '"src/missing.ts" does not exist.' });
+    expect(await locateCode(dir, "src/pricing.ts#discount")).toEqual({
+      ok: false,
+      problem: '"src/pricing.ts" has nothing called "discount".',
+    });
+    expect(await locateCode(dir, "../elsewhere.ts")).toEqual({
+      ok: false,
+      problem: '"../elsewhere.ts" points outside the project folder.',
+    });
   });
 });

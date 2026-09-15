@@ -1,19 +1,12 @@
 {
-  "id": "generate-contract",
-  "name": "Generate Contract",
   "responsibility": "Produce the TypeScript contract source for one block from its ports, so the contract can never disagree with the diagram.",
-  "kind": "composite",
   "inputs": {
     "blockId": {
       "type": "string",
       "description": "Kebab-case id, e.g. score-posting."
     },
-    "blockName": {
-      "type": "string"
-    },
-    "responsibility": {
-      "type": "string"
-    },
+    "blockName": "string",
+    "responsibility": "string",
     "blockPath": {
       "type": "string",
       "description": "Path from the blocks root, used to locate shared modules."
@@ -22,12 +15,8 @@
       "type": "{ name: string; type: string; description?: string }[]",
       "description": "Each type is an expression such as `string[]`."
     },
-    "outputs": {
-      "type": "{ name: string; type: string; description?: string }[]"
-    },
-    "capabilities": {
-      "type": "{ name: string; capability: string; description?: string }[]"
-    }
+    "outputs": "{ name: string; type: string; description?: string }[]",
+    "capabilities": "{ name: string; capability: string; description?: string }[]"
   },
   "outputs": {
     "source": {
@@ -35,24 +24,11 @@
       "description": "Contents of the block's contract.ts."
     }
   },
-  "capabilities": {},
   "children": [
-    {
-      "block": "derive-names",
-      "mode": "once"
-    },
-    {
-      "block": "render-schemas",
-      "mode": "once"
-    },
-    {
-      "block": "render-capabilities",
-      "mode": "once"
-    },
-    {
-      "block": "assemble-source",
-      "mode": "once"
-    }
+    "derive-names",
+    "render-schemas",
+    "render-capabilities",
+    "assemble-source"
   ],
   "wires": [
     "input.blockId -> derive-names.blockId",
@@ -71,6 +47,5 @@
     "render-capabilities.importLine -> assemble-source.importLine",
     "render-capabilities.capsDeclaration -> assemble-source.capsDeclaration",
     "assemble-source.source -> output.source"
-  ],
-  "pinnedAsLeaf": false
+  ]
 }

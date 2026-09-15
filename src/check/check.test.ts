@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { checkProject } from "./check.js";
+import { runBlock } from "../run/run.js";
 
 const examples = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "examples");
 
@@ -22,6 +23,9 @@ afterEach(async () => {
 
 const file = (...parts: string[]) => path.join(dir, "blocks", ...parts);
 
+const LEAF_HEADER = `import type { ExtractProfileKeywordsInput, ExtractProfileKeywordsOutput, ExtractProfileKeywordsCaps } from "./contract.js";`;
+const LEAF_SIGNATURE = `export async function extractProfileKeywords(input: ExtractProfileKeywordsInput, caps: ExtractProfileKeywordsCaps): Promise<ExtractProfileKeywordsOutput>`;
+
 describe("checkProject", () => {
   it("passes the example, checking its TypeScript system", async () => {
     const report = await checkProject(dir);
@@ -34,10 +38,10 @@ describe("checkProject", () => {
     ]);
   }, 30_000);
 
-  it("lists the blocks still to be written and tested", async () => {
+  it("lists the blocks still to be written and tested, which never includes a composite's code", async () => {
     const report = await checkProject(dir);
 
-    expect(report.unimplemented).toEqual(["embed-postings", "embed-postings/clean-text", "embed-postings/embed-text"]);
+    expect(report.unimplemented).toEqual(["embed-postings/clean-text", "embed-postings/embed-text"]);
     expect(report.untested).toContain("rank-jobs/rank-results");
     expect(report.untested).not.toContain("rank-jobs");
     expect(report.untested).not.toContain("rank-jobs/extract-profile-keywords");
@@ -51,9 +55,9 @@ describe("checkProject", () => {
   it("reports a leaf that returns the wrong shape, with its file and line", async () => {
     await writeFile(
       file("rank-jobs", "extract-profile-keywords", "impl.ts"),
-      `import type { ExtractProfileKeywordsInput, ExtractProfileKeywordsOutput, ExtractProfileKeywordsCaps } from "./contract.js";
+      `${LEAF_HEADER}
 
-export async function extractProfileKeywords(input: ExtractProfileKeywordsInput, caps: ExtractProfileKeywordsCaps): Promise<ExtractProfileKeywordsOutput> {
+${LEAF_SIGNATURE} {
   return { keywords: input.profile.skills.length };
 }
 `,
@@ -68,25 +72,38 @@ export async function extractProfileKeywords(input: ExtractProfileKeywordsInput,
     expect(problem!.message).toContain("number");
   });
 
-  it("catches a composite handing a child the wrong value", async () => {
+  it("puts back a composite that someone edited, since its code is the diagram's", async () => {
+    await checkProject(dir);
     const impl = file("rank-jobs", "impl.ts");
-    const source = await readFile(impl, "utf8");
-    expect(source).toContain("loadPostings({ path: sourcePath }");
-    await writeFile(impl, source.replace("loadPostings({ path: sourcePath }", "loadPostings({ path: profile }"), "utf8");
+    const generated = await readFile(impl, "utf8");
+    expect(generated).toContain("loadPostings({ path: sourcePath }, caps)");
+
+    await writeFile(impl, generated.replace("loadPostings({ path: sourcePath }", "loadPostings({ path: profile }"), "utf8");
+    const report = await checkProject(dir);
+
+    expect(report.errorCount).toBe(0);
+    expect(await readFile(impl, "utf8")).toBe(generated);
+  });
+
+  it("reports code someone wrote in a block with children, rather than overwriting it", async () => {
+    const impl = file("rank-jobs", "score-posting", "impl.ts");
+    const written = "// someone's own code\nexport async function scorePosting() {}\n";
+    await writeFile(impl, written, "utf8");
 
     const report = await checkProject(dir);
-    expect(report.systems[0]!.codeProblems.map((problem) => problem.file)).toEqual(["blocks/rank-jobs/impl.ts"]);
+    expect(report.generated.problems).toEqual([expect.stringContaining("holds code someone wrote")]);
+    expect(await readFile(impl, "utf8")).toBe(written);
   });
 
   it("reports an import that would typecheck but could not run", async () => {
     // The schema is a value, so the runner — which compiles each block on its
-    // own, with nothing installed — would have to load contract.js and zod.
+    // own — would have to load contract.js and zod.
     await writeFile(
       file("rank-jobs", "extract-profile-keywords", "impl.ts"),
       `import { extractProfileKeywordsInput } from "./contract.js";
-import type { ExtractProfileKeywordsInput, ExtractProfileKeywordsOutput, ExtractProfileKeywordsCaps } from "./contract.js";
+${LEAF_HEADER}
 
-export async function extractProfileKeywords(input: ExtractProfileKeywordsInput, caps: ExtractProfileKeywordsCaps): Promise<ExtractProfileKeywordsOutput> {
+${LEAF_SIGNATURE} {
   const { profile } = extractProfileKeywordsInput.parse(input);
   return { keywords: profile.skills.map((skill) => skill.toLowerCase()) };
 }
@@ -103,6 +120,52 @@ export async function extractProfileKeywords(input: ExtractProfileKeywordsInput,
         message: expect.stringContaining('imports values from "./contract.js"'),
       }),
     ]);
+  });
+
+  it("lets a block use a package installed in the project, when checking it and when running it", async () => {
+    const shout = path.join(dir, "node_modules", "shout");
+    await mkdir(shout, { recursive: true });
+    await writeFile(path.join(shout, "package.json"), JSON.stringify({ name: "shout", version: "1.0.0", main: "index.js", types: "index.d.ts" }), "utf8");
+    await writeFile(path.join(shout, "index.js"), "exports.shout = (text) => text.toUpperCase();\n", "utf8");
+    await writeFile(path.join(shout, "index.d.ts"), "export declare function shout(text: string): string;\n", "utf8");
+
+    await writeFile(
+      file("rank-jobs", "extract-profile-keywords", "impl.ts"),
+      `${LEAF_HEADER}
+import { shout } from "shout";
+
+${LEAF_SIGNATURE} {
+  return { keywords: input.profile.skills.map((skill) => shout(skill)) };
+}
+`,
+      "utf8",
+    );
+
+    const report = await checkProject(dir);
+    expect(report.systems[0]!.codeProblems).toEqual([]);
+
+    const ran = await runBlock({ projectDir: dir, blockPath: "rank-jobs/extract-profile-keywords", input: { profile: { skills: ["rust"] } } });
+    expect(ran.error).toBeUndefined();
+    expect(ran.output).toEqual({ keywords: ["RUST"] });
+  }, 30_000);
+
+  it("refuses Node's built-in modules, which capabilities are there to replace", async () => {
+    await writeFile(
+      file("rank-jobs", "extract-profile-keywords", "impl.ts"),
+      `import { readFileSync } from "node:fs";
+${LEAF_HEADER}
+
+${LEAF_SIGNATURE} {
+  return { keywords: [readFileSync("skills.txt", "utf8")] };
+}
+`,
+      "utf8",
+    );
+
+    const report = await checkProject(dir);
+    expect(report.systems[0]!.codeProblems).toContainEqual(
+      expect.objectContaining({ line: 1, message: expect.stringContaining("one of Node's built-in modules") }),
+    );
   });
 
   it("reports a wiring problem as an error", async () => {
@@ -157,7 +220,9 @@ export async function extractProfileKeywords(input: ExtractProfileKeywordsInput,
       const report = await checkProject(other);
 
       expect(report.errorCount).toBe(0);
-      expect(report.unimplemented).toHaveLength(report.blockCount);
+      // Every block but the one with children, whose code Fragmentor writes.
+      expect(report.unimplemented).toHaveLength(report.blockCount - 1);
+      expect(report.unimplemented).not.toContain("generate-contract");
     } finally {
       await rm(other, { recursive: true, force: true });
     }

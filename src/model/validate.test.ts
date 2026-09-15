@@ -227,6 +227,64 @@ describe("validateComposite", () => {
   });
 });
 
+describe("validateComposite in visual mode", () => {
+  const visual = (parent: Block, children: Map<string, Block>) => validateComposite(parent, children, "visual");
+
+  it("points out a missing wire without refusing the diagram", () => {
+    const { parent, children } = straightLine();
+    parent.wires = parent.wires.filter((w) => !(w.target.to === "block" && w.target.port === "score"));
+
+    const found = visual(parent, children);
+    expect(errors(found)).toEqual([]);
+    expect(warnings(found)).toContain('Nothing is connected to "label-score" input "score".');
+  });
+
+  it("does not compare types, which are only text", () => {
+    const { parent, children } = straightLine();
+    children.set(
+      "label-score",
+      makeBlock({ id: "label-score", inputs: { score: { type: { kind: "text", text: "Score" } } }, outputs: { label: { type: t.string } } }),
+    );
+    expect(visual(parent, children)).toEqual([]);
+  });
+
+  it("accepts blocks that feed each other in a loop, as real code can", () => {
+    const { parent, children } = straightLine();
+    parent.wires.push({
+      source: { from: "block", block: "label-score", port: "label" },
+      target: { to: "block", block: "score-posting", port: "posting" },
+    });
+    expect(errors(visual(parent, children))).toEqual([]);
+  });
+
+  it("does not ask a block to pass its children's capabilities down", () => {
+    const { parent, children } = straightLine();
+    children.get("score-posting")!.capabilities = { db: { capability: "Database" } };
+    expect(visual(parent, children)).toEqual([]);
+  });
+
+  it("still refuses a child that does not exist", () => {
+    const { parent, children } = straightLine();
+    children.delete("label-score");
+    expect(errors(visual(parent, children))).toContain('"rank-posting" refers to a child block "label-score" that does not exist.');
+  });
+});
+
+describe("executionOrder with a loop", () => {
+  it("still lists every child, putting those caught in the loop last", () => {
+    const children = [
+      { block: "a", mode: "once" as const },
+      { block: "b", mode: "once" as const },
+      { block: "c", mode: "once" as const },
+    ];
+    const wires = [
+      { source: { from: "block" as const, block: "b", port: "out" }, target: { to: "block" as const, block: "c", port: "in" } },
+      { source: { from: "block" as const, block: "c", port: "out" }, target: { to: "block" as const, block: "b", port: "in" } },
+    ];
+    expect(executionOrder(children, wires)).toEqual(["a", "b", "c"]);
+  });
+});
+
 describe("executionOrder", () => {
   it("orders blocks after the blocks that feed them", () => {
     const { parent } = straightLine();

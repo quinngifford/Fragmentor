@@ -1,4 +1,4 @@
-import type { SnapshotBlock } from "../../src/project/snapshot.js";
+import type { SnapshotBlock, SnapshotCode } from "../../src/project/snapshot.js";
 import type { ProjectDiagnostic } from "../../src/project/project.js";
 import { BUS_PALETTE, busColors, requireSnapshot, ui } from "./state.js";
 import { busColour, connectionCode } from "./graph.js";
@@ -104,9 +104,11 @@ function codeSection(block: SnapshotBlock): HTMLElement {
   // A textarea hands back its text with \n line endings whatever the file
   // uses, so the file is compared in the same form or it would never match.
   const onDisk = block.sources[ui.codeTab]?.replace(/\r\n/g, "\n") ?? null;
-  const isContract = ui.codeTab === "contract";
+  // A contract is derived from the diagram, and so is the code of a block
+  // with children: neither is anyone's to edit.
+  const generated = ui.codeTab === "contract" || block.kind === "composite";
   const pending = ui.edits.get(block.path);
-  const value = isContract ? onDisk : (pending?.text ?? onDisk);
+  const value = generated ? onDisk : (pending?.text ?? onDisk);
 
   if (value === null || value === undefined) {
     node.append(el("p", "bench-note", "This file has not been generated yet. Use Generate code."));
@@ -116,13 +118,21 @@ function codeSection(block: SnapshotBlock): HTMLElement {
   const editor = el("textarea", "code-editor");
   editor.spellcheck = false;
   editor.value = value;
-  editor.readOnly = isContract;
+  editor.readOnly = generated;
   node.append(editor);
 
   const foot = el("div", "code-foot");
 
-  if (isContract) {
-    foot.append(el("p", "bench-note", "Generated from block.json, so it is read-only. Change the diagram and it is rewritten."));
+  if (generated) {
+    foot.append(
+      el(
+        "p",
+        "bench-note",
+        ui.codeTab === "contract"
+          ? "Generated from block.json, so it is read-only. Change the diagram and it is rewritten."
+          : "This block has children, so its code is generated from its wires and is read-only. Change the diagram and it is rewritten.",
+      ),
+    );
     node.append(foot);
     return node;
   }
@@ -190,15 +200,66 @@ function codeSection(block: SnapshotBlock): HTMLElement {
   return node;
 }
 
+/** The lines a visual block points at, numbered as in the file, with the one it names picked out. */
+function excerptOf(code: SnapshotCode): HTMLElement {
+  const pre = el("pre", "code code-excerpt");
+  (code.excerpt ?? "").split("\n").forEach((text, i) => {
+    const number = code.excerptStart + i;
+    const line = el("span", number === code.line ? "excerpt-line target" : "excerpt-line");
+    line.append(el("span", "excerpt-number", String(number)), document.createTextNode(text || " "));
+    pre.append(line);
+  });
+  return pre;
+}
+
+/** In a visual project a block's code is the person's own, shown and never changed. */
+function linkedCodeSection(block: SnapshotBlock): HTMLElement {
+  const node = section("Code", true);
+  const code = block.code;
+
+  if (!code) {
+    node.append(
+      el(
+        "p",
+        "bench-note",
+        requireSnapshot().diagnostics.some((d) => d.blockPath === block.path && /points at code/.test(d.message))
+          ? "The code this block points at is not there; the problem is listed above."
+          : "This block does not say where its code is. The agent adds a \"code\" pointer to its block.json.",
+      ),
+    );
+    return node;
+  }
+
+  node.append(el("div", "code-where", code.line ? `${code.file} : line ${code.line}` : code.file));
+  if (code.excerpt !== null) node.append(excerptOf(code));
+  else node.append(el("p", "bench-note", "This points at a folder, or at a file too large to show here."));
+
+  const foot = el("div", "code-foot");
+  const reveal = el("button", "btn quiet", "Show in folder");
+  reveal.addEventListener("click", () => {
+    void window.fragmentor.revealCode(requireSnapshot().dir, code.file);
+  });
+  foot.append(reveal, el("p", "bench-note", "Visual mode: Fragmentor shows this code and never changes it."));
+  node.append(foot);
+  return node;
+}
+
 function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
+  const visual = requireSnapshot().mode === "visual";
+
   const head = el("div", "insp-head");
   head.append(el("h2", undefined, block.name), el("div", "insp-id", block.path));
 
   const badges = el("div", "badges");
-  const kind = el("span", `badge${block.kind === "composite" ? " composite" : ""}`, block.kind);
-  const state = el("span", "badge state", block.implemented ? "implemented" : "specified");
-  const language = el("span", "badge", block.language);
-  badges.append(kind, state, language);
+  badges.append(el("span", `badge${block.kind === "composite" ? " composite" : ""}`, block.kind));
+  badges.append(
+    el(
+      "span",
+      "badge state",
+      visual ? (block.implemented ? "linked to code" : "not linked") : block.implemented ? "implemented" : "specified",
+    ),
+  );
+  if (block.language) badges.append(el("span", "badge", block.language));
   head.append(badges);
 
   if (block.kind === "composite" && block.path !== ui.view) {
@@ -216,6 +277,11 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   panel.append(portSection("Inputs", block.inputs));
   panel.append(portSection("Outputs", block.outputs));
   panel.append(portSection("Capabilities", block.capabilities, true));
+
+  if (visual) {
+    panel.append(linkedCodeSection(block));
+    return;
+  }
   panel.append(codeSection(block));
   for (const section of benchSections(block)) panel.append(section);
 }
@@ -223,6 +289,7 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
 function busPanel(panel: HTMLElement, graph: Graph, bus: Bus): void {
   const sourceLabel = graph.nodes.get(bus.source)?.label ?? bus.source;
   const targetLabel = graph.nodes.get(bus.target)?.label ?? bus.target;
+  const visual = requireSnapshot().mode === "visual";
 
   const head = el("div", "insp-head");
   head.append(
@@ -242,11 +309,14 @@ function busPanel(panel: HTMLElement, graph: Graph, bus: Bus): void {
   carries.append(list);
   panel.append(carries);
 
-  const code = section("In code");
-  const pre = el("pre", "code", connectionCode(graph, bus));
-  code.append(pre);
-  code.append(el("p", "bench-note", "The call and binding this connection stands for, derived from the diagram. Open the parent block to read the code that was actually written."));
-  panel.append(code);
+  // A visual diagram describes code written some other way, so there is no
+  // generated call to show for it.
+  if (!visual) {
+    const code = section("In code");
+    code.append(el("pre", "code", connectionCode(graph, bus)));
+    code.append(el("p", "bench-note", "The call and binding this connection becomes in the generated code of the block that holds it."));
+    panel.append(code);
+  }
 
   const colours = section("Colour");
   const swatches = el("div", "swatches");
@@ -306,7 +376,7 @@ export function renderInspector(): void {
   if (!panel) return;
   panel.replaceChildren();
 
-  if (!ui.snapshot) {
+  if (!ui.snapshot || ui.waiting) {
     const note = !ui.dir
       ? "Open a project to inspect its blocks."
       : ui.waiting
@@ -350,8 +420,12 @@ export function renderInspector(): void {
   // Nothing is selected and the canvas is showing the project itself.
   const head = el("div", "insp-head");
   head.append(el("h2", undefined, snapshot.name), el("div", "insp-id", snapshot.dir));
+  const badges = el("div", "badges");
+  badges.append(el("span", "badge", `${snapshot.mode} mode`), el("span", "badge", `granularity ${snapshot.granularity.level}`));
+  if (snapshot.language) badges.append(el("span", "badge", snapshot.language));
+  head.append(badges);
   panel.append(head);
-  panel.append(el("p", "responsibility", snapshot.goal));
+  if (snapshot.goal) panel.append(el("p", "responsibility", snapshot.goal));
 
   const problems = problemsSection(snapshot.diagnostics, true);
   if (problems) panel.append(problems);
@@ -370,6 +444,12 @@ export function renderInspector(): void {
   panel.append(systems);
 
   panel.append(
-    el("p", "bench-note", "Systems in a project are separate programs. They are shown together but never connected, which is why each can be written in its own language."),
+    el(
+      "p",
+      "bench-note",
+      snapshot.mode === "visual"
+        ? "Visual mode: the diagram describes this project's code, which Fragmentor never runs or changes."
+        : "Systems in a project are separate programs. They are shown together but never connected, which is why each can be written in its own language.",
+    ),
   );
 }

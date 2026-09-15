@@ -1,20 +1,9 @@
 {
-  "id": "clean-text",
-  "name": "Clean Text",
   "responsibility": "Flatten one posting into the plain text that should be embedded.",
-  "kind": "leaf",
   "inputs": {
-    "posting": {
-      "type": "{ title: string; description: string }"
-    }
+    "posting": "{ title: string; description: string }"
   },
   "outputs": {
-    "text": {
-      "type": "string"
-    }
-  },
-  "capabilities": {},
-  "children": [],
-  "wires": [],
-  "pinnedAsLeaf": false
+    "text": "string"
+  }
 }

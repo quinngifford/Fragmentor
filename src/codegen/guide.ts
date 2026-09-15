@@ -1,22 +1,24 @@
 import { readFileSync } from "node:fs";
-import { blockSchema } from "../model/block.js";
+import type { Mode } from "../model/block.js";
 import { CAPABILITIES } from "../model/capabilities.js";
-import { describeType } from "../model/types.js";
-import { getPack, knownLanguages } from "../lang/index.js";
+import { getPack, isKnownLanguage, knownLanguages } from "../lang/index.js";
+import type { LanguagePack } from "../lang/index.js";
+import type { Manifest } from "../project/project.js";
 
 /**
  * What a coding agent needs to know to work in a Fragmentor project.
  *
  * Fragmentor does not call a model. An agent such as Claude Code or Codex
- * works in the project folder, and this is how it learns the rules. The guide
- * is general — the same for every project — and kept apart from the
+ * works in the project folder, and this is how it learns the rules. It is
+ * written for the one project it sits in — its mode, its language and its
+ * granularity — so it says only what applies there. It is kept apart from the
  * project's own architecture, which stays machine-readable in fragmentor.json
  * and the block.json files.
  *
  * It is regenerated like a contract, so it describes the rules the checks
  * actually enforce. The parts that could drift are built from the same
- * catalogue and language packs the checks use, and the worked example is held
- * by test to validate, typecheck and pass its own tests.
+ * catalogue and language packs the checks use, and the worked examples are
+ * held by test to pass the checks exactly as the guide shows them.
  */
 
 export const GUIDE_FILE = "FRAGMENTOR.md";
@@ -25,98 +27,53 @@ export const CLAUDE_FILE = "CLAUDE.md";
 
 const ORDER = "{ id: string; lines: { quantity: number; unitPrice: number }[] }";
 
-/** A small system the guide uses to show every part of a project. */
+const PRICE_ORDERS_WIRES = [
+  "input.path -> load-orders.path",
+  "load-orders.orders -> price-order.order",
+  "price-order.total -> sum-totals.totals",
+  "price-order.total -> output.totals",
+  "sum-totals.sum -> output.grandTotal",
+];
+
+/** A small structured system, as the files an agent writes to build it. */
 export const workedExample = {
   manifest: {
     name: "Order Pricer",
     goal: "Read a file of orders and report what each order costs and what they cost altogether.",
-    systems: [{ rootBlock: "price-orders", language: "typescript" }],
+    mode: "structured",
+    language: "typescript",
     granularity: { level: 3, maxDepth: 4 },
+    systems: [{ rootBlock: "price-orders" }],
   },
   blocks: {
     "price-orders": {
-      id: "price-orders",
-      name: "Price Orders",
       responsibility: "Read orders from a file and return what each one costs and the grand total.",
-      kind: "composite",
       inputs: { path: { type: "string", description: "The JSON file holding the orders." } },
-      outputs: {
-        totals: { type: "number[]", description: "One total per order, in file order." },
-        grandTotal: { type: "number" },
-      },
-      capabilities: { files: { capability: "FileSystem", description: "Reads the orders file." } },
-      children: [
-        { block: "load-orders", mode: "once" },
-        { block: "price-order", mode: "each", eachOver: "order" },
-        { block: "sum-totals", mode: "once" },
-      ],
-      wires: [
-        "input.path -> load-orders.path",
-        "load-orders.orders -> price-order.order",
-        "price-order.total -> sum-totals.totals",
-        "price-order.total -> output.totals",
-        "sum-totals.sum -> output.grandTotal",
-      ],
-      pinnedAsLeaf: false,
+      outputs: { totals: "number[]", grandTotal: "number" },
+      capabilities: { files: "FileSystem" },
+      children: ["load-orders", { block: "price-order", each: "order" }, "sum-totals"],
+      wires: PRICE_ORDERS_WIRES,
     },
     "price-orders/load-orders": {
-      id: "load-orders",
-      name: "Load Orders",
       responsibility: "Read the orders file and parse it into orders.",
-      kind: "leaf",
-      inputs: { path: { type: "string" } },
-      outputs: { orders: { type: `${ORDER}[]` } },
-      capabilities: { files: { capability: "FileSystem" } },
-      children: [],
-      wires: [],
-      pinnedAsLeaf: false,
+      inputs: { path: "string" },
+      outputs: { orders: `${ORDER}[]` },
+      capabilities: { files: "FileSystem" },
     },
     "price-orders/price-order": {
-      id: "price-order",
-      name: "Price Order",
       responsibility: "Add up one order: each line's quantity times its unit price.",
-      kind: "leaf",
-      inputs: { order: { type: ORDER } },
-      outputs: { total: { type: "number" } },
-      capabilities: {},
-      children: [],
-      wires: [],
-      pinnedAsLeaf: false,
+      inputs: { order: ORDER },
+      outputs: { total: "number" },
     },
     "price-orders/sum-totals": {
-      id: "sum-totals",
-      name: "Sum Totals",
       responsibility: "Add the order totals together.",
-      kind: "leaf",
-      inputs: { totals: { type: "number[]" } },
-      outputs: { sum: { type: "number" } },
-      capabilities: {},
-      children: [],
-      wires: [],
-      pinnedAsLeaf: false,
+      inputs: { totals: "number[]" },
+      outputs: { sum: "number" },
     },
-  },
-  code: {
-    "price-orders": `import type { PriceOrdersInput, PriceOrdersOutput, PriceOrdersCaps } from "./contract.js";
-import { loadOrders } from "./load-orders/impl.js";
-import { priceOrder } from "./price-order/impl.js";
-import { sumTotals } from "./sum-totals/impl.js";
-
-/** Read orders from a file and return what each one costs and the grand total. */
-export async function priceOrders(input: PriceOrdersInput, caps: PriceOrdersCaps): Promise<PriceOrdersOutput> {
-  const { path } = input;
-
-  const { orders } = await loadOrders({ path }, caps);
-
-  const priceOrderResults = await Promise.all(orders.map((order) => priceOrder({ order }, caps)));
-  const total = priceOrderResults.map((result) => result.total);
-
-  const { sum } = await sumTotals({ totals: total }, caps);
-
-  return { totals: total, grandTotal: sum };
-}
-`,
-    "price-orders/price-order": `import type { PriceOrderInput, PriceOrderOutput, PriceOrderCaps } from "./contract.js";
+  } as Record<string, Record<string, unknown>>,
+  /** The one leaf the guide shows written, in each language. */
+  leafCode: {
+    typescript: `import type { PriceOrderInput, PriceOrderOutput, PriceOrderCaps } from "./contract.js";
 
 /** Add up one order: each line's quantity times its unit price. */
 export async function priceOrder(input: PriceOrderInput, caps: PriceOrderCaps): Promise<PriceOrderOutput> {
@@ -124,7 +81,15 @@ export async function priceOrder(input: PriceOrderInput, caps: PriceOrderCaps): 
   return { total };
 }
 `,
-  },
+    python: `from contract import PriceOrderInput, PriceOrderOutput, PriceOrderCaps
+
+
+async def price_order(value: PriceOrderInput, caps: PriceOrderCaps) -> PriceOrderOutput:
+    """Add up one order: each line's quantity times its unit price."""
+    total = sum(line.quantity * line.unit_price for line in value.order.lines)
+    return PriceOrderOutput(total=total)
+`,
+  } as Record<string, string>,
   cases: {
     "price-orders/price-order": [
       {
@@ -138,51 +103,130 @@ export async function priceOrder(input: PriceOrderInput, caps: PriceOrderCaps): 
         expected: { total: 0 },
       },
     ],
+  } as Record<string, unknown[]>,
+};
+
+/** The same program in a visual project, drawn over code that already exists in `src/pricing.ts`. */
+export const visualExample: Record<string, Record<string, unknown>> = {
+  "price-orders": {
+    responsibility: "Read orders from a file and report what each one costs and the grand total.",
+    code: "src/pricing.ts#priceOrders",
+    inputs: { path: "string" },
+    outputs: { totals: "number[]", grandTotal: "number" },
+    capabilities: { files: "FileSystem" },
+    children: ["load-orders", { block: "price-order", each: "order" }, "sum-totals"],
+    wires: PRICE_ORDERS_WIRES,
+  },
+  "price-orders/price-order": {
+    responsibility: "Add up one order: each line's quantity times its unit price.",
+    code: "src/pricing.ts#priceOrder",
+    inputs: { order: "Order" },
+    outputs: { total: "number" },
   },
 };
 
-const GRANULARITY: Record<number, string> = {
-  1: "Split only where the block plainly contains separate responsibilities. Prefer 2 or 3 substantial children. Leave real work inside each child.",
-  2: "Prefer 2 to 4 children, each a substantial piece of work.",
-  3: "Prefer 3 to 5 children, each with one clear responsibility, each roughly 30 to 80 lines of code.",
-  4: "Prefer 4 to 6 fairly small children, each roughly 20 to 50 lines of code.",
-  5: "Break the work down aggressively into small single-purpose children, each roughly 10 to 30 lines of code. Still do not create a child that is a single expression.",
+const GRANULARITY: Record<Mode, Record<number, string>> = {
+  structured: {
+    1: "Split a block only where it plainly holds separate responsibilities, into 2 or 3 substantial children, and leave real work inside each.",
+    2: "Split a block into 2 to 4 children, each a substantial piece of work.",
+    3: "Split a block into 3 to 5 children, each with one clear responsibility and roughly 30 to 80 lines of code.",
+    4: "Split a block into 4 to 6 fairly small children, each roughly 20 to 50 lines of code.",
+    5: "Break the work down into small single-purpose children, each roughly 10 to 30 lines of code, but never one that is a single expression.",
+  },
+  visual: {
+    1: "Show only the program's major parts: 2 or 3 children per block.",
+    2: "Show 2 to 4 children per block, each a substantial part of the program.",
+    3: "Show 3 to 5 children per block, each with one clear job, down to functions of roughly 30 to 80 lines.",
+    4: "Show 4 to 6 children per block, down to functions of roughly 20 to 50 lines.",
+    5: "Show the code in fine detail, down to small single-purpose functions.",
+  },
 };
 
-const json = (value: unknown) => JSON.stringify(value, null, 2);
+/** What a block may import, which differs by language. */
+const IMPORT_RULES: Record<string, string> = {
+  typescript:
+    "A block may import types with `import type`, and packages installed in the project folder. It may not import another block's code, a shared helper file, or one of Node's built-in modules such as `fs`: use a capability, or add a block. `fragmentor check` reports any such import.",
+  python: "A block may import its contract and packages installed for the project. It reaches files and the network only through its capabilities.",
+};
 
-function capabilitiesSection(): string {
+const WIDTH = 100;
+
+function oneLine(value: unknown): string {
+  if (Array.isArray(value)) return value.length === 0 ? "[]" : `[${value.map(oneLine).join(", ")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value);
+    if (entries.length === 0) return "{}";
+    return `{ ${entries.map(([key, item]) => `${JSON.stringify(key)}: ${oneLine(item)}`).join(", ")} }`;
+  }
+  return JSON.stringify(value);
+}
+
+function layout(value: unknown, indent: string, used: number): string {
+  const flat = oneLine(value);
+  if (used + flat.length < WIDTH || value === null || typeof value !== "object") return flat;
+
+  const inner = `${indent}  `;
+  if (Array.isArray(value)) {
+    return `[\n${value.map((item) => inner + layout(item, inner, inner.length)).join(",\n")}\n${indent}]`;
+  }
+  const lines = Object.entries(value).map(([key, item]) => {
+    const head = `${inner}${JSON.stringify(key)}: `;
+    return head + layout(item, inner, head.length);
+  });
+  return `{\n${lines.join(",\n")}\n${indent}}`;
+}
+
+/**
+ * JSON laid out the way a person would write it: anything short enough stays
+ * on one line, so an example reads as its shape rather than a column of
+ * brackets. It is still exactly valid JSON.
+ */
+export function compactJson(value: unknown): string {
+  return layout(value, "", 0);
+}
+
+function capabilitiesSection(pack: LanguagePack): string {
   return Object.values(CAPABILITIES)
     .map((capability) => {
       const operations = capability.operations.map((operation) => {
-        const parameters = operation.parameters.map((p) => `${p.name}: ${describeType(p.type)}`).join(", ");
-        const returns = operation.returns ? `\`${describeType(operation.returns)}\`` : "nothing";
-        return `  - \`${operation.name}(${parameters})\` returns ${returns}${operation.async ? ", asynchronously" : ""}. ${operation.description}`;
+        const parameters = operation.parameters
+          .map((parameter) => `${pack.functionName(parameter.name)}: ${pack.typeExpression(parameter.type)}`)
+          .join(", ");
+        const returns = operation.returns ? ` → ${pack.typeExpression(operation.returns)}` : "";
+        return `\`${pack.functionName(operation.name)}(${parameters})${returns}\`${operation.async ? " (async)" : ""}`;
       });
-      return [`- **${capability.name}**: ${capability.description}`, ...operations].join("\n");
+      return `- **${capability.name}**: ${capability.description} ${operations.join(", ")}`;
     })
     .join("\n");
 }
 
-function languagesSection(): string {
-  const leaf = blockSchema.parse(workedExample.blocks["price-orders/price-order"]);
+/** The example project file, set up the way this project is. */
+function exampleManifest(manifest: Manifest): unknown {
+  const suggestLanguage = manifest.language === undefined && manifest.mode === "structured";
+  return {
+    name: workedExample.manifest.name,
+    goal: workedExample.manifest.goal,
+    mode: manifest.mode,
+    ...(manifest.language === undefined ? {} : { language: manifest.language }),
+    granularity: manifest.granularity,
+    systems: [{ rootBlock: "price-orders", ...(suggestLanguage ? { language: "typescript" } : {}) }],
+  };
+}
 
-  return knownLanguages()
-    .map(({ id }) => {
-      const pack = getPack(id);
-      const abilities = pack.canRun && pack.canCheck
-        ? `\`fragmentor check\` checks ${pack.displayName} code and \`fragmentor test\` runs it.`
-        : `Fragmentor generates ${pack.displayName} contracts but cannot check or run ${pack.displayName} code yet, so \`fragmentor test\` skips these blocks.`;
-
-      return [
-        `**${pack.displayName}** (\`"language": "${id}"\`). Write the code in \`${pack.implFile}\`; \`${pack.contractFile}\` is generated. A block's function is named after its id, so \`price-order\` becomes \`${pack.functionName("price-order")}\`. ${abilities} A new block's \`${pack.implFile}\` starts as:`,
-        "",
-        "```" + id,
-        pack.implScaffold(leaf).trimEnd(),
-        "```",
-      ].join("\n");
-    })
-    .join("\n\n");
+function structuredLanguageRule(manifest: Manifest, pack: LanguagePack): string {
+  if (manifest.language === undefined) {
+    const choices = knownLanguages()
+      .map(({ id, displayName }) => {
+        const each = getPack(id);
+        return `\`"${id}"\` (${each.canRun ? "Fragmentor checks and runs it" : `Fragmentor generates its types but cannot run ${displayName} yet`})`;
+      })
+      .join(" or ");
+    return `The person left the language to you: give each system a \`"language"\`, ${choices}. The examples below are ${pack.displayName}; in another language the file names and naming conventions follow that language.`;
+  }
+  if (!isKnownLanguage(manifest.language)) {
+    return `The project is set to \`${manifest.language}\`, which Fragmentor cannot generate code for. Ask the person to choose one of ${knownLanguages().map(({ id }) => `\`${id}\``).join(" or ")}.`;
+  }
+  return `The person chose ${pack.displayName}, so every system is written in it.`;
 }
 
 function fill(template: string, values: Record<string, string>): string {
@@ -193,31 +237,53 @@ function fill(template: string, values: Record<string, string>): string {
   });
 }
 
-export function agentGuide(): string {
+function template(mode: Mode): string {
   // Read on each call, from beside this module, so the compiled application
   // finds its copy the same way the kernel finds the original.
-  const template = readFileSync(new URL("./guide.md", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  return readFileSync(new URL(`./guide-${mode}.md`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+}
 
-  return fill(template, {
-    manifest: json(workedExample.manifest),
-    languageIds: knownLanguages().map(({ id }) => `\`"${id}"\``).join(" or "),
-    leafBlock: json(workedExample.blocks["price-orders/price-order"]),
-    compositeBlock: json(workedExample.blocks["price-orders"]),
-    capabilities: capabilitiesSection(),
-    languages: languagesSection(),
-    leafCode: workedExample.code["price-orders/price-order"].trimEnd(),
-    compositeCode: workedExample.code["price-orders"].trimEnd(),
-    cases: json(workedExample.cases["price-orders/price-order"]),
-    granularity: Object.entries(GRANULARITY).map(([level, text]) => `- **${level}**: ${text}`).join("\n"),
+export function agentGuide(manifest: Manifest): string {
+  const common = {
+    manifest: compactJson(exampleManifest(manifest)),
+    level: String(manifest.granularity.level),
+    granularity: GRANULARITY[manifest.mode][manifest.granularity.level]!,
+    maxDepth: String(manifest.granularity.maxDepth),
+  };
+
+  if (manifest.mode === "visual") {
+    return fill(template("visual"), {
+      ...common,
+      languageRule: manifest.language === undefined
+        ? " A system may say what its code is written in with `\"language\"`."
+        : ` The code is written in ${manifest.language}.`,
+      compositeBlock: compactJson(visualExample["price-orders"]),
+      leafBlock: compactJson(visualExample["price-orders/price-order"]),
+    });
+  }
+
+  const pack = getPack(manifest.language !== undefined && isKnownLanguage(manifest.language) ? manifest.language : "typescript");
+  return fill(template("structured"), {
+    ...common,
+    languageRule: structuredLanguageRule(manifest, pack),
+    implFile: pack.implFile,
+    contractFile: pack.contractFile,
+    capabilitiesFile: pack.capabilitiesFile,
+    compositeBlock: compactJson(workedExample.blocks["price-orders"]),
+    leafBlock: compactJson(workedExample.blocks["price-orders/price-order"]),
+    capabilities: capabilitiesSection(pack),
+    codeLanguage: pack.id,
+    leafCode: (workedExample.leafCode[pack.id] ?? "").trimEnd(),
+    importRule: IMPORT_RULES[pack.id] ?? "",
+    cases: compactJson(workedExample.cases["price-orders/price-order"]),
+    testNote: pack.canRun ? "" : ` Fragmentor cannot run ${pack.displayName} yet, so \`fragmentor test\` skips these blocks.`,
   });
 }
 
 /** AGENTS.md as first created. Codex reads this file. */
 export const AGENTS_SCAFFOLD = `# Agent instructions
 
-This folder is a Fragmentor project. Before changing anything, read \`FRAGMENTOR.md\`. It explains how the project is laid out, the rules blocks and wires follow, and how to check your work with \`fragmentor check\` and \`fragmentor test\`.
-
-The system's architecture is in \`fragmentor.json\` and the \`block.json\` files under \`blocks/\`.
+This folder is a Fragmentor project. Before changing anything, read \`FRAGMENTOR.md\`: it explains how the project is laid out, the rules it follows, and how to check your work with \`fragmentor check\`.
 
 <!-- Add instructions specific to this project below. Fragmentor never changes this file once it exists. -->
 `;

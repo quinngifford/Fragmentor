@@ -17,6 +17,7 @@ import {
 import { onInspectorChange, renderInspector } from "./inspector.js";
 import { onBenchChange } from "./bench.js";
 import { PROJECT_VIEW } from "./graph.js";
+import { askForProjectSettings } from "./newproject.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
 
@@ -60,7 +61,6 @@ function show(load: ProjectLoad, opening: boolean): void {
   if (unchanged) return;
 
   ui.dir = load.dir;
-  ui.waiting = !load.hasManifest;
   ui.loadError = load.error;
   document.body.dataset.project = "open";
 
@@ -76,12 +76,18 @@ function show(load: ProjectLoad, opening: boolean): void {
     // A project that stops reading halfway through a change keeps its last
     // good diagram on screen, with the reason shown over it, until the next
     // change puts it right.
-    if (fresh || !load.hasManifest) ui.snapshot = null;
+    if (fresh) {
+      ui.snapshot = null;
+      ui.waiting = false;
+    }
     render();
     return;
   }
 
-  const firstSight = fresh || ui.snapshot === null;
+  // The person has set the project up, and the agent has not defined a system yet.
+  ui.waiting = load.snapshot.systems.length === 0;
+
+  const firstSight = fresh || ui.snapshot === null || ui.snapshot.systems.length === 0;
   ui.snapshot = load.snapshot;
 
   if (firstSight) {
@@ -112,7 +118,10 @@ async function chooseProject(): Promise<void> {
 }
 
 async function newProject(): Promise<void> {
-  const result = await window.fragmentor.newProject();
+  const settings = await askForProjectSettings();
+  if (!settings) return;
+
+  const result = await window.fragmentor.newProject(settings);
   if (!result.ok) {
     ui.status = { text: `Could not start a project there: ${result.error}`, tone: "bad" };
     render();
@@ -183,7 +192,7 @@ async function renderWelcome(): Promise<void> {
 
   const actions = el("div", "welcome-actions");
   const start = el("button", "btn", "New project…");
-  start.title = "Choose an empty folder, then open your coding agent in it";
+  start.title = "Start a project in a folder, empty or holding code, then open your coding agent in it";
   start.addEventListener("click", () => void newProject());
   const open = el("button", "btn quiet", "Open a project folder…");
   open.addEventListener("click", () => void chooseProject());
@@ -231,12 +240,15 @@ function renderPanes(): void {
   element("inspector-pane").hidden = !ui.showInspector;
   element("toggle-rail").setAttribute("aria-pressed", String(ui.showRail));
   element("toggle-inspector").setAttribute("aria-pressed", String(ui.showInspector));
+
+  // A visual project's code is the person's own, so there is nothing to generate.
+  element("generate-code").hidden = ui.snapshot?.mode !== "structured";
 }
 
 function renderCrumbs(): void {
   const nav = element("crumbs");
   nav.replaceChildren();
-  if (!ui.snapshot) return;
+  if (!ui.snapshot || ui.waiting) return;
 
   const snapshot = requireSnapshot();
   const projectCrumb = el("button", "crumb", snapshot.name);
@@ -271,13 +283,14 @@ function renderTree(): void {
     const button = el("button", "node");
     button.setAttribute("role", "treeitem");
     button.setAttribute("aria-selected", String(path === ui.view));
+    button.dataset.path = path;
     button.style.paddingLeft = `${8 + depth * 14}px`;
     button.append(el("span", "glyph", block.kind === "composite" ? "▣" : "▫"), el("span", "label", block.id));
 
     // A system root says what language it is, since that is what differs.
     if (depth === 0) {
       const system = snapshot.systems.find((entry) => entry.rootBlock === block.id);
-      if (system) button.append(el("span", "lang", system.displayName));
+      if (system?.displayName) button.append(el("span", "lang", system.displayName));
     }
 
     button.addEventListener("click", () => showBlock(path));
@@ -299,7 +312,7 @@ function renderStatus(): void {
     return span;
   };
 
-  if (!ui.snapshot) {
+  if (!ui.snapshot || ui.waiting) {
     if (!ui.dir) {
       bar.append(el("span", undefined, "No project open"));
     } else {
@@ -316,10 +329,11 @@ function renderStatus(): void {
     const warnings = snapshot.diagnostics.length - errors;
 
     bar.append(el("span", "project-name", snapshot.name));
-    bar.append(el("span", undefined, snapshot.systems.map((system) => `${system.rootBlock} (${system.displayName})`).join("  ")));
+    bar.append(el("span", `mode-tag ${snapshot.mode}`, snapshot.mode));
+    bar.append(el("span", undefined, snapshot.systems.map((system) => `${system.rootBlock}${system.displayName ? ` (${system.displayName})` : ""}`).join("  ")));
     bar.append(stat("blocks", all.length));
     bar.append(stat("composite", composites));
-    bar.append(stat("implemented", implemented, implemented === all.length ? "good" : "warn"));
+    bar.append(stat(snapshot.mode === "visual" ? "linked to code" : "implemented", implemented, implemented === all.length ? "good" : "warn"));
     if (graph) bar.append(stat("buses in view", graph.buses.size));
     bar.append(stat("errors", errors, errors > 0 ? "bad" : undefined));
     bar.append(stat("warnings", warnings, warnings > 0 ? "warn" : undefined));
@@ -334,15 +348,26 @@ function renderStatus(): void {
 
 /** What the canvas says when a folder is open but there is no diagram to draw. */
 function noDiagramText(): string {
+  if (ui.waiting && ui.snapshot?.mode === "visual") {
+    return [
+      "Nothing has been drawn yet.",
+      "",
+      "Open your coding agent (Claude Code or Codex) in this folder and ask it to map the code into a Fragmentor diagram:",
+      "",
+      `  ${ui.dir ?? ""}`,
+      "",
+      "It learns how from FRAGMENTOR.md, and it never changes the code. The diagram appears here as soon as it defines the first system.",
+    ].join("\n");
+  }
   if (ui.waiting) {
     return [
       "No system has been defined here yet.",
       "",
-      "Open your coding agent (Claude Code or Codex) in this folder and describe what you want to build:",
+      "Open your coding agent (Claude Code or Codex) in this folder and describe what you want to build. If the folder already holds code, ask it to rebuild that code as blocks:",
       "",
       `  ${ui.dir ?? ""}`,
       "",
-      "The agent learns how Fragmentor projects work from FRAGMENTOR.md. The diagram appears here as soon as it writes fragmentor.json.",
+      "It learns how this project works from FRAGMENTOR.md. The diagram appears here as soon as it defines the first system.",
     ].join("\n");
   }
   return [
@@ -374,7 +399,7 @@ function renderPanels(): void {
 
 export function render(): void {
   renderPanels();
-  if (ui.snapshot) renderCanvas();
+  if (ui.snapshot && !ui.waiting) renderCanvas();
   else if (ui.dir) showCanvasMessage(noDiagramText());
   renderLoadError();
   renderInspector();

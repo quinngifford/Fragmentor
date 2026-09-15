@@ -2,10 +2,11 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import { checkProject } from "./check/check.js";
 import type { CheckReport } from "./check/check.js";
-import { writeAgentFiles } from "./codegen/emit.js";
+import { startProject, writeAgentFiles } from "./codegen/emit.js";
+import type { NewProjectSettings } from "./codegen/emit.js";
 import { CLAUDE_FILE, GUIDE_FILE } from "./codegen/guide.js";
 import { getPack, isKnownLanguage } from "./lang/index.js";
-import { loadProject, manifestPath, systemOf } from "./project/project.js";
+import { loadProject, manifestPath, readManifest, systemOf } from "./project/project.js";
 import type { Project, ProjectDiagnostic } from "./project/project.js";
 import { readCases } from "./run/cases.js";
 import { runCases } from "./run/run.js";
@@ -22,8 +23,10 @@ import type { CaseResult } from "./run/run.js";
 const USAGE = `Usage: fragmentor <command> [--project <folder>]
 
 Commands:
-  init                   Prepare a folder for a coding agent: writes FRAGMENTOR.md, AGENTS.md and CLAUDE.md.
-  check                  Check the diagram, regenerate contracts, check the code, and list unfinished work.
+  init --mode <structured|visual> --granularity <1-5> [--language <language>]
+                         Start a project in a folder: writes fragmentor.json, FRAGMENTOR.md, AGENTS.md and CLAUDE.md.
+                         In a folder that is already a project, brings FRAGMENTOR.md up to date.
+  check                  Check the diagram, regenerate generated code, check the code, and list unfinished work.
   test [block-path ...]  Run the saved tests of every block, or of the named blocks only.
 
 check and test use the nearest folder, from here upwards, that holds fragmentor.json.
@@ -59,26 +62,50 @@ async function findProject(start: string): Promise<string | null> {
 /* init                                                                        */
 /* -------------------------------------------------------------------------- */
 
-async function init(dir: string): Promise<number> {
-  const { written, kept, withoutGuide } = await writeAgentFiles(dir);
+function settingsFrom(options: Map<string, string>): NewProjectSettings | string {
+  const mode = options.get("mode");
+  const granularity = Number(options.get("granularity"));
+  if (mode !== "structured" && mode !== "visual") {
+    return "fragmentor init needs --mode structured (Fragmentor generates, checks and runs the code) or --mode visual (Fragmentor only draws it).";
+  }
+  if (![1, 2, 3, 4, 5].includes(granularity)) {
+    return "fragmentor init needs --granularity, from 1 (a few large blocks) to 5 (many small ones).";
+  }
+  return { mode, granularity: granularity as NewProjectSettings["granularity"], language: options.get("language") ?? null };
+}
 
-  console.log(`Prepared ${dir} for a coding agent.`);
-  for (const file of written) console.log(`  wrote  ${file}`);
-  for (const file of kept) console.log(`  kept   ${file}, which already existed`);
+async function init(dir: string, options: Map<string, string>): Promise<number> {
+  let files: { written: string[]; kept: string[]; withoutGuide: string[] };
+
+  if (await exists(manifestPath(dir))) {
+    try {
+      files = await writeAgentFiles(dir, await readManifest(dir));
+    } catch (error) {
+      console.log(messageOf(error));
+      return 1;
+    }
+    console.log(`${dir} is already a Fragmentor project; its agent files are up to date.`);
+  } else {
+    const settings = settingsFrom(options);
+    if (typeof settings === "string") {
+      console.log(`${settings}\n\n${USAGE}`);
+      return 1;
+    }
+    files = await startProject(dir, settings);
+    console.log(`Started a ${settings.mode} Fragmentor project in ${dir}.`);
+  }
+
+  for (const file of files.written) console.log(`  wrote  ${file}`);
+  for (const file of files.kept) console.log(`  kept   ${file}, which already existed`);
 
   // Those files are the person's and are never changed, but an agent reading
   // one that never mentions the guide would not know the guide is there.
-  for (const file of withoutGuide) {
+  for (const file of files.withoutGuide) {
     const line = file === CLAUDE_FILE ? `@${GUIDE_FILE}` : `Read ${GUIDE_FILE} before changing anything.`;
     console.log(`\n${file} does not mention ${GUIDE_FILE}. Add this line to it, so an agent reads the guide:\n  ${line}`);
   }
 
-  console.log("");
-  console.log(
-    (await exists(manifestPath(dir)))
-      ? "Next: run `fragmentor check`."
-      : `Next: read ${GUIDE_FILE}, then write fragmentor.json and the blocks.`,
-  );
+  console.log(`\nNext: read ${GUIDE_FILE}, then fill in fragmentor.json and write the blocks.`);
   return 0;
 }
 
@@ -92,10 +119,15 @@ function problemLine(diagnostic: ProjectDiagnostic): string {
 }
 
 function formatReport(report: CheckReport): string {
+  const visual = report.mode === "visual";
   const lines: string[] = [];
   const systems = report.systems.map((system) => `${system.rootBlock} (${system.displayName})`).join(", ");
-  lines.push(`${report.name}  ${report.dir}`);
-  lines.push(`${plural(report.blockCount, "block")} in ${plural(report.systems.length, "system")}: ${systems}`);
+  lines.push(`${report.name}  ${report.dir}  (${report.mode} mode)`);
+  lines.push(
+    report.systems.length === 0
+      ? "No systems yet. Add them to fragmentor.json, as FRAGMENTOR.md describes."
+      : `${plural(report.blockCount, "block")} in ${plural(report.systems.length, "system")}: ${systems}`,
+  );
 
   lines.push("", "Blocks");
   const problems = [...report.problems].sort((a, b) =>
@@ -105,7 +137,7 @@ function formatReport(report: CheckReport): string {
   lines.push(...problems.map(problemLine));
 
   // Only files whose contents changed are written, so each one listed here is
-  // news: a new block's implementation to fill in, or a contract that moved.
+  // news: a new block's implementation to fill in, or code that moved.
   lines.push("", "Generated files");
   for (const problem of report.generated.problems) lines.push(`  ERROR  ${problem}`);
   if (report.generated.problems.length === 0 && report.generated.written.length === 0) {
@@ -114,7 +146,8 @@ function formatReport(report: CheckReport): string {
   for (const file of report.generated.written) lines.push(`  wrote  ${file}`);
 
   lines.push("", "Code");
-  for (const system of report.systems) {
+  if (visual) lines.push("  visual mode: Fragmentor draws the code but never checks, runs or changes it");
+  for (const system of visual ? [] : report.systems) {
     if (!system.codeChecked) {
       lines.push(`  ${system.rootBlock}: ${system.displayName} code is not checked yet`);
     } else if (system.codeProblems.length === 0) {
@@ -128,10 +161,10 @@ function formatReport(report: CheckReport): string {
 
   lines.push("", "Unfinished");
   if (report.unimplemented.length === 0 && report.untested.length === 0) {
-    lines.push("  every block is implemented and has tests");
+    lines.push(visual ? "  every block points at its code" : "  every block is implemented and has tests");
   }
   if (report.unimplemented.length > 0) {
-    lines.push(`  no implementation yet (${report.unimplemented.length} of ${report.blockCount}):`);
+    lines.push(`  ${visual ? "not linked to code yet" : "no implementation yet"} (${report.unimplemented.length} of ${report.blockCount}):`);
     lines.push(...report.unimplemented.map((blockPath) => `    ${blockPath}`));
   }
   if (report.untested.length > 0) {
@@ -140,11 +173,12 @@ function formatReport(report: CheckReport): string {
   }
 
   const warnings = report.problems.filter((d) => d.severity === "warning").length;
+  const next = visual ? "" : " Run `fragmentor test` to run the tests.";
   lines.push("");
   lines.push(
     report.errorCount > 0
       ? `Result: ${plural(report.errorCount, "error")}. Fix them and run \`fragmentor check\` again.`
-      : `Result: no errors${warnings > 0 ? `, ${plural(warnings, "warning")}` : ""}. Run \`fragmentor test\` to run the tests.`,
+      : `Result: no errors${warnings > 0 ? `, ${plural(warnings, "warning")}` : ""}.${next}`,
   );
 
   return lines.join("\n");
@@ -199,6 +233,11 @@ async function test(dir: string, requested: string[]): Promise<number> {
   } catch (error) {
     console.log(`The project in ${dir} could not be read.\n\n${messageOf(error)}\n\nRun \`fragmentor check\` for details.`);
     return 1;
+  }
+
+  if (project.manifest.mode === "visual") {
+    console.log("This is a visual project: Fragmentor draws its code but never runs it, so there are no tests to run.");
+    return 0;
   }
 
   const unknown = requested.filter((blockPath) => !project.byPath.has(blockPath));
@@ -260,36 +299,40 @@ async function test(dir: string, requested: string[]): Promise<number> {
 /* Entry                                                                       */
 /* -------------------------------------------------------------------------- */
 
+const OPTIONS = new Set(["project", "mode", "granularity", "language"]);
+
 async function main(argv: string[]): Promise<number> {
   const args: string[] = [];
-  let project: string | undefined;
+  const options = new Map<string, string>();
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
-    if (arg === "--project") {
-      project = argv[i + 1];
-      i += 1;
-      if (!project) {
-        console.log(`--project needs a folder.\n\n${USAGE}`);
-        return 1;
-      }
-    } else if (arg.startsWith("--project=")) {
-      project = arg.slice("--project=".length);
-    } else {
+    const option = /^--([a-z]+)(?:=(.*))?$/.exec(arg);
+    if (!option || !OPTIONS.has(option[1]!)) {
       args.push(arg);
+      continue;
     }
+
+    const value = option[2] ?? argv[i + 1];
+    if (option[2] === undefined) i += 1;
+    if (!value) {
+      console.log(`--${option[1]} needs a value.\n\n${USAGE}`);
+      return 1;
+    }
+    options.set(option[1]!, value);
   }
 
   const [command, ...rest] = args;
+  const project = options.get("project");
 
-  if (command === "init") return init(path.resolve(project ?? process.cwd()));
+  if (command === "init") return init(path.resolve(project ?? process.cwd()), options);
 
   if (command === "check" || command === "test") {
     const dir = project ? path.resolve(project) : await findProject(process.cwd());
     if (!dir || !(await exists(manifestPath(dir)))) {
       console.log(
         `${dir ? `There is no fragmentor.json in ${dir}.` : `No fragmentor.json was found in ${process.cwd()} or any folder above it.`}\n` +
-          `To start a Fragmentor project in a folder, run \`fragmentor init\` there and read ${GUIDE_FILE}.`,
+          `A project is started from the Fragmentor application with New project…, or with \`fragmentor init\`.`,
       );
       return 1;
     }

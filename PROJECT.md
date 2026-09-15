@@ -2,7 +2,7 @@
 
 Fragmentor is a modular, block-based environment for AI-assisted software development.
 
-Software is designed as a hierarchy of blocks — systems and subsystems — with precisely defined contracts and connections between them. An AI coding agent decomposes a design into blocks, writes the code for each block, writes verification tests for every block, and wires the blocks together. Fragmentor gives that work its structure, makes it visible, and verifies it. The user inspects, tests, and steers the structure through a visual canvas.
+Software is shown as a hierarchy of blocks — systems and subsystems — with precisely defined contracts and connections between them. An AI coding agent does the work in the project folder; Fragmentor gives that work its structure, makes it visible, and verifies it. The user inspects, tests, and steers the structure through a visual canvas.
 
 The reference point is MATLAB Simulink, applied to general software development rather than signal processing.
 
@@ -11,6 +11,15 @@ The reference point is MATLAB Simulink, applied to general software development 
 Large AI-generated codebases become opaque. Neither the human nor the AI can hold them in mind, and every change begins with rediscovering how the system fits together.
 
 Fragmentor makes the structure the primary artifact. A user should be able to look at a system, see its parts, see exactly what flows between them, open any part, and test it in isolation without understanding the rest.
+
+## Two modes
+
+The person chooses a mode when a project is created, together with the granularity and optionally the language. These are the person's decisions, not the agent's, so Fragmentor asks for them and writes them into `fragmentor.json` before any agent starts. A project can be started in an empty folder or in one that already holds code.
+
+- **Structured.** The diagram is the specification. The agent builds the program as blocks, or rebuilds existing code that way; Fragmentor generates the code between blocks, checks the rest against the diagram, and runs the tests. Everything below about contracts, generated code and verification is structured mode.
+- **Visual.** The diagram is a picture of code that exists anyway. The agent maps the codebase into blocks, each pointing at the file or function it stands for, and keeps the diagram current as the code changes. Fragmentor never generates, runs or changes the code. Types are free text as the code writes them, and testing is unavailable. What is checked is that the diagram holds together and that every block points at code that exists.
+
+Rebuilding an existing codebase in structured mode is destructive by design, so the application asks for confirmation and the agent is told to make sure the code is committed first.
 
 ## What a block is
 
@@ -30,7 +39,7 @@ Capabilities are described in the same port type language as everything else, so
 
 ### Every block is a function
 
-Every block corresponds to a real, callable function in the generated code.
+In structured mode every block corresponds to a real, callable function in the code.
 
 The user must be able to open any block, enter input values, run it, and see the outputs. That requirement forces callability, so there is no separate, cheaper representation for small blocks.
 
@@ -38,43 +47,41 @@ A conceptual step too small to justify its own function is not a block; it is a 
 
 ## Relationship between the diagram and the code
 
-The diagram is the specification. The AI writes all of the code, including the glue inside composite blocks.
+The diagram is the specification. The agent writes the leaves; Fragmentor writes the composites.
 
-Inside a composite block, connections appear in the code as ordinary named variables passed between child function calls. A wire from block A's output to block B's input is a variable assigned from a call to A and passed into a call to B. Reading the diagram and reading the code should feel like reading the same thing twice.
+A composite does nothing but call its children, so its code is generated from its wires rather than written by anyone. Connections appear as ordinary named variables passed between child function calls: a wire from block A's output to block B's input is a variable assigned from a call to A and passed into a call to B. Reading the diagram and reading the code should feel like reading the same thing twice, and because the code is generated, it cannot drift from the diagram. Code someone wrote inside a composite is reported rather than overwritten.
 
-Generated code can drift from the diagram it claims to implement, so conformance is checked rather than assumed:
+Leaves can still disagree with the diagram, so conformance is checked rather than assumed:
 
 - each block is one exported function at a path determined by its position in the hierarchy, so block identity is structural rather than annotated
 - a block's contract is expressed as runtime schemas for its inputs and outputs, which also drive the test bench forms
-- composite glue is written in a deliberately restricted style — straight-line bindings and calls — so a static check can confirm the code calls exactly the declared children with arguments from the declared sources
+- leaf code is typechecked against its contract, and its imports are checked so that it can run on its own
 
-Drift is therefore a visible, reported state on a block rather than silent rot.
-
-An alternative design in which the diagram compiles directly into composite code is recorded in `ALTERNATIVE-COMPILED-GRAPH.md`. It is not the current direction.
+There is no branching on the diagram. Conditions, loops and error handling live inside leaves until an example proves that insufficient.
 
 ## Where the AI fits
 
-Fragmentor does not contain an AI and never calls a model. The AI is an external coding agent — Claude Code, Codex, or anything like them — working in the same project folder. The agent builds the system; Fragmentor supplies the structure, the visibility, and the verification.
+Fragmentor does not contain an AI and never calls a model. The AI is an external coding agent — Claude Code, Codex, or anything like them — working in the same project folder. The agent does the work; Fragmentor supplies the structure, the visibility, and the verification.
 
-The workflow is:
+The workflow in structured mode is:
 
-1. The user gives the agent a goal.
+1. The user starts a project and gives the agent a goal.
 2. The agent defines the architecture as blocks, following Fragmentor's rules.
 3. Fragmentor reads that structure from disk and draws it, redrawing whenever the agent changes a file.
-4. The agent writes the implementation and the tests.
+4. The agent writes the leaves and the tests; Fragmentor generates the rest.
 5. Fragmentor validates the diagram, checks the code against it, and runs the tests.
 6. The agent fixes whatever is reported, and the loop repeats.
 
 A project keeps two things apart:
 
 - **The architecture**, which is specific to the project and machine-readable: `fragmentor.json` and a `block.json` for each block. It is the single source of truth for the diagram.
-- **The rules for working on it**, which are general and the same in every project: `FRAGMENTOR.md`, which Fragmentor writes into the project and keeps current. `AGENTS.md` and `CLAUDE.md` point agents at it, and are otherwise the user's, for instructions specific to the project.
+- **The rules for working on it**: `FRAGMENTOR.md`, which Fragmentor writes into the project and keeps current. It is written for that one project — its mode, its language and its granularity — so it says only what applies there, and it is kept short, because an agent follows a short guide better than a complete one. `AGENTS.md` and `CLAUDE.md` point agents at it, and are otherwise the user's, for instructions specific to the project.
 
 The agent checks its work with the `fragmentor` command, which runs the same checks the application relies on and reports them as text and an exit status.
 
 Decomposition is still a review loop rather than a single shot. The user defines as much of the block hierarchy as they want, at any level, and the agent fills in the rest. The agent settles the structure first and lets the user review it on the canvas; code is written only after the structure is agreed, working bottom-up.
 
-Decomposition depth is user-controlled. A default granularity applies to the whole project, individual blocks may override it, and any block may be pinned as a leaf. Granularity is expressed as a stop condition the agent evaluates — a block is a leaf when it has one clear responsibility with no further useful internal structure — with a hard depth limit as a safety net.
+Decomposition depth is user-controlled. The granularity chosen when the project is created applies to the whole project, and any block may be pinned as a leaf. Granularity is expressed as a stop condition the agent evaluates — a block is a leaf when it has one clear responsibility with no further useful internal structure — with a hard depth limit as a safety net.
 
 ## Verification
 
@@ -82,13 +89,13 @@ Every block has tests, written by the agent alongside its code. This is not opti
 
 Beyond automated tests, each block has an interactive test bench. The block's input schema generates an input form, capability ports are filled with substitutes, and the user runs the block and compares actual outputs against expected ones, with data visualization where the output shape supports it.
 
-Running a composite block records the value carried on every internal wire. Selecting a wire shows what actually flowed through it. This is the equivalent of a Simulink scope, and it is the main reason the diagram is worth looking at while debugging.
+Running a composite block records the value carried on every internal wire. The user can watch the values move through the diagram while a block runs, stop the run at a breakpoint before any block, and select a wire afterwards to see what flowed through it. This is the equivalent of a Simulink scope, and it is the main reason the diagram is worth looking at while debugging.
 
 Each block carries a state: specified, implemented, tests passing, or stale. A block becomes stale when a contract it depends on changes. Stale propagation is what keeps a large hierarchy honest as it evolves.
 
 ## Developer interface
 
-The interface is a visual canvas — dark, high-contrast, structural — where the user navigates the hierarchy, opens blocks, reads code, runs tests, inspects wires, and watches the agent's work take shape. The user directs the agent in the agent's own tool; Fragmentor is where they see and check what it built.
+The interface is a visual canvas — dark, high-contrast, structural — where the user navigates the hierarchy, opens blocks, reads code, runs tests, inspects wires, and watches the agent's work take shape. Moving into a block and back out of it is animated as a zoom, and blocks appear on the diagram as the agent creates them, so the structure reads as a place rather than a series of pages. The user directs the agent in the agent's own tool; Fragmentor is where they see and check what it built.
 
 **The user interacts through the UI.** Understanding the structure should come from looking at it, and every action the user takes should be a clear, clickable control. The user is never expected to learn or type commands to operate Fragmentor. The `fragmentor` command exists for the coding agent, and for developing and verifying Fragmentor itself; it is not a user-facing surface.
 
@@ -100,9 +107,11 @@ If projects are ever shared, that happens through an ordinary repository holding
 
 A project holds one or more systems. A system is a block hierarchy with a single target language. Systems in the same project are never connected to each other — they are separate programs, shown together because they are worked on together.
 
-The target language is a choice, not an assumption. The block model, the validator and the project format know nothing about any language; that knowledge lives in a language pack, which owns naming conventions, file names, how a port type is written, and the source of the generated contract. Adding a language means adding a pack, not editing the kernel.
+The target language is a choice, not an assumption. The block model, the validator and the project format know nothing about any language; that knowledge lives in a language pack, which owns naming conventions, file names, how a port type is written, the source of the generated contract, and the generated code of a composite. Adding a language means adding a pack, not editing the kernel. A visual project needs no pack: its code can be in any language.
 
 Port contracts are defined with runtime schemas so a single definition yields both static types and the schema the test bench needs. Which library provides that is the pack's business — zod in TypeScript, pydantic in Python.
+
+A block may use packages installed in the project, because real code does. What it may not do is reach the outside world except through its capabilities: importing a language's built-in file, network or process modules is refused, and for packages that do the same it is a rule the agent is told rather than one Fragmentor can enforce.
 
 Two properties of the design limit which languages fit cleanly, and should be checked before adding a pack:
 
@@ -112,7 +121,6 @@ Two properties of the design limit which languages fit cleanly, and should be ch
 Not in scope now:
 
 - Fragmentor calling AI models itself; the AI is always an agent working in the project folder
-- importing or reverse-engineering existing codebases into blocks
 - connecting systems to each other, in the same language or across languages
 - a browser version of the application, or any hosted service
 - sharing projects between people, which would be a repository integration rather than a feature of the application

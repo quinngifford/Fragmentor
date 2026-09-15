@@ -103,7 +103,16 @@ export async function runCompiledBlock(options: SpawnOptions): Promise<HarnessRe
     const child = spawn(
       process.execPath,
       [harnessPath(), implPath, options.functionName, JSON.stringify(options.capabilities), options.projectDir],
-      { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, stdio: ["pipe", "pipe", "pipe"] },
+      {
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: "1",
+          // The compiled copy sits in a temporary folder, so the packages a
+          // block imports are looked for where the project installed them.
+          NODE_PATH: [path.join(options.projectDir, "node_modules"), process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      },
     );
 
     let stdout = "";

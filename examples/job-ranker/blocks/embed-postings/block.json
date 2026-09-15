@@ -1,12 +1,7 @@
 {
-  "id": "embed-postings",
-  "name": "Embed Postings",
   "responsibility": "Turn job postings into vectors so they can be compared by similarity.",
-  "kind": "composite",
   "inputs": {
-    "postings": {
-      "type": "{ title: string; description: string }[]"
-    },
+    "postings": "{ title: string; description: string }[]",
     "modelName": {
       "type": "string",
       "description": "Which embedding model to use."
@@ -27,13 +22,11 @@
   "children": [
     {
       "block": "clean-text",
-      "mode": "each",
-      "eachOver": "posting"
+      "each": "posting"
     },
     {
       "block": "embed-text",
-      "mode": "each",
-      "eachOver": "text"
+      "each": "text"
     }
   ],
   "wires": [
@@ -41,6 +34,5 @@
     "clean-text.text -> embed-text.text",
     "input.modelName -> embed-text.modelName",
     "embed-text.vector -> output.vectors"
-  ],
-  "pinnedAsLeaf": false
+  ]
 }

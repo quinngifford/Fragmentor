@@ -1,8 +1,5 @@
 {
-  "id": "rank-jobs",
-  "name": "Rank Jobs",
   "responsibility": "Read job postings from a file and return them ordered by how well they match a candidate profile, with reasons.",
-  "kind": "composite",
   "inputs": {
     "sourcePath": {
       "type": "string",
@@ -26,23 +23,13 @@
     }
   },
   "children": [
-    {
-      "block": "load-postings",
-      "mode": "once"
-    },
-    {
-      "block": "extract-profile-keywords",
-      "mode": "once"
-    },
+    "load-postings",
+    "extract-profile-keywords",
     {
       "block": "score-posting",
-      "mode": "each",
-      "eachOver": "posting"
+      "each": "posting"
     },
-    {
-      "block": "rank-results",
-      "mode": "once"
-    }
+    "rank-results"
   ],
   "wires": [
     "input.sourcePath -> load-postings.path",
@@ -53,6 +40,5 @@
     "score-posting.score -> rank-results.scores",
     "score-posting.reasons -> rank-results.reasons",
     "rank-results.ranked -> output.ranked"
-  ],
-  "pinnedAsLeaf": false
+  ]
 }

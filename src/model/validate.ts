@@ -1,4 +1,4 @@
-import type { Block, ChildRef, Wire } from "./block.js";
+import type { Block, ChildRef, Mode, Wire } from "./block.js";
 import { describeType, typesEqual } from "./types.js";
 import type { PortType } from "./types.js";
 
@@ -50,14 +50,18 @@ export interface Diagnostic {
 /**
  * Checks a composite block against the contracts of its children.
  *
- * Everything here is a statement about the diagram alone. Whether the code
- * matches the diagram is a separate question answered by the conformance
- * check once code exists.
+ * Everything here is a statement about the diagram alone. In structured mode
+ * the diagram becomes code, so it has to be complete and its types have to
+ * line up. In visual mode it is a picture of code that exists anyway: what it
+ * refers to must exist, but a gap in it is only worth pointing out, its types
+ * are free text, and a loop may be exactly what the code does.
  */
-export function validateComposite(parent: Block, children: Map<string, Block>): Diagnostic[] {
+export function validateComposite(parent: Block, children: Map<string, Block>, mode: Mode = "structured"): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const error = (message: string, path?: string) => diagnostics.push({ severity: "error", message, path });
   const warn = (message: string, path?: string) => diagnostics.push({ severity: "warning", message, path });
+  const visual = mode === "visual";
+  const incomplete = visual ? warn : error;
 
   if (parent.kind !== "composite") {
     if (parent.children.length > 0 || parent.wires.length > 0) {
@@ -178,7 +182,7 @@ export function validateComposite(parent: Block, children: Map<string, Block>): 
   parent.wires.forEach((wire, i) => {
     const sourceType = resolveSource(wire, i);
     const targetType = resolveTarget(wire, i);
-    if (sourceType && targetType && !typesEqual(sourceType, targetType)) {
+    if (!visual && sourceType && targetType && !typesEqual(sourceType, targetType)) {
       error(
         `Type mismatch on a wire: the source carries ${describeType(sourceType)} but the destination expects ${describeType(targetType)}.`,
         `wires[${i}]`,
@@ -194,9 +198,9 @@ export function validateComposite(parent: Block, children: Map<string, Block>): 
     for (const port of Object.keys(def.inputs)) {
       const count = drivers.get(`block:${ref.block}:${port}`) ?? 0;
       if (count === 0) {
-        error(`Nothing is connected to "${ref.block}" input "${port}".`);
+        incomplete(`Nothing is connected to "${ref.block}" input "${port}".`);
       } else if (count > 1) {
-        error(`"${ref.block}" input "${port}" is driven by ${count} wires; it can only accept one.`);
+        incomplete(`"${ref.block}" input "${port}" is driven by ${count} wires; it can only accept one.`);
       }
     }
   }
@@ -204,9 +208,9 @@ export function validateComposite(parent: Block, children: Map<string, Block>): 
   for (const port of Object.keys(parent.outputs)) {
     const count = drivers.get(`output:${port}`) ?? 0;
     if (count === 0) {
-      error(`Nothing produces "${parent.name}" output "${port}".`);
+      incomplete(`Nothing produces "${parent.name}" output "${port}".`);
     } else if (count > 1) {
-      error(`"${parent.name}" output "${port}" is driven by ${count} wires; it can only accept one.`);
+      incomplete(`"${parent.name}" output "${port}" is driven by ${count} wires; it can only accept one.`);
     }
   }
 
@@ -227,6 +231,10 @@ export function validateComposite(parent: Block, children: Map<string, Block>): 
       }
     }
   }
+
+  // A visual project draws code as it is, and neither passes capabilities
+  // down nor runs anything, so the last two rules are about generated code.
+  if (visual) return diagnostics;
 
   // --- capabilities are supplied by the parent -----------------------------
 
@@ -294,8 +302,9 @@ function findCycle(children: ChildRef[], wires: Wire[]): string[] | undefined {
 }
 
 /**
- * Children in an order that respects their data dependencies. Assumes the
- * graph has already been checked for cycles.
+ * Children in an order that respects their data dependencies. Blocks caught
+ * in a loop, which only a visual diagram may have, come last in the order
+ * they were listed, so every child still appears exactly once.
  */
 export function executionOrder(children: ChildRef[], wires: Wire[]): string[] {
   const incoming = new Map<string, Set<string>>();
@@ -321,5 +330,5 @@ export function executionOrder(children: ChildRef[], wires: Wire[]): string[] {
     }
   }
 
-  return ordered;
+  return [...ordered, ...remaining];
 }

@@ -19,7 +19,13 @@ export type PortType =
   | { kind: "enum"; values: string[] }
   | { kind: "array"; of: PortType }
   | { kind: "object"; fields: Record<string, ObjectField> }
-  | { kind: "union"; of: PortType[] };
+  | { kind: "union"; of: PortType[] }
+  /**
+   * A type written as free text, as in visual mode, where the diagram
+   * describes code Fragmentor never checks. It is shown, never enforced, and
+   * the parser never produces it.
+   */
+  | { kind: "text"; text: string };
 
 export interface ObjectField {
   type: PortType;
@@ -76,6 +82,7 @@ export const portTypeSchema: z.ZodType<PortType> = z.lazy(() =>
         of: z.array(portTypeSchema).min(2, "a union needs at least two members"),
       })
       .strict(),
+    z.object({ kind: z.literal("text"), text: z.string() }).strict(),
   ]),
 ) as z.ZodType<PortType>;
 
@@ -91,6 +98,8 @@ export function describeType(type: PortType): string {
     case "null":
     case "unknown":
       return type.kind;
+    case "text":
+      return type.text;
     case "literal":
       return typeof type.value === "string" ? JSON.stringify(type.value) : String(type.value);
     case "enum":
@@ -130,6 +139,8 @@ export function typesEqual(a: PortType, b: PortType): boolean {
     case "null":
     case "unknown":
       return true;
+    case "text":
+      return a.text === (b as typeof a).text;
     case "literal":
       return a.value === (b as typeof a).value;
     case "enum": {
@@ -168,6 +179,7 @@ export function typesEqual(a: PortType, b: PortType): boolean {
 export function checkValue(value: unknown, type: PortType, where = "value"): string[] {
   switch (type.kind) {
     case "unknown":
+    case "text":
       return [];
     case "string":
       return typeof value === "string" ? [] : [`${where} should be a string, but it is ${describeValue(value)}.`];

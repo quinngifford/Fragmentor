@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -14,8 +14,9 @@ let dir: string;
 const manifest: Manifest = {
   name: "Doubler",
   goal: "Double a number.",
-  systems: [{ rootBlock: "double-it", language: "typescript" }],
+  mode: "structured",
   granularity: { level: 3, maxDepth: 3 },
+  systems: [{ rootBlock: "double-it", language: "typescript" }],
 };
 
 beforeEach(async () => {
@@ -82,6 +83,7 @@ describe("projectSnapshot", () => {
     const snapshot = await projectSnapshot(dir);
 
     expect(snapshot.name).toBe("Doubler");
+    expect(snapshot.mode).toBe("structured");
     expect(Object.keys(snapshot.blocks).sort()).toEqual(["double-it", "double-it/add-to-self"]);
 
     const root = snapshot.blocks["double-it"]!;
@@ -92,6 +94,7 @@ describe("projectSnapshot", () => {
       description: "The number to double.",
     });
     expect(root.functionName).toBe("doubleIt");
+    expect(root.code).toBeNull();
   });
 
   it("reports what each wire carries, and its execution order", async () => {
@@ -112,6 +115,8 @@ describe("projectSnapshot", () => {
     const after = (await projectSnapshot(dir)).blocks["double-it"]!;
     expect(after.sources.contract).toContain("export const doubleItInput");
     expect(after.sources.impl).toContain("export async function doubleIt");
+    // The composite's code is generated, so it exists as soon as its diagram does.
+    expect(after.implemented).toBe(true);
   });
 
   it("carries the saved layout so the canvas opens where it was left", async () => {
@@ -134,5 +139,52 @@ describe("projectSnapshot", () => {
     const snapshot = await projectSnapshot(dir);
     expect(snapshot.diagnostics.map((d) => d.message)).toContainEqual(expect.stringContaining("Type mismatch"));
     expect(Object.keys(snapshot.blocks)).toHaveLength(2);
+  });
+});
+
+describe("a visual project's snapshot", () => {
+  it("carries the code each block points at, and reports a pointer that leads nowhere", async () => {
+    const other = await mkdtemp(path.join(tmpdir(), "fragmentor-snap-"));
+    try {
+      await writeFile(
+        path.join(other, "fragmentor.json"),
+        JSON.stringify({ name: "Seen", mode: "visual", language: "Go", granularity: { level: 2 }, systems: [{ rootBlock: "serve" }] }),
+        "utf8",
+      );
+      await mkdir(path.join(other, "blocks", "serve", "handle"), { recursive: true });
+      await writeFile(
+        path.join(other, "blocks", "serve", "block.json"),
+        JSON.stringify({ responsibility: "Serves requests.", code: "main.go#main", children: ["handle"] }),
+        "utf8",
+      );
+      await writeFile(
+        path.join(other, "blocks", "serve", "handle", "block.json"),
+        JSON.stringify({ responsibility: "Handles one request.", code: "handler.go#Handle", inputs: { request: "*http.Request" } }),
+        "utf8",
+      );
+      await writeFile(path.join(other, "main.go"), "package main\n\nfunc main() {\n\tserve()\n}\n", "utf8");
+
+      const snapshot = await projectSnapshot(other);
+      expect(snapshot.mode).toBe("visual");
+      expect(snapshot.language).toBe("Go");
+      expect(snapshot.systems).toEqual([{ rootBlock: "serve", language: "Go", displayName: "Go", known: true }]);
+
+      const serve = snapshot.blocks.serve!;
+      expect(serve.code).toMatchObject({ pointer: "main.go#main", file: "main.go", line: 3, excerptStart: 1 });
+      expect(serve.code!.excerpt).toContain("func main()");
+      expect(serve.implemented).toBe(true);
+      expect(serve.sources).toEqual({ impl: null, contract: null });
+
+      const handle = snapshot.blocks["serve/handle"]!;
+      expect(handle.inputs[0]!.type).toBe("*http.Request");
+      expect(handle.code).toBeNull();
+      expect(snapshot.diagnostics).toContainEqual({
+        severity: "error",
+        blockPath: "serve/handle",
+        message: '"Handle" points at code that is not there: "handler.go" does not exist.',
+      });
+    } finally {
+      await rm(other, { recursive: true, force: true });
+    }
   });
 });

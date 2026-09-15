@@ -3,26 +3,47 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { getPack, knownLanguages } from "./index.js";
 import { camelCase, pascalCase, snakeCase } from "./naming.js";
-import { blockSchema } from "../model/block.js";
+import { blockFromFile } from "../model/block.js";
 import type { Block } from "../model/block.js";
 
 /**
- * The packs are checked against the same block, because the point of the seam
- * is that one diagram produces idiomatic code in either language.
+ * The packs are checked against the same blocks, because the point of the
+ * seam is that one diagram produces idiomatic code in either language.
  */
 
-const scorePosting: Block = blockSchema.parse({
-  id: "score-posting",
-  name: "Score Posting",
-  responsibility: "Score one posting against the profile keywords.",
-  kind: "leaf",
-  inputs: {
-    posting: { type: "{ title: string; salary?: number; mode: \"remote\" | \"onsite\" }" },
-    keywords: { type: "string[]" },
+const scorePosting: Block = blockFromFile(
+  {
+    responsibility: "Score one posting against the profile keywords.",
+    inputs: {
+      posting: "{ title: string; salary?: number; mode: \"remote\" | \"onsite\" }",
+      keywords: "string[]",
+    },
+    outputs: { score: "number", reasons: "string[]" },
+    capabilities: { files: { capability: "FileSystem", description: "Reads the cache." } },
   },
-  outputs: { score: { type: "number" }, reasons: { type: "string[]" } },
-  capabilities: { files: { capability: "FileSystem", description: "Reads the cache." } },
-});
+  "score-posting",
+);
+
+/**
+ * A composite written to trip up naming: its own input and both children's
+ * outputs are all called `score`, and one child runs once per item.
+ */
+const rankJobs: Block = blockFromFile(
+  {
+    responsibility: "Rank postings.",
+    inputs: { postings: "{ title: string }[]", score: "number" },
+    outputs: { best: "number", summary: "string" },
+    children: [{ block: "score-posting", each: "posting" }, "summarise"],
+    wires: [
+      "input.postings -> score-posting.posting",
+      "input.score -> score-posting.weight",
+      "score-posting.score -> summarise.scores",
+      "summarise.score -> output.best",
+      "summarise.text -> output.summary",
+    ],
+  },
+  "rank-jobs",
+);
 
 function typeScriptErrors(source: string): string[] {
   const result = ts.transpileModule(source, {
@@ -110,6 +131,17 @@ describe("the TypeScript pack", () => {
     expect(pack.isUnimplemented(pack.implScaffold(scorePosting))).toBe(true);
     expect(pack.isUnimplemented("export async function scorePosting() { return { score: 1 }; }")).toBe(false);
   });
+
+  it("writes a composite as its diagram, keeping every variable apart", () => {
+    const source = pack.compositeSource(rankJobs);
+
+    expect(typeScriptErrors(source)).toEqual([]);
+    expect(source).toContain("const { postings, score } = input;");
+    expect(source).toContain("postings.map((posting) => scorePosting({ posting, weight: score }, caps))");
+    expect(source).toContain("const scorePostingScore = scorePostingResults.map((result) => result.score);");
+    expect(source).toContain("const { score: summariseScore, text } = await summarise({ scores: scorePostingScore }, caps);");
+    expect(source).toContain("return { best: summariseScore, summary: text };");
+  });
 });
 
 describe("the Python pack", () => {
@@ -147,10 +179,19 @@ describe("the Python pack", () => {
     expect(source).toContain("    async def write_file(self, path: str, contents: str) -> None: ...");
   });
 
+  it("writes the same composite in Python", () => {
+    const source = pack.compositeSource(rankJobs);
+    expect(source).toContain("score_posting(ScorePostingInput(posting=posting, weight=score), caps) for posting in postings");
+    expect(source).toContain("score_posting_score = [result.score for result in score_posting_results]");
+    expect(source).toContain("summarise_score = summarise_result.score");
+    expect(source).toContain("return RankJobsOutput(best=summarise_score, summary=text)");
+  });
+
   it.skipIf(!python)("writes Python that actually parses", () => {
     expect(pythonErrors(pack.contractSource({ block: scorePosting, blockPath: "rank-jobs/score-posting" }))).toBe("");
     expect(pythonErrors(pack.implScaffold(scorePosting))).toBe("");
     expect(pythonErrors(pack.capabilitiesSource())).toBe("");
+    expect(pythonErrors(pack.compositeSource(rankJobs))).toBe("");
   });
 
   it("recognises its own untouched scaffold", () => {

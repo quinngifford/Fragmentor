@@ -1,6 +1,6 @@
 import type { ProjectSnapshot } from "../src/project/snapshot.js";
 import type { Point } from "../src/project/layout.js";
-import type { EmitResult } from "../src/codegen/emit.js";
+import type { EmitResult, NewProjectSettings } from "../src/codegen/emit.js";
 import type { CaseResult, RunOutcome } from "../src/run/run.js";
 import type { TestCase } from "../src/run/cases.js";
 
@@ -24,6 +24,7 @@ export const CHANNELS = {
   saveLayout: "layout:save",
   emitCode: "codegen:emit",
   revealBlock: "block:reveal",
+  revealCode: "code:reveal",
   runBlock: "block:run",
   saveCases: "block:save-cases",
   runCases: "block:run-cases",
@@ -33,14 +34,13 @@ export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
 /**
  * A folder opened as a project. It need not hold a readable project: the agent
- * may not have defined the system yet, or may be halfway through writing it.
+ * may be halfway through writing it. A project the agent has not defined yet
+ * reads as a snapshot with no systems.
  */
 export interface ProjectLoad {
   dir: string;
   /** Null when there is nothing readable to show. */
   snapshot: ProjectSnapshot | null;
-  /** False while the folder is waiting for an agent to write fragmentor.json. */
-  hasManifest: boolean;
   /** Why the project could not be read, when it could not. */
   error: string | null;
 }
@@ -72,8 +72,8 @@ export interface WriteImplRequest {
 export interface FragmentorApi {
   /** Opens a folder picker. Resolves to null when the user cancels. */
   chooseProject(): Promise<Result<ProjectLoad | null>>;
-  /** Picks a folder and prepares it for a coding agent. Resolves to null when the user cancels. */
-  newProject(): Promise<Result<ProjectLoad | null>>;
+  /** Picks a folder and starts a project there with what the person chose. Resolves to null when they cancel. */
+  newProject(settings: NewProjectSettings): Promise<Result<ProjectLoad | null>>;
   /** Opens a project: remembers it, starts watching it, and reads it. */
   loadProject(dir: string): Promise<Result<ProjectLoad>>;
   /** Reads the open project again, after something changed it. */
@@ -88,6 +88,8 @@ export interface FragmentorApi {
   emitCode(dir: string): Promise<Result<EmitResult>>;
   /** Shows a block's folder in the system file manager. */
   revealBlock(dir: string, blockPath: string): Promise<Result<null>>;
+  /** Shows a file a visual block points at, given relative to the project. */
+  revealCode(dir: string, file: string): Promise<Result<null>>;
   /** Runs one block against the given input and reports what happened. */
   runBlock(request: RunBlockRequest): Promise<Result<RunOutcome>>;
   /** Replaces the tests saved for a block. */
