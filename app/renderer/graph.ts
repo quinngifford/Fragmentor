@@ -1,4 +1,11 @@
-import type { SnapshotBlock, SnapshotCapability, SnapshotChild, SnapshotPort } from "../../src/project/snapshot.js";
+import type {
+  SnapshotAccess,
+  SnapshotBlock,
+  SnapshotCapability,
+  SnapshotChild,
+  SnapshotExposed,
+  SnapshotPort,
+} from "../../src/project/snapshot.js";
 import type { Point } from "../../src/project/layout.js";
 import { BUS_PALETTE, busColors, requireSnapshot } from "./state.js";
 
@@ -34,10 +41,36 @@ export interface GraphNode {
   sublabel: string;
   boundary: boolean;
   outputs: SnapshotPort[];
+  /** Architecture blocks only: the tables, channels or operations drawn inside it. */
+  exposes: SnapshotExposed[];
+  /**
+   * A resource that lives above this diagram rather than in it, drawn here
+   * because something in here reaches it. Dragging or opening it still works;
+   * it is simply not one of this parent's children.
+   */
+  referenced: boolean;
   capabilities: SnapshotCapability[];
   child: SnapshotChild | null;
   block: SnapshotBlock | null;
   groups: BusGroup[];
+}
+
+/**
+ * Everything one block reaches in another, drawn as a single line.
+ *
+ * Accesses are gathered from a child and from everything inside it, so the
+ * diagram above a service shows the databases its handlers use without the
+ * service having to repeat them. They are grouped per pair of blocks for the
+ * same reason wires are: three reads and a write between two blocks are one
+ * relationship, not four lines.
+ */
+export interface AccessLink {
+  id: string;
+  source: string;
+  target: string;
+  entries: SnapshotAccess[];
+  /** True when nothing here declared it: it came from a block inside. */
+  fromWithin: boolean;
 }
 
 export interface Bus {
@@ -52,6 +85,7 @@ export interface Graph {
   nodes: Map<string, GraphNode>;
   buses: Map<string, Bus>;
   signals: Signal[];
+  accesses: Map<string, AccessLink>;
 }
 
 /** The view showing every system in the project side by side. */
@@ -79,6 +113,12 @@ function projectAsBlock(): SnapshotBlock {
     inputs: [],
     outputs: [],
     capabilities: [],
+    role: "function" as const,
+    roleLabel: "",
+    architecture: false,
+    holdsArchitecture: false,
+    exposes: [],
+    access: [],
     children: snapshot.systems.map((system) => {
       const root = snapshot.blocks[system.rootBlock];
       return {
@@ -127,6 +167,8 @@ export function buildGraph(view: string): Graph | null {
       sublabel: parent.name,
       boundary: true,
       outputs: parent.inputs,
+      exposes: [],
+      referenced: false,
       capabilities: [],
       child: null,
       block: null,
@@ -137,16 +179,24 @@ export function buildGraph(view: string): Graph | null {
   for (const child of parent.children) {
     const block = snapshot.blocks[child.path];
     if (!block) continue;
+    // A database is drawn as a database, whether or not it has blocks inside
+    // it; only a function is worth labelling by whether it has children.
     nodes.set(child.block, {
-      key: child.block,
-      label: block.name,
-      sublabel: block.planned ? "PLANNED" : block.kind === "composite" ? "COMPOSITE" : "LEAF",
-      boundary: false,
-      outputs: block.outputs,
-      capabilities: block.capabilities,
+      ...(block.architecture
+        ? resourceNode(child.block, block, false)
+        : {
+            key: child.block,
+            label: block.name,
+            sublabel: block.planned ? "PLANNED" : block.kind === "composite" ? "COMPOSITE" : "LEAF",
+            boundary: false,
+            outputs: block.outputs,
+            exposes: [],
+            referenced: false,
+            capabilities: block.capabilities,
+            block,
+            groups: [],
+          }),
       child,
-      block,
-      groups: [],
     });
   }
 
@@ -157,6 +207,8 @@ export function buildGraph(view: string): Graph | null {
       sublabel: parent.name,
       boundary: true,
       outputs: [],
+      exposes: [],
+      referenced: false,
       capabilities: [],
       child: null,
       block: null,
@@ -186,7 +238,76 @@ export function buildGraph(view: string): Graph | null {
     bus.signals.push(signal);
   }
 
-  return { parent, nodes, buses, signals };
+  return { parent, nodes, buses, signals, accesses: buildAccesses(parent, nodes) };
+}
+
+
+
+/**
+ * The access lines this diagram shows, and any resource it has to bring in
+ * from above to land them on.
+ *
+ * A child's own accesses are drawn, and so are those of everything inside it,
+ * because the level above a service should show which databases its handlers
+ * use without the service repeating them. An access reaching something that
+ * lives inside the child itself is left out: it belongs to that child's own
+ * diagram, and drawn here it would be a line from a block to itself.
+ */
+function buildAccesses(parent: SnapshotBlock, nodes: Map<string, GraphNode>): Map<string, AccessLink> {
+  const snapshot = requireSnapshot();
+  const links = new Map<string, AccessLink>();
+  const childPaths = new Map([...nodes.values()].filter((node) => node.block).map((node) => [node.block!.path, node.key]));
+
+  for (const child of parent.children) {
+    const inside = Object.values(snapshot.blocks).filter(
+      (block) => block.path === child.path || block.path.startsWith(`${child.path}/`),
+    );
+
+    for (const block of inside) {
+      for (const access of block.access) {
+        const target = access.resourcePath;
+        if (target === null || target === child.path || target.startsWith(`${child.path}/`)) continue;
+
+        // The resource is a child of this parent, or it lives further out and
+        // is brought in so the line has somewhere to land.
+        let key = childPaths.get(target);
+        if (key === undefined) {
+          const resource = snapshot.blocks[target];
+          if (!resource) continue;
+          key = resource.id;
+          if (!nodes.has(key)) nodes.set(key, resourceNode(key, resource, true));
+        }
+
+        const id = `${child.block}=>${key}`;
+        let link = links.get(id);
+        if (!link) {
+          link = { id, source: child.block, target: key, entries: [], fromWithin: true };
+          links.set(id, link);
+        }
+        if (block.path === child.path) link.fromWithin = false;
+        if (!link.entries.some((each) => each.text === access.text)) link.entries.push(access);
+      }
+    }
+  }
+
+  return links;
+}
+
+/** A block drawn as the thing it stands for rather than as a function. */
+function resourceNode(key: string, block: SnapshotBlock, referenced: boolean): GraphNode {
+  return {
+    key,
+    label: block.name,
+    sublabel: block.planned ? "PLANNED" : block.roleLabel,
+    boundary: false,
+    outputs: [],
+    exposes: block.exposes,
+    referenced,
+    capabilities: [],
+    child: null,
+    block,
+    groups: [],
+  };
 }
 
 export function busColour(graph: Graph, view: string, bus: Bus): string {
@@ -206,8 +327,30 @@ export const ROW_H = 17;
 export const GROUP_HEAD_H = 14;
 export const GROUP_GAP = 7;
 export const BODY_PAD = 9;
+/** A column of a table, which is set smaller than a port so a schema fits. */
+export const FIELD_H = 13;
 const COL_GAP = 92;
 const ROW_GAP = 40;
+
+/** Columns shown before a schema is cut short, so a wide table is not a tall block. */
+const MOST_FIELDS = 5;
+
+/**
+ * What one exposed entry shows underneath its name: a table's columns where
+ * it has them, and otherwise the one line that says what it carries. This is
+ * the whole reason a database is worth drawing rather than naming.
+ */
+export function entryLines(entry: SnapshotExposed): string[] {
+  if (entry.fields.length > 0) {
+    const shown = entry.fields.slice(0, MOST_FIELDS).map((field) => `${field.name}${field.optional ? "?" : ""}: ${field.type}`);
+    const hidden = entry.fields.length - shown.length;
+    return hidden > 0 ? [...shown, `and ${hidden} more`] : shown;
+  }
+  if (entry.accepts !== null && entry.returns !== null && entry.accepts !== entry.returns) {
+    return [`${entry.accepts} to ${entry.returns}`];
+  }
+  return [entry.returns ?? entry.accepts ?? ""];
+}
 
 export interface Measurement {
   leftHeight: number;
@@ -216,6 +359,18 @@ export interface Measurement {
 }
 
 export function measure(node: GraphNode): Measurement {
+  // A block drawn as a database or a queue has no ports to stack up the
+  // sides; what it holds goes down the middle instead.
+  if (node.exposes.length > 0) {
+    let body = 0;
+    for (const entry of node.exposes) body += GROUP_HEAD_H + entryLines(entry).length * FIELD_H + GROUP_GAP;
+    return {
+      leftHeight: 0,
+      rightHeight: 0,
+      height: HEAD_H + BODY_PAD + Math.max(body - GROUP_GAP, ROW_H) + BODY_PAD,
+    };
+  }
+
   let left = 0;
   for (const group of node.groups) left += GROUP_HEAD_H + group.signals.length * ROW_H + GROUP_GAP;
   if (left > 0) left -= GROUP_GAP;
@@ -243,8 +398,23 @@ export function autoLayout(graph: Graph): Map<string, Point> {
     depth.set(id, d);
   }
 
+  // What a block reaches sits to its right, so a diagram reads from whoever
+  // sets the system going, through the services, to the stores behind them.
+  // Relaxed rather than sorted, because access can loop where wires cannot.
+  for (let pass = 0; pass < graph.accesses.size; pass += 1) {
+    let moved = false;
+    for (const link of graph.accesses.values()) {
+      const wanted = (depth.get(link.source) ?? 1) + 1;
+      if ((depth.get(link.target) ?? 0) < wanted) {
+        depth.set(link.target, wanted);
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+
   const deepest = Math.max(0, ...depth.values());
-  depth.set("output", deepest + 1);
+  if (graph.nodes.has("output")) depth.set("output", deepest + 1);
 
   const columns = new Map<number, GraphNode[]>();
   for (const node of graph.nodes.values()) {

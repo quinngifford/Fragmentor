@@ -257,7 +257,7 @@ function follow(watch: Watch, id: number): void {
   const select = () => {
     ui.selection.clear();
     ui.selection.add(idOf(call.block));
-    ui.selectedBus = null;
+    ui.selectedLink = null;
   };
   const diagram = parentOf(call.block);
   if (diagram !== ui.view) {

@@ -52,7 +52,12 @@ export interface UiState {
   view: string;
   /** Node keys inside the current diagram: a child id, or `input` / `output`. */
   selection: Set<string>;
-  selectedBus: string | null;
+  /**
+   * The connection picked out on the diagram: a bus carrying values between
+   * two blocks, or an access reaching a database or a queue. The two kinds
+   * cannot share an id, so one field holds whichever is selected.
+   */
+  selectedLink: string | null;
   zoom: number;
   panX: number;
   panY: number;
@@ -120,7 +125,7 @@ export const ui: UiState = {
   loadError: null,
   view: "",
   selection: new Set(),
-  selectedBus: null,
+  selectedLink: null,
   zoom: 1,
   panX: 40,
   panY: 30,

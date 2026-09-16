@@ -756,6 +756,17 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("dialog", "answerableAgain") === true,
     ],
     [
+      "a database is drawn as itself, with its shape on show and the block that reads it joined to it",
+      value("architecture", "drawn") === true &&
+        value("architecture", "label") === "DATABASE" &&
+        Number(value("architecture", "columns")) === 3 &&
+        value("architecture", "joined") === true &&
+        value("architecture", "joinLabel") === "reads postings" &&
+        /not code/.test(String(value("architecture", "notCode"))) &&
+        /postings/.test(String(value("architecture", "offers"))) &&
+        value("architecture", "noPorts") === true,
+    ],
+    [
       "a planned block is drawn apart from the built ones, and nothing is asked of it",
       value("planned", "drawn") === true &&
         value("planned", "onScreen") === true &&
@@ -1367,6 +1378,61 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
           };
         `);
         await capture(window, "self-check-visual");
+
+        // The agent draws the rest of the system: the file the postings come
+        // out of becomes a store of its own, with its shape on show, and the
+        // block that reads it is joined straight to it instead of showing an
+        // input that arrives from nowhere.
+        const postingsDb = inProject("blocks", "rank-jobs", "postings-db");
+        await mkdir(postingsDb, { recursive: true });
+        await writeFile(
+          path.join(postingsDb, "block.json"),
+          JSON.stringify(
+            {
+              name: "Postings Store",
+              role: "database",
+              responsibility: "Holds every job posting that can be ranked.",
+              exposes: {
+                postings: {
+                  type: "{ title: string; company: string; description: string }",
+                  description: "One row per posting.",
+                },
+              },
+            },
+            null,
+            2,
+          ),
+          "utf8",
+        );
+        const withStore = JSON.parse(await readFile(rankJobs, "utf8")) as { children: unknown[] };
+        withStore.children = [...withStore.children, "postings-db"];
+        await writeFile(rankJobs, JSON.stringify(withStore, null, 2), "utf8");
+        const reader = JSON.parse(await readFile(pointed, "utf8")) as Record<string, unknown>;
+        reader.access = ["reads postings-db.postings"];
+        await writeFile(pointed, JSON.stringify(reader, null, 2), "utf8");
+
+        await run("architecture", `
+          const box = await until(() => document.querySelector('.block-box[data-key="postings-db"][data-architecture="true"]'));
+          if (!box) return { drawn: false };
+          document.getElementById("layout-reset").click();
+          await wait(500);
+          document.getElementById("zoom-fit").click();
+          await wait(500);
+          box.querySelector(".block-plate").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 11, clientX: 5, clientY: 5, isPrimary: true }));
+          window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 11, clientX: 5, clientY: 5 }));
+          await wait(400);
+          return {
+            drawn: true,
+            label: text('.block-box[data-key="postings-db"] .block-kind'),
+            columns: box.querySelectorAll(".exposed-field").length,
+            joined: Boolean(document.querySelector('.access-group[data-access="load-postings=>postings-db"]')),
+            joinLabel: text(".access-label"),
+            notCode: [...document.querySelectorAll(".badge")].map((b) => b.textContent).join(" "),
+            offers: [...document.querySelectorAll(".insp-body .pname, .ports .pname")].map((n) => n.textContent).join(" "),
+            noPorts: ![...document.querySelectorAll(".section h4")].some((h) => h.textContent === "Inputs"),
+          };
+        `);
+        await capture(window, "self-check-architecture");
 
         await run("closed", `
           document.getElementById("close-project").click();

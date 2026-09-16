@@ -2,7 +2,8 @@ import type { SnapshotBlock, SnapshotCode } from "../../src/project/snapshot.js"
 import type { ProjectDiagnostic } from "../../src/project/project.js";
 import { BUS_PALETTE, busColors, requireSnapshot, ui } from "./state.js";
 import { busColour, connectionCode } from "./graph.js";
-import type { Bus, Graph } from "./graph.js";
+import type { AccessLink, Bus, Graph } from "./graph.js";
+import { ROLES } from "../../src/model/roles.js";
 import { graphInView, openDiagram, showBlock } from "./canvas.js";
 import { benchSections } from "./bench.js";
 import { busWatchSection, watchSection } from "./watch.js";
@@ -137,7 +138,9 @@ function codeSection(block: SnapshotBlock): HTMLElement {
         "bench-note",
         block.holdsPlan
           ? "Its code would call a block that is only planned, so there is nothing to generate yet. Build the planned blocks inside it and this fills in."
-          : "This file has not been generated yet. Use Generate code.",
+          : block.holdsArchitecture
+            ? "It holds a piece of the architecture, so it is a diagram rather than a function and there is no chain of calls to write. The code that opens the real connections lives outside blocks/."
+            : "This file has not been generated yet. Use Generate code.",
       ),
     );
     return node;
@@ -270,6 +273,105 @@ function linkedCodeSection(block: SnapshotBlock): HTMLElement {
   return node;
 }
 
+/** What an architecture block offers, in place of the contract it has none of. */
+function exposedSection(block: SnapshotBlock): HTMLElement {
+  const noun = ROLES[block.role].entryNoun;
+  const node = section(`${noun.charAt(0).toUpperCase()}${noun.slice(1)}s`);
+
+  if (block.exposes.length === 0) {
+    node.append(el("p", "bench-note", `Nothing is written down yet. The agent lists each ${noun} under "exposes".`));
+    return node;
+  }
+
+  const list = el("div", "ports");
+  for (const entry of block.exposes) {
+    // A store holds one shape, so saying it twice would read as two things.
+    const oneShape = entry.accepts !== null && entry.accepts === entry.returns;
+    const shape = oneShape
+      ? entry.accepts!
+      : [entry.accepts === null ? null : `in ${entry.accepts}`, entry.returns === null ? null : `out ${entry.returns}`]
+          .filter(Boolean)
+          .join("    ");
+
+    const row = el("div", "port-row");
+    row.append(el("div", "pname", entry.name), el("div", "ptype", shape));
+    if (entry.description) row.append(el("div", "pdesc", entry.description));
+    list.append(row);
+  }
+  node.append(list);
+  return node;
+}
+
+/** What this block reaches, with each resource named as it was found. */
+function accessSection(block: SnapshotBlock): HTMLElement | null {
+  if (block.access.length === 0) return null;
+
+  const node = section("Reaches");
+  const list = el("div", "ports");
+
+  for (const access of block.access) {
+    const row = el("div", "port-row cap");
+    row.append(el("div", "pname", access.verb));
+
+    if (access.resourcePath === null) {
+      const missing = el("div", "ptype bad");
+      missing.textContent = `${access.resource} — nothing of that name sits beside this block or above it`;
+      row.append(missing);
+    } else {
+      const where = access.entry === null ? access.resourceName : `${access.resourceName} · ${access.entry}`;
+      row.append(el("div", "ptype", where));
+      const open = el("button", "btn quiet tiny", "Show");
+      open.addEventListener("click", () => openDiagram(access.resourcePath!));
+      row.append(open);
+    }
+
+    list.append(row);
+  }
+
+  node.append(list);
+  return node;
+}
+
+/** One access line picked out on the diagram. */
+function accessPanel(panel: HTMLElement, graph: Graph, link: AccessLink): void {
+  const source = graph.nodes.get(link.source);
+  const target = graph.nodes.get(link.target);
+
+  const head = el("div", "insp-head");
+  head.append(el("h2", undefined, `${source?.label ?? link.source} and ${target?.label ?? link.target}`));
+  head.append(el("div", "insp-id", "access"));
+  panel.append(head);
+
+  panel.append(
+    el(
+      "p",
+      "responsibility",
+      link.fromWithin
+        ? `Nothing at this level declares this. It is gathered from the blocks inside ${source?.label ?? link.source}, so this diagram shows what they depend on.`
+        : "Something this block reaches, rather than a value handed from one call to the next.",
+    ),
+  );
+
+  const what = group("Access");
+  const list = el("div", "ports");
+  for (const access of link.entries) {
+    const row = el("div", "port-row cap");
+    row.append(el("div", "pname", access.verb));
+    row.append(el("div", "ptype", access.entry === null ? "the whole thing" : access.entry));
+    list.append(row);
+  }
+  const entries = section("What it touches");
+  entries.append(list);
+  what.append(entries);
+  panel.append(what);
+
+  if (target?.block?.architecture) {
+    const offered = group(target.block.name);
+    offered.append(exposedSection(target.block));
+    panel.append(offered);
+  }
+}
+
 function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   const visual = requireSnapshot().mode === "visual";
 
@@ -277,20 +379,28 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   head.append(el("h2", undefined, block.name), el("div", "insp-id", block.path));
 
   const badges = el("div", "badges");
-  badges.append(el("span", `badge${block.kind === "composite" ? " composite" : ""}`, block.kind));
+  // For a database or a queue, what it is matters more than whether it has
+  // blocks inside it, so the role takes the first badge.
+  badges.append(
+    block.architecture
+      ? el("span", "badge role", block.roleLabel.toLowerCase())
+      : el("span", `badge${block.kind === "composite" ? " composite" : ""}`, block.kind),
+  );
   badges.append(
     el(
       "span",
       `badge state${block.planned ? " planned" : ""}`,
       block.planned
         ? "planned"
-        : visual
-          ? block.implemented
-            ? "linked to code"
-            : "not linked"
-          : block.implemented
-            ? "implemented"
-            : "specified",
+        : block.architecture
+          ? "not code"
+          : visual
+            ? block.implemented
+              ? "linked to code"
+              : "not linked"
+            : block.implemented
+              ? "implemented"
+              : "specified",
     ),
   );
   if (block.language) badges.append(el("span", "badge", block.language));
@@ -318,10 +428,39 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   const problems = problemsSection(requireSnapshot().diagnostics.filter((d) => d.blockPath === block.path), false);
   if (problems) panel.append(problems);
 
+  // A block that is not code has no contract to be called through. What it
+  // offers, and what reaches it, take the contract's place.
+  if (block.architecture) {
+    panel.append(
+      el(
+        "p",
+        "planned-note",
+        `${ROLES[block.role].description} Fragmentor draws it and checks that the diagram holds together, and generates, checks and runs nothing for it.`,
+      ),
+    );
+
+    const offers = group("Offers");
+    offers.append(exposedSection(block));
+    const reached = accessSection(block);
+    if (reached) offers.append(reached);
+    panel.append(offers);
+
+    // In a visual project even a service points at real code, and reading it
+    // is the whole reason the diagram is there.
+    if (visual) {
+      const code = group("Code");
+      code.append(linkedCodeSection(block));
+      panel.append(code);
+    }
+    return;
+  }
+
   const contract = group("Contract");
   contract.append(portSection("Inputs", block.inputs));
   contract.append(portSection("Outputs", block.outputs));
   contract.append(portSection("Capabilities", block.capabilities, true));
+  const reaches = accessSection(block);
+  if (reaches) contract.append(reaches);
   panel.append(contract);
 
   const code = group("Code");
@@ -342,7 +481,7 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   // Nothing beneath this point applies to a block with no code: one nobody
   // has written, or one whose code waits for the plan inside it. There is
   // nothing to run, and nothing a test could be run against.
-  if (visual || block.planned || block.holdsPlan) return;
+  if (visual || block.planned || block.holdsPlan || block.holdsArchitecture) return;
 
   const testing = group("Testing");
   const [bench, cases] = benchSections(block);
@@ -458,10 +597,15 @@ export function renderInspector(): void {
 
   const graph = graphInView();
 
-  if (graph && ui.selectedBus) {
-    const bus = graph.buses.get(ui.selectedBus);
+  if (graph && ui.selectedLink) {
+    const bus = graph.buses.get(ui.selectedLink);
     if (bus) {
       busPanel(panel, graph, bus);
+      return;
+    }
+    const access = graph.accesses.get(ui.selectedLink);
+    if (access) {
+      accessPanel(panel, graph, access);
       return;
     }
   }

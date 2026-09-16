@@ -64,7 +64,7 @@ function forgetProject(): void {
   ui.caseNames.clear();
   ui.status = null;
   ui.selection.clear();
-  ui.selectedBus = null;
+  ui.selectedLink = null;
   // A run, and the places runs pause, belong to the project they were set in.
   resetWatching();
 }
@@ -123,13 +123,13 @@ function show(load: ProjectLoad, opening: boolean): void {
   if (firstSight) {
     ui.view = load.snapshot.systems.length > 1 ? PROJECT_VIEW : (load.snapshot.systems[0]?.rootBlock ?? PROJECT_VIEW);
     ui.selection.clear();
-    ui.selectedBus = null;
+    ui.selectedLink = null;
     ui.userAdjusted = false;
   } else if (ui.view !== PROJECT_VIEW && !load.snapshot.blocks[ui.view]) {
     // The diagram that was on screen no longer exists.
     ui.view = PROJECT_VIEW;
     ui.selection.clear();
-    ui.selectedBus = null;
+    ui.selectedLink = null;
   }
 
   render();
@@ -406,7 +406,13 @@ function renderTree(): void {
     button.setAttribute("aria-selected", String(path === ui.view));
     button.dataset.path = path;
     button.style.paddingLeft = `${8 + depth * 14}px`;
-    button.append(el("span", "glyph", block.kind === "composite" ? "▣" : "▫"), el("span", "label", block.id));
+    // A block that is not code gets its own mark, so the rail says what kind
+    // of thing each part of the system is at a glance.
+    button.append(
+      el("span", "glyph", block.architecture ? "◈" : block.kind === "composite" ? "▣" : "▫"),
+      el("span", "label", block.id),
+    );
+    if (block.architecture) button.dataset.architecture = "true";
     if (before && !before.has(path)) button.classList.add("appearing");
     shown.add(path);
 
@@ -447,7 +453,11 @@ function renderStatus(): void {
     const snapshot = ui.snapshot;
     const all = Object.values(snapshot.blocks);
     const composites = all.filter((b) => b.kind === "composite").length;
-    const implemented = all.filter((block) => block.implemented).length;
+    // Only blocks that are code can be implemented, so only they are counted.
+    // A database is not unfinished work.
+    const code = all.filter((block) => !block.architecture && !block.holdsArchitecture);
+    const architecture = all.length - code.length;
+    const implemented = code.filter((block) => block.implemented).length;
     const graph = graphInView();
     const errors = snapshot.diagnostics.filter((d) => d.severity === "error").length;
     const warnings = snapshot.diagnostics.length - errors;
@@ -457,7 +467,14 @@ function renderStatus(): void {
     bar.append(el("span", undefined, snapshot.systems.map((system) => `${system.rootBlock}${system.displayName ? ` (${system.displayName})` : ""}`).join("  ")));
     bar.append(stat("blocks", all.length));
     bar.append(stat("composite", composites));
-    bar.append(stat(snapshot.mode === "visual" ? "linked to code" : "implemented", implemented, implemented === all.length ? "good" : "warn"));
+    bar.append(
+      stat(
+        snapshot.mode === "visual" ? "linked to code" : "implemented",
+        `${implemented}/${code.length}`,
+        implemented === code.length ? "good" : "warn",
+      ),
+    );
+    if (architecture > 0) bar.append(stat("architecture", architecture));
     if (graph) bar.append(stat("buses in view", graph.buses.size));
     bar.append(stat("errors", errors, errors > 0 ? "bad" : undefined));
     bar.append(stat("warnings", warnings, warnings > 0 ? "warn" : undefined));

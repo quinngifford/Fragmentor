@@ -261,6 +261,12 @@ body[data-project="open"] .welcome { display: none; }
 
 .welcome-link:hover { color: var(--signal); border-color: var(--signal-dim); }
 
+/* A mark of its own in the rail for a block that is not code. */
+.node[data-architecture="true"] .glyph { color: var(--effect); }
+
+.btn.tiny { padding: 1px 6px; font-size: 10px; }
+.ptype.bad { color: var(--bad); }
+
 /* ---- blocks ---- */
 
 .block-box { cursor: move; }
@@ -275,6 +281,44 @@ body[data-project="open"] .welcome { display: none; }
 .block-box[data-selected="true"] .block-plate { stroke: var(--signal); stroke-width: 1.8; }
 .block-box[data-boundary="true"] .block-plate { fill: var(--panel); stroke-dasharray: 3 3; }
 .block-head { fill: var(--panel); pointer-events: none; }
+
+/* The rest of the system: a block that stands for something the program talks
+   to rather than something it runs. Amber already marks an effect on this
+   panel, so it marks these, because everything here is outside the pure world
+   the functions live in. They come before the planned rules deliberately: a
+   planned database should read as planned first. */
+.block-box[data-architecture="true"] .block-plate { fill: var(--panel); stroke: #6b5327; }
+.block-box[data-architecture="true"] .block-head { fill: #16130d; }
+.block-box[data-architecture="true"] .block-kind { fill: var(--effect); }
+.block-box[data-architecture="true"] .block-body:hover .block-plate { stroke: var(--effect); }
+
+/* Brought in from the diagram above this one, because something here reaches
+   it. Quieter than the blocks that really live here, and never solid. */
+.block-box[data-referenced="true"] .block-body { opacity: 0.82; }
+.block-box[data-referenced="true"] .block-plate { stroke-dasharray: 2 4; }
+.elsewhere-badge { font-family: var(--mono); font-size: 9px; fill: var(--ink-faint); pointer-events: none; }
+
+/* What a resource holds, drawn down its middle. */
+.exposed-plate { fill: var(--panel-high); stroke: var(--rule); stroke-width: 1; }
+.exposed-name { font-family: var(--mono); font-size: 10px; fill: var(--effect); letter-spacing: 0.04em; pointer-events: none; }
+.exposed-field { font-family: var(--mono); font-size: 9px; fill: var(--ink-dim); pointer-events: none; }
+
+/* An access is an effect rather than a value on a wire, so it is drawn as
+   one: amber, dashed, and pointing the way the data really moves. */
+.access { fill: none; stroke: var(--effect); stroke-width: 1.5; stroke-dasharray: 5 4; opacity: 0.5; }
+.access-arrow { fill: var(--effect); opacity: 0.75; }
+.access-group:hover .access { opacity: 1; stroke-width: 2.5; }
+.access-group[data-selected="true"] .access { opacity: 1; stroke-width: 3; }
+.access-label { font-family: var(--mono); font-size: 9px; fill: var(--effect); opacity: 0.8; pointer-events: none; }
+
+/* A relationship that was already there, rather than a value on its way, so
+   it appears rather than being drawn along its length. */
+.access-group.appearing { animation: fade-in 500ms ease-out backwards; }
+
+/* Gathered from a block inside this one rather than declared here, so it is
+   drawn as the summary it is. */
+.access-group[data-within="true"] .access { opacity: 0.3; }
+.access-group[data-within="true"] .access-label { opacity: 0.5; }
 
 /* Planned: drawn, not built. It has to read as a block of the same kind as
    the others and still be unmistakably not one of them, so it keeps its shape
@@ -337,6 +381,8 @@ body[data-project="open"] .welcome { display: none; }
 .badge.composite { border-color: var(--signal-dim); color: var(--signal); }
 .badge.state { border-color: #3d4a52; color: var(--pending); }
 .badge.state.planned { border-color: var(--rule-bright); color: var(--ink-faint); border-style: dashed; }
+.badge.role { border-color: #6b5327; color: var(--effect); }
+
 
 .responsibility { margin: 0; font-size: 13px; color: var(--ink); }
 
