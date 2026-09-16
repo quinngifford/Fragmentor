@@ -14,6 +14,8 @@ import type { RunOverlay } from "./canvas.js";
 import type { Bus, Graph, Signal } from "./graph.js";
 import { requireSnapshot, ui } from "./state.js";
 import type { Watch, WatchedCall } from "./state.js";
+import { el, section, subsection } from "./dom.js";
+import { codeBlock } from "./highlight.js";
 
 /**
  * Watching a run on the diagram.
@@ -29,13 +31,6 @@ import type { Watch, WatchedCall } from "./state.js";
 let notify: () => void = () => {};
 export function onWatchChange(callback: () => void): void {
   notify = callback;
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
 }
 
 const parentOf = (blockPath: string) => blockPath.split("/").slice(0, -1).join("/");
@@ -185,9 +180,16 @@ function pulsesFor(event: RunEvent, watch: Watch, graph: Graph): string[] {
   return [];
 }
 
+/** The call the run is really stopped at, waiting for the person. Null once it has moved on. */
+function heldCall(watch: Watch | null): WatchedCall | null {
+  if (!watch || watch.outcome || watch.heldId === null) return null;
+  const call = watch.calls.get(watch.heldId);
+  return call?.state === "paused" ? call : null;
+}
+
 function paint(pulses: string[] = []): void {
   const graph = graphInView();
-  applyRunOverlay(ui.watch && graph ? overlayFor(ui.watch, graph) : null, pulses);
+  applyRunOverlay(ui.watch && graph ? overlayFor(ui.watch, graph) : null, pulses, heldCall(ui.watch) !== null);
   renderRunBar();
 }
 
@@ -197,9 +199,42 @@ function paint(pulses: string[] = []): void {
 
 let timer: number | undefined;
 
+/**
+ * How long the run must stay where it is before the canvas goes to it.
+ *
+ * Several calls can be held at once, and letting one go hands the breakpoint
+ * to the next in the queue for a moment, before the step lands where it was
+ * actually going. Following each of those in turn zoomed the canvas in and
+ * straight back out. Waiting for the run to stop moving means the canvas makes
+ * one move, to where the run came to rest.
+ */
+const SETTLE_MS = 420;
+let settle: number | undefined;
+
 function stopPlayback(): void {
   if (timer !== undefined) window.clearTimeout(timer);
   timer = undefined;
+  if (settle !== undefined) window.clearTimeout(settle);
+  settle = undefined;
+}
+
+function followWhenSettled(watch: Watch): void {
+  if (settle !== undefined) window.clearTimeout(settle);
+  const from = ui.view;
+  settle = window.setTimeout(() => {
+    settle = undefined;
+    if (ui.watch !== watch) return;
+    // Still catching up: ask again once the events on hand have been shown.
+    if (watch.played < watch.events.length) {
+      followWhenSettled(watch);
+      return;
+    }
+    // The person opened another diagram while the run was settling. They are
+    // looking at something; the run has waited this long and can wait.
+    if (ui.view !== from) return;
+    const call = heldCall(watch);
+    if (call) follow(watch, call.id);
+  }, SETTLE_MS);
 }
 
 /** How long to linger on an event: long enough to see it, if it can be seen from the diagram on screen. */
@@ -250,9 +285,9 @@ function playNext(watch: Watch): void {
   } while (watch.played < watch.events.length && pace(watch.events[watch.played]!, watch) === 0 && played < 500);
 
   paint(pulses);
-  // Follow the run to where it is held, while it is really held there. A
-  // replay of a finished run stays where the person put it.
-  if (!watch.outcome && watch.heldId !== null && watch.calls.get(watch.heldId)?.state === "paused") follow(watch, watch.heldId);
+  // Follow the run to where it is held, once it has settled there. A replay of
+  // a finished run stays where the person put it.
+  if (heldCall(watch)) followWhenSettled(watch);
 }
 
 function schedule(): void {
@@ -397,11 +432,11 @@ function renderRunBar(): void {
   const blocks = ui.snapshot?.blocks ?? {};
   const name = blocks[watch.blockPath]?.name ?? watch.blockPath;
   // Only a run that is still going can be held; a replay shows pauses as they were.
-  const held = !watch.outcome && watch.heldId !== null ? watch.calls.get(watch.heldId) : undefined;
+  const held = heldCall(watch);
   const state = el("span", "run-state");
   const buttons: HTMLButtonElement[] = [];
 
-  if (held?.state === "paused") {
+  if (held) {
     const turns = callsOf(watch, held.block);
     const which = turns.length > 1 ? ` (call ${turns.indexOf(held) + 1} of ${turns.length})` : "";
     state.textContent = `Paused before ${blocks[held.block]?.name ?? held.block}${which}`;
@@ -458,8 +493,7 @@ const STILL_GOING: Partial<Record<WatchedCall["state"], string>> = {
 export function watchSection(block: SnapshotBlock): HTMLElement | null {
   if (!canWatch(block)) return null;
 
-  const node = el("section", "section watch-section");
-  node.append(el("h3", undefined, "Watching"));
+  const node = section("Watching", "watch-section");
 
   const toggle = el("label", "watch-toggle");
   const box = el("input");
@@ -503,11 +537,18 @@ export function watchSection(block: SnapshotBlock): HTMLElement | null {
     node.append(picker);
   }
 
-  node.append(el("h4", "watch-label", call.state === "paused" ? "About to receive" : "Received"), el("pre", "code", json(call.input)));
+  const received = subsection(call.state === "paused" ? "About to receive" : "Received");
+  received.append(codeBlock(json(call.input), "json"));
+  node.append(received);
+
   if (call.state === "returned") {
-    node.append(el("h4", "watch-label good", "Returned"), el("pre", "code", json(call.output)));
+    const returned = subsection("Returned", "good");
+    returned.append(codeBlock(json(call.output), "json"));
+    node.append(returned);
   } else if (call.state === "threw") {
-    node.append(el("h4", "watch-label bad", "Failed"), el("pre", "code", call.error ?? ""));
+    const failed = subsection("Failed", "bad");
+    failed.append(el("pre", "code", call.error ?? ""));
+    node.append(failed);
   } else {
     node.append(el("p", "bench-note", STILL_GOING[call.state] ?? ""));
   }
@@ -521,12 +562,14 @@ export function busWatchSection(bus: Bus, graph: Graph): HTMLElement | null {
   if (!watch || !frame) return null;
 
   const children = childCalls(watch, graph, frame);
-  const node = el("section", "section watch-section");
-  node.append(el("h3", undefined, "In the run on the diagram"));
+  const node = section("In the run on the diagram", "watch-section");
   for (const signal of bus.signals) {
     const value = carried(signal, frame, children, graph);
-    node.append(el("h4", "watch-label", `${signal.sourcePort} → ${signal.targetPort}`));
-    node.append(value.known ? el("pre", "code", json(value.value)) : el("p", "bench-note", "Nothing has come down this wire yet."));
+    const part = subsection(`${signal.sourcePort} → ${signal.targetPort}`);
+    part.append(
+      value.known ? codeBlock(json(value.value), "json") : el("p", "bench-note", "Nothing has come down this wire yet."),
+    );
+    node.append(part);
   }
   return node;
 }

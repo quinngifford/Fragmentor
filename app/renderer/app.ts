@@ -1,6 +1,7 @@
 import type { ProjectLoad } from "../ipc.js";
-import { requireSnapshot, ui } from "./state.js";
+import { INSPECTOR_WIDTH, rememberInspectorWidth, requireSnapshot, ui } from "./state.js";
 import {
+  clearCanvas,
   fitToView,
   fitWhenReady,
   graphInView,
@@ -52,6 +53,23 @@ let treeBefore: Set<string> | null = null;
 /* -------------------------------------------------------------------------- */
 
 /**
+ * Everything the window was holding about one project. Forgotten whenever a
+ * different project takes its place, and when one is put away.
+ */
+function forgetProject(): void {
+  ui.edits.clear();
+  ui.benchInputs.clear();
+  ui.runs.clear();
+  ui.caseResults.clear();
+  ui.caseNames.clear();
+  ui.status = null;
+  ui.selection.clear();
+  ui.selectedBus = null;
+  // A run, and the places runs pause, belong to the project they were set in.
+  resetWatching();
+}
+
+/**
  * Shows what was read from a project folder. `opening` is true when the
  * person chose the folder, and false when it is being read again because
  * something changed it on disk — usually the agent.
@@ -74,11 +92,7 @@ function show(load: ProjectLoad, opening: boolean): void {
   document.body.dataset.project = "open";
 
   if (fresh) {
-    ui.edits.clear();
-    ui.benchInputs.clear();
-    ui.runs.clear();
-    ui.caseResults.clear();
-    ui.status = null;
+    forgetProject();
 
     // In a project the agent has not started on, everything it writes is new
     // and arrives as it is written. In any other, what is there already is
@@ -86,8 +100,6 @@ function show(load: ProjectLoad, opening: boolean): void {
     const empty = load.snapshot === null || load.snapshot.systems.length === 0;
     resetArrivals(empty);
     treeBefore = empty ? new Set() : null;
-    // A run, and the places runs pause, belong to the project they were set in.
-    resetWatching();
   }
 
   if (!load.snapshot) {
@@ -160,6 +172,35 @@ async function openPath(dir: string): Promise<void> {
     return;
   }
   show(result.value, true);
+}
+
+/**
+ * Puts the project away and shows the start screen again. Nothing is written:
+ * closing is only about this window, and everything the project holds — its
+ * layout, its tests, its code — is already on disk.
+ */
+async function closeProject(): Promise<void> {
+  if (!ui.dir) return;
+
+  // Stop hearing about a folder no longer on screen, so a busy agent working
+  // in it cannot pull a closed project back up.
+  latestRead += 1;
+  await window.fragmentor.closeProject();
+
+  forgetProject();
+  ui.dir = null;
+  ui.snapshot = null;
+  ui.loadError = null;
+  ui.waiting = false;
+  ui.view = PROJECT_VIEW;
+  ui.userAdjusted = false;
+  treeBefore = null;
+
+  clearCanvas();
+  delete document.body.dataset.project;
+  render();
+  // The project just closed is now the most recent one, so the list is read again.
+  void renderWelcome();
 }
 
 /** Changes arrive in bursts, so only the most recent read may update the screen. */
@@ -255,16 +296,68 @@ function renderPanes(): void {
   const columns: string[] = [];
   if (ui.showRail) columns.push("232px");
   columns.push("minmax(0, 1fr)");
-  if (ui.showInspector) columns.push("360px");
+  if (ui.showInspector) columns.push("5px", `${Math.round(ui.inspectorWidth)}px`);
 
   element("panes").style.gridTemplateColumns = columns.join(" ");
+
+  const handle = element("inspector-splitter");
+  handle.setAttribute("aria-valuenow", String(Math.round(ui.inspectorWidth)));
+  handle.setAttribute("aria-valuemin", String(INSPECTOR_WIDTH.least));
+  handle.setAttribute("aria-valuemax", String(INSPECTOR_WIDTH.most));
+
   element("rail").hidden = !ui.showRail;
   element("inspector-pane").hidden = !ui.showInspector;
+  element("inspector-splitter").hidden = !ui.showInspector;
   element("toggle-rail").setAttribute("aria-pressed", String(ui.showRail));
   element("toggle-inspector").setAttribute("aria-pressed", String(ui.showInspector));
 
+  // Only worth offering with something open to close.
+  element("close-project").hidden = !ui.dir;
   // A visual project's code is the person's own, so there is nothing to generate.
   element("generate-code").hidden = ui.snapshot?.mode !== "structured";
+}
+
+/** Dragging the edge between the diagram and the inspector, or nudging it with the arrow keys. */
+function setUpSplitter(): void {
+  const handle = element("inspector-splitter");
+
+  const setWidth = (width: number) => {
+    ui.inspectorWidth = Math.min(INSPECTOR_WIDTH.most, Math.max(INSPECTOR_WIDTH.least, width));
+    renderPanes();
+  };
+
+  handle.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    handle.dataset.dragging = "true";
+    document.body.dataset.resizing = "true";
+
+    // Tracked on the window, as dragging a block is: the pointer leaves the
+    // handle the moment it starts moving.
+    const move = (at: PointerEvent) => {
+      if (at.pointerId === event.pointerId) setWidth(window.innerWidth - at.clientX);
+    };
+    const stop = (up: PointerEvent) => {
+      if (up.pointerId !== event.pointerId) return;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      delete handle.dataset.dragging;
+      delete document.body.dataset.resizing;
+      rememberInspectorWidth(ui.inspectorWidth);
+    };
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  });
+
+  handle.addEventListener("keydown", (event) => {
+    const step = event.key === "ArrowLeft" ? 24 : event.key === "ArrowRight" ? -24 : 0;
+    if (step === 0) return;
+    event.preventDefault();
+    setWidth(ui.inspectorWidth + step);
+    rememberInspectorWidth(ui.inspectorWidth);
+  });
 }
 
 function renderCrumbs(): void {
@@ -449,6 +542,7 @@ function wireToolbar(): void {
   });
   element("new-project").addEventListener("click", () => void newProject());
   element("open-project").addEventListener("click", () => void chooseProject());
+  element("close-project").addEventListener("click", () => void closeProject());
   element("generate-code").addEventListener("click", () => void generateCode());
   element("reload-project").addEventListener("click", () => void reload());
 
@@ -488,6 +582,7 @@ try {
     if (dir === ui.dir) void reload();
   });
   wireToolbar();
+  setUpSplitter();
   setUpCanvasGestures();
   watchCanvasSize();
   setUpWatching();

@@ -4,6 +4,8 @@ import type { TestCase } from "../../src/run/cases.js";
 import type { CaseResult } from "../../src/run/run.js";
 import { requireSnapshot, ui } from "./state.js";
 import { runWatched } from "./watch.js";
+import { el, section, subsection } from "./dom.js";
+import { codeBlock } from "./highlight.js";
 
 /**
  * The test bench: enter values, run the block, see what came back.
@@ -20,17 +22,6 @@ import { runWatched } from "./watch.js";
 let notify: () => void = () => {};
 export function onBenchChange(callback: () => void): void {
   notify = callback;
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className?: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
 }
 
 /** A value of this type that a person can sensibly start from. */
@@ -166,8 +157,8 @@ function draftFor(block: SnapshotBlock): Draft {
 }
 
 function problemList(title: string, problems: string[], tone: string): HTMLElement {
-  const wrap = el("div", "run-problems");
-  wrap.append(el("h4", tone, title));
+  const wrap = subsection(title, tone);
+  wrap.classList.add("run-problems");
   const list = el("ul");
   for (const problem of problems) list.append(el("li", undefined, problem));
   wrap.append(list);
@@ -190,8 +181,9 @@ function resultPanel(block: SnapshotBlock): HTMLElement | null {
   if (!outcome.ok) {
     panel.append(problemList(outcome.stopped ? "The run was stopped" : "The block failed", [outcome.error ?? "No reason given."], "bad"));
   } else {
-    const output = el("pre", "code", JSON.stringify(outcome.output, null, 2));
-    panel.append(el("h4", "good", `Output — ${outcome.durationMs} ms`), output);
+    const output = subsection(`Output — ${outcome.durationMs} ms`, "good");
+    output.append(codeBlock(JSON.stringify(outcome.output, null, 2) ?? "nothing", "json"));
+    panel.append(output);
   }
 
   if (outcome.outputProblems.length > 0) {
@@ -199,7 +191,9 @@ function resultPanel(block: SnapshotBlock): HTMLElement | null {
   }
 
   if (outcome.logs.length > 0) {
-    panel.append(el("h4", undefined, "Logged"), el("pre", "code", outcome.logs.join("\n")));
+    const logged = subsection("Logged");
+    logged.append(el("pre", "code", outcome.logs.join("\n")));
+    panel.append(logged);
   }
 
   return panel;
@@ -293,8 +287,8 @@ function caseRow(block: SnapshotBlock, testCase: TestCase, result: CaseResult | 
 }
 
 function newCaseBox(block: SnapshotBlock): HTMLElement {
-  const box = el("div", "case-new");
-  box.append(el("h4", undefined, "Save the current values as a test"));
+  const box = subsection("Save the current values as a test");
+  box.classList.add("case-new");
 
   const lastRun = ui.runs.get(block.path);
   const canExpect = Boolean(lastRun?.ok);
@@ -350,8 +344,7 @@ function newCaseBox(block: SnapshotBlock): HTMLElement {
 }
 
 function casesSection(block: SnapshotBlock): HTMLElement {
-  const node = el("section", "section");
-  node.append(el("h3", undefined, "Saved tests"));
+  const node = section("Saved tests");
 
   const results = ui.caseResults.get(block.path);
   const byName = new Map((results ?? []).map((result) => [result.name, result]));
@@ -416,8 +409,7 @@ function casesSection(block: SnapshotBlock): HTMLElement {
 }
 
 export function benchSection(block: SnapshotBlock): HTMLElement {
-  const node = el("section", "section bench major");
-  node.append(el("h3", undefined, "Test bench"));
+  const node = section("Test bench", "bench");
 
   const draft = draftFor(block);
 

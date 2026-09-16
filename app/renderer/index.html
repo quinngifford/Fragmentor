@@ -17,6 +17,7 @@
         <div class="toolbar">
           <button class="toggle" id="new-project" title="Start a project in an empty folder, for a coding agent to build">New project…</button>
           <button class="toggle" id="open-project">Open project…</button>
+          <button class="toggle" id="close-project" title="Close this project and go back to the Fragmentor start screen">Close project</button>
           <button class="toggle" id="reload-project" title="Re-read the project from disk. Fragmentor also does this whenever a file in it changes.">Reload</button>
           <button class="toggle" id="generate-code" title="Regenerate every block's contract">Generate code</button>
           <span class="toolbar-sep"></span>
@@ -56,6 +57,15 @@
             <div class="welcome-body" id="welcome-body"></div>
           </section>
         </div>
+
+        <div
+          class="splitter"
+          id="inspector-splitter"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Drag to change how wide the inspector is"
+          tabindex="0"
+        ></div>
 
         <aside class="inspector" id="inspector-pane">
           <div class="pane-title">Inspector</div>

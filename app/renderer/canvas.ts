@@ -56,6 +56,8 @@ let currentLayout: Map<string, Point> | null = null;
 /** The drawn elements, so they can be updated rather than replaced. */
 const nodeElements = new Map<string, SVGGElement>();
 const busElements = new Map<string, { group: SVGGElement; paths: SVGPathElement[]; label: SVGTextElement }>();
+/** The repeating pulse on each wire that is holding a value while a run is paused. */
+const heldPulses = new Map<string, SVGPathElement>();
 
 export function graphInView(): Graph | null {
   return currentGraph;
@@ -121,6 +123,7 @@ export function applyPositions(): void {
     if (!geometry) continue;
 
     for (const path of drawn.paths) path.setAttribute("d", geometry.path);
+    heldPulses.get(id)?.setAttribute("d", geometry.path);
     drawn.label.setAttribute("x", String(geometry.middle.x));
     drawn.label.setAttribute("y", String(geometry.middle.y));
   }
@@ -156,10 +159,12 @@ export interface RunOverlay {
 }
 
 /**
- * Shows a run on what is already drawn. `pulses` are buses that data has
- * just travelled along, each sent a pulse of light from end to end.
+ * Shows a run on what is already drawn. `pulses` are buses that data has just
+ * travelled along, each sent a pulse of light from end to end. While the run
+ * is `held` at a breakpoint nothing else moves, so the wires that are holding
+ * a value keep pulsing: a paused diagram still shows where the data is.
  */
-export function applyRunOverlay(overlay: RunOverlay | null, pulses: string[] = []): void {
+export function applyRunOverlay(overlay: RunOverlay | null, pulses: string[] = [], held = false): void {
   for (const [key, group] of nodeElements) {
     const run = overlay?.nodes.get(key);
     if (run) group.dataset.run = run.state;
@@ -175,6 +180,8 @@ export function applyRunOverlay(overlay: RunOverlay | null, pulses: string[] = [
   }
 
   const layer = element("pulse-layer");
+  applyHeldPulses(overlay, held, layer);
+
   for (const id of pulses) {
     const line = busElements.get(id)?.paths[0];
     if (!line) continue;
@@ -187,6 +194,33 @@ export function applyRunOverlay(overlay: RunOverlay | null, pulses: string[] = [
     pulse.addEventListener("animationend", () => pulse.remove());
     // Where animation is turned off, nothing ends it.
     window.setTimeout(() => pulse.remove(), 1500);
+  }
+}
+
+/** Keeps a slow repeating pulse on every wire carrying a value, for as long as the run is held. */
+function applyHeldPulses(overlay: RunOverlay | null, held: boolean, layer: Element): void {
+  const carrying = held && overlay ? new Set(overlay.buses.keys()) : new Set<string>();
+
+  for (const [id, pulse] of heldPulses) {
+    if (carrying.has(id)) continue;
+    pulse.remove();
+    heldPulses.delete(id);
+  }
+
+  for (const id of carrying) {
+    if (heldPulses.has(id)) continue;
+    const line = busElements.get(id)?.paths[0];
+    if (!line) continue;
+    const pulse = svgEl("path", {
+      d: line.getAttribute("d") ?? "",
+      class: "bus-pulse held",
+      stroke: line.getAttribute("stroke") ?? "#4fe38f",
+      pathLength: 1,
+    }, layer);
+    // Started part way in, and each wire a little behind the last, so the
+    // diagram does not march in step.
+    pulse.style.animationDelay = `${-330 * heldPulses.size}ms`;
+    heldPulses.set(id, pulse);
   }
 }
 
@@ -293,6 +327,10 @@ function tween(duration: number, step: (t: number) => void, current: () => boole
 let moves = 0;
 let fits = 0;
 let moving = false;
+/** The diagram a move under way is heading for, so a second ask for it is not a second move. */
+let movingTo: string | null = null;
+/** What to do when that move arrives. A later ask for the same diagram replaces it. */
+let onArrival: () => void = () => {};
 
 function diagramBounds(): Box | null {
   if (!currentGraph || !currentLayout) return null;
@@ -381,24 +419,33 @@ function nodeBox(key: string): Box | null {
  * diagrams simply fades.
  */
 async function moveTo(path: string, arrive: () => void): Promise<void> {
+  // Already on the way there. Restarting the move would zoom back to where it
+  // began and set off again, which is all the eye would see of it.
+  if (movingTo === path) {
+    onArrival = arrive;
+    return;
+  }
+
   const from = ui.view;
   const id = ++moves;
   fits += 1;
   const current = () => id === moves;
   const svg = element("canvas-svg");
 
+  onArrival = arrive;
   const change = () => {
     ui.view = path;
     ui.selection.clear();
     ui.selectedBus = null;
     ui.userAdjusted = false;
-    arrive();
+    onArrival();
     notify({ redraw: true });
   };
 
   const { width, height } = canvasSize();
   if (path === from || lessMotion() || !currentGraph || !width || !height) {
     moving = false;
+    movingTo = null;
     svg.classList.remove("moving");
     setFade(1);
     change();
@@ -409,6 +456,7 @@ async function moveTo(path: string, arrive: () => void): Promise<void> {
   const down = isInside(path, from);
   const up = isInside(from, path);
   moving = true;
+  movingTo = path;
   svg.classList.add("moving");
 
   // Leave the diagram on screen: into the block the new one is inside, or
@@ -420,6 +468,8 @@ async function moveTo(path: string, arrive: () => void): Promise<void> {
     setCamera(between(start, leaveTo, t));
     setFade(1 - t * t);
   }, current);
+  // Taken over by a newer move, which is now the one saying where the canvas
+  // goes and when it is no longer moving.
   if (!left) return;
 
   change();
@@ -428,6 +478,7 @@ async function moveTo(path: string, arrive: () => void): Promise<void> {
   const target = fitCamera();
   if (!target) {
     moving = false;
+    movingTo = null;
     svg.classList.remove("moving");
     setFade(1);
     return;
@@ -443,6 +494,7 @@ async function moveTo(path: string, arrive: () => void): Promise<void> {
 
   if (current()) {
     moving = false;
+    movingTo = null;
     svg.classList.remove("moving");
     setFade(1);
   }
@@ -502,12 +554,14 @@ export function resetArrivals(projectIsEmpty: boolean): void {
   everythingArrives = projectIsEmpty;
 }
 
-function clearCanvas(): void {
+/** Takes the diagram off the canvas, as when a project is closed. */
+export function clearCanvas(): void {
   element("bus-layer").replaceChildren();
   element("pulse-layer").replaceChildren();
   element("node-layer").replaceChildren();
   nodeElements.clear();
   busElements.clear();
+  heldPulses.clear();
   currentGraph = null;
   currentLayout = null;
   document.querySelectorAll(".canvas-empty").forEach((el) => el.remove());

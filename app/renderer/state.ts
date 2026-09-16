@@ -58,6 +58,8 @@ export interface UiState {
   panY: number;
   showRail: boolean;
   showInspector: boolean;
+  /** How wide the inspector is, in pixels. Dragged by hand and kept between sessions. */
+  inspectorWidth: number;
   codeTab: "impl" | "contract";
   /** Once the view has been moved by hand, stop refitting it automatically. */
   userAdjusted: boolean;
@@ -87,6 +89,30 @@ export interface UiState {
   status: { text: string; tone: "info" | "good" | "bad" } | null;
 }
 
+const WIDTH_KEY = "fragmentor.inspectorWidth";
+
+/** How wide the inspector may be dragged. Narrow enough to read, wide enough for code. */
+export const INSPECTOR_WIDTH = { least: 280, most: 900, standard: 360 };
+
+function readWidth(): number {
+  try {
+    const stored = Number(localStorage.getItem(WIDTH_KEY));
+    if (!Number.isFinite(stored) || stored <= 0) return INSPECTOR_WIDTH.standard;
+    return Math.min(INSPECTOR_WIDTH.most, Math.max(INSPECTOR_WIDTH.least, stored));
+  } catch {
+    return INSPECTOR_WIDTH.standard;
+  }
+}
+
+/** Kept in this browser profile, like the bus colours: it is how someone likes to look at a project, not part of it. */
+export function rememberInspectorWidth(width: number): void {
+  try {
+    localStorage.setItem(WIDTH_KEY, String(Math.round(width)));
+  } catch {
+    // Storage can be unavailable; the width simply starts from the default next time.
+  }
+}
+
 export const ui: UiState = {
   snapshot: null,
   dir: null,
@@ -100,6 +126,7 @@ export const ui: UiState = {
   panY: 30,
   showRail: true,
   showInspector: true,
+  inspectorWidth: readWidth(),
   codeTab: "impl",
   userAdjusted: false,
   edits: new Map(),

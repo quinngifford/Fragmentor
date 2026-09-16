@@ -16,6 +16,7 @@ export const CHANNELS = {
   chooseProject: "project:choose",
   newProject: "project:new",
   loadProject: "project:load",
+  closeProject: "project:close",
   readProject: "project:read",
   projectChanged: "project:changed",
   recentProjects: "project:recent",
@@ -88,6 +89,8 @@ export interface FragmentorApi {
   newProject(settings: NewProjectSettings): Promise<Result<ProjectLoad | null>>;
   /** Opens a project: remembers it, starts watching it, and reads it. */
   loadProject(dir: string): Promise<Result<ProjectLoad>>;
+  /** Stops watching whatever this window had open, for going back to the start screen. */
+  closeProject(): Promise<Result<null>>;
   /** Reads the open project again, after something changed it. */
   readProject(dir: string): Promise<Result<ProjectLoad>>;
   /** Called with the project's folder whenever files in it change on disk. */

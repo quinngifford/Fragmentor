@@ -11,6 +11,7 @@ const CHANNELS = {
   chooseProject: "project:choose",
   newProject: "project:new",
   loadProject: "project:load",
+  closeProject: "project:close",
   readProject: "project:read",
   projectChanged: "project:changed",
   recentProjects: "project:recent",
@@ -31,6 +32,7 @@ contextBridge.exposeInMainWorld("fragmentor", {
   chooseProject: () => ipcRenderer.invoke(CHANNELS.chooseProject),
   newProject: (settings) => ipcRenderer.invoke(CHANNELS.newProject, settings),
   loadProject: (dir) => ipcRenderer.invoke(CHANNELS.loadProject, dir),
+  closeProject: () => ipcRenderer.invoke(CHANNELS.closeProject),
   readProject: (dir) => ipcRenderer.invoke(CHANNELS.readProject, dir),
   // Only the data is passed on, never the event, which would expose the sender.
   onProjectChanged: (callback) => {

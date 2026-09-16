@@ -16,9 +16,22 @@
   --effect: #e2a54b;
   --pending: #7a8b96;
   --bad: #e3778c;
+  /* Code colours. Quiet enough to sit beside the diagram, and distinct enough
+     to be read apart at 11px. None of them is the signal green, which on this
+     panel means something else. */
+  --code-comment: #52655f;
+  --code-keyword: #7aa6d6;
+  --code-string: #a8d68f;
+  --code-number: #d9a86c;
+  --code-type: #7fd1c4;
+  --code-name: #d6cf8a;
+  --code-punct: #77908a;
   --radius: 3px;
   --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
   --mono: "Cascadia Mono", Consolas, ui-monospace, "SF Mono", Menlo, monospace;
+  /* Scrollbars and the browser's own controls are drawn dark to match. A pale
+     scrollbar down the side of a code box was the loudest thing on the panel. */
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -96,11 +109,22 @@ body {
 
 /* ---- panes ---- */
 
-.panes { display: grid; min-height: 0; grid-template-columns: 232px minmax(0, 1fr) 360px; }
+.panes { display: grid; min-height: 0; grid-template-columns: 232px minmax(0, 1fr) 5px 360px; }
 
 .rail, .inspector { background: var(--panel); overflow-y: auto; min-height: 0; }
 .rail { border-right: 1px solid var(--rule); }
 .inspector { border-left: 1px solid var(--rule); }
+
+/* The handle between the diagram and the inspector. Thin, and lit while it is
+   being used, so it reads as an edge rather than a gap. */
+.splitter {
+  cursor: col-resize;
+  background: var(--rule);
+  touch-action: none;
+}
+
+.splitter:hover, .splitter[data-dragging="true"] { background: var(--signal-dim); }
+body[data-resizing="true"] { cursor: col-resize; }
 
 .pane-title {
   font-size: 10px;
@@ -241,7 +265,14 @@ body[data-project="open"] .welcome { display: none; }
 
 .block-box { cursor: move; }
 .block-plate { fill: var(--panel-high); stroke: var(--rule-bright); stroke-width: 1; }
-.block-box:hover .block-plate { stroke: var(--signal-dim); }
+
+/* The breakpoint sits beside the block, inside the same group, so anything
+   that lights up the whole group — hover, or a focus ring around it — would
+   reach out and take the breakpoint in with it. Both are drawn on the plate
+   instead, which is the box itself. */
+.block-body:hover .block-plate { stroke: var(--signal-dim); }
+.block-box:focus-visible { outline: none; }
+.block-box:focus-visible .block-plate { stroke: var(--signal); stroke-width: 2; }
 .block-box[data-selected="true"] .block-plate { stroke: var(--signal); stroke-width: 1.8; }
 .block-box[data-boundary="true"] .block-plate { fill: var(--panel); stroke-dasharray: 3 3; }
 .block-head { fill: var(--panel); pointer-events: none; }
@@ -292,14 +323,85 @@ body[data-project="open"] .welcome { display: none; }
 
 .responsibility { margin: 0; font-size: 13px; color: var(--ink); }
 
-.section h3 {
-  margin: 0 0 8px;
+/* The panel reads as a ladder: the subject, the areas it is divided into, the
+   sections in each area, and the named parts of a section. Each rung is
+   quieter and smaller than the one above it, so what sits under what is never
+   in doubt. */
+
+.group { display: flex; flex-direction: column; gap: 16px; }
+
+.group-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+/* A short bar in signal colour marks the start of an area, and a rule runs
+   from the title to the edge of the panel. */
+.group-title::before {
+  content: "";
+  width: 3px;
+  height: 13px;
+  border-radius: 1px;
+  background: var(--signal-dim);
+  flex: none;
+}
+
+.group-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--rule-bright);
+}
+
+.section { display: flex; flex-direction: column; gap: 8px; }
+
+.section > h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--ink-faint);
-  font-weight: 500;
+  color: var(--ink-dim);
+  font-weight: 600;
 }
+
+.section > h4::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--rule-bright);
+}
+
+/* A named part of a section: its heading is the quietest of the three, and
+   what it holds is indented under it so the grouping is visible. */
+.subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-left: 10px;
+  border-left: 1px solid var(--rule);
+}
+
+.subsection h5 {
+  margin: 0;
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ink-faint);
+}
+
+.subsection h5.good { color: var(--signal); }
+.subsection h5.bad { color: var(--bad); }
 
 .ports { display: flex; flex-direction: column; gap: 8px; }
 
@@ -339,28 +441,75 @@ pre.code {
   white-space: pre;
 }
 
-.code-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.code-tabs { display: flex; gap: 4px; }
 
-.code-editor {
-  width: 100%;
-  min-height: 260px;
-  resize: vertical;
+.t-comment { color: var(--code-comment); font-style: italic; }
+.t-keyword { color: var(--code-keyword); }
+.t-string { color: var(--code-string); }
+.t-number { color: var(--code-number); }
+.t-type { color: var(--code-type); }
+.t-name { color: var(--code-name); }
+.t-punct { color: var(--code-punct); }
+.t-key { color: var(--code-type); }
+
+pre.code-view { max-height: 420px; overflow: auto; }
+
+/*
+ * A code box that can be typed in and is still coloured.
+ *
+ * The coloured copy and the box itself sit in the same grid cell, in the same
+ * font at the same size, so the text lines up character for character. The box
+ * shows nothing but its caret and its selection; everything read is the copy
+ * underneath. The box is the one that scrolls and the one that can be resized,
+ * and the copy is told to follow it.
+ */
+.code-edit { position: relative; }
+
+.code-edit-view,
+.code-edit-input {
+  margin: 0;
   font-family: var(--mono);
   font-size: 11px;
   line-height: 1.6;
-  background: var(--ground);
+  padding: 10px;
   border: 1px solid var(--rule-bright);
   border-radius: var(--radius);
-  color: var(--ink);
-  padding: 10px;
   white-space: pre;
   overflow-wrap: normal;
-  overflow-x: auto;
   tab-size: 2;
 }
 
-.code-editor[readonly] { color: var(--ink-dim); }
-.code-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+/* Taken out of the flow, so the box is the one that decides how tall this is
+   and the copy simply fills it. Left in the flow, the copy would be as tall as
+   the whole file and the box would be stretched to match it. */
+.code-edit-view {
+  position: absolute;
+  inset: 0;
+  background: var(--ground);
+  color: var(--ink);
+  overflow: hidden;
+  pointer-events: none;
+  /* The box has a scrollbar and the copy does not, so both keep room for one
+     or the coloured text would run a scrollbar's width past the box's. */
+  scrollbar-gutter: stable;
+}
+
+.code-edit-input {
+  display: block;
+  width: 100%;
+  min-height: 260px;
+  height: 260px;
+  resize: vertical;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--signal);
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.code-edit-input::selection { background: rgba(79, 227, 143, 0.22); color: transparent; }
+.code-edit-input:focus-visible { outline: 1px solid var(--signal-dim); outline-offset: 0; }
+.code-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 .swatches { display: flex; gap: 6px; flex-wrap: wrap; }
 
@@ -517,6 +666,17 @@ pre.code {
   to { stroke-dashoffset: -1; }
 }
 
+/* While a run is held at a breakpoint nothing else on the diagram moves. The
+   wires that are holding a value go on flowing, so the paused diagram still
+   shows where the data is. Slower and fainter than a pulse in flight: this is
+   data waiting, not data arriving. */
+.bus-pulse.held {
+  stroke-width: 4;
+  opacity: 0.75;
+  stroke-dasharray: 0.06 0.94;
+  animation: pulse-travel 2200ms linear infinite;
+}
+
 /* A breakpoint sits beside a block's name: faint on hover, red when set. */
 .breakpoint-hit { fill: transparent; cursor: pointer; }
 .breakpoint-dot { fill: transparent; stroke: transparent; stroke-width: 1.5; pointer-events: none; }
@@ -564,22 +724,10 @@ pre.code {
 .run-btn:hover { color: var(--ink); background: var(--panel-high); }
 .run-btn:disabled { color: var(--ink-faint); cursor: default; background: none; }
 
-.watch-section { display: flex; flex-direction: column; gap: 8px; }
 .watch-toggle { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--ink-dim); cursor: pointer; }
 .watch-toggle input { margin: 0; accent-color: var(--bad); }
 .call-picker { display: flex; gap: 8px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
 
-.watch-label {
-  margin: 4px 0 0;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-weight: 500;
-  color: var(--ink-faint);
-}
-
-.watch-label.good { color: var(--signal); }
-.watch-label.bad { color: var(--bad); }
 .watch-section pre.code { max-height: 240px; overflow: auto; white-space: pre-wrap; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -601,21 +749,7 @@ pre.code {
 
 /* ---- test bench results ---- */
 
-.run-result { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
-
-.run-result h4, .run-problems h4 {
-  margin: 0;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-weight: 500;
-  color: var(--ink-faint);
-}
-
-.run-result h4.good, .run-problems h4.good { color: var(--signal); }
-.run-result h4.bad, .run-problems h4.bad { color: var(--bad); }
-
-.run-problems { display: flex; flex-direction: column; gap: 6px; }
+.run-result { display: flex; flex-direction: column; gap: 10px; margin-top: 2px; }
 
 .run-problems ul {
   margin: 0;
@@ -632,14 +766,10 @@ pre.code {
 
 /* ---- inspector section divisions ---- */
 
-/* Only the three big areas are divided — what the block is, its code, and its
-   tests. A rule between every subsection made the panel look like a table. */
-.inspector-body > .section.major {
-  border-top: 1px solid var(--rule-bright);
-  padding-top: 18px;
-  margin-top: 4px;
-}
-
+/* Only the areas are divided, and the divider is the space around the area
+   title rather than a rule of its own: a rule between every section made the
+   panel look like a table. */
+.inspector-body > .group { padding-top: 10px; margin-top: 4px; }
 .inspector-body > .insp-head { padding-bottom: 2px; }
 
 /* ---- saved tests ---- */
@@ -694,23 +824,12 @@ pre.code {
 
 .case-actions button:hover { color: var(--ink); background: var(--panel-high); }
 
-.case-new {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.subsection.case-new {
   padding: 10px;
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   background: var(--ground);
-}
-
-.case-new > h4 {
-  margin: 0;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-weight: 500;
-  color: var(--ink-faint);
+  gap: 8px;
 }
 
 .case-new-row { display: flex; gap: 8px; align-items: center; }

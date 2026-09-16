@@ -294,6 +294,13 @@ function registerHandlers(): void {
     }
   });
 
+  // Going back to the start screen. Nothing is written: the window simply
+  // stops hearing about a folder it is no longer showing.
+  ipcMain.handle(CHANNELS.closeProject, async (event): Promise<Result<null>> => {
+    stopWatching(event.sender.id);
+    return ok(null);
+  });
+
   ipcMain.handle(CHANNELS.readProject, async (_event, dir: string): Promise<Result<ProjectLoad>> => {
     try {
       return ok(await readProject(dir));
@@ -497,7 +504,7 @@ const INTERACTIONS = `
 
   // Editing a block's code and having it reach the disk is the whole point
   // of this being an application rather than a drawing, so check it.
-  const editor = () => document.querySelector(".code-editor");
+  const editor = () => document.querySelector(".code-edit-input");
   const saveButton = () => document.querySelector(".code-foot .btn");
   const statusText = () => text("#status");
 
@@ -518,6 +525,23 @@ const INTERACTIONS = `
     box.value = value;
     box.dispatchEvent(new Event("input", { bubbles: true }));
   };
+
+  // However long the file, the box keeps its own size and scrolls inside
+  // itself: the coloured copy behind it must not stretch it to the whole file.
+  type(original + "\\n// a very long file".repeat(300));
+  const box = editor();
+  const view = document.querySelector(".code-edit-view");
+  const boxBounds = box.getBoundingClientRect();
+  const viewBounds = view.getBoundingClientRect();
+  const boxKeepsSize = boxBounds.height < 500 && box.scrollHeight > box.clientHeight;
+  // The copy has to sit exactly where the box does, or the colours would drift
+  // off the letters they belong to.
+  const copyLinesUp =
+    Math.abs(boxBounds.top - viewBounds.top) < 1 &&
+    Math.abs(boxBounds.left - viewBounds.left) < 1 &&
+    Math.abs(boxBounds.height - viewBounds.height) < 1 &&
+    box.clientWidth === view.clientWidth;
+  type(original);
 
   // Each save is followed by a pause long enough for the window to hear about
   // its own write and reload, so later steps do not race it.
@@ -647,6 +671,8 @@ const INTERACTIONS = `
   return {
     stage: "opened",
     bootError: text(".boot-error") || null,
+    boxKeepsSize,
+    copyLinesUp,
     ...drawn,
     ran,
     tests,
@@ -681,6 +707,10 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       value("interface", "stage") === "opened" && !value("interface", "bootError") && Number(value("interface", "blocks")) > 0,
     ],
     ["a file that has only been opened is not reported as edited", value("interface", "startsSaved") === true],
+    [
+      "the code box keeps its own size and its colouring sits on the letters",
+      value("interface", "boxKeepsSize") === true && value("interface", "copyLinesUp") === true,
+    ],
     [
       "code saved from the window reaches the disk",
       value("interface", "savedToDisk") === true && value("interface", "restoredCleanly") === true,
@@ -725,6 +755,27 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("stopped", "canReplay") === true,
     ],
     [
+      "the inspector can be dragged wider",
+      Number(value("widened", "to")) >= Number(value("widened", "from")) + 150,
+    ],
+    [
+      "wires holding a value keep flowing while a run is held",
+      Number(value("paused", "flowing")) >= 1,
+    ],
+    [
+      "stepping moves the canvas into the block once, and leaves it there",
+      value("stepped", "stepped") === true &&
+        Number(value("stepped", "moves")) <= 1 &&
+        /score-posting/.test(String(value("stepped", "ended"))),
+    ],
+    [
+      "a project can be closed, which shows the start screen again",
+      value("closed", "back") === true &&
+        value("closed", "startScreen") === true &&
+        value("closed", "blocks") === 0 &&
+        value("closed", "closeHidden") === true,
+    ],
+    [
       "blocks the agent writes arrive animated, and nothing else does",
       Number(value("appeared", "arrived")) > 0 &&
         value("renamed", "arriving") === 0 &&
@@ -765,6 +816,12 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
   window.webContents.on("did-fail-load", (_event, code, description) => {
     console.error(`The window failed to load: ${description} (${code})`);
     app.exit(1);
+  });
+
+  // Anything the window complains about belongs in the check's output; a
+  // renderer that throws on the way up would otherwise just look inert.
+  window.webContents.on("console-message", (event) => {
+    if (event.level === "error") console.error(`Window: ${event.message} (${event.sourceId}:${event.lineNumber})`);
   });
 
   window.webContents.once("did-finish-load", () => {
@@ -831,6 +888,23 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
         await run("interface", INTERACTIONS);
         await capture(window, "self-check");
 
+        // The edge between the diagram and the inspector is dragged, to make
+        // room for code.
+        await run("widened", `
+          const pane = document.getElementById("inspector-pane");
+          const handle = document.getElementById("inspector-splitter");
+          const from = pane.getBoundingClientRect().width;
+          const edge = window.innerWidth - from;
+          const at = (type, x, target) => target.dispatchEvent(
+            new PointerEvent(type, { bubbles: true, pointerId: 7, clientX: x, clientY: 400, isPrimary: true }),
+          );
+          at("pointerdown", edge, handle);
+          at("pointermove", edge - 170, window);
+          at("pointerup", edge - 170, window);
+          await wait(120);
+          return { from: Math.round(from), to: Math.round(pane.getBoundingClientRect().width) };
+        `);
+
         // The person sets a breakpoint and watches a run of the system stop there.
         await run("paused", `
           const root = [...document.querySelectorAll(".tree .node")]
@@ -858,9 +932,27 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
             wire: text('.bus-group[data-bus="load-postings->score-posting"] .bus-count'),
             inspector: text("#inspector h2"),
             runBar: text("#run-bar"),
+            // A paused diagram still shows where the data is.
+            flowing: document.querySelectorAll(".bus-pulse.held").length,
           };
         `);
         await capture(window, "self-check-paused");
+
+        // Stepping goes into the block that was held, once, and stays there.
+        // Letting one held call go hands the breakpoint to the next in the
+        // queue for a moment, which used to drag the canvas in and back out.
+        await run("stepped", `
+          const step = [...document.querySelectorAll("#run-bar button")].find((button) => button.textContent === "Step");
+          if (!step) return { stepped: false };
+          const seen = [text("#crumbs")];
+          step.click();
+          for (let i = 0; i < 50; i += 1) {
+            await wait(60);
+            const now = text("#crumbs");
+            if (now !== seen[seen.length - 1]) seen.push(now);
+          }
+          return { stepped: true, moves: seen.length - 1, ended: seen[seen.length - 1] };
+        `);
 
         await run("watched", `
           const next = () => [...document.querySelectorAll("#run-bar button")].find((button) => button.textContent === "Continue");
@@ -980,7 +1072,7 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
 
         // A person has unsaved edits in a file the agent then rewrites.
         await run("typed", `
-          const box = document.querySelector(".code-editor");
+          const box = document.querySelector(".code-edit-input");
           if (!box) return { typed: false };
           box.value = box.value + "// a person's unsaved edit\\n";
           box.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1033,6 +1125,19 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
           };
         `);
         await capture(window, "self-check-visual");
+
+        await run("closed", `
+          document.getElementById("close-project").click();
+          await until(() => document.body.dataset.project !== "open");
+          await wait(300);
+          return {
+            back: document.body.dataset.project !== "open",
+            startScreen: Boolean(document.querySelector("#welcome-body .welcome-actions")),
+            blocks: document.querySelectorAll(".block-box").length,
+            closeHidden: document.getElementById("close-project").hidden,
+            status: text("#status"),
+          };
+        `);
 
         console.log(JSON.stringify(report, null, 2));
 

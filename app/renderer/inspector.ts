@@ -6,28 +6,12 @@ import type { Bus, Graph } from "./graph.js";
 import { graphInView, openDiagram, showBlock } from "./canvas.js";
 import { benchSections } from "./bench.js";
 import { busWatchSection, watchSection } from "./watch.js";
+import { el, group, section } from "./dom.js";
+import { codeBlock, codeFragment, codeLines, languageOf } from "./highlight.js";
 
 let notify: () => void = () => {};
 export function onInspectorChange(callback: () => void): void {
   notify = callback;
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className?: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-/** `major` marks one of the three areas the panel is divided into. */
-function section(title: string, major = false): HTMLElement {
-  const node = el("section", major ? "section major" : "section");
-  node.append(el("h3", undefined, title));
-  return node;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -87,8 +71,43 @@ function portSection(
   return node;
 }
 
+/**
+ * A code box that can be typed in and is still coloured. The coloured copy is
+ * drawn underneath, and the box itself is transparent apart from its caret, so
+ * there is only ever one piece of text to keep in step — what was typed.
+ */
+function editableCode(value: string, language: ReturnType<typeof languageOf>): {
+  wrap: HTMLElement;
+  editor: HTMLTextAreaElement;
+} {
+  const wrap = el("div", "code-edit");
+  const shown = el("pre", "code-edit-view");
+  shown.setAttribute("aria-hidden", "true");
+
+  const editor = el("textarea", "code-edit-input");
+  editor.spellcheck = false;
+  editor.value = value;
+
+  const recolour = () => {
+    // The extra newline keeps the coloured copy as tall as the text being
+    // typed, so the last line is never clipped as the box scrolls.
+    shown.replaceChildren(codeFragment(`${editor.value}\n`, language));
+  };
+
+  recolour();
+  editor.addEventListener("input", recolour);
+  editor.addEventListener("scroll", () => {
+    shown.scrollTop = editor.scrollTop;
+    shown.scrollLeft = editor.scrollLeft;
+  });
+
+  wrap.append(shown, editor);
+  return { wrap, editor };
+}
+
 function codeSection(block: SnapshotBlock): HTMLElement {
-  const node = section("Code", true);
+  const node = section("Source");
+  const language = languageOf(block.language, block.files[ui.codeTab]);
 
   const tabs = el("div", "code-tabs");
   for (const [key, label] of [["impl", block.files.impl], ["contract", block.files.contract]] as const) {
@@ -116,16 +135,9 @@ function codeSection(block: SnapshotBlock): HTMLElement {
     return node;
   }
 
-  const editor = el("textarea", "code-editor");
-  editor.spellcheck = false;
-  editor.value = value;
-  editor.readOnly = generated;
-  node.append(editor);
-
-  const foot = el("div", "code-foot");
-
   if (generated) {
-    foot.append(
+    node.append(codeBlock(value, language, "code code-view"));
+    node.append(
       el(
         "p",
         "bench-note",
@@ -134,9 +146,13 @@ function codeSection(block: SnapshotBlock): HTMLElement {
           : "This block has children, so its code is generated from its wires and is read-only. Change the diagram and it is rewritten.",
       ),
     );
-    node.append(foot);
     return node;
   }
+
+  const { wrap, editor } = editableCode(value, language);
+  node.append(wrap);
+
+  const foot = el("div", "code-foot");
 
   // The file on disk is not the one editing started from: someone else —
   // usually the agent — rewrote it in the meantime.
@@ -202,12 +218,13 @@ function codeSection(block: SnapshotBlock): HTMLElement {
 }
 
 /** The lines a visual block points at, numbered as in the file, with the one it names picked out. */
-function excerptOf(code: SnapshotCode): HTMLElement {
+function excerptOf(code: SnapshotCode, language: ReturnType<typeof languageOf>): HTMLElement {
   const pre = el("pre", "code code-excerpt");
-  (code.excerpt ?? "").split("\n").forEach((text, i) => {
+  codeLines(code.excerpt ?? "", language).forEach((coloured, i) => {
     const number = code.excerptStart + i;
     const line = el("span", number === code.line ? "excerpt-line target" : "excerpt-line");
-    line.append(el("span", "excerpt-number", String(number)), document.createTextNode(text || " "));
+    line.append(el("span", "excerpt-number", String(number)));
+    while (coloured.firstChild) line.append(coloured.firstChild);
     pre.append(line);
   });
   return pre;
@@ -215,7 +232,7 @@ function excerptOf(code: SnapshotCode): HTMLElement {
 
 /** In a visual project a block's code is the person's own, shown and never changed. */
 function linkedCodeSection(block: SnapshotBlock): HTMLElement {
-  const node = section("Code", true);
+  const node = section("Source");
   const code = block.code;
 
   if (!code) {
@@ -232,7 +249,7 @@ function linkedCodeSection(block: SnapshotBlock): HTMLElement {
   }
 
   node.append(el("div", "code-where", code.line ? `${code.file} : line ${code.line}` : code.file));
-  if (code.excerpt !== null) node.append(excerptOf(code));
+  if (code.excerpt !== null) node.append(excerptOf(code, languageOf(block.language, code.file)));
   else node.append(el("p", "bench-note", "This points at a folder, or at a file too large to show here."));
 
   const foot = el("div", "code-foot");
@@ -275,20 +292,24 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   const problems = problemsSection(requireSnapshot().diagnostics.filter((d) => d.blockPath === block.path), false);
   if (problems) panel.append(problems);
 
-  panel.append(portSection("Inputs", block.inputs));
-  panel.append(portSection("Outputs", block.outputs));
-  panel.append(portSection("Capabilities", block.capabilities, true));
+  const contract = group("Contract");
+  contract.append(portSection("Inputs", block.inputs));
+  contract.append(portSection("Outputs", block.outputs));
+  contract.append(portSection("Capabilities", block.capabilities, true));
+  panel.append(contract);
 
-  if (visual) {
-    panel.append(linkedCodeSection(block));
-    return;
-  }
-  panel.append(codeSection(block));
+  const code = group("Code");
+  code.append(visual ? linkedCodeSection(block) : codeSection(block));
+  panel.append(code);
+  if (visual) return;
+
+  const testing = group("Testing");
   const [bench, cases] = benchSections(block);
-  panel.append(bench);
+  testing.append(bench);
   const watching = watchSection(block);
-  if (watching) panel.append(watching);
-  panel.append(cases);
+  if (watching) testing.append(watching);
+  testing.append(cases);
+  panel.append(testing);
 }
 
 function busPanel(panel: HTMLElement, graph: Graph, bus: Bus): void {
@@ -321,7 +342,7 @@ function busPanel(panel: HTMLElement, graph: Graph, bus: Bus): void {
   // generated call to show for it.
   if (!visual) {
     const code = section("In code");
-    code.append(el("pre", "code", connectionCode(graph, bus)));
+    code.append(codeBlock(connectionCode(graph, bus), "typescript"));
     code.append(el("p", "bench-note", "The call and binding this connection becomes in the generated code of the block that holds it."));
     panel.append(code);
   }
