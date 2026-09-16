@@ -316,7 +316,7 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
   for (const node of project.byPath.values()) {
     const onDisk = new Map(node.children.map((child) => [child.block.id, child.block]));
 
-    for (const diagnostic of validateComposite(node.block, onDisk, mode)) {
+    for (const diagnostic of validateComposite(node.block, onDisk, mode, holdsArchitecture(node))) {
       diagnostics.push({ ...diagnostic, blockPath: node.path });
     }
 
@@ -389,14 +389,19 @@ export function holdsArchitecture(node: LoadedBlock): boolean {
 }
 
 /** What an access says about a block, once the block it names has been found. */
-function accessDiagnostics(project: Project, node: LoadedBlock, access: Access, loose: boolean): ProjectDiagnostic[] {
+function accessDiagnostics(project: Project, node: LoadedBlock, access: Access, declaredLoosely: boolean): ProjectDiagnostic[] {
+  const written = `declares "${formatAccess(access)}"`;
+  const found = resolveAccess(project, node.path, access.resource);
+
+  // A planned resource is the thing being decided, so a handler written
+  // against one is early rather than wrong. Nothing about a plan is an error,
+  // whichever end of the access it sits at.
+  const loose = declaredLoosely || (found?.block.planned ?? false);
   const at = (severity: "error" | "warning", message: string): ProjectDiagnostic => ({
     severity: loose ? "warning" : severity,
     blockPath: node.path,
     message,
   });
-  const written = `declares "${formatAccess(access)}"`;
-  const found = resolveAccess(project, node.path, access.resource);
 
   if (!found) {
     return [
@@ -406,6 +411,18 @@ function accessDiagnostics(project: Project, node: LoadedBlock, access: Access, 
       ),
     ];
   }
+
+  // Looking outward passes through the block itself and then everything it
+  // sits inside, so both are reachable by name and neither means anything.
+  if (found.path === node.path) {
+    return [at("error", `"${node.block.name}" ${written}, but that is the block itself.`)];
+  }
+  if (node.path.startsWith(`${found.path}/`)) {
+    return [
+      at("error", `"${node.block.name}" ${written}, but "${access.resource}" is the block it sits inside. A block cannot reach what it is part of.`),
+    ];
+  }
+
   if (!isArchitecture(found.block.role)) {
     return [
       at(
@@ -442,7 +459,6 @@ function accessDiagnostics(project: Project, node: LoadedBlock, access: Access, 
   }
   return [];
 }
-
 /**
  * Whether this block is planned, or holds a planned block anywhere beneath it.
  *

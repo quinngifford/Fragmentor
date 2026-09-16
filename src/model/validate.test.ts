@@ -460,9 +460,44 @@ describe("a composite holding a piece of the architecture", () => {
       ["orders-db", database],
     ]);
 
-    const found = validateComposite(parent, children);
+    // Whether architecture sits beneath a block is the project's answer, not
+    // something to be guessed from the children in hand, so it is passed in.
+    const found = validateComposite(parent, children, "structured", true);
     expect(errors(found)).toEqual([]);
     expect(warnings(found)).toContainEqual(expect.stringContaining('Nothing is connected to "load-orders" input "owner"'));
+
+    // The same diagram with code to generate is held to the strict rule.
+    expect(errors(validateComposite(parent, children))).toContainEqual(
+      expect.stringContaining('Nothing is connected to "load-orders" input "owner"'),
+    );
+  });
+
+  it("still refuses two wires into one input, wherever the block sits", () => {
+    const source = makeBlock({ id: "pick-owner", outputs: { owner: { type: t.string } } });
+    const parent = makeBlock({
+      id: "orders-api",
+      role: "service",
+      kind: "composite",
+      children: [
+        { block: "pick-owner", mode: "once" },
+        { block: "load-orders", mode: "once" },
+      ],
+      wires: [
+        { source: { from: "block", block: "pick-owner", port: "owner" }, target: { to: "block", block: "load-orders", port: "owner" } },
+        { source: { from: "block", block: "pick-owner", port: "owner" }, target: { to: "block", block: "load-orders", port: "owner" } },
+      ],
+    });
+    const children = new Map([
+      ["pick-owner", source],
+      ["load-orders", handler],
+    ]);
+
+    // Nothing being wired to a handler is normal inside a service; two things
+    // wired to one port is a contradiction anywhere, because nothing says
+    // which of them wins.
+    expect(warnings(validateComposite(parent, children))).toContainEqual(
+      expect.stringContaining('"load-orders" input "owner" is driven by 2 wires'),
+    );
   });
 
   it("asks nothing of the capabilities it cannot pass down", () => {

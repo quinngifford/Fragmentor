@@ -61,7 +61,6 @@ export interface SnapshotAccess {
   /** Where the resource is in the project, or null when nothing of that id is in scope. */
   resourcePath: string | null;
   resourceName: string;
-  resourceRole: Role | null;
   entry: string | null;
 }
 
@@ -253,7 +252,6 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
         resource: entry.resource,
         resourcePath: found?.path ?? null,
         resourceName: found?.block.name ?? entry.resource,
-        resourceRole: found?.block.role ?? null,
         entry: entry.entry,
       };
     });
@@ -325,11 +323,7 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       },
       language,
       files: { impl: pack?.implFile ?? "", contract: pack?.contractFile ?? "" },
-      implemented: isArchitecture(block.role)
-        ? false
-        : pack
-          ? impl !== null && !pack.isUnimplemented(impl)
-          : code !== null,
+      implemented: pack ? impl !== null && !pack.isUnimplemented(impl) : code !== null,
       cases: pack && !block.planned && !isArchitecture(block.role) ? await casesFor(blockPath) : [],
       code,
     };

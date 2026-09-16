@@ -462,33 +462,89 @@ describe("blocks that are pieces of the architecture", () => {
         access: [
           { verb: "reads", resource: "billing", entry: null },
           { verb: "reads", resource: "orders-db", entry: "invoices" },
-          { verb: "reads", resource: "orders-api", entry: "listOrders" },
+          { verb: "writes", resource: "orders-db", entry: "orders" },
         ],
+      }),
+    );
+
+    await writeBlock(
+      blockDir(dir, "orders-app/orders-db"),
+      makeBlock({
+        id: "orders-db",
+        role: "database",
+        // Written to, never read back, which the second access contradicts.
+        exposes: { orders: { accepts: t.object({ id: t.string }), returns: null } },
       }),
     );
 
     expect(validateProject(await loadProject(dir)).map((d) => d.message)).toEqual([
       expect.stringContaining('there is no block called "billing" beside it or anywhere above it'),
       expect.stringContaining('exposes no table called "invoices". It exposes: orders.'),
-      // A service that answers nothing back is worth pointing out, not refusing.
-      expect.stringContaining('which says nothing comes back from it'),
     ]);
   });
 
-  it("refuses an access to an ordinary function block", async () => {
+  it("refuses an access that names the block itself, or the one it sits inside", async () => {
+    await writeApplication();
+    await writeBlock(
+      blockDir(dir, "orders-app/orders-api/load-orders"),
+      makeBlock({
+        id: "load-orders",
+        inputs: { owner: { type: t.string } },
+        access: [
+          { verb: "reads", resource: "load-orders", entry: null },
+          { verb: "calls", resource: "orders-api", entry: "listOrders" },
+        ],
+      }),
+    );
+
+    // Looking outward passes through the block and then everything it sits
+    // inside, so both are reachable by name and neither means anything.
+    expect(validateProject(await loadProject(dir)).map((d) => d.message)).toEqual([
+      expect.stringContaining("but that is the block itself"),
+      expect.stringContaining("is the block it sits inside"),
+    ]);
+  });
+
+  it("refuses an access to an ordinary function block beside it", async () => {
     await writeSmallProject();
+    await writeBlock(
+      blockDir(dir, "rank-jobs/label-score"),
+      makeBlock({ id: "label-score", inputs: { score: { type: t.number } } }),
+    );
     await writeBlock(
       blockDir(dir, "rank-jobs/score-posting"),
       makeBlock({
         id: "score-posting",
         inputs: { posting: { type: t.object({ title: t.string }) } },
         outputs: { score: { type: t.number } },
-        access: [{ verb: "reads", resource: "score-posting", entry: null }],
+        access: [{ verb: "reads", resource: "label-score", entry: null }],
       }),
     );
 
     expect(validateProject(await loadProject(dir)).map((d) => d.message)).toContainEqual(
       expect.stringContaining("is an ordinary function block"),
     );
+  });
+
+  it("asks nothing of an access to a resource that is only planned", async () => {
+    await writeApplication();
+    await writeBlock(
+      blockDir(dir, "orders-app/orders-db"),
+      makeBlock({ id: "orders-db", role: "database", planned: true }),
+    );
+    await writeBlock(
+      blockDir(dir, "orders-app/orders-api/load-orders"),
+      makeBlock({
+        id: "load-orders",
+        inputs: { owner: { type: t.string } },
+        access: [{ verb: "reads", resource: "orders-db", entry: "orders" }],
+      }),
+    );
+
+    // The table it names is exactly what has not been decided yet, so writing
+    // the handler against it early is not a fault in either of them.
+    const found = validateProject(await loadProject(dir));
+    expect(found.filter((d) => d.severity === "error")).toEqual([]);
+    expect(found.map((d) => d.message)).toContainEqual(expect.stringContaining("exposes nothing at all yet"));
   });
 });

@@ -61,7 +61,18 @@ export interface Diagnostic {
  * because the gaps in it are what is being planned. Nothing about one is an
  * error: not a port with nothing on it, not a type that does not line up.
  */
-export function validateComposite(parent: Block, children: Map<string, Block>, mode: Mode = "structured"): Diagnostic[] {
+export function validateComposite(
+  parent: Block,
+  children: Map<string, Block>,
+  mode: Mode = "structured",
+  /**
+   * Whether a piece of the architecture sits anywhere beneath this block, so
+   * nothing here is generated. Only the project knows that, because it can see
+   * past this block's own children; the default suits a caller that has
+   * already established there is code to generate.
+   */
+  holdsArchitecture = false,
+): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const error = (message: string, path?: string) => diagnostics.push({ severity: "error", message, path });
   const warn = (message: string, path?: string) => diagnostics.push({ severity: "warning", message, path });
@@ -75,8 +86,11 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
    * framework code outside `blocks/` is what calls into these — so
    * completeness drops to something worth pointing out rather than an error.
    * Types still have to line up, because a mismatch is wrong either way.
+   *
+   * This has to be the same answer the generator acts on, or a block would be
+   * held to a rule about code that was never going to be written for it.
    */
-  const noCode = isArchitecture(parent.role) || [...children.values()].some((child) => isArchitecture(child.role));
+  const noCode = isArchitecture(parent.role) || holdsArchitecture;
   const incomplete = loose || noCode ? warn : error;
   /**
    * Whether the children here are reached from outside rather than from each
@@ -250,11 +264,14 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
     const def = childOf(ref.block);
     // A planned block's wiring is the thing being planned. A port with
     // nothing on it yet is the point of drawing it, not a fault in it.
-    if (!def || def.planned || entryPoints) continue;
+    if (!def || def.planned) continue;
     for (const port of Object.keys(def.inputs)) {
       const count = drivers.get(`block:${ref.block}:${port}`) ?? 0;
+      // Nothing being wired to a handler inside a service is the normal case;
+      // two things being wired to one port is a contradiction wherever it
+      // happens, because nothing says which value would win.
       if (count === 0) {
-        incomplete(`Nothing is connected to "${ref.block}" input "${port}".`);
+        if (!entryPoints) incomplete(`Nothing is connected to "${ref.block}" input "${port}".`);
       } else if (count > 1) {
         incomplete(`"${ref.block}" input "${port}" is driven by ${count} wires; it can only accept one.`);
       }

@@ -133,4 +133,24 @@ describe("inside the service", () => {
   it("marks an access the block itself declared apart from one gathered from inside", () => {
     expect(graph.accesses.get("resolve-link=>links-db")!.fromWithin).toBe(false);
   });
+
+  it("draws no line from a block to the one whose diagram this is", () => {
+    // Looking outward reaches the service the handlers are inside, so an
+    // access naming it resolves; drawing it would be a line to the frame
+    // around everything else. The checks refuse it; the canvas ignores it.
+    ui.snapshot!.blocks["link-shortener/api/resolve-link"]!.access = [
+      {
+        text: "calls api.resolveLink",
+        verb: "calls",
+        resource: "api",
+        resourcePath: "link-shortener/api",
+        resourceName: "Link API",
+        entry: "resolveLink",
+      },
+    ];
+
+    const redrawn = buildGraph("link-shortener/api")!;
+    expect([...redrawn.accesses.keys()]).not.toContain("resolve-link=>api");
+    expect(redrawn.nodes.has("api")).toBe(false);
+  });
 });

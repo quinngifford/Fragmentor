@@ -266,29 +266,32 @@ const describedType = z
  * the bare type or `{ "type": ..., "description": ... }` will do, and an
  * operation whose two directions differ writes them out as `accepts` and
  * `returns`.
+ *
+ * `type` is a real field rather than something rewritten before the schema
+ * sees it, so writing it beside `accepts` is refused and said plainly. It
+ * used to win silently, which threw away a direction someone had written.
  */
 const exposedSchema = z.preprocess(
-  (value) => {
-    if (typeof value === "string") return { accepts: value, returns: value };
-    if (value !== null && typeof value === "object" && "type" in value) {
-      const { type, ...rest } = value as { type: unknown };
-      return { ...rest, accepts: type, returns: type };
-    }
-    return value;
-  },
+  (value) => (typeof value === "string" ? { type: value } : value),
   z
     .object({
+      type: describedType.optional(),
       accepts: describedType.optional(),
       returns: describedType.optional(),
       description: z.string().optional(),
     })
     .strict()
-    .refine((entry) => entry.accepts !== undefined || entry.returns !== undefined, {
-      message: "say what goes in, what comes back, or both: nothing at all describes nothing",
+    .refine((entry) => entry.type === undefined || (entry.accepts === undefined && entry.returns === undefined), {
+      message: `"type" is short for both directions at once, so it cannot be written beside "accepts" or "returns"`,
+      path: ["type"],
     })
+    .refine(
+      (entry) => entry.type !== undefined || entry.accepts !== undefined || entry.returns !== undefined,
+      { message: "say what goes in, what comes back, or both: nothing at all describes nothing" },
+    )
     .transform((entry): Exposed => ({
-      accepts: entry.accepts ?? null,
-      returns: entry.returns ?? null,
+      accepts: entry.type ?? entry.accepts ?? null,
+      returns: entry.type ?? entry.returns ?? null,
       ...(entry.description === undefined ? {} : { description: entry.description }),
     })),
 );

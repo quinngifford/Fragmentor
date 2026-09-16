@@ -317,6 +317,24 @@ describe("blocks that are not functions", () => {
     expect(block.exposes.sessions!.returns).toEqual({ kind: "text", text: "jsonb" });
   });
 
+  it("refuses a shape written both ways at once, rather than dropping one", () => {
+    expect(
+      problemsWith({
+        role: "database",
+        responsibility: "Holds the orders.",
+        exposes: { orders: { type: "{ id: string }", returns: "{ id: string; total: number }" } },
+      }),
+    ).toEqual([
+      expect.stringContaining(`"type" is short for both directions at once`),
+    ]);
+  });
+
+  it("refuses an entry that describes nothing", () => {
+    expect(
+      problemsWith({ role: "queue", responsibility: "Carries clicks.", exposes: { clicks: { description: "a click" } } }),
+    ).toEqual([expect.stringContaining("nothing at all describes nothing")]);
+  });
+
   it("refuses ports and capabilities on a block that is not called", () => {
     expect(problemsWith({ role: "queue", responsibility: "Carries clicks.", inputs: { click: "string" } })).toEqual([
       expect.stringContaining("is not called, so it has no inputs or outputs"),

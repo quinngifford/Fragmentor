@@ -755,14 +755,14 @@ function accessGeometry(graph: Graph, layout: Map<string, Point>, link: AccessLi
   };
 }
 
-/** `reads users`, or `3 accesses` once there are too many to name. */
+/** `reads users`, then `reads 3` and `reads and writes` as there are more to name. */
 function accessLabel(link: AccessLink): string {
   if (link.entries.length === 1) {
     const only = link.entries[0]!;
     return only.entry === null ? only.verb : `${only.verb} ${only.entry}`;
   }
   const verbs = [...new Set(link.entries.map((entry) => entry.verb))];
-  return verbs.length === 1 ? `${verbs[0]} ${link.entries.length}` : `${link.entries.length} accesses`;
+  return verbs.length === 1 ? `${verbs[0]} ${link.entries.length}` : verbs.join(" and ");
 }
 
 function drawAccesses(graph: Graph, layout: Map<string, Point>, layer: Element, delay: number, arriving: boolean): void {

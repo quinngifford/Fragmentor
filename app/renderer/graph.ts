@@ -266,7 +266,12 @@ function buildAccesses(parent: SnapshotBlock, nodes: Map<string, GraphNode>): Ma
     for (const block of inside) {
       for (const access of block.access) {
         const target = access.resourcePath;
-        if (target === null || target === child.path || target.startsWith(`${child.path}/`)) continue;
+        // Nothing, something inside the child (which is that child's own
+        // diagram to show), or the block this diagram is of — each of which
+        // would be a line from a block to itself.
+        if (target === null || target === parent.path || target === child.path || target.startsWith(`${child.path}/`)) {
+          continue;
+        }
 
         // The resource is a child of this parent, or it lives further out and
         // is brought in so the line has somewhere to land.
