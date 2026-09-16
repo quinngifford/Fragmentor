@@ -1,6 +1,8 @@
 import { z } from "zod/v4";
 import { describeType, identifierPattern } from "./types.js";
 import { tryParseType } from "./typeExpression.js";
+import { ROLE_IDS, isArchitecture } from "./roles.js";
+import type { Role } from "./roles.js";
 import type { PortType } from "./types.js";
 
 /**
@@ -71,13 +73,102 @@ export interface Wire {
   target: WireTarget;
 }
 
+/**
+ * One of the things an architecture block offers: a database table, a queue
+ * channel, a service operation.
+ *
+ * Both directions are recorded because they genuinely differ for some of
+ * them. A table gives back what was put in, so one shape covers it and the
+ * file may write it once. An operation takes a request and returns a
+ * response, which are rarely the same, and either may be nothing at all.
+ */
+export interface Exposed {
+  /** What goes in: a row written, a request sent. Null when nothing does. */
+  accepts: PortType | null;
+  /** What comes back: a row read, a response returned. Null when nothing does. */
+  returns: PortType | null;
+  description?: string;
+}
+
+/**
+ * What a block does to a resource. A read takes data out, a write puts data
+ * in, and a call does both: a request out and a response back.
+ */
+export type AccessVerb = "reads" | "writes" | "calls";
+
+export const ACCESS_VERBS: AccessVerb[] = ["reads", "writes", "calls"];
+
+/**
+ * A block reaching a piece of the architecture: `reads app-db.users`.
+ *
+ * This is declared by the block that does the touching, the way a capability
+ * is, rather than by its parent the way a wire is. A wire is a value handed
+ * from one call to the next, which only the parent knows about; reaching a
+ * database is something the block itself does, and stays true wherever the
+ * block is moved to.
+ *
+ * The resource is named by id and found by looking outward: the block's
+ * parent first, then its parent, up to the top of the system. That is how a
+ * handler deep inside a service reaches a database the service keeps beside
+ * it, without every level in between having to mention it.
+ */
+export interface Access {
+  verb: AccessVerb;
+  /** The id of the architecture block being touched. */
+  resource: string;
+  /** Which of its exposed entries, or null for the resource as a whole. */
+  entry: string | null;
+}
+
+export function parseAccessText(text: string): { ok: true; access: Access } | { ok: false; error: string } {
+  const parts = text.trim().split(/[ ]+/);
+  if (parts.length !== 2) {
+    return {
+      ok: false,
+      error: `An access must be written as "reads app-db.users" or "calls billing.charge", but this reads "${text}".`,
+    };
+  }
+
+  const [verb, target] = parts as [string, string];
+  if (!(ACCESS_VERBS as string[]).includes(verb)) {
+    return { ok: false, error: `"${verb}" is not one of ${ACCESS_VERBS.join(", ")}.` };
+  }
+
+  const split = target.lastIndexOf(".");
+  const resource = split === -1 ? target : target.slice(0, split);
+  const entry = split === -1 ? null : target.slice(split + 1);
+
+  if (!blockIdPattern.test(resource)) {
+    return { ok: false, error: `"${resource}" is not a block id: it should be kebab-case, naming the block being reached.` };
+  }
+  if (entry !== null && !identifierPattern.test(entry)) {
+    return { ok: false, error: `"${entry}" is not a valid name for one of "${resource}"'s entries.` };
+  }
+
+  return { ok: true, access: { verb: verb as AccessVerb, resource, entry } };
+}
+
+export function formatAccess(access: Access): string {
+  return `${access.verb} ${access.resource}${access.entry === null ? "" : `.${access.entry}`}`;
+}
+
 export interface Block {
   id: string;
   name: string;
   responsibility: string;
   kind: BlockKind;
+  /**
+   * What kind of thing this block stands for. `function` is code Fragmentor
+   * owns; every other role is a piece of the architecture the system talks
+   * to, and nothing is generated, checked or run for it.
+   */
+  role: Role;
   inputs: Record<string, Port>;
   outputs: Record<string, Port>;
+  /** Architecture blocks only: the tables, channels or operations it offers. */
+  exposes: Record<string, Exposed>;
+  /** What this block reaches: `reads app-db.users`. Empty for a block that touches nothing. */
+  access: Access[];
   capabilities: Record<string, CapabilityPort>;
   /** Composite only. Empty for leaves. */
   children: ChildRef[];
@@ -148,6 +239,55 @@ function portSchema(freeText: boolean) {
     z.object({ type: freeText ? typeText : typeExpression, description: z.string().optional() }).strict(),
   );
 }
+
+/**
+ * A type on an architecture block: what a table holds, what an operation
+ * returns.
+ *
+ * Nothing is generated, checked or run from these, so they are descriptions
+ * rather than contracts. They are read with the ordinary type parser first,
+ * because a schema written as `{ id: string; email: string }` can then be
+ * drawn field by field on the block. Anything the parser does not recognise
+ * — `timestamp`, `jsonb`, `Order[]` in a visual project — is kept as the
+ * words it was written in rather than refused, because refusing it would cost
+ * the person a correct diagram to gain a check nothing relies on.
+ */
+const describedType = z
+  .string()
+  .min(1, "a type cannot be empty")
+  .transform((value): PortType => {
+    const parsed = tryParseType(value);
+    return parsed.ok ? parsed.type : { kind: "text", text: value };
+  });
+
+/** Lets a store's entry be written once, as the one shape it holds. */
+const exposedSchema = z.preprocess(
+  (value) => (typeof value === "string" ? { accepts: value, returns: value } : value),
+  z
+    .object({
+      accepts: describedType.optional(),
+      returns: describedType.optional(),
+      description: z.string().optional(),
+    })
+    .strict()
+    .refine((entry) => entry.accepts !== undefined || entry.returns !== undefined, {
+      message: "say what goes in, what comes back, or both: nothing at all describes nothing",
+    })
+    .transform((entry): Exposed => ({
+      accepts: entry.accepts ?? null,
+      returns: entry.returns ?? null,
+      ...(entry.description === undefined ? {} : { description: entry.description }),
+    })),
+);
+
+const accessSchema = z.string().transform((value, ctx): Access => {
+  const parsed = parseAccessText(value);
+  if (!parsed.ok) {
+    ctx.addIssue({ code: "custom", message: parsed.error });
+    return z.NEVER;
+  }
+  return parsed.access;
+});
 
 const capabilityPortSchema = z.preprocess(
   orJust("capability"),
@@ -250,10 +390,17 @@ function blockFileSchema(mode: Mode, planned: boolean) {
     .object({
       name: z.string().min(1).optional(),
       responsibility: z.string().min(1, "every block must state what it is responsible for"),
+      role: z
+        .enum(ROLE_IDS as [Role, ...Role[]], {
+          error: `must be one of ${ROLE_IDS.join(", ")}. Leave it out for an ordinary function block.`,
+        })
+        .default("function"),
       planned: z.boolean().default(false),
       code: z.string().min(1).optional(),
       inputs: z.record(portName, portSchema(freeText)).default({}),
       outputs: z.record(portName, portSchema(freeText)).default({}),
+      exposes: z.record(portName, exposedSchema).default({}),
+      access: z.array(accessSchema).default([]),
       capabilities: z.record(portName, capabilityPortSchema).default({}),
       children: z.array(childRefSchema).default([]),
       wires: z.array(wireSchema).default([]),
@@ -271,6 +418,25 @@ function blockFileSchema(mode: Mode, planned: boolean) {
     .refine((file) => !(planned || file.planned) || file.code === undefined, {
       message: "a planned block stands for code that does not exist yet, so it cannot point at any",
       path: ["code"],
+    })
+    // An architecture block is a thing the system talks to, not a function
+    // that is called, so it has no ports to be called through and no
+    // capabilities to be given. What it offers goes in "exposes" instead, and
+    // what reaches it says so with "access".
+    .refine(
+      (file) => !isArchitecture(file.role) || Object.keys(file.inputs).length + Object.keys(file.outputs).length === 0,
+      {
+        message: `a block with an architecture role is not called, so it has no inputs or outputs. Describe what it offers with "exposes", and join blocks to it with "access".`,
+        path: ["inputs"],
+      },
+    )
+    .refine((file) => !isArchitecture(file.role) || Object.keys(file.capabilities).length === 0, {
+      message: `capabilities are what a function's code is handed when it runs. An architecture block is not code Fragmentor runs, so it declares none.`,
+      path: ["capabilities"],
+    })
+    .refine((file) => isArchitecture(file.role) || Object.keys(file.exposes).length === 0, {
+      message: `"exposes" describes the tables, channels or operations of an architecture block. A function block's interface is its inputs and outputs, so give it a "role" or use those.`,
+      path: ["exposes"],
     });
 }
 
@@ -317,8 +483,11 @@ export function parseBlockFile(
     name: file.name ?? nameFromId(id),
     responsibility: file.responsibility,
     kind: file.children.length > 0 ? "composite" : "leaf",
+    role: file.role,
     inputs: file.inputs,
     outputs: file.outputs,
+    exposes: file.exposes,
+    access: file.access,
     capabilities: file.capabilities,
     children: file.children,
     wires: file.wires,
@@ -353,13 +522,33 @@ export function blockToFileShape(block: Block): Record<string, unknown> {
     ]),
   );
 
+  /** A store's entry collapses back to the one shape it was written as. */
+  const exposes = Object.fromEntries(
+    Object.entries(block.exposes).map(([name, entry]) => {
+      const accepts = entry.accepts === null ? undefined : describeType(entry.accepts);
+      const returns = entry.returns === null ? undefined : describeType(entry.returns);
+      if (accepts !== undefined && accepts === returns && entry.description === undefined) return [name, accepts];
+      return [
+        name,
+        {
+          ...(accepts === undefined ? {} : { accepts }),
+          ...(returns === undefined ? {} : { returns }),
+          ...(entry.description === undefined ? {} : { description: entry.description }),
+        },
+      ];
+    }),
+  );
+
   const file: Record<string, unknown> = {};
   if (block.name !== nameFromId(block.id)) file.name = block.name;
   file.responsibility = block.responsibility;
+  if (block.role !== "function") file.role = block.role;
   if (block.planned) file.planned = true;
   if (block.code !== undefined) file.code = block.code;
   if (Object.keys(block.inputs).length > 0) file.inputs = ports(block.inputs);
   if (Object.keys(block.outputs).length > 0) file.outputs = ports(block.outputs);
+  if (Object.keys(block.exposes).length > 0) file.exposes = exposes;
+  if (block.access.length > 0) file.access = block.access.map(formatAccess);
   if (Object.keys(block.capabilities).length > 0) file.capabilities = capabilities;
   if (block.children.length > 0) {
     file.children = block.children.map((child) =>

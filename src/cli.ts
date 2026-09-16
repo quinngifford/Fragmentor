@@ -6,7 +6,7 @@ import { startProject, writeAgentFiles } from "./codegen/emit.js";
 import type { NewProjectSettings } from "./codegen/emit.js";
 import { CLAUDE_FILE, GUIDE_FILE } from "./codegen/guide.js";
 import { getPack, isKnownLanguage } from "./lang/index.js";
-import { holdsPlan, loadProject, manifestPath, readManifest, systemOf } from "./project/project.js";
+import { holdsArchitecture, holdsPlan, loadProject, manifestPath, readManifest, systemOf } from "./project/project.js";
 import type { Project, ProjectDiagnostic } from "./project/project.js";
 import { readCases } from "./run/cases.js";
 import { runCases } from "./run/run.js";
@@ -164,7 +164,7 @@ function formatReport(report: CheckReport): string {
     lines.push("  everything was already up to date");
   }
   for (const file of report.generated.written) lines.push(`  wrote  ${file}`);
-  for (const file of report.generated.removed) lines.push(`  took away  ${file}, because what it described is planned now`);
+  for (const file of report.generated.removed) lines.push(`  took away  ${file}, because the block it described has no code`);
 
   lines.push("", "Code");
   if (visual) lines.push("  visual mode: Fragmentor draws the code but never checks, runs or changes it");
@@ -180,22 +180,33 @@ function formatReport(report: CheckReport): string {
     }
   }
 
-  // Planned blocks are kept apart from unfinished work. Nothing about them
-  // is late: they are a drawing of what has not been started.
+  // Neither a plan nor a piece of the architecture is unfinished work, so
+  // both are kept apart from it. One is a drawing of what has not been
+  // started; the other is not Fragmentor's to write at all.
   if (report.planned.length > 0) {
     lines.push("", "Planned");
     lines.push(`  ${plural(report.planned.length, "block")} drawn but not built, with nothing generated, checked or run:`);
     lines.push(...report.planned.map((blockPath) => `    ${blockPath}`));
-    if (report.waiting.length > 0) {
-      lines.push(`  ${plural(report.waiting.length, "block")} above the plan, whose code waits for it to be built:`);
-      lines.push(...report.waiting.map((blockPath) => `    ${blockPath}`));
-    }
   }
 
-  const built = report.blockCount - report.planned.length - report.waiting.length;
+  if (report.architecture.length > 0) {
+    lines.push("", "Architecture");
+    lines.push(`  ${plural(report.architecture.length, "block")} the system talks to rather than code Fragmentor writes:`);
+    lines.push(...report.architecture.map((blockPath) => `    ${blockPath}`));
+  }
+
+  if (report.waiting.length > 0) {
+    lines.push("", "No code of their own");
+    lines.push(
+      `  ${plural(report.waiting.length, "block")} with nothing to generate, because a plan or a piece of the architecture sits beneath:`,
+    );
+    lines.push(...report.waiting.map((blockPath) => `    ${blockPath}`));
+  }
+
+  const built = report.blockCount - report.planned.length - report.architecture.length - report.waiting.length;
   lines.push("", "Unfinished");
   if (built === 0) {
-    lines.push("  nothing is built yet: every block is part of the plan");
+    lines.push("  nothing here is Fragmentor's to build: every block is a plan or a piece of the architecture");
   } else if (report.unimplemented.length === 0 && report.untested.length === 0) {
     lines.push(visual ? "  every block points at its code" : "  every block is implemented and has tests");
   }
@@ -287,14 +298,16 @@ async function test(dir: string, requested: string[]): Promise<number> {
 
   const counts = { passed: 0, failed: 0, error: 0, unchecked: 0, skipped: 0 };
   const untested: string[] = [];
+  /** Blocks with no code to run: a plan, a piece of the architecture, or a block waiting on either. */
   const inThePlan: string[] = [];
 
   for (const blockPath of requested.length > 0 ? requested : [...project.byPath.keys()]) {
     // A planned block has no code to run, and neither has one whose code is
-    // held back until the plan beneath it is built. Nothing about either is
-    // untested, so they are passed over rather than failing to load.
+    // held back until the plan beneath it is built, nor a piece of the
+    // architecture. Nothing about any of them is untested, so they are passed
+    // over rather than failing to load.
     const node = project.byPath.get(blockPath);
-    if (node && holdsPlan(node)) {
+    if (node && (holdsPlan(node) || holdsArchitecture(node))) {
       inThePlan.push(blockPath);
       continue;
     }
@@ -339,7 +352,7 @@ async function test(dir: string, requested: string[]): Promise<number> {
   if (untested.length > 0) console.log(`No tests yet: ${untested.join(", ")}`);
   // Said plainly, because a block with saved tests that quietly never runs
   // reads as a test runner that lost them.
-  if (inThePlan.length > 0) console.log(`Not run, because they are part of the plan and have no code yet: ${inThePlan.join(", ")}`);
+  if (inThePlan.length > 0) console.log(`Not run, because they have no code: ${inThePlan.join(", ")}`);
 
   return counts.failed + counts.error > 0 ? 1 : 0;
 }

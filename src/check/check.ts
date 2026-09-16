@@ -39,9 +39,14 @@ export interface CheckReport {
   /** Blocks that are part of the plan rather than of the program. */
   planned: string[];
   /**
-   * Real blocks holding a planned block somewhere beneath them, whose own
-   * code waits for it. Nobody is meant to write these, so they are not
-   * unfinished work either.
+   * Blocks that stand for something the system talks to rather than code:
+   * a database, a queue, another team's service.
+   */
+  architecture: string[];
+  /**
+   * Real blocks whose own code is not Fragmentor's to write, because a
+   * planned block or a piece of the architecture sits beneath them. Nobody is
+   * meant to write these, so they are not unfinished work either.
    */
   waiting: string[];
   /**
@@ -78,7 +83,11 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
   });
 
   const blocks = Object.values(snapshot.blocks);
-  const real = blocks.filter((block) => !block.planned && !block.holdsPlan);
+  // Work that is somebody's to finish: not a plan, not a piece of the
+  // architecture, and not a block whose code waits on either.
+  const real = blocks.filter(
+    (block) => !block.planned && !block.holdsPlan && !block.architecture && !block.holdsArchitecture,
+  );
   const errorCount =
     snapshot.diagnostics.filter((d) => d.severity === "error").length +
     generated.problems.length +
@@ -93,7 +102,10 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
     generated,
     systems,
     planned: blocks.filter((block) => block.planned).map((block) => block.path),
-    waiting: blocks.filter((block) => !block.planned && block.holdsPlan).map((block) => block.path),
+    architecture: blocks.filter((block) => !block.planned && block.architecture).map((block) => block.path),
+    waiting: blocks
+      .filter((block) => !block.planned && !block.architecture && (block.holdsPlan || block.holdsArchitecture))
+      .map((block) => block.path),
     unimplemented: real.filter((block) => !block.implemented).map((block) => block.path),
     untested: visual ? [] : real.filter((block) => block.cases.length === 0).map((block) => block.path),
     errorCount,

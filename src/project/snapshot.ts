@@ -1,13 +1,15 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { Mode } from "../model/block.js";
-import { formatWire } from "../model/block.js";
+import type { AccessVerb, Mode } from "../model/block.js";
+import { formatAccess, formatWire } from "../model/block.js";
+import { ROLES, isArchitecture } from "../model/roles.js";
+import type { Role } from "../model/roles.js";
 import { describeType } from "../model/types.js";
 import type { PortType } from "../model/types.js";
 import { executionOrder, wireCarriedType } from "../model/validate.js";
 import { loadLayout } from "./layout.js";
 import type { Layout } from "./layout.js";
-import { holdsPlan, loadProject, locateCode, systemOf, validateProject } from "./project.js";
+import { holdsArchitecture, holdsPlan, loadProject, locateCode, resolveAccess, systemOf, validateProject } from "./project.js";
 import type { CodeLocation, Granularity, ProjectDiagnostic, Start } from "./project.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
 import { readCases } from "../run/cases.js";
@@ -28,6 +30,39 @@ export interface SnapshotPort {
   /** The same type as structure, which the test bench walks to build a form. */
   typeIr: PortType;
   description: string | null;
+}
+
+/**
+ * One of the things an architecture block offers, ready to draw: a database
+ * table with its columns, a queue channel, a service operation.
+ */
+export interface SnapshotExposed {
+  name: string;
+  /** What goes in, as written. Null when nothing does. */
+  accepts: string | null;
+  /** What comes back, as written. Null when nothing does. */
+  returns: string | null;
+  description: string | null;
+  /**
+   * The named parts of the shape, when it has any: a table's columns. Taken
+   * from what comes back, or what goes in when nothing does, because a store
+   * gives back what it was given and an operation is recognised by its
+   * result. Empty when the shape is a plain type or free text.
+   */
+  fields: { name: string; type: string; optional: boolean }[];
+}
+
+/** A block reaching a piece of the architecture, with the resource already found. */
+export interface SnapshotAccess {
+  /** As written, e.g. `reads app-db.users`. */
+  text: string;
+  verb: AccessVerb;
+  resource: string;
+  /** Where the resource is in the project, or null when nothing of that id is in scope. */
+  resourcePath: string | null;
+  resourceName: string;
+  resourceRole: Role | null;
+  entry: string | null;
 }
 
 export interface SnapshotCapability {
@@ -83,6 +118,14 @@ export interface SnapshotBlock {
   name: string;
   responsibility: string;
   kind: "leaf" | "composite";
+  /** What kind of thing the block stands for: a function, or a piece of the architecture. */
+  role: Role;
+  /** Shown on the block: FUNCTION, DATABASE, QUEUE. */
+  roleLabel: string;
+  /** True for every role but `function`: something the system talks to rather than code. */
+  architecture: boolean;
+  /** Whether architecture sits at or beneath this block, so no code is generated here. */
+  holdsArchitecture: boolean;
   /**
    * Part of the plan rather than of the program: drawn, explained, wired as
    * loosely as the plan is, with nothing generated, checked or run for it.
@@ -93,6 +136,10 @@ export interface SnapshotBlock {
   functionName: string;
   inputs: SnapshotPort[];
   outputs: SnapshotPort[];
+  /** Architecture blocks only: the tables, channels or operations it offers. */
+  exposes: SnapshotExposed[];
+  /** What this block reaches, with each resource already found. */
+  access: SnapshotAccess[];
   capabilities: SnapshotCapability[];
   children: SnapshotChild[];
   order: string[];
@@ -180,6 +227,37 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
     // no generated code, so it has no pack either.
     const pack = mode === "structured" ? getPack(isKnownLanguage(language) ? language : "typescript") : null;
 
+    /** A shape's named parts, so a table can be drawn as its columns. */
+    const fieldsOf = (type: PortType | null) =>
+      type?.kind === "object"
+        ? Object.entries(type.fields).map(([name, field]) => ({
+            name,
+            type: describeType(field.type),
+            optional: Boolean(field.optional),
+          }))
+        : [];
+
+    const exposes: SnapshotExposed[] = Object.entries(block.exposes).map(([name, entry]) => ({
+      name,
+      accepts: entry.accepts === null ? null : describeType(entry.accepts),
+      returns: entry.returns === null ? null : describeType(entry.returns),
+      description: entry.description ?? null,
+      fields: fieldsOf(entry.returns ?? entry.accepts),
+    }));
+
+    const accesses: SnapshotAccess[] = block.access.map((entry) => {
+      const found = resolveAccess(project, blockPath, entry.resource);
+      return {
+        text: formatAccess(entry),
+        verb: entry.verb,
+        resource: entry.resource,
+        resourcePath: found?.path ?? null,
+        resourceName: found?.block.name ?? entry.resource,
+        resourceRole: found?.block.role ?? null,
+        entry: entry.entry,
+      };
+    });
+
     const ports = (record: typeof block.inputs): SnapshotPort[] =>
       Object.entries(record).map(([name, port]) => ({
         name,
@@ -195,7 +273,9 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       else fileProblems.push({ severity: "error", blockPath, message: `"${block.name}" points at code that is not there: ${found.problem}` });
     }
 
-    const impl = pack ? await readIfPresent(path.join(node.dir, pack.implFile)) : null;
+    // An architecture block has no implementation file to look for, and a
+    // stray one in its folder has already been reported by the generator.
+    const impl = pack && !isArchitecture(block.role) ? await readIfPresent(path.join(node.dir, pack.implFile)) : null;
 
     blocks[blockPath] = {
       path: blockPath,
@@ -203,11 +283,17 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       name: block.name,
       responsibility: block.responsibility,
       kind: block.kind,
+      role: block.role,
+      roleLabel: ROLES[block.role].label,
+      architecture: isArchitecture(block.role),
+      holdsArchitecture: holdsArchitecture(node),
       planned: block.planned,
       holdsPlan: holdsPlan(node),
       functionName: pack?.functionName(block.id) ?? "",
       inputs: ports(block.inputs),
       outputs: ports(block.outputs),
+      exposes,
+      access: accesses,
       capabilities: Object.entries(block.capabilities).map(([name, cap]) => ({
         name,
         capability: cap.capability,
@@ -239,8 +325,12 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       },
       language,
       files: { impl: pack?.implFile ?? "", contract: pack?.contractFile ?? "" },
-      implemented: pack ? impl !== null && !pack.isUnimplemented(impl) : code !== null,
-      cases: pack && !block.planned ? await casesFor(blockPath) : [],
+      implemented: isArchitecture(block.role)
+        ? false
+        : pack
+          ? impl !== null && !pack.isUnimplemented(impl)
+          : code !== null,
+      cases: pack && !block.planned && !isArchitecture(block.role) ? await casesFor(blockPath) : [],
       code,
     };
   }

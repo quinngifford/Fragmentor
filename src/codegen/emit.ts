@@ -4,7 +4,8 @@ import type { Mode } from "../model/block.js";
 import { CAPABILITIES, isKnownCapability } from "../model/capabilities.js";
 import { validateComposite } from "../model/validate.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
-import { blocksRoot, holdsPlan, manifestPath, systemOf, writeManifest } from "../project/project.js";
+import { ROLES, isArchitecture } from "../model/roles.js";
+import { blocksRoot, holdsArchitecture, holdsPlan, manifestPath, systemOf, writeManifest } from "../project/project.js";
 import type { Manifest, Project, Start } from "../project/project.js";
 import { AGENTS_FILE, AGENTS_SCAFFOLD, CLAUDE_FILE, CLAUDE_SCAFFOLD, GUIDE_FILE, agentGuide } from "./guide.js";
 
@@ -28,6 +29,13 @@ import { AGENTS_FILE, AGENTS_SCAFFOLD, CLAUDE_FILE, CLAUDE_SCAFFOLD, GUIDE_FILE,
  * has nothing to generate for the same reason: its code would be a call to a
  * function that does not exist. Whatever Fragmentor generated for such a
  * block before is taken away, so a contract cannot outlive what it described.
+ *
+ * Architecture blocks — a database, a queue, another team's service — are
+ * treated the same way and for the same reason. They are things the system
+ * talks to rather than functions it calls, and a block holding one has no
+ * chain of calls to be written as. What reaches into them is the framework
+ * code outside `blocks/`, which is the person's to write. Their function
+ * children are ordinary blocks and are generated as usual.
  */
 
 export interface EmitResult {
@@ -234,6 +242,16 @@ export async function emitProject(project: Project): Promise<EmitResult> {
       continue;
     }
 
+    if (isArchitecture(node.block.role)) {
+      // It is not called, so it has no contract to be called through and no
+      // body to write. What it offers is described by "exposes" instead.
+      await discard(path.join(node.dir, pack.contractFile));
+      await clearImpl(
+        `"${node.block.name}" is ${ROLES[node.block.role].label.toLowerCase()} rather than a function, so Fragmentor writes no code for it, but ${relative(implFile)} holds code someone wrote. Take the "role" off the block if it really is a function, or move that code into a block inside it.`,
+      );
+      continue;
+    }
+
     await write(path.join(node.dir, pack.contractFile), pack.contractSource({ block: node.block, blockPath: node.path }));
 
     if (node.block.kind === "composite") {
@@ -243,6 +261,16 @@ export async function emitProject(project: Project): Promise<EmitResult> {
       // it would be checked and run as though it were the block.
       if (holdsPlan(node)) {
         await clearImpl(handWritten);
+        continue;
+      }
+
+      // A composite holding a database or a service is architecture, not a
+      // chain of calls. Its contract stays, because the blocks inside it are
+      // real, but nothing here can be written as code.
+      if (holdsArchitecture(node)) {
+        await clearImpl(
+          `"${node.block.name}" holds a piece of the architecture, so it is a diagram rather than a function, but ${relative(implFile)} holds code someone wrote. Code that reaches into these blocks belongs outside blocks/, where it can make the real connections.`,
+        );
         continue;
       }
 

@@ -3,6 +3,7 @@ import { builtinModules, createRequire } from "node:module";
 import path from "node:path";
 import ts from "typescript";
 import { getPack } from "../lang/index.js";
+import { isArchitecture } from "../model/roles.js";
 import type { LoadedBlock, Project } from "../project/project.js";
 
 /**
@@ -121,9 +122,10 @@ export function checkSystemCode(project: Project, rootBlock: string): CodeProble
   const files = new Map<string, LoadedBlock>();
   for (const node of project.byPath.values()) {
     if (node.path !== rootBlock && !node.path.startsWith(`${rootBlock}/`)) continue;
-    // Nothing is generated, checked or run for a planned block. Anything left
-    // in its folder has already been reported by the generator.
-    if (node.block.planned) continue;
+    // Nothing is generated, checked or run for a planned block, nor for a
+    // piece of the architecture. Anything left in either's folder has already
+    // been reported by the generator.
+    if (node.block.planned || isArchitecture(node.block.role)) continue;
     const file = path.join(node.dir, implFile);
     if (existsSync(file)) files.set(file, node);
   }

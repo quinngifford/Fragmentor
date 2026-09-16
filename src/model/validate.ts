@@ -1,4 +1,5 @@
 import type { Block, ChildRef, Mode, Wire } from "./block.js";
+import { ROLES, isArchitecture } from "./roles.js";
 import { describeType, typesEqual } from "./types.js";
 import type { PortType } from "./types.js";
 
@@ -66,7 +67,17 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
   const warn = (message: string, path?: string) => diagnostics.push({ severity: "warning", message, path });
   const visual = mode === "visual";
   const loose = visual || parent.planned;
-  const incomplete = loose ? warn : error;
+  /**
+   * Whether this composite has code of its own to generate. It does not once
+   * architecture is involved: an architecture block is not a function, and a
+   * function composite holding one cannot be written as a chain of calls
+   * either. Without generated code, a gap in the wiring breaks nothing — the
+   * framework code outside `blocks/` is what calls into these — so
+   * completeness drops to something worth pointing out rather than an error.
+   * Types still have to line up, because a mismatch is wrong either way.
+   */
+  const noCode = isArchitecture(parent.role) || [...children.values()].some((child) => isArchitecture(child.role));
+  const incomplete = loose || noCode ? warn : error;
 
   if (parent.kind !== "composite") {
     if (parent.children.length > 0 || parent.wires.length > 0) {
@@ -111,6 +122,15 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
     if (!def) {
       error(`"${parent.name}" refers to a child block "${child.block}" that does not exist.`, `children[${i}]`);
       return;
+    }
+
+    // An architecture block is a thing the system talks to, not a step in a
+    // flow, so there is no running it once per item and nothing to wire to.
+    if (isArchitecture(def.role) && child.mode === "each") {
+      error(
+        `"${child.block}" is ${ROLES[def.role].label.toLowerCase()} rather than a function, so it cannot be run once per item.`,
+        `children[${i}]`,
+      );
     }
 
     if (child.mode === "each") {
@@ -160,6 +180,10 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
       error(`A wire starts from "${wire.source.block}", which is not a child of "${parent.name}".`, path);
       return undefined;
     }
+    if (isArchitecture(def.role)) {
+      error(notAWire(wire.source.block, def), path);
+      return undefined;
+    }
     const type = outputTypeOnWire(ref, def, wire.source.port);
     if (!type) {
       error(`A wire starts from an output "${wire.source.port}" that "${wire.source.block}" does not produce.`, path);
@@ -185,6 +209,10 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
     const ref = refOf(wire.target.block);
     if (!def || !ref) {
       error(`A wire ends at "${wire.target.block}", which is not a child of "${parent.name}".`, path);
+      return undefined;
+    }
+    if (isArchitecture(def.role)) {
+      error(notAWire(wire.target.block, def), path);
       return undefined;
     }
     const type = inputTypeOnWire(ref, def, wire.target.port);
@@ -259,20 +287,25 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
 
   // --- capabilities are supplied by the parent -----------------------------
 
-  for (const ref of present) {
-    const def = childOf(ref.block);
-    // A planned block is not called, so nothing has to be passed to it yet.
-    if (!def || def.planned) continue;
-    for (const [name, cap] of Object.entries(def.capabilities)) {
-      const supplied = parent.capabilities[name];
-      if (!supplied) {
-        error(
-          `"${ref.block}" needs the capability "${name}" (${cap.capability}), but "${parent.name}" does not declare it.`,
-        );
-      } else if (supplied.capability !== cap.capability) {
-        error(
-          `"${ref.block}" needs "${name}" to be ${cap.capability}, but "${parent.name}" supplies ${supplied.capability}.`,
-        );
+  // Capabilities flow down through generated code. Where none is generated
+  // nothing flows, and the children are reached by the framework code outside
+  // `blocks/`, which makes the capabilities itself.
+  if (!noCode) {
+    for (const ref of present) {
+      const def = childOf(ref.block);
+      // A planned block is not called, so nothing has to be passed to it yet.
+      if (!def || def.planned) continue;
+      for (const [name, cap] of Object.entries(def.capabilities)) {
+        const supplied = parent.capabilities[name];
+        if (!supplied) {
+          error(
+            `"${ref.block}" needs the capability "${name}" (${cap.capability}), but "${parent.name}" does not declare it.`,
+          );
+        } else if (supplied.capability !== cap.capability) {
+          error(
+            `"${ref.block}" needs "${name}" to be ${cap.capability}, but "${parent.name}" supplies ${supplied.capability}.`,
+          );
+        }
       }
     }
   }
@@ -285,6 +318,17 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
   }
 
   return diagnostics;
+}
+
+/**
+ * A wire is a value handed from one call to the next, so it has nothing to
+ * attach to on a database or a queue. Saying so is worth more than the port
+ * error the wire would otherwise produce, because the fix is a different kind
+ * of connection rather than a different port.
+ */
+function notAWire(id: string, def: Block): string {
+  const noun = ROLES[def.role].entryNoun;
+  return `A wire touches "${id}", which is ${ROLES[def.role].label.toLowerCase()} rather than a function. A wire carries a value from one call into the next; say what reaches it with an access such as "reads ${id}.<${noun}>" on the block that reaches it.`;
 }
 
 /** Returns the blocks forming a dependency cycle, or undefined if the graph is runnable. */

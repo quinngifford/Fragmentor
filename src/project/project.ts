@@ -1,8 +1,9 @@
 import { access, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod/v4";
-import { blockIdPattern, blockToFileShape, parseBlockFile } from "../model/block.js";
-import type { Block, Mode } from "../model/block.js";
+import { blockIdPattern, blockToFileShape, formatAccess, parseBlockFile } from "../model/block.js";
+import type { Access, Block, Mode } from "../model/block.js";
+import { ROLES, isArchitecture } from "../model/roles.js";
 import { validateComposite } from "../model/validate.js";
 import type { Diagnostic } from "../model/validate.js";
 import { resolveInside } from "./safePath.js";
@@ -330,6 +331,14 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
       }
     }
 
+    // Access is declared by the block that does the reaching, so it is
+    // checked here rather than in the composite: only the project knows what
+    // lies above a block.
+    const loose = mode === "visual" || node.block.planned;
+    for (const access of node.block.access) {
+      diagnostics.push(...accessDiagnostics(project, node, access, loose));
+    }
+
     const depth = node.path.split("/").length;
     if (depth > maxDepth) {
       diagnostics.push({
@@ -341,6 +350,97 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
   }
 
   return diagnostics;
+}
+
+/**
+ * The block an access names, found by looking outward from the one that
+ * declared it: its parent's children first, then its parent's, up to the top
+ * of the system.
+ *
+ * That is what lets a handler buried inside a service reach a database the
+ * service keeps beside it, without every level in between having to repeat
+ * it. A block of the right id is returned whatever it turns out to be, so
+ * that naming a function by mistake is reported as the mistake it is rather
+ * than as a missing block.
+ */
+export function resolveAccess(project: Project, blockPath: string, resource: string): LoadedBlock | undefined {
+  const segments = blockPath.split("/");
+  for (let depth = segments.length - 1; depth > 0; depth -= 1) {
+    const ancestor = project.byPath.get(segments.slice(0, depth).join("/"));
+    const found = ancestor?.children.find((child) => child.block.id === resource);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * Whether this block is a piece of the architecture, or holds one anywhere
+ * beneath it.
+ *
+ * A composite's code is nothing but a call to each of its children, and a
+ * database is not something you call. So a block with architecture below it
+ * has no code of its own to generate, exactly as one with a plan below it
+ * does not — the real code that reaches into it is the framework's, and lives
+ * outside `blocks/`. Its function children are ordinary blocks and are
+ * generated, checked and run as usual.
+ */
+export function holdsArchitecture(node: LoadedBlock): boolean {
+  return isArchitecture(node.block.role) || node.children.some(holdsArchitecture);
+}
+
+/** What an access says about a block, once the block it names has been found. */
+function accessDiagnostics(project: Project, node: LoadedBlock, access: Access, loose: boolean): ProjectDiagnostic[] {
+  const at = (severity: "error" | "warning", message: string): ProjectDiagnostic => ({
+    severity: loose ? "warning" : severity,
+    blockPath: node.path,
+    message,
+  });
+  const written = `"${formatAccess(access)}"`;
+  const found = resolveAccess(project, node.path, access.resource);
+
+  if (!found) {
+    return [
+      at(
+        "error",
+        `"${node.block.name}" ${written}, but there is no block called "${access.resource}" beside it or anywhere above it in this system.`,
+      ),
+    ];
+  }
+  if (!isArchitecture(found.block.role)) {
+    return [
+      at(
+        "error",
+        `"${node.block.name}" ${written}, but "${access.resource}" is an ordinary function block. Access joins a block to a database, queue, service or other piece of the architecture; wire a function to it instead.`,
+      ),
+    ];
+  }
+
+  const role = ROLES[found.block.role];
+  if (access.entry === null) return [];
+
+  const entry = found.block.exposes[access.entry];
+  if (!entry) {
+    const names = Object.keys(found.block.exposes);
+    return [
+      at(
+        "error",
+        `"${node.block.name}" ${written}, but "${found.block.name}" exposes no ${role.entryNoun} called "${access.entry}"${
+          names.length > 0 ? `. It exposes: ${names.join(", ")}.` : `, and exposes nothing at all yet.`
+        }`,
+      ),
+    ];
+  }
+
+  // The entry itself says which directions it has. Reading something that
+  // gives nothing back, or writing to something that takes nothing, is a
+  // contradiction worth pointing out but not worth refusing a diagram over.
+  if (access.verb === "reads" && entry.returns === null) {
+    return [at("warning", `"${node.block.name}" reads "${access.resource}.${access.entry}", which says nothing comes back from it.`)];
+  }
+  if (access.verb === "writes" && entry.accepts === null) {
+    return [at("warning", `"${node.block.name}" writes to "${access.resource}.${access.entry}", which says it takes nothing.`)];
+  }
+  return [];
 }
 
 /**
