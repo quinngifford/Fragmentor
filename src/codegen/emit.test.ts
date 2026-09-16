@@ -294,7 +294,14 @@ describe("planned blocks", () => {
 
   it("never takes back code someone wrote, and says it is there", async () => {
     await emitProject(await loadProject(dir));
-    const written = "export async function addToSelf() { return { sum: 2 }; }";
+    // Real code that happens to keep the starting point's wording in a branch
+    // nobody has finished. What decides this is whether the file is the
+    // starting point, not whether that phrase appears somewhere in it.
+    const written = `export async function addToSelf(input: { value: number }) {
+  if (input.value < 0) throw new Error("Add To Self has no implementation yet.");
+  return { sum: input.value + input.value };
+}
+`;
     await writeFile(childFile("impl.ts"), written, "utf8");
 
     await planTheChild();
@@ -302,5 +309,23 @@ describe("planned blocks", () => {
 
     expect(result.problems.join(" ")).toMatch(/is planned, so it is only a drawing/);
     expect(await readFile(childFile("impl.ts"), "utf8")).toBe(written);
+    expect(result.removed).not.toContain("blocks/double-it/add-to-self/impl.ts");
+  });
+
+  it("reports a hand-written composite above a plan rather than quietly leaving it to be run", async () => {
+    await emitProject(await loadProject(dir));
+    const byHand = `export async function doubleIt(input: { value: number }) {
+  return { doubled: input.value * 2 };
+}
+`;
+    await writeFile(compositeFile(), byHand, "utf8");
+
+    await planTheChild();
+    const result = await emitProject(await loadProject(dir));
+
+    // Without this it would sit there being typechecked and run as though it
+    // were the block, which is the drift generated code exists to prevent.
+    expect(result.problems.join(" ")).toMatch(/holds code someone wrote/);
+    expect(await readFile(compositeFile(), "utf8")).toBe(byHand);
   });
 });

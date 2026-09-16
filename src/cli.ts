@@ -6,7 +6,7 @@ import { startProject, writeAgentFiles } from "./codegen/emit.js";
 import type { NewProjectSettings } from "./codegen/emit.js";
 import { CLAUDE_FILE, GUIDE_FILE } from "./codegen/guide.js";
 import { getPack, isKnownLanguage } from "./lang/index.js";
-import { loadProject, manifestPath, readManifest, systemOf } from "./project/project.js";
+import { holdsPlan, loadProject, manifestPath, readManifest, systemOf } from "./project/project.js";
 import type { Project, ProjectDiagnostic } from "./project/project.js";
 import { readCases } from "./run/cases.js";
 import { runCases } from "./run/run.js";
@@ -81,6 +81,9 @@ function settingsFrom(options: Map<string, string>): NewProjectSettings | string
   const start = options.get("start") ?? "build";
   if (start !== "plan" && start !== "build") {
     return "fragmentor init needs --start plan (draw the architecture as planned blocks first) or --start build (build it as you go).";
+  }
+  if (options.has("existing-code") && start === "plan") {
+    return "Code that already exists is described or rebuilt, not planned, so --existing-code and --start plan cannot go together.";
   }
   return {
     mode,
@@ -191,7 +194,9 @@ function formatReport(report: CheckReport): string {
 
   const built = report.blockCount - report.planned.length - report.waiting.length;
   lines.push("", "Unfinished");
-  if (report.unimplemented.length === 0 && report.untested.length === 0) {
+  if (built === 0) {
+    lines.push("  nothing is built yet: every block is part of the plan");
+  } else if (report.unimplemented.length === 0 && report.untested.length === 0) {
     lines.push(visual ? "  every block points at its code" : "  every block is implemented and has tests");
   }
   if (report.unimplemented.length > 0) {
@@ -282,10 +287,17 @@ async function test(dir: string, requested: string[]): Promise<number> {
 
   const counts = { passed: 0, failed: 0, error: 0, unchecked: 0, skipped: 0 };
   const untested: string[] = [];
+  const inThePlan: string[] = [];
 
   for (const blockPath of requested.length > 0 ? requested : [...project.byPath.keys()]) {
-    // A planned block has no code to run, and nothing about it is untested.
-    if (project.byPath.get(blockPath)?.block.planned) continue;
+    // A planned block has no code to run, and neither has one whose code is
+    // held back until the plan beneath it is built. Nothing about either is
+    // untested, so they are passed over rather than failing to load.
+    const node = project.byPath.get(blockPath);
+    if (node && holdsPlan(node)) {
+      inThePlan.push(blockPath);
+      continue;
+    }
 
     const saved = await readCases(dir, blockPath);
     if (saved.problem) {
@@ -325,6 +337,9 @@ async function test(dir: string, requested: string[]): Promise<number> {
   if (counts.skipped > 0) summary.push(`${counts.skipped} skipped`);
   console.log(`Result: ${summary.join(", ")}.`);
   if (untested.length > 0) console.log(`No tests yet: ${untested.join(", ")}`);
+  // Said plainly, because a block with saved tests that quietly never runs
+  // reads as a test runner that lost them.
+  if (inThePlan.length > 0) console.log(`Not run, because they are part of the plan and have no code yet: ${inThePlan.join(", ")}`);
 
   return counts.failed + counts.error > 0 ? 1 : 0;
 }

@@ -121,6 +121,9 @@ export function checkSystemCode(project: Project, rootBlock: string): CodeProble
   const files = new Map<string, LoadedBlock>();
   for (const node of project.byPath.values()) {
     if (node.path !== rootBlock && !node.path.startsWith(`${rootBlock}/`)) continue;
+    // Nothing is generated, checked or run for a planned block. Anything left
+    // in its folder has already been reported by the generator.
+    if (node.block.planned) continue;
     const file = path.join(node.dir, implFile);
     if (existsSync(file)) files.set(file, node);
   }

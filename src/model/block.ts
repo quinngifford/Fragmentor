@@ -263,7 +263,7 @@ function blockFileSchema(mode: Mode, planned: boolean) {
       message: `"code" is only for visual mode. In structured mode a block's code is the implementation file in its folder.`,
       path: ["code"],
     })
-    .refine((file) => !file.planned || file.code === undefined, {
+    .refine((file) => !(planned || file.planned) || file.code === undefined, {
       message: "a planned block stands for code that does not exist yet, so it cannot point at any",
       path: ["code"],
     });
@@ -286,15 +286,20 @@ export function parseBlockFile(
   raw: unknown,
   id: string,
   mode: Mode = "structured",
+  /** True when a block above this one is planned, which makes this one planned too. */
+  plannedAbove = false,
 ): { ok: true; block: Block } | { ok: false; problems: string[] } {
   if (!blockIdPattern.test(id)) {
     return { ok: false, problems: [`the folder name "${id}" must be kebab-case (lowercase letters, digits, single hyphens)`] };
   }
 
-  // Which schema the ports get depends on a field of the file being read, so
-  // it is looked at first. Anything other than `true` falls through to the
-  // schema, which says what a planned flag may be.
-  const planned = typeof raw === "object" && raw !== null && (raw as { planned?: unknown }).planned === true;
+  // Which schema the ports get depends on whether this block is planned, so
+  // that is settled before the file is read. It cannot wait until afterwards:
+  // a planned block's types are words, which the strict schema refuses.
+  // Anything other than `true` falls through to the schema, which says what a
+  // planned flag may be.
+  const planned =
+    plannedAbove || (typeof raw === "object" && raw !== null && (raw as { planned?: unknown }).planned === true);
 
   const parsed = blockFileSchema(mode, planned).safeParse(raw);
   if (!parsed.success) {
@@ -313,15 +318,15 @@ export function parseBlockFile(
     children: file.children,
     wires: file.wires,
     pinnedAsLeaf: file.pinnedAsLeaf,
-    planned: file.planned,
+    planned,
   };
   if (file.code !== undefined) block.code = file.code;
   return { ok: true, block };
 }
 
 /** The same, for a file already known to be valid, such as an example written in code. */
-export function blockFromFile(raw: unknown, id: string, mode: Mode = "structured"): Block {
-  const result = parseBlockFile(raw, id, mode);
+export function blockFromFile(raw: unknown, id: string, mode: Mode = "structured", plannedAbove = false): Block {
+  const result = parseBlockFile(raw, id, mode, plannedAbove);
   if (!result.ok) throw new Error(`"${id}" is not a valid block:\n  ${result.problems.join("\n  ")}`);
   return result.block;
 }

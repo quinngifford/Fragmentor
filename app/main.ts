@@ -146,6 +146,9 @@ function settingsFrom(raw: unknown): NewProjectSettings {
   if (value.start !== "plan" && value.start !== "build") {
     throw new Error("Choose whether to plan the architecture first or build it straight away.");
   }
+  if (value.existingCode && value.start === "plan") {
+    throw new Error("Code that already exists is described or rebuilt, not planned. Start from scratch to plan an architecture.");
+  }
 
   const language = typeof value.language === "string" && value.language.trim() ? value.language.trim().slice(0, 40) : null;
   if (value.mode === "structured" && language !== null && !isKnownLanguage(language)) {
@@ -283,11 +286,14 @@ function registerHandlers(): void {
           cancelId: 1,
           message: hasFiles ? "This folder already holds code" : "This folder is empty",
           detail: hasFiles
-            ? "You said you were starting from scratch. Using it anyway is fine: your agent will be told the code is already here and asked to work from it."
+            ? `You said you were starting from scratch. Using it anyway is fine: your agent will be told the code is already here and asked to work from it${settings.start === "plan" ? ", rather than to plan an architecture from nothing" : ""}.`
             : "You said you were working with code you already have. Using it anyway is fine: your agent will be told to write the program from nothing.",
         });
         if (response !== 0) return ok(null);
         settings.existingCode = hasFiles;
+        // Code that already exists is described or rebuilt, never planned,
+        // which is why the window never offers that pair either.
+        if (hasFiles) settings.start = "build";
       }
 
       // Structured mode rebuilds whatever code is already there. That is what
@@ -744,6 +750,12 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("dialogClosed", "closed") === true,
     ],
     [
+      "changing an answer clears the ones below it, and they can be given again",
+      value("dialog", "startNotAskedOfExistingCode") === true &&
+        value("dialog", "clearedBelow") === true &&
+        value("dialog", "answerableAgain") === true,
+    ],
+    [
       "a planned block is drawn apart from the built ones, and nothing is asked of it",
       value("planned", "drawn") === true &&
         value("planned", "onScreen") === true &&
@@ -927,6 +939,22 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
           dialog.querySelector('input[name="start"][value="plan"]').click();
           const blockedWithoutLevel = create.disabled;
           dialog.querySelector('input[name="granularity"][value="3"]').click();
+          const ready = !create.disabled;
+
+          // Code that already exists is described or rebuilt, never planned,
+          // so that question is not asked of it at all.
+          dialog.querySelector('input[name="starting-point"][value="true"]').click();
+          dialog.querySelector('input[name="mode"][value="structured"]').click();
+          const startNotAskedOfExistingCode = dialog.querySelector('input[name="start"]').closest("fieldset").hidden;
+
+          // Going back clears the answers below, and they can be given again.
+          // A radio left checked for a cleared answer could not be re-chosen:
+          // clicking the one already checked raises no event at all.
+          dialog.querySelector('input[name="starting-point"][value="false"]').click();
+          const clearedBelow = ![...dialog.querySelectorAll('input[name="start"]')].some((i) => i.checked);
+          dialog.querySelector('input[name="mode"][value="visual"]').click();
+          dialog.querySelector('input[name="start"][value="plan"]').click();
+
           return {
             opened: true,
             blockedAtFirst,
@@ -934,7 +962,10 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
             roleAsked,
             blockedWithoutStart,
             blockedWithoutLevel,
-            ready: !create.disabled,
+            ready,
+            startNotAskedOfExistingCode,
+            clearedBelow,
+            answerableAgain: !create.disabled,
             languageIsFree: Boolean(dialog.querySelector(".language-slot input[list]")),
             levelText: text("dialog.new-project .dialog-note"),
           };

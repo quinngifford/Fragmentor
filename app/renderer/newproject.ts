@@ -202,7 +202,6 @@ export function askForProjectSettings(): Promise<NewProjectSettings | null> {
     const firstStep = question<Start>("start", (value) => {
       start = value;
     });
-    firstStep.draw("How do you want to start?", STARTS);
 
     const granularity = el("fieldset", "dialog-field");
     granularity.append(legend("How finely should the work be divided?", "required"));
@@ -305,6 +304,12 @@ export function askForProjectSettings(): Promise<NewProjectSettings | null> {
           const asked = MODES[existingCode ? "existing" : "scratch"];
           role.draw(asked.question, asked.choices);
         }
+        // Both answers below were cleared along with the role, so their
+        // controls are rebuilt too. A radio left checked for an answer that
+        // no longer holds cannot be chosen again: clicking the one already
+        // checked raises no event, so nothing would notice.
+        firstStep.draw("How do you want to start?", STARTS);
+        languageDrawnFor = undefined;
         roleDrawnFor = existingCode;
       }
       role.field.hidden = existingCode === null;

@@ -339,9 +339,10 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
     code.append(visual ? linkedCodeSection(block) : codeSection(block));
   }
   panel.append(code);
-  // Nothing beneath this point applies to a block nobody has written: there
-  // is nothing to run, and nothing a test could be written against.
-  if (visual || block.planned) return;
+  // Nothing beneath this point applies to a block with no code: one nobody
+  // has written, or one whose code waits for the plan inside it. There is
+  // nothing to run, and nothing a test could be run against.
+  if (visual || block.planned || block.holdsPlan) return;
 
   const testing = group("Testing");
   const [bench, cases] = benchSections(block);

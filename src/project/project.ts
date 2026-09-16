@@ -255,16 +255,16 @@ async function loadBlockTree(dir: string, blockPath: string, mode: Mode, planned
     throw new Error(`Could not read the block definition at ${file}: ${reason}.`, { cause });
   }
 
-  const parsed = parseBlockFile(raw, id, mode);
+  const parsed = parseBlockFile(raw, id, mode, plannedAbove);
   if (!parsed.ok) {
     throw new Error(`The block definition at ${file} is not valid:\n  ${parsed.problems.join("\n  ")}`);
   }
 
   // Planning spreads downward: a block inside one that does not exist yet
-  // does not exist either. Settling it here means everything that reads a
+  // does not exist either. parseBlockFile has already applied that, both to
+  // the block and to how its ports were read, so everything that reads a
   // loaded block sees the truth without walking back up the tree to find it.
-  const planned = parsed.block.planned || plannedAbove;
-  parsed.block.planned = planned;
+  const planned = parsed.block.planned;
 
   // A block's folder can sit alongside things that are not blocks: __pycache__,
   // node_modules, a virtual environment. Only a directory that is named like a

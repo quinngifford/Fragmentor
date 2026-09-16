@@ -236,7 +236,7 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       language,
       files: { impl: pack?.implFile ?? "", contract: pack?.contractFile ?? "" },
       implemented: pack ? impl !== null && !pack.isUnimplemented(impl) : code !== null,
-      cases: pack ? await casesFor(blockPath) : [],
+      cases: pack && !block.planned ? await casesFor(blockPath) : [],
       code,
     };
   }

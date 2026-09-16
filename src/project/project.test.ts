@@ -326,6 +326,38 @@ describe("planned blocks", () => {
   });
 });
 
+describe("a block inside a plan", () => {
+  it("may write its types as words without repeating the flag", async () => {
+    await writeSmallProject();
+    await writeBlock(
+      blockDir(dir, "rank-jobs/score-posting"),
+      makeBlock({
+        id: "score-posting",
+        kind: "composite",
+        planned: true,
+        inputs: { posting: { type: t.object({ title: t.string }) } },
+        outputs: { score: { type: t.number } },
+        children: [{ block: "weigh-keywords", mode: "once" }],
+      }),
+    );
+
+    // Written as the file itself, because this is about how the file is read:
+    // a prose type is only legal once the block is known to be planned, and
+    // this one is planned by the block above it rather than by itself.
+    await mkdir(blockDir(dir, "rank-jobs/score-posting/weigh-keywords"), { recursive: true });
+    await writeFile(
+      path.join(blockDir(dir, "rank-jobs/score-posting/weigh-keywords"), "block.json"),
+      JSON.stringify({ responsibility: "Weigh them somehow.", inputs: { terms: "the keywords it will weigh" } }),
+      "utf8",
+    );
+
+    const project = await loadProject(dir);
+    const inside = project.byPath.get("rank-jobs/score-posting/weigh-keywords")!.block;
+    expect(inside.planned).toBe(true);
+    expect(inside.inputs.terms!.type).toEqual({ kind: "text", text: "the keywords it will weigh" });
+  });
+});
+
 describe("a project file written before the questions were asked", () => {
   it("reads as one started from nothing and built as it went", async () => {
     await writeManifestJson({

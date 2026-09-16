@@ -203,35 +203,46 @@ export async function emitProject(project: Project): Promise<EmitResult> {
     }
     const pack = getPack(system.language);
     const implFile = path.join(node.dir, pack.implFile);
+    const existing = (await readIfPresent(implFile))?.replace(/\r\n/g, "\n") ?? null;
+
+    /**
+     * What Fragmentor may rewrite or take away here: code it generated, or
+     * the starting point it created that nobody has filled in since.
+     *
+     * The starting point is matched exactly rather than by the "no
+     * implementation yet" marker inside it, because that phrase can appear in
+     * real code — in a branch someone has left unfinished, say — and here it
+     * decides what gets deleted.
+     */
+    const ours = (source: string) => isGeneratedSource(source) || source === pack.implScaffold(node.block);
+
+    /** Leaves the block with no code: Fragmentor's own goes, anyone else's is reported. */
+    const clearImpl = async (problem: string) => {
+      if (existing !== null && !ours(existing)) problems.push(problem);
+      else await discard(implFile, ours);
+    };
+
+    const handWritten = `"${node.block.name}" has children, so Fragmentor writes its code, but ${relative(implFile)} holds code someone wrote. Move that code into its children, then delete the file so it can be generated.`;
 
     if (node.block.planned) {
       // Its ports say what is meant to flow rather than what does, so there
       // is no contract to write and nothing to write code against.
       await discard(path.join(node.dir, pack.contractFile));
-
-      // An implementation file nobody has filled in is Fragmentor's own, the
-      // same as anything it generated. Work someone did is theirs.
-      const ours = (source: string) => isGeneratedSource(source) || pack.isUnimplemented(source);
-      const left = await readIfPresent(implFile);
-      if (left !== null && !ours(left)) {
-        problems.push(
-          `"${node.block.name}" is planned, so it is only a drawing, but ${relative(implFile)} holds code someone wrote. Take "planned" off the block if it is real now, or move that code out of it.`,
-        );
-      } else {
-        await discard(implFile, ours);
-      }
+      await clearImpl(
+        `"${node.block.name}" is planned, so it is only a drawing, but ${relative(implFile)} holds code someone wrote. Take "planned" off the block if it is real now, or move that code out of it.`,
+      );
       continue;
     }
 
     await write(path.join(node.dir, pack.contractFile), pack.contractSource({ block: node.block, blockPath: node.path }));
 
-    const existing = (await readIfPresent(implFile))?.replace(/\r\n/g, "\n") ?? null;
-
     if (node.block.kind === "composite") {
       // Its code would call a block nobody has written yet, so it waits for
-      // the plan beneath it to be built. Its own contract is real and stays.
+      // the plan beneath it to be built; its own contract is real and stays.
+      // Code someone left here is still reported, because while it sits there
+      // it would be checked and run as though it were the block.
       if (holdsPlan(node)) {
-        await discard(implFile);
+        await clearImpl(handWritten);
         continue;
       }
 
@@ -240,14 +251,10 @@ export async function emitProject(project: Project): Promise<EmitResult> {
       const children = new Map(node.children.map((child) => [child.block.id, child.block]));
       if (validateComposite(node.block, children).some((diagnostic) => diagnostic.severity === "error")) continue;
 
-      // Only code Fragmentor generated, or the starting point it created and
-      // nobody has touched since, is Fragmentor's to replace.
-      if (existing === null || isGeneratedSource(existing) || existing === pack.implScaffold(node.block)) {
+      if (existing === null || ours(existing)) {
         await write(implFile, pack.compositeSource(node.block));
       } else {
-        problems.push(
-          `"${node.block.name}" has children, so Fragmentor writes its code, but ${relative(implFile)} holds code someone wrote. Move that code into its children, then delete the file so it can be generated.`,
-        );
+        problems.push(handWritten);
       }
     } else if (existing === null) {
       await write(implFile, pack.implScaffold(node.block));
