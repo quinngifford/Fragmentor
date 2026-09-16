@@ -1,6 +1,6 @@
 # Fragmentor
 
-Fragmentor shows software as a hierarchy of blocks, each a function with typed inputs, typed outputs and declared effects, and checks that the code matches the diagram.
+Fragmentor shows software as a hierarchy of blocks — functions with typed inputs, typed outputs and declared effects, alongside the databases, queues, services and clients they talk to — and checks that the code matches the diagram.
 
 It does not contain an AI. A coding agent such as Claude Code or Codex builds the software in the project folder, following the rules Fragmentor writes there. Fragmentor draws the system as it grows, points out what is wrong, and runs the tests.
 
@@ -22,6 +22,8 @@ npm link
 In **structured** mode the agent reads `FRAGMENTOR.md`, defines the blocks, writes the code and the tests, and runs `fragmentor check` and `fragmentor test` until both pass. Fragmentor writes the code that connects the blocks. In a folder that already holds code, the agent rebuilds that code as blocks.
 
 In **visual** mode the agent maps the code already in the folder into a diagram, and never changes it.
+
+A diagram is not only functions. A block can stand for a database, a queue, a store, a service of yours, someone else's API, or the browser that starts a request. Those carry what they offer rather than ports — a database shows its tables and their columns — and the blocks that read or write them are joined straight to them, so the diagram says where data comes from, where it is kept and where it goes. Fragmentor generates, checks and runs nothing for them; the blocks inside a service are ordinary blocks and are checked and tested as usual. `examples/link-shortener` is a whole application drawn this way.
 
 If you asked to plan first, the agent draws the whole architecture before building any of it. Blocks that are only planned appear greyed out, wired as loosely as the plan is, with nothing generated, checked or run for them; they turn into ordinary blocks as the agent builds them.
 

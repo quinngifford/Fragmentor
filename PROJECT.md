@@ -25,6 +25,7 @@ Rebuilding an existing codebase in structured mode is destructive by design, so 
 
 A block has:
 
+- a role, saying what kind of thing it stands for: a function by default, or a piece of the architecture such as a database or a queue
 - typed input ports
 - typed output ports
 - capability ports — declared effects the block needs, such as a database, HTTP access, the clock, or a model API
@@ -37,13 +38,31 @@ Capability ports matter more than they first appear. Real software touches netwo
 
 Capabilities are described in the same port type language as everything else, so each target language renders them its own way rather than the model favouring one.
 
-### Every block is a function
+### Every function block is a function
 
-In structured mode every block corresponds to a real, callable function in the code.
+In structured mode every block whose role is `function` corresponds to a real, callable function in the code.
 
 The user must be able to open any block, enter input values, run it, and see the outputs. That requirement forces callability, so there is no separate, cheaper representation for small blocks.
 
 A conceptual step too small to justify its own function is not a block; it is a line inside a leaf block. Granularity control, not a second block representation, is what keeps the codebase from filling with trivial one-line functions.
+
+## The rest of the system
+
+A program is functions. An application is functions plus the things they talk to, and a diagram of the functions alone shows values arriving from nowhere and leaving for nowhere: where the data actually lives is not on it.
+
+So a block carries a **role**. `function` is the block described above, and is what a block is unless it says otherwise. The rest — `service`, `external`, `database`, `storage`, `queue`, `client` — are **architecture**: parts of the system that are not Fragmentor's to write.
+
+An architecture block is not called, so it has no ports and no capabilities. It declares what it offers as **exposed entries**: a database's tables with their schemas, a queue's channels with the message on them, a service's operations with what they accept and return. A table drawn with its columns is the point — it is what makes the store worth looking at rather than merely naming.
+
+Any block declares what it reaches as **access**: `reads app-db.users`, `writes app-db.orders`, `calls billing.charge`. This is declared by the block doing the reaching, the way a capability is, rather than by its parent the way a wire is: reaching a database is something the block itself does, and stays true wherever the block is moved. The block named is found by looking outward — the block's parent, then its parent, to the top of the system — so a handler deep inside a service reaches a database the service keeps beside it.
+
+A wire and an access mean different things and are drawn differently. A wire is a value handed from one call into the next, and generated code depends on that meaning exactly. An access is a relationship with something the system talks to. Nothing is wired to a database.
+
+Nothing is generated, checked or run for an architecture block, or for a block holding one anywhere beneath it — the same rule as a plan, for the same reason: there is no chain of calls to write when one of the links is a database. The code that opens the real connections and calls into these is the framework's, and lives outside `blocks/`. The function blocks **inside** a service are ordinary blocks, generated, checked, run and tested as usual, which is what lets a project hold an honest end-to-end architecture at the top and a fully verified block hierarchy underneath each service.
+
+Access says where data comes from and where it goes. It is not how the code gets there: block code still reaches the outside world only through its capabilities, and there is no database capability today. So an access belongs on whichever block really talks to the store — a service, whose code is outside `blocks/`, or a block with a capability that reaches it.
+
+The roles are a vocabulary for reading, not a taxonomy to be enforced. Adding one is adding a description; everything that treats architecture differently asks only whether a role is code.
 
 ## Planned architecture
 

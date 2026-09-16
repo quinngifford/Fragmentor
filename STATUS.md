@@ -2,9 +2,11 @@
 
 ## Current focus
 
-A new project is started by answering a short question tree, and its answers are what the agent's guide is written from. Architecture can now be drawn before it is built: a block marked planned appears greyed out, wired as loosely as the plan is, with nothing generated, checked or run for it. Underneath, the two modes, the generated composite code, the zooming canvas, watched runs with breakpoints and the rebuilt inspector are all in place. Next: running both modes with a real agent.
+A diagram can now hold the whole system, not only its functions. A block carries a role, so a database, a queue, a service, someone else's API or the browser that starts a request is drawn as the thing it is, with its tables or operations on show, and the blocks that reach it are joined straight to it. Underneath, planned architecture, the two modes, the generated composite code, the zooming canvas, watched runs with breakpoints and the rebuilt inspector are all in place. Next: running both modes with a real agent.
 
 ## Working
+
+- **The rest of the system.** A block has a `role`. `function` is what a block has always been; `service`, `external`, `database`, `storage`, `queue` and `client` are architecture — parts of the system Fragmentor does not write. An architecture block has no ports and no capabilities; it says what it offers with `exposes`, each entry a table with its schema, a channel with its message, or an operation with what it accepts and returns. Any block says what it reaches with `access`, as in `"reads app-db.users"`, declared on the block doing the reaching and resolved by looking outward to the top of the system, so a handler inside a service reaches a database the service keeps beside it. On the canvas a resource is an amber plate carrying its entries down its middle, and an access is a dashed amber line whose arrow points the way the data moves; access is gathered from everything inside a block, so the level above a service shows what its handlers depend on without the service repeating it, and a resource that lives further out is brought in and marked `elsewhere`. Nothing is generated, checked or run for architecture, nor for a block holding it, exactly as for a plan — the blocks inside a service stay ordinary blocks and are generated, checked and tested as before. `examples/link-shortener` is a whole application drawn this way.
 
 - **A question tree when a project is created.** **New project…** asks where you are starting from (an empty folder or code you already have), what Fragmentor's role should be over that code, whether to plan the architecture before building it, how finely to divide the work, and optionally the language. Each answer reveals the next, so a question that does not apply is never asked; plan-first is only offered where there is nothing there yet. The answers go into `fragmentor.json` as `mode`, `existingCode` and `start` before any agent starts. Starting a structured project over existing code asks for confirmation and says to commit first, and answers that disagree with the folder that was picked are pointed out rather than silently kept. `fragmentor init --mode … --granularity … [--language …] [--existing-code] [--start plan|build]` does the same for an agent.
 
@@ -24,6 +26,7 @@ A new project is started by answering a short question tree, and its answers are
 
 ## Not built yet
 
+- No capability reaches a database, so in structured mode an `access` records where data comes from without being how the code gets it.
 - Showing code problems in the application. Only `fragmentor check` reports them.
 - Running or checking Python code.
 - Stale-state propagation, and per-block granularity overrides.
@@ -31,6 +34,12 @@ A new project is started by answering a short question tree, and its answers are
 ## Known problems or uncertainties
 
 - **Neither mode has been run with a real agent.** Everything an agent does has been exercised by tests and the self-check. Whether an agent follows the shorter guide well is untested, and so is whether it maps an existing codebase faithfully in visual mode or rebuilds one safely in structured mode.
+- **A role is the agent's to write**, as `planned` is. There is no control in the application for making a block a database or taking the role off again.
+- **`access` describes, it does not connect.** In structured mode a block's code still reaches the world only through its capabilities, and the catalogue has none for a database. So an access belongs on whichever block really talks to the store: a service, whose code lives outside `blocks/`, or a block with a capability that reaches it. Nothing enforces that.
+- **An exposed type that will not parse is kept as words**, without a word said. That is deliberate — a database column is often a type the port language has never heard of — but it means a typo in a schema is shown rather than reported.
+- **A composite holding architecture has its wiring checked more loosely.** With no code to generate, an input nothing is wired to is a warning rather than an error, and inside a service it is not remarked on at all, because the framework calls those blocks from outside. A genuine mistake in that wiring is therefore quieter than elsewhere.
+- **Access is drawn on the parent's diagram only.** A block's own diagram does not show what it reaches; the level above it does.
+
 - **Planned blocks are the agent's to mark.** There is no control in the application for declaring a block planned or taking the flag off. The agent writes `"planned": true` into the block's file, as it writes everything else about a block.
 
 - **A block nobody has laid out lands in the automatic grid**, which can be nowhere near blocks that were placed by hand, so a newly planned block may appear off to one side. **Re-layout** puts them all together again. This is not new, but it shows up most when the agent adds blocks to a diagram someone has arranged.
@@ -59,6 +68,8 @@ A new project is started by answering a short question tree, and its answers are
 
 - **Starting a project, and answering its questions.** Run `npm run app`, choose **New project…**, and walk the questions both ways: from scratch and from a folder holding code. Then open Claude Code or Codex in the folder and ask for a small program (structured) or a diagram of the code (visual). Things to judge: whether each question is clear and lands in the right order, whether the recommended answer is the one you would want, and whether the agent follows the guide it is given.
 
+- **A whole application on the canvas.** Run `npm run app`, open `examples/link-shortener`, and look at the top diagram: a browser, an HTTP service, a database, a queue and someone else's geolocation service, joined by dashed amber lines. Double-click into **Link API**. Things to judge: whether the database's columns are readable, whether the arrows make it obvious which way data moves, whether the gathered lines at the top level help or mislead, and whether a resource marked `elsewhere` reads as belonging to the diagram above rather than to this one.
+
 - **Planning an architecture before building it.** Start a project from scratch with **Plan the architecture**, then ask your agent for something small. Things to judge: whether it draws the whole shape as planned blocks before writing code, whether greyed-out blocks are unmistakably not built, and whether the plan is easy to argue with on the canvas.
 - **How the canvas moves.** Double-click into blocks and use the breadcrumbs to come back out, and watch blocks arrive while an agent works. Things to judge: whether the zoom reads as going inside a block, and whether arrivals help or distract.
 - **Watching and pausing a run.** In the Job Relevance Ranker example, run `rank-jobs` from the test bench, then set a breakpoint on Score Posting and run it again. Things to judge: whether the pace is right, whether the values on the wires are readable, whether Continue and Step do what you expect, and whether the flow on the held wires helps or distracts.
@@ -66,7 +77,7 @@ A new project is started by answering a short question tree, and its answers are
 
 ## Current checkpoint
 
-- `main`, with planned architecture and the new-project question tree on top of the two modes, the canvas animation, watched runs and the rebuilt inspector. The tag `checkpoint/pre-planned-blocks` marks `main` as it was before this work, `checkpoint/pre-inspector-ui` before the inspector work, and `checkpoint/pre-modes` before the modes work.
+- `main`, with architectural block types on top of planned architecture, the new-project question tree, the two modes, the canvas animation, watched runs and the rebuilt inspector. The tag `checkpoint/pre-architecture-blocks` marks `main` as it was before this work, `checkpoint/pre-planned-blocks` before the planned-block work, `checkpoint/pre-inspector-ui` before the inspector work, and `checkpoint/pre-modes` before the modes work.
 - One test has been failing since before this work: `check.test.ts` > "puts back a composite that someone edited" compares generated code against a file this checkout has in CRLF. It is a line-ending artifact of the working copy, not a fault in the code.
 
 ## Next major steps
