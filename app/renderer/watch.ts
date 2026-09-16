@@ -443,6 +443,19 @@ function renderRunBar(): void {
     state.dataset.tone = "paused";
     buttons.push(
       barButton("Continue", "Run on to the next breakpoint", () => command(watch, { type: "resume", mode: "continue" })),
+    );
+    // A block run once per item is called for every item at once, and every
+    // call is held. Continue would let them go one at a time.
+    if (turns.length > 1) {
+      buttons.push(
+        barButton(
+          "Continue all",
+          "Let go of every call of this block that is waiting, rather than one at a time",
+          () => command(watch, { type: "resume", mode: "block" }),
+        ),
+      );
+    }
+    buttons.push(
       barButton("Step", "Run until the next block starts", () => command(watch, { type: "resume", mode: "step" })),
       barButton("Stop", "End the run here", () => command(watch, { type: "stop" })),
     );

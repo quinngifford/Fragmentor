@@ -66,7 +66,7 @@ export interface WatchRunRequest {
 
 /** What the person can tell a watched run to do. */
 export type RunCommand =
-  | { type: "resume"; mode: "continue" | "step" }
+  | { type: "resume"; mode: "continue" | "step" | "block" }
   | { type: "breakpoints"; paths: string[] }
   | { type: "stop" };
 

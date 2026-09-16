@@ -39,8 +39,12 @@ export interface RunRequest {
 
 /** Steers a run that is under way. */
 export interface RunControl {
-  /** Lets the call held at a breakpoint go on. With "step", the next block to start is held too. */
-  resume(mode: "continue" | "step"): void;
+  /**
+   * Lets the call held at a breakpoint go on. With "step", the next block to
+   * start is held too; with "block", every call of the same block that is
+   * waiting its turn goes as well.
+   */
+  resume(mode: "continue" | "step" | "block"): void;
   setBreakpoints(paths: string[]): void;
   /** Ends the run where it is. */
   stop(): void;

@@ -146,10 +146,19 @@ function releaseNext(mode) {
   if (!next) return;
   stepping = mode === "step";
   letGo(next);
-  if (mode === "continue") {
+  if (mode !== "step") {
     // Calls held by an earlier step, or at a breakpoint that has since been
     // taken away, have nothing left to wait for.
     for (const entry of held.filter((each) => !breakpoints.has(each.blockPath))) {
+      held.splice(held.indexOf(entry), 1);
+      letGo(entry);
+    }
+  }
+  if (mode === "block") {
+    // A block run once per item is called for every item at once, so its
+    // calls would otherwise have to be let go one at a time. This lets the
+    // whole block through, and leaves the breakpoint where it is.
+    for (const entry of held.filter((each) => each.blockPath === next.blockPath)) {
       held.splice(held.indexOf(entry), 1);
       letGo(entry);
     }

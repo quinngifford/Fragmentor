@@ -152,6 +152,11 @@ function settingsFrom(raw: unknown): NewProjectSettings {
 /* Watching                                                                    */
 /* -------------------------------------------------------------------------- */
 
+/** The window is not trusted to send a mode that means anything, so anything else is a plain resume. */
+function resumeMode(raw: unknown): "continue" | "step" | "block" {
+  return raw === "step" || raw === "block" ? raw : "continue";
+}
+
 /** One watcher per window, on whichever project that window has open. */
 const watchers = new Map<number, FSWatcher>();
 
@@ -419,7 +424,7 @@ function registerHandlers(): void {
   ipcMain.handle(CHANNELS.controlRun, async (_event, runId: string, command: RunCommand): Promise<Result<null>> => {
     const control = liveRuns.get(runId);
     if (control && command && typeof command === "object") {
-      if (command.type === "resume") control.resume(command.mode === "step" ? "step" : "continue");
+      if (command.type === "resume") control.resume(resumeMode(command.mode));
       else if (command.type === "stop") control.stop();
       else if (command.type === "breakpoints") control.setBreakpoints(paths(command.paths));
     }
@@ -665,7 +670,10 @@ const INTERACTIONS = `
     panel.scrollTop = panel.scrollHeight;
     await wait(400);
 
-    return (text("#inspector h2") || "no heading") + " / " + (text(".case-summary") || "no summary");
+    const name = document.querySelector(".case-row .case-name");
+    const whole = name ? name.scrollWidth <= name.clientWidth + 1 : false;
+    return (text("#inspector h2") || "no heading") + " / " + (text(".case-summary") || "no summary") +
+      " / name shown whole: " + whole;
   });
 
   return {
@@ -753,6 +761,25 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("stopped", "ended") === true &&
         Number(value("stopped", "cutShort")) >= 1 &&
         value("stopped", "canReplay") === true,
+    ],
+    [
+      "a focus ring on a block can only enclose the box, not the breakpoint or the capabilities beside it",
+      JSON.stringify(value("ring", "withBreakpoint")) ===
+        JSON.stringify({ onlyThePlate: true, groupIsBigger: true, blockNotFocusable: true }) &&
+        JSON.stringify(value("ring", "withCapability")) ===
+          JSON.stringify({ onlyThePlate: true, groupIsBigger: true, blockNotFocusable: true }) &&
+        value("ring", "focused") === true &&
+        value("ring", "selectedBySpace") === "Score Posting",
+    ],
+    [
+      "every call of a block held at once can be let go together",
+      value("continueAll", "offered") === true &&
+        value("continueAll", "finished") === true &&
+        value("continueAll", "messageWhole") === true,
+    ],
+    [
+      "a saved test's name is shown whole",
+      /name shown whole: true/.test(String(value("interface", "shown"))),
     ],
     [
       "the inspector can be dragged wider",
@@ -887,6 +914,40 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
 
         await run("interface", INTERACTIONS);
         await capture(window, "self-check");
+        // A browser draws its focus ring around everything in a group, so the
+        // part of a block that can be focused has to be the box and not the
+        // group holding the breakpoint and the capability dots as well.
+        await run("ring", `
+          const measure = (key) => {
+            const block = document.querySelector('.block-box[data-key="' + key + '"]');
+            if (!block) return null;
+            const plate = block.querySelector(".block-plate");
+            const focusable = [...block.querySelectorAll('[tabindex="0"]')];
+            const group = block.getBoundingClientRect();
+            const box = plate.getBoundingClientRect();
+            return {
+              onlyThePlate: focusable.length === 1 && focusable[0] === plate,
+              groupIsBigger: Math.round(group.width - box.width) > 0 || Math.round(group.height - box.height) > 0,
+              blockNotFocusable: !block.hasAttribute("tabindex"),
+            };
+          };
+          // Moving what can be focused onto the plate must not take the
+          // keyboard with it: the keys are still answered by the block.
+          const plate = document.querySelector('.block-box[data-key="score-posting"] .block-plate');
+          plate.focus();
+          const focused = document.activeElement === plate;
+          plate.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+          await wait(200);
+          const selectedBySpace = text("#inspector h2");
+
+          return {
+            // One with a breakpoint beside it, and one with a capability below it.
+            withBreakpoint: measure("score-posting"),
+            withCapability: measure("load-postings"),
+            focused,
+            selectedBySpace,
+          };
+        `);
 
         // The edge between the diagram and the inspector is dragged, to make
         // room for code.
@@ -952,6 +1013,35 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
             if (now !== seen[seen.length - 1]) seen.push(now);
           }
           return { stepped: true, moves: seen.length - 1, ended: seen[seen.length - 1] };
+        `);
+
+        // A block run once per item holds every call at once. "Continue all"
+        // lets the whole block through instead of one call at a time.
+        await run("continueAll", `
+          const button = (label) => [...document.querySelectorAll("#run-bar button")].find((b) => b.textContent === label);
+          // Back out of the block the step went into, to where its calls wait.
+          for (let i = 0; i < 6; i += 1) {
+            if (/Paused before Score Posting/.test(text("#run-bar"))) break;
+            const on = button("Continue");
+            if (!on) break;
+            on.click();
+            await wait(600);
+          }
+          const at = text("#run-bar");
+          const all = button("Continue all");
+          if (!all) return { offered: false, at };
+          all.click();
+          // The bar has to say where the run is held, not eat the message to
+          // make room for its own buttons.
+          const state = document.querySelector(".run-state");
+          const messageWhole = state.scrollWidth <= state.clientWidth + 1;
+          return {
+            offered: true,
+            at,
+            messageWhole,
+            finished: Boolean(await until(() => /finished/.test(text("#run-bar")), 20000)),
+            runBar: text("#run-bar"),
+          };
         `);
 
         await run("watched", `

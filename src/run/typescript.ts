@@ -113,7 +113,7 @@ export interface SpawnOptions {
 /** A run under way, and the means to steer it. */
 export interface CompiledRun {
   result: Promise<HarnessResult>;
-  resume(mode: "continue" | "step"): void;
+  resume(mode: "continue" | "step" | "block"): void;
   setBreakpoints(paths: string[]): void;
   stop(): void;
 }

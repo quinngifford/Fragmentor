@@ -676,8 +676,6 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
     transform: `translate(${point.x} ${point.y})`,
     "data-boundary": String(node.boundary),
     "data-key": node.key,
-    tabindex: "0",
-    role: "button",
   }, layer);
 
   svgEl("title", {}, group).textContent = node.block
@@ -692,7 +690,22 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
     body.style.animationDelay = `${arrivalDelay}ms`;
   }
 
-  svgEl("rect", { x: 0, y: 0, width: NODE_W, height, rx: 3, class: "block-plate" }, body);
+  // The plate is what can be focused, not the group around it: a browser
+  // draws a focus ring around everything in a group, which here would reach
+  // out to the breakpoint beside the name and the capability dots below. A
+  // ring around the plate is the box, which is what it should be. Keys still
+  // reach the group, because they bubble up from here.
+  svgEl("rect", {
+    x: 0,
+    y: 0,
+    width: NODE_W,
+    height,
+    rx: 3,
+    class: "block-plate",
+    tabindex: "0",
+    role: "button",
+    "aria-label": node.label,
+  }, body);
   svgEl("rect", { x: 0, y: 0, width: NODE_W, height: HEAD_H, rx: 3, class: "block-head" }, body);
   svgEl("line", { x1: 0, y1: HEAD_H, x2: NODE_W, y2: HEAD_H, class: "block-divider" }, body);
   svgEl("text", { x: 10, y: 15, class: "block-name" }, body).textContent = node.label;
