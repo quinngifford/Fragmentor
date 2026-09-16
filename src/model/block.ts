@@ -85,6 +85,13 @@ export interface Block {
   wires: Wire[];
   /** The user has declared this block will not be decomposed further. */
   pinnedAsLeaf: boolean;
+  /**
+   * Part of the plan rather than of the program: drawn on the diagram so the
+   * intended shape can be seen and argued with, with nothing generated,
+   * checked or run for it. Planning spreads downward, so everything inside a
+   * planned block is planned too.
+   */
+  planned: boolean;
   /** Visual mode only: the file or folder, optionally `#name`, that this block stands for. */
   code?: string;
 }
@@ -124,10 +131,16 @@ function orJust(field: string) {
   return (value: unknown) => (typeof value === "string" ? { [field]: value } : value);
 }
 
-function portSchema(mode: Mode) {
+/**
+ * A planned block's types are free text for the same reason a visual block's
+ * are: neither is Fragmentor's to enforce. What flows between planned blocks
+ * is often exactly what has not been decided yet, so `"the scored postings"`
+ * has to be as writable as `number[]`.
+ */
+function portSchema(freeText: boolean) {
   return z.preprocess(
     orJust("type"),
-    z.object({ type: mode === "visual" ? typeText : typeExpression, description: z.string().optional() }).strict(),
+    z.object({ type: freeText ? typeText : typeExpression, description: z.string().optional() }).strict(),
   );
 }
 
@@ -226,14 +239,16 @@ const wireSchema = z.string().transform((value, ctx): Wire => {
   return parsed.wire;
 });
 
-function blockFileSchema(mode: Mode) {
+function blockFileSchema(mode: Mode, planned: boolean) {
+  const freeText = mode === "visual" || planned;
   return z
     .object({
       name: z.string().min(1).optional(),
       responsibility: z.string().min(1, "every block must state what it is responsible for"),
+      planned: z.boolean().default(false),
       code: z.string().min(1).optional(),
-      inputs: z.record(portName, portSchema(mode)).default({}),
-      outputs: z.record(portName, portSchema(mode)).default({}),
+      inputs: z.record(portName, portSchema(freeText)).default({}),
+      outputs: z.record(portName, portSchema(freeText)).default({}),
       capabilities: z.record(portName, capabilityPortSchema).default({}),
       children: z.array(childRefSchema).default([]),
       wires: z.array(wireSchema).default([]),
@@ -246,6 +261,10 @@ function blockFileSchema(mode: Mode) {
     })
     .refine((file) => mode === "visual" || file.code === undefined, {
       message: `"code" is only for visual mode. In structured mode a block's code is the implementation file in its folder.`,
+      path: ["code"],
+    })
+    .refine((file) => !file.planned || file.code === undefined, {
+      message: "a planned block stands for code that does not exist yet, so it cannot point at any",
       path: ["code"],
     });
 }
@@ -272,7 +291,12 @@ export function parseBlockFile(
     return { ok: false, problems: [`the folder name "${id}" must be kebab-case (lowercase letters, digits, single hyphens)`] };
   }
 
-  const parsed = blockFileSchema(mode).safeParse(raw);
+  // Which schema the ports get depends on a field of the file being read, so
+  // it is looked at first. Anything other than `true` falls through to the
+  // schema, which says what a planned flag may be.
+  const planned = typeof raw === "object" && raw !== null && (raw as { planned?: unknown }).planned === true;
+
+  const parsed = blockFileSchema(mode, planned).safeParse(raw);
   if (!parsed.success) {
     return { ok: false, problems: parsed.error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`) };
   }
@@ -289,6 +313,7 @@ export function parseBlockFile(
     children: file.children,
     wires: file.wires,
     pinnedAsLeaf: file.pinnedAsLeaf,
+    planned: file.planned,
   };
   if (file.code !== undefined) block.code = file.code;
   return { ok: true, block };
@@ -321,6 +346,7 @@ export function blockToFileShape(block: Block): Record<string, unknown> {
   const file: Record<string, unknown> = {};
   if (block.name !== nameFromId(block.id)) file.name = block.name;
   file.responsibility = block.responsibility;
+  if (block.planned) file.planned = true;
   if (block.code !== undefined) file.code = block.code;
   if (Object.keys(block.inputs).length > 0) file.inputs = ports(block.inputs);
   if (Object.keys(block.outputs).length > 0) file.outputs = ports(block.outputs);

@@ -15,6 +15,8 @@ const manifest: Manifest = {
   name: "Doubler",
   goal: "Double a number.",
   mode: "structured",
+  existingCode: false,
+  start: "build",
   granularity: { level: 3, maxDepth: 3 },
   systems: [{ rootBlock: "double-it", language: "typescript" }],
 };

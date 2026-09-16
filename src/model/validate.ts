@@ -55,13 +55,18 @@ export interface Diagnostic {
  * line up. In visual mode it is a picture of code that exists anyway: what it
  * refers to must exist, but a gap in it is only worth pointing out, its types
  * are free text, and a loop may be exactly what the code does.
+ *
+ * A planned block is held to the same loose standard wherever it appears,
+ * because the gaps in it are what is being planned. Nothing about one is an
+ * error: not a port with nothing on it, not a type that does not line up.
  */
 export function validateComposite(parent: Block, children: Map<string, Block>, mode: Mode = "structured"): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const error = (message: string, path?: string) => diagnostics.push({ severity: "error", message, path });
   const warn = (message: string, path?: string) => diagnostics.push({ severity: "warning", message, path });
   const visual = mode === "visual";
-  const incomplete = visual ? warn : error;
+  const loose = visual || parent.planned;
+  const incomplete = loose ? warn : error;
 
   if (parent.kind !== "composite") {
     if (parent.children.length > 0 || parent.wires.length > 0) {
@@ -124,6 +129,12 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
 
   const childOf = (id: string): Block | undefined => (seen.has(id) ? children.get(id) : undefined);
   const refOf = (id: string): ChildRef | undefined => present.find((c) => c.block === id);
+  const plannedChild = (id: string): boolean => childOf(id)?.planned ?? false;
+
+  /** A wire with a planned end carries whatever is decided later, so its type is not fixed yet. */
+  const touchesPlan = (wire: Wire): boolean =>
+    (wire.source.from === "block" && plannedChild(wire.source.block)) ||
+    (wire.target.to === "block" && plannedChild(wire.target.block));
 
   // --- wires resolve on both ends ------------------------------------------
 
@@ -189,7 +200,7 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
   parent.wires.forEach((wire, i) => {
     const sourceType = resolveSource(wire, i);
     const targetType = resolveTarget(wire, i);
-    if (!visual && sourceType && targetType && !typesEqual(sourceType, targetType)) {
+    if (!loose && !touchesPlan(wire) && sourceType && targetType && !typesEqual(sourceType, targetType)) {
       error(
         `Type mismatch on a wire: the source carries ${describeType(sourceType)} but the destination expects ${describeType(targetType)}.`,
         `wires[${i}]`,
@@ -201,7 +212,9 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
 
   for (const ref of present) {
     const def = childOf(ref.block);
-    if (!def) continue;
+    // A planned block's wiring is the thing being planned. A port with
+    // nothing on it yet is the point of drawing it, not a fault in it.
+    if (!def || def.planned) continue;
     for (const port of Object.keys(def.inputs)) {
       const count = drivers.get(`block:${ref.block}:${port}`) ?? 0;
       if (count === 0) {
@@ -224,14 +237,14 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
   // --- unused sources are suspicious but legal -----------------------------
 
   for (const port of Object.keys(parent.inputs)) {
-    if (!usedSources.has(`input:${port}`)) {
+    if (!parent.planned && !usedSources.has(`input:${port}`)) {
       warn(`"${parent.name}" takes an input "${port}" that nothing inside it uses.`);
     }
   }
 
   for (const ref of present) {
     const def = childOf(ref.block);
-    if (!def) continue;
+    if (!def || def.planned) continue;
     for (const port of Object.keys(def.outputs)) {
       if (!usedSources.has(`block:${ref.block}:${port}`)) {
         warn(`"${ref.block}" produces an output "${port}" that nothing uses.`);
@@ -241,13 +254,15 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
 
   // A visual project draws code as it is, and neither passes capabilities
   // down nor runs anything, so the last two rules are about generated code.
-  if (visual) return diagnostics;
+  // Neither is a plan: nothing is generated from it and nothing runs.
+  if (loose) return diagnostics;
 
   // --- capabilities are supplied by the parent -----------------------------
 
   for (const ref of present) {
     const def = childOf(ref.block);
-    if (!def) continue;
+    // A planned block is not called, so nothing has to be passed to it yet.
+    if (!def || def.planned) continue;
     for (const [name, cap] of Object.entries(def.capabilities)) {
       const supplied = parent.capabilities[name];
       if (!supplied) {

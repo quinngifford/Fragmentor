@@ -2,14 +2,16 @@
 
 ## Current focus
 
-Projects have two modes, chosen when they are created along with the granularity and optionally the language. The agent guide is a third of its old length and the code of blocks with children is generated. The canvas zooms between diagrams and brings in blocks as the agent writes them, and a run can be watched on the diagram and paused at breakpoints. The inspector has been rebuilt to read as a ladder, with coloured code and an edge that can be dragged. Next: running both modes with a real agent.
+A new project is started by answering a short question tree, and its answers are what the agent's guide is written from. Architecture can now be drawn before it is built: a block marked planned appears greyed out, wired as loosely as the plan is, with nothing generated, checked or run for it. Underneath, the two modes, the generated composite code, the zooming canvas, watched runs with breakpoints and the rebuilt inspector are all in place. Next: running both modes with a real agent.
 
 ## Working
 
-- **Two modes, chosen when a project is created.** **New project…** asks what Fragmentor should do with the code (structured or visual), how finely to divide it (required) and optionally the language, and writes those into `fragmentor.json` before any agent starts. The folder can be empty or already hold code; starting a structured project over existing code asks for confirmation and says to commit first. `fragmentor init --mode … --granularity … [--language …]` does the same for an agent.
+- **A question tree when a project is created.** **New project…** asks where you are starting from (an empty folder or code you already have), what Fragmentor's role should be over that code, whether to plan the architecture before building it, how finely to divide the work, and optionally the language. Each answer reveals the next, so a question that does not apply is never asked; plan-first is only offered where there is nothing there yet. The answers go into `fragmentor.json` as `mode`, `existingCode` and `start` before any agent starts. Starting a structured project over existing code asks for confirmation and says to commit first, and answers that disagree with the folder that was picked are pointed out rather than silently kept. `fragmentor init --mode … --granularity … [--language …] [--existing-code] [--start plan|build]` does the same for an agent.
+
+- **Planned architecture.** A block with `"planned": true` is part of the plan rather than of the program: drawn greyed out with a dashed edge and a `PLANNED` label, its wires dimmed, its port types written as words such as `"the ranked postings"`, and its wiring as incomplete as the plan is. Nothing about one is an error, and Fragmentor generates, checks and runs nothing for it. Planning spreads downward; a block holding a plan beneath it keeps its contract but has its code held back, and `fragmentor check` counts both apart from unfinished work. Taking the flag off restores the contract, the starting file and the parent's generated code. Code Fragmentor wrote for a block that is now planned is taken away; code someone else wrote is reported, never deleted.
 - **Structured mode.** Typed ports, capability ports that flow down by name, and straight-line plus per-item iteration. The code of a block with children is generated from its wires, so it cannot drift from the diagram; code someone wrote there is reported, never overwritten. The agent writes the leaves and the tests.
 - **Visual mode.** The diagram describes existing code. Each block points at the file or function it stands for, such as `src/pricing.ts#priceOrder`, and its types are free text. `fragmentor check` reports pointers that lead nowhere, and treats gaps in the wiring as warnings. The inspector shows the code a block points at; the test bench, saved tests, code generation and breakpoints are hidden. Fragmentor never changes or runs the code.
-- **Agent guide.** `FRAGMENTOR.md` is written for the one project it sits in: its mode, its language and its granularity. It is about 150 lines for a structured project and 60 for a visual one, down from 375. Its worked examples are held by test to pass the checks exactly as shown. New projects also get `AGENTS.md` and `CLAUDE.md`, which point at it and are never rewritten.
+- **Agent guide.** `FRAGMENTOR.md` is written for the one project it sits in: its mode, its language, its granularity, where it started and whether it starts as a plan. Instead of an `if this folder already had code` paragraph it states which case this project is in, and a plan-first project is told to draw every block planned and wait for agreement. It is about 150 lines for a structured project and 60 for a visual one, down from 375. Its worked examples are held by test to pass the checks exactly as shown. New projects also get `AGENTS.md` and `CLAUDE.md`, which point at it and are never rewritten.
 - **Small block files.** The folder gives a block its id, having children is what makes it a composite, ports and capabilities can be written as just their type, and anything empty can be left out.
 - **Packages.** A block may import packages installed in the project; checking and running find them in the project's `node_modules`. Node's built-in modules are refused, because effects go through capabilities.
 - **Language packs.** TypeScript is generated, typechecked and run. Python gets contracts and composite code, but is not checked or run.
@@ -18,7 +20,7 @@ Projects have two modes, chosen when they are created along with the granularity
 - **Desktop application.** Opens a project, draws its diagram and redraws it as the agent works, keeping the view and selection. Problems are listed against their blocks, a half-written file shows a banner over the last good diagram, and unsaved edits warn when the file changes underneath them. Leaf code can be edited; generated code is read-only. **Close project** puts it away and shows the start screen again.
 - **The inspector.** It reads as a ladder: the block, the areas it is divided into — what it promises, its code, its tests — then the sections in each area, then the named parts of a section. Each rung is smaller and quieter than the one above it. Code is coloured, whether it is being read or typed in, by a scanner that knows TypeScript, Python and JSON. The edge between the diagram and the inspector can be dragged to make room for code, and how wide it was left is remembered.
 - **Canvas motion.** Opening a block zooms into it until its own diagram takes over, and going back up zooms out of it into the diagram around it; unrelated jumps fade. Blocks and buses the agent adds are brought in one after another, and new blocks flash in the hierarchy. Opening a project animates nothing, and the system's reduced-motion setting turns it all off.
-- **The application checks itself.** `npm run check:app` plays an agent against a throwaway project: the new-project form, the agent's first system arriving, a block added while the person watches, zooming into a block, a run paused at a breakpoint and stepped, let through a whole block and continued to the end, the inspector dragged wider, the project closed again, a switch to visual mode, and the older checks. Anything the window logs as an error fails the check. It saves screenshots to `dist/self-check*.png`, and the command fails if any step fails.
+- **The application checks itself.** `npm run check:app` plays an agent against a throwaway project: the new-project form, the agent's first system arriving, a block added while the person watches, zooming into a block, a run paused at a breakpoint and stepped, let through a whole block and continued to the end, the inspector dragged wider, the project closed again, a switch to visual mode, a planned block drawn apart from the built ones, and the older checks. Anything the window logs as an error fails the check. It saves screenshots to `dist/self-check*.png`, and the command fails if any step fails.
 
 ## Not built yet
 
@@ -29,6 +31,10 @@ Projects have two modes, chosen when they are created along with the granularity
 ## Known problems or uncertainties
 
 - **Neither mode has been run with a real agent.** Everything an agent does has been exercised by tests and the self-check. Whether an agent follows the shorter guide well is untested, and so is whether it maps an existing codebase faithfully in visual mode or rebuilds one safely in structured mode.
+- **Planned blocks are the agent's to mark.** There is no control in the application for declaring a block planned or taking the flag off. The agent writes `"planned": true` into the block's file, as it writes everything else about a block.
+
+- **A block nobody has laid out lands in the automatic grid**, which can be nowhere near blocks that were placed by hand, so a newly planned block may appear off to one side. **Re-layout** puts them all together again. This is not new, but it shows up most when the agent adds blocks to a diagram someone has arranged.
+
 - **Rebuilding existing code is up to the agent.** Fragmentor warns the person and tells the agent to make sure the code is committed, but cannot enforce either.
 - **Packages can reach the outside world** without a capability. Only Node's built-in modules are refused.
 - **Visual pointers are found by name, not by parsing.** A pointer to a name that only appears in a comment still passes.
@@ -51,19 +57,21 @@ Projects have two modes, chosen when they are created along with the granularity
 
 ## Human verification needed
 
-- **Starting a project in both modes.** Run `npm run app`, choose **New project…**, and try each mode in an empty folder and in a folder holding some code. Then open Claude Code or Codex in the folder and ask for a small program (structured) or a diagram of the code (visual). Things to judge: whether the form is clear, whether the agent follows the guide, and whether the diagram keeps up.
+- **Starting a project, and answering its questions.** Run `npm run app`, choose **New project…**, and walk the questions both ways: from scratch and from a folder holding code. Then open Claude Code or Codex in the folder and ask for a small program (structured) or a diagram of the code (visual). Things to judge: whether each question is clear and lands in the right order, whether the recommended answer is the one you would want, and whether the agent follows the guide it is given.
+
+- **Planning an architecture before building it.** Start a project from scratch with **Plan the architecture**, then ask your agent for something small. Things to judge: whether it draws the whole shape as planned blocks before writing code, whether greyed-out blocks are unmistakably not built, and whether the plan is easy to argue with on the canvas.
 - **How the canvas moves.** Double-click into blocks and use the breadcrumbs to come back out, and watch blocks arrive while an agent works. Things to judge: whether the zoom reads as going inside a block, and whether arrivals help or distract.
 - **Watching and pausing a run.** In the Job Relevance Ranker example, run `rank-jobs` from the test bench, then set a breakpoint on Score Posting and run it again. Things to judge: whether the pace is right, whether the values on the wires are readable, whether Continue and Step do what you expect, and whether the flow on the held wires helps or distracts.
 - **Reading the inspector.** Select a leaf block and read down the panel. Things to judge: whether it is obvious what sits under what, whether the code colours are right for this panel, and how wide the inspector wants to be.
 
 ## Current checkpoint
 
-- `main`, with the two modes, the canvas animation and watching runs merged from `modes-and-debugger`, and the inspector rebuilt on top. The tag `checkpoint/pre-modes` marks `main` as it was before the modes work, and `checkpoint/pre-inspector-ui` as it was before the inspector work.
+- `main`, with planned architecture and the new-project question tree on top of the two modes, the canvas animation, watched runs and the rebuilt inspector. The tag `checkpoint/pre-planned-blocks` marks `main` as it was before this work, `checkpoint/pre-inspector-ui` before the inspector work, and `checkpoint/pre-modes` before the modes work.
 - One test has been failing since before this work: `check.test.ts` > "puts back a composite that someone edited" compares generated code against a file this checkout has in CRLF. It is a line-ending artifact of the working copy, not a fault in the code.
 
 ## Next major steps
 
-1. Run both modes with a real agent, and tighten `FRAGMENTOR.md` wherever the agent goes wrong.
+1. Run both modes with a real agent, plan-first included, and tighten `FRAGMENTOR.md` wherever the agent goes wrong.
 2. Show everything `fragmentor check` finds in the application, code problems included.
 3. Decide how Python blocks are laid out as modules, so they can be run and watched.
 

@@ -276,6 +276,23 @@ body[data-project="open"] .welcome { display: none; }
 .block-box[data-boundary="true"] .block-plate { fill: var(--panel); stroke-dasharray: 3 3; }
 .block-head { fill: var(--panel); pointer-events: none; }
 
+/* Planned: drawn, not built. It has to read as a block of the same kind as
+   the others and still be unmistakably not one of them, so it keeps its shape
+   and loses its solidity — a dashed edge, a flat plate, quiet lettering. */
+.block-box[data-planned="true"] .block-plate {
+  fill: var(--ground);
+  stroke: var(--rule-bright);
+  stroke-dasharray: 5 4;
+}
+.block-box[data-planned="true"] .block-head { fill: transparent; }
+.block-box[data-planned="true"] .block-name { fill: var(--ink-dim); }
+.block-box[data-planned="true"] .block-kind { fill: var(--pending); }
+.block-box[data-planned="true"] .port-label { fill: var(--ink-faint); }
+
+/* A wire with a planned end carries something nobody has decided yet. */
+.bus-group[data-planned="true"] .bus { opacity: 0.28; stroke-dasharray: 6 5; }
+.bus-group[data-planned="true"] .bus-count { opacity: 0.5; }
+
 .block-name { font-family: var(--sans); font-size: 12.5px; font-weight: 600; fill: var(--ink); pointer-events: none; }
 .block-kind { font-family: var(--mono); font-size: 9px; fill: var(--ink-faint); letter-spacing: 0.08em; pointer-events: none; }
 .group-label { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; pointer-events: none; }
@@ -319,8 +336,19 @@ body[data-project="open"] .welcome { display: none; }
 
 .badge.composite { border-color: var(--signal-dim); color: var(--signal); }
 .badge.state { border-color: #3d4a52; color: var(--pending); }
+.badge.state.planned { border-color: var(--rule-bright); color: var(--ink-faint); border-style: dashed; }
 
 .responsibility { margin: 0; font-size: 13px; color: var(--ink); }
+
+.planned-note {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--ink-dim);
+  border: 1px dashed var(--rule-bright);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
 
 /* The panel reads as a ladder: the subject, the areas it is divided into, the
    sections in each area, and the named parts of a section. Each rung is
@@ -939,6 +967,9 @@ button.problem:hover .problem-where { color: var(--signal); }
   border-radius: var(--radius);
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
   user-select: text;
+  /* The tree grows as it is answered, and the last question has to stay
+     reachable on a short window. */
+  overflow-y: auto;
 }
 
 .new-project::backdrop { background: rgba(4, 6, 7, 0.72); }
@@ -946,6 +977,10 @@ button.problem:hover .problem-where { color: var(--signal); }
 .dialog-lede { margin: 4px 0 18px; font-size: 12.5px; color: var(--ink-dim); }
 
 .dialog-field { border: 0; margin: 0 0 18px; padding: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+/* A question that does not apply is not asked. Without this the fieldset's
+   own display would override the hidden attribute and show it anyway. */
+.dialog-field[hidden] { display: none; }
+.choices { display: flex; flex-direction: column; gap: 8px; }
 
 .dialog-field legend {
   padding: 0;
@@ -974,7 +1009,19 @@ button.problem:hover .problem-where { color: var(--signal); }
 .choice:has(input:checked) { border-color: var(--signal); background: var(--signal-deep); }
 .choice input { flex: none; margin: 3px 0 0; accent-color: var(--signal); }
 .choice-body { display: flex; flex-direction: column; gap: 3px; }
-.choice-title { font-size: 13px; font-weight: 600; }
+.choice-title { font-size: 13px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+
+.choice-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--signal);
+  border: 1px solid var(--signal-dim);
+  border-radius: var(--radius);
+  padding: 1px 5px;
+}
 .choice-text { font-size: 12px; color: var(--ink-dim); }
 
 .levels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }

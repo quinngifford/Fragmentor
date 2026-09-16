@@ -236,10 +236,13 @@ async function generateCode(): Promise<void> {
     return;
   }
 
-  const { written, problems } = result.value;
-  const summary = written.length === 0
-    ? "Everything was already up to date."
-    : `Updated ${written.length} file${written.length === 1 ? "" : "s"}.`;
+  const { written, removed, problems } = result.value;
+  const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const changes: string[] = [];
+  if (written.length > 0) changes.push(`Updated ${count(written.length, "file")}`);
+  // A block that has become planned has no code, so what was generated for it goes.
+  if (removed.length > 0) changes.push(`took away ${count(removed.length, "file")} the plan no longer needs`);
+  const summary = changes.length === 0 ? "Everything was already up to date." : `${changes.join(", ")}.`;
   ui.status = problems.length > 0 ? { text: problems[0]!, tone: "bad" } : { text: summary, tone: "good" };
 
   await reload();

@@ -36,9 +36,19 @@ export interface CheckReport {
   problems: ProjectDiagnostic[];
   generated: EmitResult;
   systems: SystemCheck[];
+  /** Blocks that are part of the plan rather than of the program. */
+  planned: string[];
+  /**
+   * Real blocks holding a planned block somewhere beneath them, whose own
+   * code waits for it. Nobody is meant to write these, so they are not
+   * unfinished work either.
+   */
+  waiting: string[];
   /**
    * Blocks whose implementation is still the untouched starting point, or in
    * a visual project, blocks not yet linked to the code they stand for.
+   * Neither planned blocks nor the blocks waiting on them are among these:
+   * nothing about a plan is unfinished, it is simply not started.
    */
   unimplemented: string[];
   /** Blocks with no saved tests. Always empty in a visual project, which has none. */
@@ -68,6 +78,7 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
   });
 
   const blocks = Object.values(snapshot.blocks);
+  const real = blocks.filter((block) => !block.planned && !block.holdsPlan);
   const errorCount =
     snapshot.diagnostics.filter((d) => d.severity === "error").length +
     generated.problems.length +
@@ -81,8 +92,10 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
     problems: snapshot.diagnostics,
     generated,
     systems,
-    unimplemented: blocks.filter((block) => !block.implemented).map((block) => block.path),
-    untested: visual ? [] : blocks.filter((block) => block.cases.length === 0).map((block) => block.path),
+    planned: blocks.filter((block) => block.planned).map((block) => block.path),
+    waiting: blocks.filter((block) => !block.planned && block.holdsPlan).map((block) => block.path),
+    unimplemented: real.filter((block) => !block.implemented).map((block) => block.path),
+    untested: visual ? [] : real.filter((block) => block.cases.length === 0).map((block) => block.path),
     errorCount,
   };
 }

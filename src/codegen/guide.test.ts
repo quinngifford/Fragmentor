@@ -28,12 +28,22 @@ const structured = (language?: string): Manifest => ({
   name: "Test",
   goal: "",
   mode: "structured",
+  existingCode: false,
+  start: "build",
   ...(language ? { language } : {}),
   granularity: { level: 3, maxDepth: 4 },
   systems: [],
 });
 
-const visual: Manifest = { name: "Test", goal: "", mode: "visual", granularity: { level: 2, maxDepth: 5 }, systems: [] };
+const visual: Manifest = {
+  name: "Test",
+  goal: "",
+  mode: "visual",
+  existingCode: true,
+  start: "build",
+  granularity: { level: 2, maxDepth: 5 },
+  systems: [],
+};
 
 async function writeBlocks(blocks: Record<string, unknown>): Promise<void> {
   for (const [blockPath, file] of Object.entries(blocks)) {
@@ -116,7 +126,7 @@ describe("the guide", () => {
   it("is short enough for an agent to take in at once", () => {
     // The guide these replaced ran to 375 lines. Keep it from growing back.
     expect(guides["structured TypeScript"]!.split("\n").length).toBeLessThan(180);
-    expect(guides.visual!.split("\n").length).toBeLessThan(90);
+    expect(guides.visual!.split("\n").length).toBeLessThan(95);
   });
 
   it("tells a structured agent about every capability, and how to check and test its work", () => {
@@ -301,5 +311,49 @@ describe("the visual worked example", () => {
     expect(report.errorCount).toBe(0);
     expect(report.unimplemented).toEqual([]);
     expect(report.generated.written).toEqual(["FRAGMENTOR.md"]);
+  });
+});
+
+describe("the guide says where the project starts", () => {
+  const withAnswers = (over: Partial<Manifest>): Manifest => ({ ...structured("typescript"), ...over });
+
+  it("tells an agent in an empty folder that the program is its own to write", () => {
+    const guide = agentGuide(withAnswers({ existingCode: false }));
+    expect(guide).toContain("**This folder started empty**");
+    expect(guide).not.toContain("rebuilding it as blocks");
+  });
+
+  it("tells an agent in a folder of code to commit it and rebuild it", () => {
+    const guide = agentGuide(withAnswers({ existingCode: true }));
+    expect(guide).toContain("**This folder already held code**");
+    expect(guide).toContain("committed to version control");
+  });
+
+  it("asks for the architecture as a plan first when that is what the person chose", () => {
+    const planning = agentGuide(withAnswers({ start: "plan" }));
+    expect(planning).toContain("**This project starts as a plan.**");
+    expect(planning).toContain('Give every block `"planned": true` to begin with');
+    expect(agentGuide(withAnswers({ start: "build" }))).not.toContain("starts as a plan");
+  });
+
+  it("says the same to a visual agent, in its own terms", () => {
+    const drawing = agentGuide({ ...visual, existingCode: false, start: "plan" });
+    expect(drawing).toContain("**This folder started empty.**");
+    expect(drawing).toContain("**This project starts as a plan.**");
+    expect(drawing).not.toContain("committed to version control");
+  });
+
+  it("explains planned blocks in both modes", () => {
+    for (const guide of [agentGuide(structured("typescript")), agentGuide(visual)]) {
+      expect(guide).toContain("`planned: true`");
+      expect(guide).toContain("greyed out");
+    }
+  });
+
+  it("shows the person's answers in the example project file, so they are not changed", () => {
+    const guide = agentGuide(withAnswers({ existingCode: true, start: "plan" }));
+    expect(guide).toContain('"existingCode": true');
+    expect(guide).toContain('"start": "plan"');
+    expect(guide).toContain("Leave `mode`, `existingCode`, `start` and `granularity` as the person set them.");
   });
 });

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { blockDir, createProject, loadProject, locateCode, validateProject, writeBlock } from "./project.js";
+import { blockDir, createProject, holdsPlan, loadProject, locateCode, validateProject, writeBlock } from "./project.js";
 import type { Manifest } from "./project.js";
 import { makeBlock, t } from "../model/testing.js";
 
@@ -12,6 +12,8 @@ const manifest: Manifest = {
   name: "Job Ranker",
   goal: "Rank job postings against a profile.",
   mode: "structured",
+  existingCode: false,
+  start: "build",
   granularity: { level: 3, maxDepth: 4 },
   systems: [{ rootBlock: "rank-jobs", language: "typescript" }],
 };
@@ -176,6 +178,8 @@ describe("project settings", () => {
       name: "Waiting",
       goal: "",
       mode: "structured",
+  existingCode: false,
+  start: "build",
       granularity: { level: 2, maxDepth: 4 },
       systems: [],
     });
@@ -289,5 +293,51 @@ describe("locateCode", () => {
       ok: false,
       problem: '"../elsewhere.ts" points outside the project folder.',
     });
+  });
+});
+
+describe("planned blocks", () => {
+  it("spread downward, and are felt by every block above them", async () => {
+    await writeSmallProject();
+
+    // Only the middle block says it is planned. The one inside it says
+    // nothing, and the one above it is real.
+    await writeBlock(
+      blockDir(dir, "rank-jobs/score-posting"),
+      makeBlock({
+        id: "score-posting",
+        kind: "composite",
+        planned: true,
+        inputs: { posting: { type: t.object({ title: t.string }) } },
+        outputs: { score: { type: t.number } },
+        children: [{ block: "weigh-keywords", mode: "once" }],
+      }),
+    );
+    await writeBlock(blockDir(dir, "rank-jobs/score-posting/weigh-keywords"), makeBlock({ id: "weigh-keywords" }));
+
+    const project = await loadProject(dir);
+    expect(project.byPath.get("rank-jobs/score-posting")!.block.planned).toBe(true);
+    expect(project.byPath.get("rank-jobs/score-posting/weigh-keywords")!.block.planned).toBe(true);
+
+    // The block above is real, but has no code to generate until the plan
+    // beneath it is built.
+    expect(project.byPath.get("rank-jobs")!.block.planned).toBe(false);
+    expect(holdsPlan(project.byPath.get("rank-jobs")!)).toBe(true);
+  });
+});
+
+describe("a project file written before the questions were asked", () => {
+  it("reads as one started from nothing and built as it went", async () => {
+    await writeManifestJson({
+      name: "Older",
+      goal: "",
+      mode: "structured",
+      language: "typescript",
+      granularity: { level: 3, maxDepth: 4 },
+      systems: [],
+    });
+    const project = await loadProject(dir);
+    expect(project.manifest.existingCode).toBe(false);
+    expect(project.manifest.start).toBe("build");
   });
 });

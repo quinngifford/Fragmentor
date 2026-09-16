@@ -51,11 +51,28 @@ export interface SystemDeclaration {
   language?: string;
 }
 
+/**
+ * Whether the agent lays the architecture out as a plan before building it.
+ *
+ * With `plan`, it draws the whole shape first as planned blocks and waits for
+ * the person to agree before writing anything. With `build`, it defines and
+ * implements as it goes. Either way planned blocks stay available: this only
+ * says where the work starts.
+ */
+export type Start = "plan" | "build";
+
 export interface Manifest {
   name: string;
   /** What the software being built is supposed to do, in the user's words. */
   goal: string;
   mode: Mode;
+  /**
+   * Whether the folder already held code when the project was started. It
+   * decides whether the agent is describing code or writing it from nothing,
+   * which is the difference the guide has to state plainly.
+   */
+  existingCode: boolean;
+  start: Start;
   /** The language the person chose for every system, if they chose one. */
   language?: string;
   granularity: Granularity;
@@ -76,6 +93,12 @@ export const manifestSchema = z
     mode: z.enum(["structured", "visual"], {
       error: `must be "structured" (Fragmentor generates, checks and runs the code) or "visual" (Fragmentor only draws it)`,
     }),
+    // Both were added after the first projects were, so a manifest without
+    // them reads as one started from nothing and built straight away.
+    existingCode: z.boolean().default(false),
+    start: z.enum(["plan", "build"], {
+      error: `must be "plan" (lay the architecture out as planned blocks first) or "build" (build it as you go)`,
+    }).default("build"),
     language: z.string().min(1).optional(),
     granularity: z
       .object(
@@ -206,7 +229,7 @@ export async function loadProject(projectDir: string): Promise<Project> {
       );
     }
 
-    const root = await loadBlockTree(blockDir(projectDir, declaration.rootBlock), declaration.rootBlock, manifest.mode);
+    const root = await loadBlockTree(blockDir(projectDir, declaration.rootBlock), declaration.rootBlock, manifest.mode, false);
     systems.push({ rootBlock: declaration.rootBlock, language: language ?? "", root });
     index(root);
   }
@@ -214,7 +237,7 @@ export async function loadProject(projectDir: string): Promise<Project> {
   return { dir: projectDir, manifest, systems, byPath };
 }
 
-async function loadBlockTree(dir: string, blockPath: string, mode: Mode): Promise<LoadedBlock> {
+async function loadBlockTree(dir: string, blockPath: string, mode: Mode, plannedAbove: boolean): Promise<LoadedBlock> {
   const id = blockPath.split("/").at(-1)!;
   const file = path.join(dir, BLOCK_FILE);
 
@@ -237,6 +260,12 @@ async function loadBlockTree(dir: string, blockPath: string, mode: Mode): Promis
     throw new Error(`The block definition at ${file} is not valid:\n  ${parsed.problems.join("\n  ")}`);
   }
 
+  // Planning spreads downward: a block inside one that does not exist yet
+  // does not exist either. Settling it here means everything that reads a
+  // loaded block sees the truth without walking back up the tree to find it.
+  const planned = parsed.block.planned || plannedAbove;
+  parsed.block.planned = planned;
+
   // A block's folder can sit alongside things that are not blocks: __pycache__,
   // node_modules, a virtual environment. Only a directory that is named like a
   // block and actually contains one is treated as a child.
@@ -254,7 +283,7 @@ async function loadBlockTree(dir: string, blockPath: string, mode: Mode): Promis
     } catch {
       continue;
     }
-    children.push(await loadBlockTree(childDir, `${blockPath}/${childId}`, mode));
+    children.push(await loadBlockTree(childDir, `${blockPath}/${childId}`, mode, planned));
   }
 
   return { block: parsed.block, path: blockPath, dir, children };
@@ -312,6 +341,17 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
   }
 
   return diagnostics;
+}
+
+/**
+ * Whether this block is planned, or holds a planned block anywhere beneath it.
+ *
+ * A composite's code is nothing but a call to each of its children, so a
+ * block with a planned block somewhere below it has no code to generate
+ * either: the call would name a function nobody has written.
+ */
+export function holdsPlan(node: LoadedBlock): boolean {
+  return node.block.planned || node.children.some(holdsPlan);
 }
 
 export async function writeBlock(dir: string, block: Block): Promise<void> {

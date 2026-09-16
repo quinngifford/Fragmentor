@@ -41,6 +41,8 @@ export const workedExample = {
     name: "Order Pricer",
     goal: "Read a file of orders and report what each order costs and what they cost altogether.",
     mode: "structured",
+    existingCode: false,
+    start: "build",
     language: "typescript",
     granularity: { level: 3, maxDepth: 4 },
     systems: [{ rootBlock: "price-orders" }],
@@ -207,10 +209,51 @@ function exampleManifest(manifest: Manifest): unknown {
     name: workedExample.manifest.name,
     goal: workedExample.manifest.goal,
     mode: manifest.mode,
+    existingCode: manifest.existingCode,
+    start: manifest.start,
     ...(manifest.language === undefined ? {} : { language: manifest.language }),
     granularity: manifest.granularity,
     systems: [{ rootBlock: "price-orders", ...(suggestLanguage ? { language: "typescript" } : {}) }],
   };
+}
+
+const ENTRY_POINTS =
+  "Entry points such as a `main` function, a server or framework setup stay outside `blocks/`: they create the real capabilities and call a system's top block.";
+
+/**
+ * Where this project starts, and whether it starts as a plan.
+ *
+ * The person answered both when they created it, so the guide states them
+ * rather than asking the agent to work out which case it is in. An agent
+ * follows an instruction better than a condition.
+ */
+function startingPoint(manifest: Manifest): string {
+  const visual = manifest.mode === "visual";
+  const parts: string[] = [];
+
+  if (visual) {
+    parts.push(
+      manifest.existingCode
+        ? "**This folder already held code**, and the diagram describes it."
+        : "**This folder started empty.** Write the program however suits it best, laid out however you like, and keep the diagram describing what you actually wrote.",
+    );
+  } else {
+    parts.push(
+      manifest.existingCode
+        ? `**This folder already held code**, and you are rebuilding it as blocks. First make sure it is committed to version control, and ask the person if it is not. Describe the program's existing structure as blocks, move its logic into them from the bottom up, and delete the old code once the blocks pass their tests. ${ENTRY_POINTS}`
+        : `**This folder started empty**, so the program is yours to write from nothing. ${ENTRY_POINTS}`,
+    );
+  }
+
+  if (manifest.start === "plan") {
+    parts.push(
+      visual
+        ? '**This project starts as a plan.** Draw the architecture you mean to write as blocks with `"planned": true`, and show the person before you write any of it. Take `"planned"` off a block once its code exists and the block points at it.'
+        : '**This project starts as a plan.** Give every block `"planned": true` to begin with, so the whole architecture can be seen and argued with before any of it is built. Once the person agrees, take `"planned"` off one block at a time and build that block, rather than starting all of them at once.',
+    );
+  }
+
+  return parts.join("\n\n");
 }
 
 function structuredLanguageRule(manifest: Manifest, pack: LanguagePack): string {
@@ -257,6 +300,7 @@ export function agentGuide(manifest: Manifest): string {
       languageRule: manifest.language === undefined
         ? " A system may say what its code is written in with `\"language\"`."
         : ` The code is written in ${manifest.language}.`,
+      startingPoint: startingPoint(manifest),
       compositeBlock: compactJson(visualExample["price-orders"]),
       leafBlock: compactJson(visualExample["price-orders/price-order"]),
     });
@@ -266,6 +310,7 @@ export function agentGuide(manifest: Manifest): string {
   return fill(template("structured"), {
     ...common,
     languageRule: structuredLanguageRule(manifest, pack),
+    startingPoint: startingPoint(manifest),
     implFile: pack.implFile,
     contractFile: pack.contractFile,
     capabilitiesFile: pack.capabilitiesFile,

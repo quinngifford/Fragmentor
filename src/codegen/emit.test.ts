@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import ts from "typescript";
@@ -16,6 +16,8 @@ const manifest: Manifest = {
   name: "Tiny",
   goal: "Double a number.",
   mode: "structured",
+  existingCode: false,
+  start: "build",
   granularity: { level: 3, maxDepth: 3 },
   systems: [{ rootBlock: "double-it", language: "typescript" }],
 };
@@ -200,7 +202,7 @@ describe("emitProject", () => {
     await writeFile(path.join(dir, "fragmentor.json"), JSON.stringify({ ...manifest, mode: "visual" }), "utf8");
 
     const result = await emitProject(await loadProject(dir));
-    expect(result).toEqual({ written: ["FRAGMENTOR.md"], skipped: [], problems: [] });
+    expect(result).toEqual({ written: ["FRAGMENTOR.md"], skipped: [], removed: [], problems: [] });
   });
 });
 
@@ -208,23 +210,97 @@ describe("startProject", () => {
   it("writes what the person chose and the files an agent reads first, and will not start twice", async () => {
     const fresh = await mkdtemp(path.join(tmpdir(), "fragmentor-start-"));
     try {
-      const started = await startProject(fresh, { mode: "visual", granularity: 2, language: null });
+      const started = await startProject(fresh, {
+        mode: "visual",
+        granularity: 2,
+        language: null,
+        existingCode: true,
+        start: "build",
+      });
       expect(started.written).toEqual(["fragmentor.json", "FRAGMENTOR.md", "AGENTS.md", "CLAUDE.md"]);
 
       expect(await readManifest(fresh)).toEqual({
         name: path.basename(fresh),
         goal: "",
         mode: "visual",
+        existingCode: true,
+        start: "build",
         granularity: { level: 2, maxDepth: 4 },
         systems: [],
       });
       expect(await readFile(path.join(fresh, "FRAGMENTOR.md"), "utf8")).toContain("Never change the program's code");
 
-      await expect(startProject(fresh, { mode: "structured", granularity: 3, language: "typescript" })).rejects.toThrow(
-        /already a Fragmentor project/,
-      );
+      await expect(
+        startProject(fresh, {
+          mode: "structured",
+          granularity: 3,
+          language: "typescript",
+          existingCode: false,
+          start: "build",
+        }),
+      ).rejects.toThrow(/already a Fragmentor project/);
     } finally {
       await rm(fresh, { recursive: true, force: true });
     }
+  });
+});
+
+describe("planned blocks", () => {
+  const there = async (file: string) => access(file).then(() => true, () => false);
+  const childFile = (name: string) => path.join(blockDir(dir, "double-it/add-to-self"), name);
+
+  /** The leaf becomes a drawing of something nobody has written. */
+  const planTheChild = () =>
+    writeBlock(
+      blockDir(dir, "double-it/add-to-self"),
+      makeBlock({
+        id: "add-to-self",
+        name: "Add To Self",
+        planned: true,
+        inputs: { value: { type: parseType("number") } },
+        outputs: { sum: { type: parseType("number") } },
+      }),
+    );
+
+  it("generates nothing for one, and holds back the code of the block above it", async () => {
+    await planTheChild();
+    const result = await emitProject(await loadProject(dir));
+
+    expect(result.problems).toEqual([]);
+    expect(await there(childFile("contract.ts"))).toBe(false);
+    expect(await there(childFile("impl.ts"))).toBe(false);
+
+    // The block above is real, so its contract is real. Its code would call
+    // a function nobody has written, so that waits.
+    expect(await there(path.join(blockDir(dir, "double-it"), "contract.ts"))).toBe(true);
+    expect(await there(compositeFile())).toBe(false);
+  });
+
+  it("takes back the code it generated once a block becomes planned", async () => {
+    await emitProject(await loadProject(dir));
+    expect(await there(childFile("contract.ts"))).toBe(true);
+    expect(await there(compositeFile())).toBe(true);
+
+    await planTheChild();
+    const result = await emitProject(await loadProject(dir));
+
+    expect(result.removed).toEqual([
+      "blocks/double-it/add-to-self/contract.ts",
+      "blocks/double-it/add-to-self/impl.ts",
+      "blocks/double-it/impl.ts",
+    ]);
+    expect(result.problems).toEqual([]);
+  });
+
+  it("never takes back code someone wrote, and says it is there", async () => {
+    await emitProject(await loadProject(dir));
+    const written = "export async function addToSelf() { return { sum: 2 }; }";
+    await writeFile(childFile("impl.ts"), written, "utf8");
+
+    await planTheChild();
+    const result = await emitProject(await loadProject(dir));
+
+    expect(result.problems.join(" ")).toMatch(/is planned, so it is only a drawing/);
+    expect(await readFile(childFile("impl.ts"), "utf8")).toBe(written);
   });
 });

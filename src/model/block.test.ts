@@ -33,6 +33,7 @@ describe("reading a block file", () => {
       children: [],
       wires: [],
       pinnedAsLeaf: false,
+      planned: false,
     });
   });
 
@@ -238,5 +239,34 @@ describe("wire syntax", () => {
 
   it("rejects an endpoint that is not a real block id", () => {
     expect(parseWireText("Not_A_Block.value -> child.value").ok).toBe(false);
+  });
+});
+
+describe("planned blocks", () => {
+  const auditLog = {
+    responsibility: "Record what was ranked, so a later run can be compared against it.",
+    planned: true,
+    inputs: { entries: "the ranked postings" },
+    outputs: { written: "whether it was recorded" },
+  };
+
+  it("write their types as words, in a structured project as much as a visual one", () => {
+    for (const mode of ["structured", "visual"] as Mode[]) {
+      const block = blockFromFile(auditLog, "audit-log", mode);
+      expect(block.planned).toBe(true);
+      expect(block.inputs.entries!.type).toEqual({ kind: "text", text: "the ranked postings" });
+      // What was written is what reads back: the file is the whole record.
+      expect(blockToFileShape(block)).toEqual(auditLog);
+    }
+  });
+
+  it("are not planned unless they say so", () => {
+    expect(blockFromFile({ responsibility: "Score a posting." }, "score-posting").planned).toBe(false);
+  });
+
+  it("cannot point at code, because there is none to point at", () => {
+    const result = parseBlockFile({ ...auditLog, code: "src/audit.ts" }, "audit-log", "visual");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.problems.join(" ")).toMatch(/code that does not exist yet/);
   });
 });

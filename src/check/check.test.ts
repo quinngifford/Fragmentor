@@ -249,3 +249,46 @@ ${LEAF_SIGNATURE} {
     }
   });
 });
+
+describe("a project with a plan in it", () => {
+  /** A block the agent has drawn but not built, reading what the ranker produces. */
+  async function planAnAuditLog(): Promise<void> {
+    await mkdir(file("rank-jobs", "audit-log"), { recursive: true });
+    await writeFile(
+      path.join(file("rank-jobs", "audit-log"), "block.json"),
+      JSON.stringify({
+        responsibility: "Record what was ranked, so a later run can be compared against it.",
+        planned: true,
+        inputs: { entries: "the ranked postings", runId: "some identifier, not decided yet" },
+        outputs: { written: "whether it was recorded" },
+      }),
+      "utf8",
+    );
+
+    const rankJobs = path.join(file("rank-jobs"), "block.json");
+    const parent = JSON.parse(await readFile(rankJobs, "utf8")) as { children: unknown[]; wires: string[] };
+    parent.children.push("audit-log");
+    parent.wires.push("rank-results.ranked -> audit-log.entries");
+    await writeFile(rankJobs, JSON.stringify(parent), "utf8");
+  }
+
+  it("asks nothing of the plan, and counts it apart from unfinished work", async () => {
+    await planAnAuditLog();
+    const report = await checkProject(dir);
+
+    expect(report.problems).toEqual([]);
+    expect(report.errorCount).toBe(0);
+    expect(report.planned).toEqual(["rank-jobs/audit-log"]);
+    expect(report.unimplemented).not.toContain("rank-jobs/audit-log");
+    expect(report.untested).not.toContain("rank-jobs/audit-log");
+  }, 30_000);
+
+  it("generates nothing for it, and holds back the code of the block above it", async () => {
+    await checkProject(dir);
+    await planAnAuditLog();
+    const report = await checkProject(dir);
+
+    expect(report.generated.removed).toEqual(["blocks/rank-jobs/impl.ts"]);
+    expect(report.generated.written).not.toContain("blocks/rank-jobs/audit-log/contract.ts");
+  }, 30_000);
+});

@@ -140,12 +140,25 @@ function settingsFrom(raw: unknown): NewProjectSettings {
     throw new Error("Choose how finely to divide the work, from 1 to 5.");
   }
 
+  if (typeof value.existingCode !== "boolean") {
+    throw new Error("Choose whether you are starting from scratch or working with code you already have.");
+  }
+  if (value.start !== "plan" && value.start !== "build") {
+    throw new Error("Choose whether to plan the architecture first or build it straight away.");
+  }
+
   const language = typeof value.language === "string" && value.language.trim() ? value.language.trim().slice(0, 40) : null;
   if (value.mode === "structured" && language !== null && !isKnownLanguage(language)) {
     throw new Error(`Fragmentor cannot generate ${language} code. Choose TypeScript or Python, or leave it to the agent.`);
   }
 
-  return { mode: value.mode, granularity: value.granularity as NewProjectSettings["granularity"], language };
+  return {
+    mode: value.mode,
+    granularity: value.granularity as NewProjectSettings["granularity"],
+    language,
+    existingCode: value.existingCode,
+    start: value.start,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -258,9 +271,28 @@ function registerHandlers(): void {
       const ask = (options: Electron.MessageBoxOptions) =>
         window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options);
 
+      // The person said where they were starting from before they chose the
+      // folder, and the folder can disagree. That answer decides what the
+      // agent is told, so it is worth one question rather than a wrong guide.
+      const hasFiles = await holdsFiles(dir);
+      if (settings.existingCode !== hasFiles) {
+        const { response } = await ask({
+          type: "question",
+          buttons: ["Use this folder", "Choose another"],
+          defaultId: 0,
+          cancelId: 1,
+          message: hasFiles ? "This folder already holds code" : "This folder is empty",
+          detail: hasFiles
+            ? "You said you were starting from scratch. Using it anyway is fine: your agent will be told the code is already here and asked to work from it."
+            : "You said you were working with code you already have. Using it anyway is fine: your agent will be told to write the program from nothing.",
+        });
+        if (response !== 0) return ok(null);
+        settings.existingCode = hasFiles;
+      }
+
       // Structured mode rebuilds whatever code is already there. That is what
       // the person asked for, but it should never come as a surprise.
-      if (settings.mode === "structured" && (await holdsFiles(dir))) {
+      if (settings.mode === "structured" && hasFiles) {
         const { response } = await ask({
           type: "warning",
           buttons: ["Rebuild it as blocks", "Cancel"],
@@ -702,11 +734,24 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
 
   const checks: [string, boolean][] = [
     [
-      "a new project asks for a mode and a granularity before it will go on",
+      "a new project asks its questions in order, and will not go on until each that applies is answered",
       value("dialog", "blockedAtFirst") === true &&
+        value("dialog", "roleUnasked") === true &&
+        value("dialog", "roleAsked") === true &&
+        value("dialog", "blockedWithoutStart") === true &&
         value("dialog", "blockedWithoutLevel") === true &&
         value("dialog", "ready") === true &&
         value("dialogClosed", "closed") === true,
+    ],
+    [
+      "a planned block is drawn apart from the built ones, and nothing is asked of it",
+      value("planned", "drawn") === true &&
+        value("planned", "onScreen") === true &&
+        value("planned", "label") === "PLANNED" &&
+        value("planned", "noBreakpoint") === true &&
+        value("planned", "wireIsQuiet") === true &&
+        value("planned", "explained") === true &&
+        value("planned", "noTesting") === true,
     ],
     ["a new project waits for its agent", value("waiting", "waiting") === true],
     ["the diagram appears once the agent writes the project", value("appeared", "appeared") === true],
@@ -864,21 +909,30 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
       const inProject = (...parts: string[]) => path.join(check.projectDir, ...parts);
 
       try {
-        // The person asks for a new project. The form will not go on until they
-        // have chosen a mode and a granularity. It is cancelled before the
-        // folder picker, which the check cannot answer.
+        // The person asks for a new project. The questions are asked as a
+        // tree: each answer reveals the next, and the form will not go on
+        // until every question that applies has one. It is cancelled before
+        // the folder picker, which the check cannot answer.
         await run("dialog", `
           document.getElementById("new-project").click();
           const dialog = await until(() => document.querySelector("dialog.new-project[open]"));
           if (!dialog) return { opened: false };
           const create = [...dialog.querySelectorAll(".dialog-actions .btn")].find((b) => b.textContent.startsWith("Choose folder"));
           const blockedAtFirst = create.disabled;
+          const roleUnasked = dialog.querySelectorAll('input[name="mode"]').length === 0;
+          dialog.querySelector('input[name="starting-point"][value="false"]').click();
+          const roleAsked = dialog.querySelectorAll('input[name="mode"]').length === 2;
           dialog.querySelector('input[name="mode"][value="visual"]').click();
+          const blockedWithoutStart = create.disabled;
+          dialog.querySelector('input[name="start"][value="plan"]').click();
           const blockedWithoutLevel = create.disabled;
           dialog.querySelector('input[name="granularity"][value="3"]').click();
           return {
             opened: true,
             blockedAtFirst,
+            roleUnasked,
+            roleAsked,
+            blockedWithoutStart,
             blockedWithoutLevel,
             ready: !create.disabled,
             languageIsFree: Boolean(dialog.querySelector(".language-slot input[list]")),
@@ -893,7 +947,13 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
         `);
 
         // New project: what the person chose, and no system for the agent to have defined yet.
-        await startProject(check.projectDir, { mode: "structured", granularity: 3, language: "typescript" });
+        await startProject(check.projectDir, {
+          mode: "structured",
+          granularity: 3,
+          language: "typescript",
+          existingCode: false,
+          start: "build",
+        });
         await run("waiting", `
           await wait(400);
           const link = [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.projectDir)});
@@ -1141,6 +1201,67 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
           };
         `);
         await capture(window, "self-check-added");
+
+        // The agent turns that block into a plan: drawn and explained, loosely
+        // wired to what it will eventually read, and built into nothing. One
+        // of its inputs is left with nothing on it, and the wire that does
+        // reach it comes from a real typed output, so the diagram stays free
+        // of errors only if nothing is asked of a planned block.
+        await writeFile(
+          path.join(auditLog, "block.json"),
+          JSON.stringify(
+            {
+              responsibility: "Record what was ranked, so a later run can be compared against it.",
+              planned: true,
+              inputs: { entries: "the ranked postings", runId: "some identifier, not decided yet" },
+              outputs: { written: "whether it was recorded" },
+            },
+            null,
+            2,
+          ),
+          "utf8",
+        );
+        const withPlan = JSON.parse(await readFile(rankJobsFile, "utf8")) as { wires: string[] };
+        withPlan.wires.push("rank-results.ranked -> audit-log.entries");
+        await writeFile(rankJobsFile, JSON.stringify(withPlan, null, 2), "utf8");
+        await run("planned", `
+          if (!(await until(() => document.querySelector('.block-box[data-key="audit-log"][data-planned="true"]')))) {
+            return { drawn: false };
+          }
+          // A block nobody has laid out lands wherever the automatic layout
+          // puts it, which is nowhere near blocks that were placed by hand.
+          // Lay the diagram out afresh and fit it, so the screenshot this
+          // check leaves behind shows the plan beside what is built.
+          document.getElementById("layout-reset").click();
+          await wait(500);
+          document.getElementById("zoom-fit").click();
+          await wait(500);
+          const node = [...document.querySelectorAll(".tree .node")].find((n) => n.textContent.includes("audit-log"));
+          if (node) node.click();
+          await wait(400);
+          const box = document.querySelector('.block-box[data-key="audit-log"]');
+          const pane = document.getElementById("inspector-pane");
+          return {
+            drawn: Boolean(box),
+            onScreen: Boolean(box) && box.getBoundingClientRect().right < pane.getBoundingClientRect().left,
+            label: text('.block-box[data-key="audit-log"] .block-kind'),
+            noBreakpoint: Boolean(box) && !box.querySelector(".breakpoint"),
+            wireIsQuiet: Boolean(document.querySelector('.bus-group[data-planned="true"]')),
+            explained: /generates, checks and runs nothing/.test(text(".planned-note")),
+            noTesting: ![...document.querySelectorAll(".group-title")].some((h) => h.textContent === "Testing"),
+          };
+        `);
+        await capture(window, "self-check-planned");
+
+        // Put the selection back on a block whose code can be typed in, which
+        // is where the steps after this one carry on from.
+        await run("reselected", `
+          const node = [...document.querySelectorAll(".tree .node")]
+            .find((n) => n.textContent.includes("extract-profile-keywords"));
+          if (node) node.click();
+          await wait(400);
+          return { editable: Boolean(document.querySelector(".code-edit-input")) };
+        `);
 
         // The agent is caught halfway through writing a file, then finishes it.
         const rankResults = inProject("blocks", "rank-jobs", "rank-results", "block.json");

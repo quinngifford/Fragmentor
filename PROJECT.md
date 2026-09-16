@@ -14,7 +14,7 @@ Fragmentor makes the structure the primary artifact. A user should be able to lo
 
 ## Two modes
 
-The person chooses a mode when a project is created, together with the granularity and optionally the language. These are the person's decisions, not the agent's, so Fragmentor asks for them and writes them into `fragmentor.json` before any agent starts. A project can be started in an empty folder or in one that already holds code.
+When a project is created the person is asked a short series of questions, each following from the last: whether they are starting from nothing or from code they already have, what Fragmentor's role should be over that code, whether to plan the architecture before building it, how finely to divide the work, and optionally the language. These are the person's decisions rather than the agent's, so Fragmentor asks for them and writes them into `fragmentor.json` before any agent starts. The answers are what the agent's guide is written from, so the guide states what applies to this one project instead of listing the cases it might be in.
 
 - **Structured.** The diagram is the specification. The agent builds the program as blocks, or rebuilds existing code that way; Fragmentor generates the code between blocks, checks the rest against the diagram, and runs the tests. Everything below about contracts, generated code and verification is structured mode.
 - **Visual.** The diagram is a picture of code that exists anyway. The agent maps the codebase into blocks, each pointing at the file or function it stands for, and keeps the diagram current as the code changes. Fragmentor never generates, runs or changes the code. Types are free text as the code writes them, and testing is unavailable. What is checked is that the diagram holds together and that every block points at code that exists.
@@ -44,6 +44,14 @@ In structured mode every block corresponds to a real, callable function in the c
 The user must be able to open any block, enter input values, run it, and see the outputs. That requirement forces callability, so there is no separate, cheaper representation for small blocks.
 
 A conceptual step too small to justify its own function is not a block; it is a line inside a leaf block. Granularity control, not a second block representation, is what keeps the codebase from filling with trivial one-line functions.
+
+## Planned architecture
+
+A block may be declared **planned**: part of the architecture rather than of the program. It appears on the diagram greyed out, carrying its responsibility and whatever connections have been worked out so far, and Fragmentor generates, checks and runs nothing for it. Its port types are prose as readily as types, because what flows between planned blocks is usually the thing still being decided.
+
+Planning spreads downward — a block inside one that does not exist yet does not exist either. Upward it stops code rather than spreading: a block holding a planned block anywhere beneath it keeps its own contract but has no code to generate, because that code would call a function nobody has written. It is drawn as the real block it is, and the checks say plainly what it is waiting for.
+
+This is what lets an architecture be argued with before it is built. A project created with plan-first begins entirely as planned blocks; the person reads the shape on the canvas, and the agent takes the flag off one block at a time as it builds them. A project built as it goes can still plan a part of itself this way.
 
 ## Relationship between the diagram and the code
 

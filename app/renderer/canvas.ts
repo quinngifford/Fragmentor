@@ -608,7 +608,11 @@ export function renderCanvas(): void {
     if (!geometry) continue;
 
     const colour = busColour(graph, ui.view, bus);
-    const group = svgEl("g", { class: "bus-group", "data-bus": bus.id }, busLayer);
+    // What a wire carries is only settled once both ends are real, so a wire
+    // reaching a planned block is drawn as quietly as the block it reaches.
+    const toPlan =
+      Boolean(graph.nodes.get(bus.source)?.block?.planned) || Boolean(graph.nodes.get(bus.target)?.block?.planned);
+    const group = svgEl("g", { class: "bus-group", "data-bus": bus.id, "data-planned": String(toPlan) }, busLayer);
 
     const line = svgEl("path", { d: geometry.path, class: "bus", stroke: colour }, group);
     const hit = svgEl("path", { d: geometry.path, class: "bus-hit" }, group);
@@ -665,7 +669,7 @@ export function renderCanvas(): void {
 
 /** Only TypeScript blocks in a structured project run, so only they can be paused. */
 function canPause(block: SnapshotBlock): boolean {
-  return ui.snapshot?.mode === "structured" && block.language === "typescript";
+  return ui.snapshot?.mode === "structured" && block.language === "typescript" && !block.planned;
 }
 
 /** `arrivalDelay` is null for a block that was already there, and otherwise when it should arrive. */
@@ -675,11 +679,20 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
     class: "block-box",
     transform: `translate(${point.x} ${point.y})`,
     "data-boundary": String(node.boundary),
+    "data-planned": String(Boolean(node.block?.planned)),
     "data-key": node.key,
   }, layer);
 
+  // A planned block is on the diagram to be read, so what it is for and the
+  // fact that it is not built yet are the first things its tooltip says.
   svgEl("title", {}, group).textContent = node.block
-    ? node.block.responsibility + (node.block.kind === "composite" ? "\n\nDouble-click to open this block's diagram." : "")
+    ? [
+        node.block.planned ? "Planned: drawn, but not built yet." : "",
+        node.block.responsibility,
+        node.block.kind === "composite" ? "Double-click to open this block's diagram." : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n")
     : `${node.label} of ${graph.parent.name}`;
 
   // Everything drawn sits in its own group, so an arrival can scale it

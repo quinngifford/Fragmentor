@@ -14,7 +14,7 @@ The person you work with sees this project in Fragmentor as a diagram of **block
 
 When the design changes, change the `block.json` files first, then the code. If the `fragmentor` command is not found, ask the person to run `npm link` once in Fragmentor's folder.
 
-**If this folder already had code**, you are rebuilding it as blocks. First make sure it is committed to version control, and ask the person if it is not. Describe the program's existing structure as blocks, move its logic into them from the bottom up, and delete the old code once the blocks pass their tests. Entry points such as a `main` function, a server or framework setup stay outside `blocks/`: they create the real capabilities and call a system's top block.
+{{startingPoint}}
 
 ## Files
 
@@ -36,7 +36,7 @@ A block's id is its folder name, in kebab-case. A block with children has its `{
 {{manifest}}
 ```
 
-Each system is a separate program, and `rootBlock` is its folder under `blocks/`. {{languageRule}} Leave `mode` and `granularity` as the person set them.
+Each system is a separate program, and `rootBlock` is its folder under `blocks/`. {{languageRule}} Leave `mode`, `existingCode`, `start` and `granularity` as the person set them.
 
 ## Blocks
 
@@ -59,6 +59,7 @@ A block without children, `price-order`:
 - `children` lists the child ids in reading order. `{ "block": "price-order", "each": "order" }` calls a child once for each item of the array wired to its `order` input, and each of its outputs then leaves as an array.
 - `wires` connect `input.<port>` or `<child>.<output>` to `<child>.<input>` or `output.<port>`. Every child input and every output needs exactly one wire, and the types at its two ends must match exactly.
 - `pinnedAsLeaf: true` means the person wants the block kept as one piece of code. Never give it children.
+- `planned: true` marks a block as part of the plan rather than of the program. It is drawn greyed out; its port types may be plain words such as `"the scored postings"`; its wires need not be complete; and Fragmentor generates, checks and runs nothing for it, nor for any block above it until the plan beneath is built. Take it off when you build the block, and give it real types then.
 
 There is no branching on the diagram. Conditions, loops and error handling belong inside blocks without children.
 

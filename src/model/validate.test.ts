@@ -324,3 +324,54 @@ describe("executionOrder", () => {
     expect(executionOrder(children, wires)).toEqual(["producer", "consumer"]);
   });
 });
+
+describe("planned blocks", () => {
+  /** The straight line again, with the block that labels a score not written yet. */
+  function withPlan(): { parent: Block; children: Map<string, Block> } {
+    const { parent, children } = straightLine();
+    children.set(
+      "label-score",
+      makeBlock({
+        id: "label-score",
+        planned: true,
+        // Words rather than types, and a port nothing reaches: both are the
+        // point of drawing a block before deciding what is in it.
+        inputs: { score: { type: t.text("a score of some kind") }, weight: { type: t.text("not decided") } },
+        outputs: { label: { type: t.text("something to show") }, colour: { type: t.text("not decided") } },
+        capabilities: { clock: { capability: "Clock" } },
+      }),
+    );
+    return { parent, children };
+  }
+
+  it("asks nothing of one: not its types, not its wiring, not its capabilities", () => {
+    const { parent, children } = withPlan();
+    expect(validateComposite(parent, children)).toEqual([]);
+  });
+
+  it("would report every one of those things if the block were real", () => {
+    const { parent, children } = withPlan();
+    children.set("label-score", makeBlock({ ...children.get("label-score")!, planned: false }));
+    const found = errors(validateComposite(parent, children));
+    expect(found).toContain('Nothing is connected to "label-score" input "weight".');
+    expect(found.some((message) => /Type mismatch/.test(message))).toBe(true);
+    expect(found.some((message) => /needs the capability "clock"/.test(message))).toBe(true);
+  });
+
+  it("still checks everything around it", () => {
+    const { parent, children } = withPlan();
+    parent.wires = parent.wires.filter((wire) => wire.target.to !== "block" || wire.target.block !== "score-posting");
+    expect(errors(validateComposite(parent, children))).toEqual([
+      'Nothing is connected to "score-posting" input "posting".',
+    ]);
+  });
+
+  it("reports gaps inside a planned parent as worth knowing, not as errors", () => {
+    const { parent, children } = straightLine();
+    parent.planned = true;
+    parent.wires = [];
+    const found = validateComposite(parent, children);
+    expect(errors(found)).toEqual([]);
+    expect(warnings(found).length).toBeGreaterThan(0);
+  });
+});

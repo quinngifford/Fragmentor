@@ -1,26 +1,95 @@
 import type { NewProjectSettings } from "../../src/codegen/emit.js";
 
 /**
- * What the person decides before a project exists: what Fragmentor does with
- * the code, how finely it is divided, and if they like, the language. These
- * are the person's decisions rather than the agent's, which is why they are
- * asked here and written into fragmentor.json before any agent starts. The
- * folder is chosen afterwards by the main process, which owns the file dialog.
+ * What the person decides before a project exists.
+ *
+ * It is asked as a question tree rather than a flat form, because the answers
+ * are not independent: where they are starting from decides what Fragmentor
+ * can usefully do with the code, and that in turn decides whether starting
+ * with a plan is even a question. Each answer reveals the next, so nobody is
+ * shown a choice that does not apply to them.
+ *
+ * These are the person's decisions rather than the agent's, which is why they
+ * are asked here and written into fragmentor.json before any agent starts.
+ * The folder is chosen afterwards by the main process, which owns the file
+ * dialog, and which reconciles these answers with what is actually in it.
  */
 
 type Mode = NewProjectSettings["mode"];
+type Start = NewProjectSettings["start"];
 type Level = NewProjectSettings["granularity"];
 
-const MODES: { mode: Mode; title: string; text: string }[] = [
+interface Choice<T> {
+  value: T;
+  title: string;
+  text: string;
+  /** Tagged beside the title, for the answer that suits most people. */
+  recommended?: boolean;
+}
+
+const STARTING_POINTS: Choice<boolean>[] = [
   {
-    mode: "structured",
-    title: "Structured: Fragmentor shapes the code",
-    text: "Your agent builds the program as blocks, or rebuilds the code already in the folder that way. Fragmentor writes the code between blocks, checks everything, and runs the tests.",
+    value: false,
+    title: "Starting from scratch",
+    text: "The folder is empty. Your agent writes the program from nothing.",
   },
   {
-    mode: "visual",
-    title: "Visual: Fragmentor only draws",
-    text: "Your agent maps the code already in the folder into a diagram. The code is never changed, and there is no testing.",
+    value: true,
+    title: "Working with code I already have",
+    text: "The folder already holds a program. Your agent works from what is there.",
+  },
+];
+
+/** The same decision, put the way it lands in each case. */
+const MODES: Record<"scratch" | "existing", { question: string; choices: Choice<Mode>[] }> = {
+  scratch: {
+    question: "What should Fragmentor's role be?",
+    choices: [
+      {
+        value: "structured",
+        title: "Shape the code: blocks with strict inputs and outputs",
+        text:
+          "Your agent builds the program as blocks, each a function with typed inputs, typed outputs and declared effects. Fragmentor writes the code that connects them, checks every block against its contract, and lets you open any block, type in values and run it on its own. That is what keeps a growing program testable and understandable, instead of a wall of code neither of you can hold in mind.",
+        recommended: true,
+      },
+      {
+        value: "visual",
+        title: "Draw the code only",
+        text:
+          "Your agent writes the program however it likes and keeps a diagram of it current, so you can see how it fits together. You get the picture without the constraints: Fragmentor never generates, checks or runs anything, and there is no testing.",
+      },
+    ],
+  },
+  existing: {
+    question: "What do you want to do with this code?",
+    choices: [
+      {
+        value: "structured",
+        title: "Rewrite it as a structured architecture",
+        text:
+          "Your agent moves this program's logic into blocks with typed inputs and outputs, and deletes the old files once the blocks pass their tests. Everything then becomes checkable and separately runnable. The code is genuinely rewritten, so commit it to version control first.",
+      },
+      {
+        value: "visual",
+        title: "Draw it as it is",
+        text:
+          "Your agent maps the program into a diagram and keeps it current as the code changes. Nothing is rewritten, generated or run.",
+      },
+    ],
+  },
+};
+
+const STARTS: Choice<Start>[] = [
+  {
+    value: "plan",
+    title: "Plan the architecture",
+    text:
+      "Your agent lays out the whole shape first as planned blocks: drawn greyed out, explained, connected as loosely as it has worked out so far, and built into nothing. You look it over and agree before any code is written.",
+  },
+  {
+    value: "build",
+    title: "Build the architecture",
+    text: "Your agent defines the blocks and writes their code as it goes.",
   },
 ];
 
@@ -49,9 +118,14 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
   return node;
 }
 
+function legendText(node: HTMLLegendElement, text: string, tag: string): void {
+  node.replaceChildren();
+  node.append(`${text} `, el("span", "field-tag", tag));
+}
+
 function legend(text: string, tag: string): HTMLLegendElement {
   const node = el("legend");
-  node.append(`${text} `, el("span", "field-tag", tag));
+  legendText(node, text, tag);
   return node;
 }
 
@@ -66,7 +140,9 @@ function radio(name: string, value: string): HTMLInputElement {
 /** Asks for the settings in a modal dialog. Resolves to null when the person cancels. */
 export function askForProjectSettings(): Promise<NewProjectSettings | null> {
   return new Promise((resolve) => {
+    let existingCode: boolean | null = null;
     let mode: Mode | null = null;
+    let start: Start | null = null;
     let level: Level | null = null;
     let language = "";
 
@@ -74,23 +150,59 @@ export function askForProjectSettings(): Promise<NewProjectSettings | null> {
     dialog.setAttribute("aria-labelledby", "new-project-title");
     const title = el("h2", undefined, "New project");
     title.id = "new-project-title";
-    dialog.append(title, el("p", "dialog-lede", "You choose the folder next. It can be empty, or already hold code."));
+    dialog.append(title, el("p", "dialog-lede", "You choose the folder last."));
 
-    const modes = el("fieldset", "dialog-field");
-    modes.append(legend("What should Fragmentor do with the code?", "required"));
-    for (const option of MODES) {
-      const choice = el("label", "choice");
-      const input = radio("mode", option.mode);
-      input.addEventListener("change", () => {
-        mode = option.mode;
-        language = "";
-        update();
-      });
-      const body = el("span", "choice-body");
-      body.append(el("span", "choice-title", option.title), el("span", "choice-text", option.text));
-      choice.append(input, body);
-      modes.append(choice);
+    /**
+     * One question of the tree. Its options are rebuilt whenever the question
+     * itself changes, so an answer to a question no longer being asked can
+     * never survive as a selection nobody can see.
+     */
+    function question<T>(name: string, onPick: (value: T) => void) {
+      const field = el("fieldset", "dialog-field");
+      const head = el("legend");
+      const options = el("div", "choices");
+      field.append(head, options);
+
+      return {
+        field,
+        draw(text: string, choices: Choice<T>[]) {
+          legendText(head, text, "required");
+          options.replaceChildren();
+          for (const choice of choices) {
+            const label = el("label", "choice");
+            const input = radio(name, String(choice.value));
+            input.addEventListener("change", () => {
+              onPick(choice.value);
+              update();
+            });
+            const body = el("span", "choice-body");
+            const heading = el("span", "choice-title", choice.title);
+            if (choice.recommended) heading.append(el("span", "choice-tag", "Recommended"));
+            body.append(heading, el("span", "choice-text", choice.text));
+            label.append(input, body);
+            options.append(label);
+          }
+        },
+      };
     }
+
+    const startingPoint = question<boolean>("starting-point", (value) => {
+      existingCode = value;
+      mode = null;
+      start = null;
+      language = "";
+    });
+    startingPoint.draw("Where are you starting from?", STARTING_POINTS);
+
+    const role = question<Mode>("mode", (value) => {
+      mode = value;
+      language = "";
+    });
+
+    const firstStep = question<Start>("start", (value) => {
+      start = value;
+    });
+    firstStep.draw("How do you want to start?", STARTS);
 
     const granularity = el("fieldset", "dialog-field");
     granularity.append(legend("How finely should the work be divided?", "required"));
@@ -123,7 +235,7 @@ export function askForProjectSettings(): Promise<NewProjectSettings | null> {
     create.type = "button";
     actions.append(cancel, create);
 
-    dialog.append(modes, granularity, languages, actions);
+    dialog.append(startingPoint.field, role.field, firstStep.field, granularity, languages, actions);
 
     const finish = (value: NewProjectSettings | null) => {
       dialog.close();
@@ -136,10 +248,22 @@ export function askForProjectSettings(): Promise<NewProjectSettings | null> {
       finish(null);
     });
     create.addEventListener("click", () => {
-      if (mode && level) finish({ mode, granularity: level, language: language.trim() || null });
+      const settings = answered();
+      if (settings) finish(settings);
     });
 
+    /** Everything asked so far, or null while a question that applies is unanswered. */
+    function answered(): NewProjectSettings | null {
+      if (existingCode === null || mode === null || level === null) return null;
+      const common = { mode, granularity: level, language: language.trim() || null, existingCode };
+      // Starting with a plan is only a question where there is nothing yet.
+      // Code that already exists is described or rebuilt, never planned.
+      if (existingCode) return { ...common, start: "build" };
+      return start === null ? null : { ...common, start };
+    }
+
     let languageDrawnFor: Mode | null | undefined;
+    let roleDrawnFor: boolean | null | undefined;
 
     function drawLanguage(): void {
       languageSlot.replaceChildren();
@@ -158,12 +282,13 @@ export function askForProjectSettings(): Promise<NewProjectSettings | null> {
           suggestions.append(option);
         }
         languageSlot.append(input, suggestions);
-        languageNote.textContent = "What the existing code is written in. Code in any language can be drawn.";
+        languageNote.textContent = existingCode
+          ? "What the existing code is written in. Code in any language can be drawn."
+          : "What you would like it written in. Code in any language can be drawn.";
         return;
       }
 
       const select = el("select");
-      select.disabled = mode === null;
       for (const option of STRUCTURED_LANGUAGES) {
         const item = el("option", undefined, option.label);
         item.value = option.value;
@@ -171,17 +296,33 @@ export function askForProjectSettings(): Promise<NewProjectSettings | null> {
       }
       select.addEventListener("change", () => (language = select.value));
       languageSlot.append(select);
-      languageNote.textContent = mode === null ? "Choose what Fragmentor does with the code first." : "Every system in the project is written in it.";
+      languageNote.textContent = "Every system in the project is written in it.";
     }
 
     function update(): void {
+      if (roleDrawnFor !== existingCode) {
+        if (existingCode !== null) {
+          const asked = MODES[existingCode ? "existing" : "scratch"];
+          role.draw(asked.question, asked.choices);
+        }
+        roleDrawnFor = existingCode;
+      }
+      role.field.hidden = existingCode === null;
+
+      // Only worth asking about an architecture nobody has written yet.
+      firstStep.field.hidden = existingCode !== false || mode === null;
+
+      granularity.hidden = mode === null;
       levelText.textContent = level ? LEVELS[level] : "Pick a level. It can be changed later in fragmentor.json.";
-      if (languageDrawnFor !== mode) {
+
+      languages.hidden = mode === null;
+      if (mode !== null && languageDrawnFor !== mode) {
         drawLanguage();
         languageDrawnFor = mode;
       }
-      create.disabled = !mode || !level;
-      create.title = create.disabled ? "Choose what Fragmentor does with the code, and a level, first." : "";
+
+      create.disabled = answered() === null;
+      create.title = create.disabled ? "Answer the questions above first." : "";
     }
 
     update();

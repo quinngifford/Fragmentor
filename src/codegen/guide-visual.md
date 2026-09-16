@@ -6,6 +6,8 @@ The person you work with uses Fragmentor to see how this codebase works, as a di
 
 **Never change the program's code for Fragmentor's sake.** The diagram describes the code; the code does not follow the diagram. Fragmentor never runs or changes the code either.
 
+{{startingPoint}}
+
 ## How to work
 
 1. Read the code. Fill in `goal` and `systems` in `fragmentor.json`.
@@ -31,7 +33,7 @@ A block's id is its folder name, in kebab-case. Never edit `layout.json`.
 {{manifest}}
 ```
 
-Each system is a separate program, such as a server and its command-line tool, and `rootBlock` is its folder under `blocks/`.{{languageRule}} Leave `mode` and `granularity` as the person set them.
+Each system is a separate program, such as a server and its command-line tool, and `rootBlock` is its folder under `blocks/`.{{languageRule}} Leave `mode`, `existingCode`, `start` and `granularity` as the person set them.
 
 ## Blocks
 
@@ -54,6 +56,7 @@ A block without children, `price-order`:
 - `capabilities` names what the block reaches outside the program, such as `"Database"`, `"FileSystem"` or `"Http"`.
 - `children` lists the child ids in reading order. `{ "block": "price-order", "each": "order" }` shows a child that runs once for each item of a list.
 - `wires` connect `input.<port>` or `<child>.<output>` to `<child>.<input>` or `output.<port>`: a value one part of the code hands to another. Draw what really flows.
+- `planned: true` marks a part of the program that does not exist yet. It is drawn greyed out, has no `code`, and is wired as loosely as has been decided. `fragmentor check` asks nothing of it.
 
 ## Granularity: level {{level}}
 

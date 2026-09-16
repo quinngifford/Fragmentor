@@ -13,12 +13,15 @@ export function makeBlock(partial: Partial<Block> & { id: string }): Block {
     children: [],
     wires: [],
     pinnedAsLeaf: false,
+    planned: false,
     ...partial,
   };
 }
 
 export const t = {
   string: { kind: "string" } as PortType,
+  /** A type written as words, as a planned or visual block writes one. */
+  text: (text: string): PortType => ({ kind: "text", text }),
   number: { kind: "number" } as PortType,
   boolean: { kind: "boolean" } as PortType,
   array: (of: PortType): PortType => ({ kind: "array", of }),

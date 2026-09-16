@@ -131,7 +131,15 @@ function codeSection(block: SnapshotBlock): HTMLElement {
   const value = generated ? onDisk : (pending?.text ?? onDisk);
 
   if (value === null || value === undefined) {
-    node.append(el("p", "bench-note", "This file has not been generated yet. Use Generate code."));
+    node.append(
+      el(
+        "p",
+        "bench-note",
+        block.holdsPlan
+          ? "Its code would call a block that is only planned, so there is nothing to generate yet. Build the planned blocks inside it and this fills in."
+          : "This file has not been generated yet. Use Generate code.",
+      ),
+    );
     return node;
   }
 
@@ -273,8 +281,16 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   badges.append(
     el(
       "span",
-      "badge state",
-      visual ? (block.implemented ? "linked to code" : "not linked") : block.implemented ? "implemented" : "specified",
+      `badge state${block.planned ? " planned" : ""}`,
+      block.planned
+        ? "planned"
+        : visual
+          ? block.implemented
+            ? "linked to code"
+            : "not linked"
+          : block.implemented
+            ? "implemented"
+            : "specified",
     ),
   );
   if (block.language) badges.append(el("span", "badge", block.language));
@@ -289,6 +305,16 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
 
   panel.append(el("p", "responsibility", block.responsibility));
 
+  if (block.planned) {
+    panel.append(
+      el(
+        "p",
+        "planned-note",
+        "Planned: part of the architecture rather than of the program. Its ports say what is meant to flow rather than what does, its wiring can be as loose as the plan is, and Fragmentor generates, checks and runs nothing for it.",
+      ),
+    );
+  }
+
   const problems = problemsSection(requireSnapshot().diagnostics.filter((d) => d.blockPath === block.path), false);
   if (problems) panel.append(problems);
 
@@ -299,9 +325,23 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   panel.append(contract);
 
   const code = group("Code");
-  code.append(visual ? linkedCodeSection(block) : codeSection(block));
+  if (block.planned) {
+    const none = section("None yet");
+    none.append(
+      el(
+        "p",
+        "bench-note",
+        "There is no code for a planned block. When it is built, its \"planned\" flag comes off and its code appears here.",
+      ),
+    );
+    code.append(none);
+  } else {
+    code.append(visual ? linkedCodeSection(block) : codeSection(block));
+  }
   panel.append(code);
-  if (visual) return;
+  // Nothing beneath this point applies to a block nobody has written: there
+  // is nothing to run, and nothing a test could be written against.
+  if (visual || block.planned) return;
 
   const testing = group("Testing");
   const [bench, cases] = benchSections(block);

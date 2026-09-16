@@ -1,11 +1,11 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Mode } from "../model/block.js";
 import { CAPABILITIES, isKnownCapability } from "../model/capabilities.js";
 import { validateComposite } from "../model/validate.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
-import { blocksRoot, manifestPath, systemOf, writeManifest } from "../project/project.js";
-import type { Manifest, Project } from "../project/project.js";
+import { blocksRoot, holdsPlan, manifestPath, systemOf, writeManifest } from "../project/project.js";
+import type { Manifest, Project, Start } from "../project/project.js";
 import { AGENTS_FILE, AGENTS_SCAFFOLD, CLAUDE_FILE, CLAUDE_SCAFFOLD, GUIDE_FILE, agentGuide } from "./guide.js";
 
 /**
@@ -22,6 +22,12 @@ import { AGENTS_FILE, AGENTS_SCAFFOLD, CLAUDE_FILE, CLAUDE_SCAFFOLD, GUIDE_FILE,
  *
  * A visual project has no generated code at all. Its code is the person's
  * own, and all Fragmentor keeps current there is the guide.
+ *
+ * Planned blocks have no code either. A planned block is a drawing of
+ * something nobody has written, and a block holding one anywhere beneath it
+ * has nothing to generate for the same reason: its code would be a call to a
+ * function that does not exist. Whatever Fragmentor generated for such a
+ * block before is taken away, so a contract cannot outlive what it described.
  */
 
 export interface EmitResult {
@@ -29,6 +35,8 @@ export interface EmitResult {
   written: string[];
   /** Implementations that already existed, and were left alone. */
   skipped: string[];
+  /** Generated files taken away, because what they described is now planned. */
+  removed: string[];
   problems: string[];
 }
 
@@ -102,6 +110,10 @@ export interface NewProjectSettings {
   granularity: 1 | 2 | 3 | 4 | 5;
   /** Null when the agent is left to choose. */
   language: string | null;
+  /** Whether the folder already holds code the agent has to work with. */
+  existingCode: boolean;
+  /** Whether the agent draws the architecture as a plan before building it. */
+  start: Start;
 }
 
 /**
@@ -119,6 +131,8 @@ export async function startProject(
     name: path.basename(path.resolve(dir)),
     goal: "",
     mode: settings.mode,
+    existingCode: settings.existingCode,
+    start: settings.start,
     ...(settings.language ? { language: settings.language } : {}),
     granularity: { level: settings.granularity, maxDepth: 4 },
     systems: [],
@@ -132,17 +146,29 @@ export async function startProject(
 export async function emitProject(project: Project): Promise<EmitResult> {
   const written: string[] = [];
   const skipped: string[] = [];
+  const removed: string[] = [];
   const problems: string[] = [];
 
   const relative = (target: string) => path.relative(project.dir, target).split(path.sep).join("/");
   const write = async (target: string, contents: string) => {
     if (await writeIfChanged(target, contents)) written.push(relative(target));
   };
+  /**
+   * Takes away a file that is Fragmentor's to take away, and only that.
+   * Anything else in a planned block's folder is someone's work, and is
+   * reported instead so that they decide what becomes of it.
+   */
+  const discard = async (target: string, ours: (source: string) => boolean = isGeneratedSource) => {
+    const existing = await readIfPresent(target);
+    if (existing === null || !ours(existing)) return;
+    await rm(target);
+    removed.push(relative(target));
+  };
 
   // The guide does not depend on the project being valid, and is most needed
   // when it is not, so it is kept current before anything can be refused.
   await write(path.join(project.dir, GUIDE_FILE), agentGuide(project.manifest));
-  if (project.manifest.mode === "visual") return { written, skipped, problems };
+  if (project.manifest.mode === "visual") return { written, skipped, removed, problems };
 
   for (const system of project.systems) {
     if (!isKnownLanguage(system.language)) {
@@ -160,7 +186,7 @@ export async function emitProject(project: Project): Promise<EmitResult> {
     }
   }
 
-  if (problems.length > 0) return { written, skipped, problems };
+  if (problems.length > 0) return { written, skipped, removed, problems };
 
   // One shared capabilities module per language actually used.
   const languagesUsed = [...new Set(project.systems.map((system) => system.language))];
@@ -176,13 +202,39 @@ export async function emitProject(project: Project): Promise<EmitResult> {
       continue;
     }
     const pack = getPack(system.language);
+    const implFile = path.join(node.dir, pack.implFile);
+
+    if (node.block.planned) {
+      // Its ports say what is meant to flow rather than what does, so there
+      // is no contract to write and nothing to write code against.
+      await discard(path.join(node.dir, pack.contractFile));
+
+      // An implementation file nobody has filled in is Fragmentor's own, the
+      // same as anything it generated. Work someone did is theirs.
+      const ours = (source: string) => isGeneratedSource(source) || pack.isUnimplemented(source);
+      const left = await readIfPresent(implFile);
+      if (left !== null && !ours(left)) {
+        problems.push(
+          `"${node.block.name}" is planned, so it is only a drawing, but ${relative(implFile)} holds code someone wrote. Take "planned" off the block if it is real now, or move that code out of it.`,
+        );
+      } else {
+        await discard(implFile, ours);
+      }
+      continue;
+    }
 
     await write(path.join(node.dir, pack.contractFile), pack.contractSource({ block: node.block, blockPath: node.path }));
 
-    const implFile = path.join(node.dir, pack.implFile);
     const existing = (await readIfPresent(implFile))?.replace(/\r\n/g, "\n") ?? null;
 
     if (node.block.kind === "composite") {
+      // Its code would call a block nobody has written yet, so it waits for
+      // the plan beneath it to be built. Its own contract is real and stays.
+      if (holdsPlan(node)) {
+        await discard(implFile);
+        continue;
+      }
+
       // A diagram with errors in it has no code to become. The errors are
       // already reported with the rest of the diagram's.
       const children = new Map(node.children.map((child) => [child.block.id, child.block]));
@@ -212,5 +264,6 @@ export async function emitProject(project: Project): Promise<EmitResult> {
 
   written.sort();
   skipped.sort();
-  return { written, skipped, problems };
+  removed.sort();
+  return { written, skipped, removed, problems };
 }

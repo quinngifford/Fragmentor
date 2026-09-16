@@ -7,7 +7,7 @@ import type { PortType } from "../model/types.js";
 import { executionOrder, wireCarriedType } from "../model/validate.js";
 import { loadLayout } from "./layout.js";
 import type { Layout } from "./layout.js";
-import { loadProject, locateCode, systemOf, validateProject } from "./project.js";
+import { holdsPlan, loadProject, locateCode, systemOf, validateProject } from "./project.js";
 import type { CodeLocation, Granularity, ProjectDiagnostic } from "./project.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
 import { readCases } from "../run/cases.js";
@@ -83,6 +83,13 @@ export interface SnapshotBlock {
   name: string;
   responsibility: string;
   kind: "leaf" | "composite";
+  /**
+   * Part of the plan rather than of the program: drawn, explained, wired as
+   * loosely as the plan is, with nothing generated, checked or run for it.
+   */
+  planned: boolean;
+  /** Whether a planned block sits somewhere beneath this one, so its own code waits. */
+  holdsPlan: boolean;
   functionName: string;
   inputs: SnapshotPort[];
   outputs: SnapshotPort[];
@@ -192,6 +199,8 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       name: block.name,
       responsibility: block.responsibility,
       kind: block.kind,
+      planned: block.planned,
+      holdsPlan: holdsPlan(node),
       functionName: pack?.functionName(block.id) ?? "",
       inputs: ports(block.inputs),
       outputs: ports(block.outputs),

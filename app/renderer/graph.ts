@@ -71,6 +71,10 @@ function projectAsBlock(): SnapshotBlock {
     name: snapshot.name,
     responsibility: snapshot.goal,
     kind: "composite",
+    // The project itself is never planned, and nothing reads these of it:
+    // it is a frame around the systems, not a block anyone can open.
+    planned: false,
+    holdsPlan: false,
     functionName: "",
     inputs: [],
     outputs: [],
@@ -136,7 +140,7 @@ export function buildGraph(view: string): Graph | null {
     nodes.set(child.block, {
       key: child.block,
       label: block.name,
-      sublabel: block.kind === "composite" ? "COMPOSITE" : "LEAF",
+      sublabel: block.planned ? "PLANNED" : block.kind === "composite" ? "COMPOSITE" : "LEAF",
       boundary: false,
       outputs: block.outputs,
       capabilities: block.capabilities,
