@@ -90,6 +90,11 @@ export interface Block {
    * intended shape can be seen and argued with, with nothing generated,
    * checked or run for it. Planning spreads downward, so everything inside a
    * planned block is planned too.
+   *
+   * A loaded block carries the inherited value, not only what its own file
+   * said. Anything that writes a loaded block back out would therefore record
+   * inheritance as if it had been declared, which would survive the parent
+   * being built; nothing does that today.
    */
   planned: boolean;
   /** Visual mode only: the file or folder, optionally `#name`, that this block stands for. */
