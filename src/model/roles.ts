@@ -16,88 +16,61 @@
 
 export type Role = "function" | "service" | "external" | "database" | "storage" | "queue" | "client";
 
-/**
- * How the things a block exposes are shaped.
- *
- * `store` entries hold data: a table, a bucket, a channel. One shape covers
- * both directions, because what is put in is what comes back out.
- *
- * `operations` entries answer requests, so the two directions differ: what is
- * sent, and what comes back.
- */
-export type ExposeShape = "store" | "operations";
-
 export interface RoleDefinition {
-  id: Role;
   /** Shown on the block, in capitals. */
   label: string;
   /** What kind of thing this is, in the agent's guide and the inspector. */
   description: string;
   /** What an entry under `exposes` stands for here, singular: "table", "operation". */
   entryNoun: string;
-  shape: ExposeShape;
   /** True only for `function`: Fragmentor generates, checks and runs it. */
   isCode: boolean;
 }
 
 export const ROLES: Record<Role, RoleDefinition> = {
   function: {
-    id: "function",
     label: "FUNCTION",
     description: "Code that runs: a function with typed inputs and outputs. This is what a block is unless it says otherwise.",
     entryNoun: "port",
-    shape: "store",
     isCode: true,
   },
   service: {
-    id: "service",
     label: "SERVICE",
     description:
       "A program of ours that answers requests: a backend, a microservice, a web server, a worker.",
     entryNoun: "operation",
-    shape: "operations",
     isCode: false,
   },
   external: {
-    id: "external",
     label: "EXTERNAL",
     description:
       "Something outside the system we do not write: a third-party API, another team's service. A black box with a known interface.",
     entryNoun: "operation",
-    shape: "operations",
     isCode: false,
   },
   database: {
-    id: "database",
     label: "DATABASE",
     description: "A database. Each entry is a table or collection, and its shape is that table's schema.",
     entryNoun: "table",
-    shape: "store",
     isCode: false,
   },
   storage: {
-    id: "storage",
     label: "STORAGE",
     description: "Files, objects, blobs or a cache. Each entry is a bucket or a set of keys, and its shape is what is kept there.",
     entryNoun: "store",
-    shape: "store",
     isCode: false,
   },
   queue: {
-    id: "queue",
     label: "QUEUE",
     description: "A queue, topic or event stream. Each entry is a channel, and its shape is the message carried on it.",
     entryNoun: "channel",
-    shape: "store",
     isCode: false,
   },
   client: {
-    id: "client",
     label: "CLIENT",
     description:
       "Who or what sets the system going, and where data first comes from: a browser, a mobile app, a command-line tool, a scheduled job.",
     entryNoun: "action",
-    shape: "operations",
     isCode: false,
   },
 };
@@ -117,17 +90,4 @@ export const ARCHITECTURE_ROLES = ROLE_IDS.filter((role) => !ROLES[role].isCode)
  */
 export function isArchitecture(role: Role): boolean {
   return !ROLES[role].isCode;
-}
-
-export function roleLabel(role: Role): string {
-  return ROLES[role].label;
-}
-
-/**
- * How a block's exposed entries are worded in a sentence: "tables", "channels",
- * "operations". Used wherever a message has to name them.
- */
-export function entryNoun(role: Role, plural = false): string {
-  const noun = ROLES[role].entryNoun;
-  return plural ? `${noun}s` : noun;
 }
