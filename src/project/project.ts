@@ -395,7 +395,7 @@ function accessDiagnostics(project: Project, node: LoadedBlock, access: Access, 
     blockPath: node.path,
     message,
   });
-  const written = `"${formatAccess(access)}"`;
+  const written = `declares "${formatAccess(access)}"`;
   const found = resolveAccess(project, node.path, access.resource);
 
   if (!found) {
