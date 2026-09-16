@@ -8,13 +8,13 @@ The person you work with sees this project in Fragmentor as a diagram of **block
 
 1. Fill in `goal` and `systems` in `fragmentor.json`. Then write a `block.json` for every block, keeping any the person already wrote.
 2. Run `fragmentor check` and fix everything it reports. It generates the code of every block that has children, and a starting file for every block that has none.
-3. Show the person the diagram and wait for them to agree before you write code, unless they told you to carry on.
+3. Carry straight on to the code. They can watch the diagram fill in as you work, and will say if they want the shape changed, so do not stop to ask for agreement.
 4. Write the code of each block without children, and tests for every block.
 5. Run `fragmentor check` and `fragmentor test` until both pass.
 
 When the design changes, change the `block.json` files first, then the code. If the `fragmentor` command is not found, ask the person to run `npm link` once in Fragmentor's folder.
 
-**If this folder already had code**, you are rebuilding it as blocks. First make sure it is committed to version control, and ask the person if it is not. Describe the program's existing structure as blocks, move its logic into them from the bottom up, and delete the old code once the blocks pass their tests. Entry points such as a `main` function, a server or framework setup stay outside `blocks/`: they create the real capabilities and call a system's top block.
+**This folder started empty**, so the program is yours to write from nothing. Entry points such as a `main` function, a server or framework setup stay outside `blocks/`: they create the real capabilities and call a system's top block.
 
 ## Files
 
@@ -37,12 +37,14 @@ A block's id is its folder name, in kebab-case. A block with children has its `i
   "name": "Order Pricer",
   "goal": "Read a file of orders and report what each order costs and what they cost altogether.",
   "mode": "structured",
+  "existingCode": false,
+  "start": "build",
   "granularity": { "level": 3, "maxDepth": 3 },
   "systems": [{ "rootBlock": "price-orders", "language": "typescript" }]
 }
 ```
 
-Each system is a separate program, and `rootBlock` is its folder under `blocks/`. The person left the language to you: give each system a `"language"`, `"typescript"` (Fragmentor checks and runs it) or `"python"` (Fragmentor generates its types but cannot run Python yet). The examples below are TypeScript; in another language the file names and naming conventions follow that language. Leave `mode` and `granularity` as the person set them.
+Each system is a separate program, and `rootBlock` is its folder under `blocks/`. The person left the language to you: give each system a `"language"`, `"typescript"` (Fragmentor checks and runs it) or `"python"` (Fragmentor generates its types but cannot run Python yet). The examples below are TypeScript; in another language the file names and naming conventions follow that language. Leave `mode`, `existingCode`, `start` and `granularity` as the person set them.
 
 ## Blocks
 
@@ -82,8 +84,53 @@ A block without children, `price-order`:
 - `children` lists the child ids in reading order. `{ "block": "price-order", "each": "order" }` calls a child once for each item of the array wired to its `order` input, and each of its outputs then leaves as an array.
 - `wires` connect `input.<port>` or `<child>.<output>` to `<child>.<input>` or `output.<port>`. Every child input and every output needs exactly one wire, and the types at its two ends must match exactly.
 - `pinnedAsLeaf: true` means the person wants the block kept as one piece of code. Never give it children.
+- `planned: true` marks a block as part of the plan rather than of the program. It is drawn greyed out; its port types may be plain words such as `"the scored postings"`; its wires need not be complete; and Fragmentor generates, checks and runs nothing for it, nor for any block above it until the plan beneath is built. Take it off when you build the block, and give it real types then.
 
 There is no branching on the diagram. Conditions, loops and error handling belong inside blocks without children.
+
+## The rest of the system
+
+Not every block is a function. A database, a queue, another team's service and the browser that starts a request are parts of the system too, and a diagram without them shows values arriving from nowhere. Give a block a `role` and it stands for one of them:
+
+- **`"service"`** — A program of ours that answers requests: a backend, a microservice, a web server, a worker.
+- **`"external"`** — Something outside the system we do not write: a third-party API, another team's service. A black box with a known interface.
+- **`"database"`** — A database. Each entry is a table or collection, and its shape is that table's schema.
+- **`"storage"`** — Files, objects, blobs or a cache. Each entry is a bucket or a set of keys, and its shape is what is kept there.
+- **`"queue"`** — A queue, topic or event stream. Each entry is a channel, and its shape is the message carried on it.
+- **`"client"`** — Who or what sets the system going, and where data first comes from: a browser, a mobile app, a command-line tool, a scheduled job.
+
+A block with a role is not called, so it has no `inputs`, `outputs` or `capabilities`. It says what it offers with `exposes`, and other blocks say what they reach with `access`:
+
+```json
+{
+  "name": "Orders Database",
+  "role": "database",
+  "responsibility": "Holds every order and who placed it.",
+  "exposes": {
+    "orders": {
+      "type": "{ id: string; owner: string; total: number }",
+      "description": "One row per order."
+    },
+    "owners": "{ id: string; email: string }"
+  }
+}
+```
+
+```json
+{
+  "responsibility": "Read one owner's orders.",
+  "inputs": { "owner": "string" },
+  "outputs": { "orders": "{ id: string; total: number }[]" },
+  "access": ["reads orders-db.orders"]
+}
+```
+
+- A store's entry is written once, as the shape it holds. An operation writes its two directions apart, `{ "accepts": "{ orderId: string; amount: number }", "returns": "{ receipt: string }" }`, and may leave either out.
+- Write a shape as a type wherever you can, so the block can be drawn column by column. Anything the type language cannot say, such as `timestamp`, is kept as the words you write.
+- `reads` takes data out, `writes` puts data in, `calls` does both. Name the entry, as in `reads orders-db.orders`, or leave it off to mean the whole thing.
+- The block named is looked for beside the one reaching it, then above it, up to the top of the system, so a handler inside a service reaches a database the service keeps beside it. Put the access on the block that really touches the resource; the diagrams above gather it up.
+
+Nothing is generated, checked or run for a block with a role, nor for any block holding one: a database is not something you call, so there is no chain of calls to write, and the code that opens the connections belongs outside `blocks/`. Blocks **inside** a service are ordinary blocks, generated, checked and tested as usual, and nothing needs to be wired to them. `access` says where data comes from and where it goes; block code still reaches the world only through its capabilities, so put the access on whichever block really talks to the store.
 
 ## Types
 
@@ -145,4 +192,6 @@ Leave out `expected` to record what the block returns without checking it. A blo
 
 ## Granularity: level 3
 
-Split a block into 3 to 5 children, each with one clear responsibility and roughly 30 to 80 lines of code. A step too small to be its own function is a line of code, not a block. The diagram may be at most 3 levels deep, counting a system's top block.
+Try for three to five children per block, each with one clear responsibility and somewhere around 30 to 80 lines of code. A step too small to be its own function is a line of code, not a block.
+
+These are aims rather than rules. Reach for that size, but a block that has to be bigger or smaller to make sense is the right block: never split one responsibility in two, or press two together, to hit a number. Fragmentor does not check any of it, except that the diagram may be at most 3 levels deep, counting a system's top block, which it warns about.

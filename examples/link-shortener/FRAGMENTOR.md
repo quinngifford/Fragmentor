@@ -86,6 +86,50 @@ A block without children, `price-order`:
 - `wires` connect `input.<port>` or `<child>.<output>` to `<child>.<input>` or `output.<port>`: a value one part of the code hands to another. Draw what really flows.
 - `planned: true` marks a part of the program that does not exist yet. It is drawn greyed out, has no `code`, and is wired as loosely as has been decided. `fragmentor check` asks nothing of it.
 
+## The rest of the system
+
+Not every block is a piece of code. A database, a queue, another team's service and the browser that starts a request are parts of the system too, and a diagram without them shows values arriving from nowhere. Give a block a `role` and it stands for one of them:
+
+- **`"service"`** — A program of ours that answers requests: a backend, a microservice, a web server, a worker.
+- **`"external"`** — Something outside the system we do not write: a third-party API, another team's service. A black box with a known interface.
+- **`"database"`** — A database. Each entry is a table or collection, and its shape is that table's schema.
+- **`"storage"`** — Files, objects, blobs or a cache. Each entry is a bucket or a set of keys, and its shape is what is kept there.
+- **`"queue"`** — A queue, topic or event stream. Each entry is a channel, and its shape is the message carried on it.
+- **`"client"`** — Who or what sets the system going, and where data first comes from: a browser, a mobile app, a command-line tool, a scheduled job.
+
+A block with a role has no `inputs` or `outputs`. It says what it offers with `exposes`, and other blocks say what they reach with `access`. It may still have `code`, pointing at the module that wraps it, and may be left without one when it lives outside this codebase.
+
+```json
+{
+  "name": "Orders Database",
+  "role": "database",
+  "responsibility": "Holds every order and who placed it.",
+  "exposes": {
+    "orders": {
+      "type": "{ id: string; owner: string; total: number }",
+      "description": "One row per order."
+    },
+    "owners": "{ id: string; email: string }"
+  }
+}
+```
+
+```json
+{
+  "responsibility": "Read one owner's orders.",
+  "inputs": { "owner": "string" },
+  "outputs": { "orders": "{ id: string; total: number }[]" },
+  "access": ["reads orders-db.orders"]
+}
+```
+
+- A store's entry is written once, as the shape it holds. An operation writes its two directions apart, `{ "accepts": "{ orderId: string; amount: number }", "returns": "{ receipt: string }" }`, and may leave either out.
+- A shape written as an object, `{ code: string; url: string }`, is drawn column by column, which is what makes a database block worth looking at. Anything else is kept as the words you write.
+- `reads` takes data out, `writes` puts data in, `calls` does both. Name the entry, as in `reads orders-db.orders`, or leave it off to mean the whole thing.
+- The block named is looked for beside the one reaching it, then above it, up to the top of the system, so a handler inside a service reaches a database the service keeps beside it. Put the access on the block whose code really touches the resource; the diagrams above gather it up.
+
+Blocks inside a service are reached from outside rather than from each other, so nothing is expected to be wired to them.
+
 ## Granularity: level 3
 
 Try for three to five children per block, each with one clear job, down to functions of somewhere around 30 to 80 lines.
