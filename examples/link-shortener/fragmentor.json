@@ -1,0 +1,17 @@
+{
+  "name": "Link Shortener",
+  "goal": "Turn long URLs into short codes, send visitors on to the original, and count every click.",
+  "mode": "visual",
+  "existingCode": true,
+  "start": "build",
+  "language": "TypeScript",
+  "granularity": {
+    "level": 3,
+    "maxDepth": 4
+  },
+  "systems": [
+    {
+      "rootBlock": "link-shortener"
+    }
+  ]
+}

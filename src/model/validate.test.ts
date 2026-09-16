@@ -375,3 +375,102 @@ describe("planned blocks", () => {
     expect(warnings(found).length).toBeGreaterThan(0);
   });
 });
+
+describe("a composite holding a piece of the architecture", () => {
+  const database = makeBlock({
+    id: "orders-db",
+    role: "database",
+    exposes: { orders: { accepts: t.object({ id: t.string }), returns: t.object({ id: t.string }) } },
+  });
+
+  const handler = makeBlock({
+    id: "load-orders",
+    inputs: { owner: { type: t.string } },
+    outputs: { orders: { type: t.array(t.object({ id: t.string })) } },
+    access: [{ verb: "reads", resource: "orders-db", entry: "orders" }],
+  });
+
+  function service(): { parent: Block; children: Map<string, Block> } {
+    const parent = makeBlock({
+      id: "orders-api",
+      role: "service",
+      kind: "composite",
+      exposes: { listOrders: { accepts: t.object({ owner: t.string }), returns: null } },
+      children: [{ block: "load-orders", mode: "once" }],
+    });
+    return { parent, children: new Map([["load-orders", handler]]) };
+  }
+
+  it("says what to do instead when a wire is drawn to one", () => {
+    const parent = makeBlock({
+      id: "orders-api",
+      kind: "composite",
+      children: [
+        { block: "load-orders", mode: "once" },
+        { block: "orders-db", mode: "once" },
+      ],
+      wires: [
+        {
+          source: { from: "block", block: "orders-db", port: "orders" },
+          target: { to: "block", block: "load-orders", port: "owner" },
+        },
+      ],
+    });
+    const children = new Map([
+      ["load-orders", handler],
+      ["orders-db", database],
+    ]);
+
+    expect(errors(validateComposite(parent, children))).toEqual([
+      expect.stringContaining('A wire touches "orders-db", which is database rather than a function'),
+    ]);
+  });
+
+  it("refuses to run one once per item", () => {
+    const parent = makeBlock({
+      id: "orders-api",
+      kind: "composite",
+      children: [{ block: "orders-db", mode: "each", eachOver: "orders" }],
+    });
+
+    expect(errors(validateComposite(parent, new Map([["orders-db", database]])))).toContainEqual(
+      expect.stringContaining("cannot be run once per item"),
+    );
+  });
+
+  it("expects nothing to be wired to a service's own children, which are reached from outside", () => {
+    const { parent, children } = service();
+
+    // `owner` arrives from the framework code that answers the request, which
+    // lives outside blocks/ and is nothing the diagram can show.
+    expect(validateComposite(parent, children)).toEqual([]);
+  });
+
+  it("drops an unwired input to a warning where no code is generated from it", () => {
+    const parent = makeBlock({
+      id: "orders",
+      kind: "composite",
+      children: [
+        { block: "load-orders", mode: "once" },
+        { block: "orders-db", mode: "once" },
+      ],
+    });
+    const children = new Map([
+      ["load-orders", handler],
+      ["orders-db", database],
+    ]);
+
+    const found = validateComposite(parent, children);
+    expect(errors(found)).toEqual([]);
+    expect(warnings(found)).toContainEqual(expect.stringContaining('Nothing is connected to "load-orders" input "owner"'));
+  });
+
+  it("asks nothing of the capabilities it cannot pass down", () => {
+    const { parent, children } = service();
+    children.set("load-orders", makeBlock({ ...handler, capabilities: { log: { capability: "Logger" } } }));
+
+    // A service is not generated, so it never hands `caps` to anything, and
+    // requiring it to declare what it cannot pass on would be a false rule.
+    expect(errors(validateComposite(parent, children))).toEqual([]);
+  });
+});

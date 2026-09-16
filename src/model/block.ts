@@ -260,9 +260,22 @@ const describedType = z
     return parsed.ok ? parsed.type : { kind: "text", text: value };
   });
 
-/** Lets a store's entry be written once, as the one shape it holds. */
+/**
+ * Lets a store's entry be written once, as the one shape it holds: a table
+ * gives back the rows it was given, so saying it twice would be noise. Either
+ * the bare type or `{ "type": ..., "description": ... }` will do, and an
+ * operation whose two directions differ writes them out as `accepts` and
+ * `returns`.
+ */
 const exposedSchema = z.preprocess(
-  (value) => (typeof value === "string" ? { accepts: value, returns: value } : value),
+  (value) => {
+    if (typeof value === "string") return { accepts: value, returns: value };
+    if (value !== null && typeof value === "object" && "type" in value) {
+      const { type, ...rest } = value as { type: unknown };
+      return { ...rest, accepts: type, returns: type };
+    }
+    return value;
+  },
   z
     .object({
       accepts: describedType.optional(),
@@ -527,7 +540,11 @@ export function blockToFileShape(block: Block): Record<string, unknown> {
     Object.entries(block.exposes).map(([name, entry]) => {
       const accepts = entry.accepts === null ? undefined : describeType(entry.accepts);
       const returns = entry.returns === null ? undefined : describeType(entry.returns);
-      if (accepts !== undefined && accepts === returns && entry.description === undefined) return [name, accepts];
+      // A store holds one shape, so both directions collapse back to how it
+      // was most likely written: the bare type, or the type with a note.
+      if (accepts !== undefined && accepts === returns) {
+        return entry.description === undefined ? [name, accepts] : [name, { type: accepts, description: entry.description }];
+      }
       return [
         name,
         {

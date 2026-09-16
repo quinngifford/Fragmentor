@@ -1,0 +1,19 @@
+{
+  "name": "Visitor's Browser",
+  "role": "client",
+  "responsibility": "Where every request starts: someone shortening a URL, or someone following a short link.",
+  "exposes": {
+    "shorten": {
+      "accepts": "{ url: string; owner: string }",
+      "returns": "{ code: string }"
+    },
+    "follow": {
+      "accepts": "{ code: string; ip: string }",
+      "returns": "{ url: string }"
+    }
+  },
+  "access": [
+    "calls api.createLink",
+    "calls api.resolveLink"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "responsibility": "Turn long URLs into short codes, send visitors on to the original, and record every click.",
+  "code": "src",
+  "children": [
+    "browser",
+    "api",
+    "links-db",
+    "click-events",
+    "geo-lookup"
+  ]
+}

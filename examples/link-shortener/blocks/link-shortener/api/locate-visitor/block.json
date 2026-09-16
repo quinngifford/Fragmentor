@@ -1,0 +1,13 @@
+{
+  "responsibility": "Work out which country a visitor came from, from their address.",
+  "code": "src/geo.ts#lookupCountry",
+  "inputs": {
+    "ip": "string"
+  },
+  "outputs": {
+    "country": "string"
+  },
+  "access": [
+    "calls geo-lookup.locate"
+  ]
+}

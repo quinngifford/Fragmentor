@@ -3,10 +3,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { GUIDE_FILE, agentGuide, compactJson, visualExample, workedExample } from "./guide.js";
+import { GUIDE_FILE, agentGuide, architectureExample, compactJson, visualExample, workedExample } from "./guide.js";
 import { writeAgentFiles } from "./emit.js";
 import { blockFromFile } from "../model/block.js";
 import { CAPABILITIES } from "../model/capabilities.js";
+import { ARCHITECTURE_ROLES } from "../model/roles.js";
 import { validateComposite } from "../model/validate.js";
 import { blockDir, manifestPath, manifestSchema } from "../project/project.js";
 import type { Manifest } from "../project/project.js";
@@ -125,8 +126,12 @@ describe("the guide", () => {
 
   it("is short enough for an agent to take in at once", () => {
     // The guide these replaced ran to 375 lines. Keep it from growing back.
-    expect(guides["structured TypeScript"]!.split("\n").length).toBeLessThan(180);
-    expect(guides.visual!.split("\n").length).toBeLessThan(95);
+    // The room above what they measured before is the section on the rest of
+    // the system, which a guide cannot do without once a diagram can hold a
+    // database or a queue. That section is the only thing allowed to add to
+    // these numbers.
+    expect(guides["structured TypeScript"]!.split("\n").length).toBeLessThan(205);
+    expect(guides.visual!.split("\n").length).toBeLessThan(145);
   });
 
   it("tells a structured agent about every capability, and how to check and test its work", () => {
@@ -368,5 +373,45 @@ describe("the guide says where the project starts", () => {
     expect(guide).toContain('"existingCode": true');
     expect(guide).toContain('"start": "plan"');
     expect(guide).toContain("Leave `mode`, `existingCode`, `start` and `granularity` as the person set them.");
+  });
+});
+
+describe("the architecture the guide shows", () => {
+  it("checks clean exactly as printed, in a service that holds all three", async () => {
+    await writeFile(
+      manifestPath(dir),
+      JSON.stringify({ ...workedExample.manifest, systems: [{ rootBlock: "price-orders" }] }, null, 2),
+      "utf8",
+    );
+    await writeBlocks({
+      "price-orders": {
+        role: "service",
+        responsibility: "Answer for the orders one owner has placed.",
+        children: ["orders-db", "billing", "load-orders"],
+      },
+      "price-orders/orders-db": architectureExample["orders-db"]!,
+      "price-orders/billing": architectureExample.billing!,
+      "price-orders/load-orders": architectureExample["load-orders"]!,
+    });
+
+    const report = await checkProject(dir);
+    expect(report.problems).toEqual([]);
+    expect(report.errorCount).toBe(0);
+    // Neither a database nor someone else's payment service is unfinished work.
+    expect([...report.architecture].sort()).toEqual([
+      "price-orders",
+      "price-orders/billing",
+      "price-orders/orders-db",
+    ]);
+    // The one block that is code is the one still to be written.
+    expect(report.unimplemented).toEqual(["price-orders/load-orders"]);
+  });
+
+  it("names every role it offers, and shows both halves of joining one up", () => {
+    for (const guide of [agentGuide(structured("typescript")), agentGuide(visual)]) {
+      for (const role of ARCHITECTURE_ROLES) expect(guide).toContain(`\`"${role}"\``);
+      expect(guide).toContain('"role": "database"');
+      expect(guide).toContain('"access": ["reads orders-db.orders"]');
+    }
   });
 });

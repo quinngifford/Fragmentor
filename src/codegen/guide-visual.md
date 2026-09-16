@@ -58,6 +58,29 @@ A block without children, `price-order`:
 - `wires` connect `input.<port>` or `<child>.<output>` to `<child>.<input>` or `output.<port>`: a value one part of the code hands to another. Draw what really flows.
 - `planned: true` marks a part of the program that does not exist yet. It is drawn greyed out, has no `code`, and is wired as loosely as has been decided. `fragmentor check` asks nothing of it.
 
+## The rest of the system
+
+Not every block is a piece of code. A database, a queue, another team's service and the browser that starts a request are parts of the system too, and a diagram without them shows values arriving from nowhere. Give a block a `role` and it stands for one of them:
+
+{{roles}}
+
+A block with a role has no `inputs` or `outputs`. It says what it offers with `exposes`, and other blocks say what they reach with `access`. It may still have `code`, pointing at the module that wraps it, and may be left without one when it lives outside this codebase.
+
+```json
+{{architectureBlock}}
+```
+
+```json
+{{accessBlock}}
+```
+
+- A store's entry is written once, as the shape it holds. An operation writes its two directions apart, `{{operationEntry}}`, and may leave either out.
+- A shape written as an object, `{ code: string; url: string }`, is drawn column by column, which is what makes a database block worth looking at. Anything else is kept as the words you write.
+- `reads` takes data out, `writes` puts data in, `calls` does both. Name the entry, as in `reads orders-db.orders`, or leave it off to mean the whole thing.
+- The block named is looked for beside the one reaching it, then above it, up to the top of the system, so a handler inside a service reaches a database the service keeps beside it. Put the access on the block whose code really touches the resource; the diagrams above gather it up.
+
+Blocks inside a service are reached from outside rather than from each other, so nothing is expected to be wired to them.
+
 ## Granularity: level {{level}}
 
 {{granularity}}

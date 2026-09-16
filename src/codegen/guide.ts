@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { Mode } from "../model/block.js";
 import { CAPABILITIES } from "../model/capabilities.js";
+import { ARCHITECTURE_ROLES, ROLES } from "../model/roles.js";
 import { getPack, isKnownLanguage, knownLanguages } from "../lang/index.js";
 import type { LanguagePack } from "../lang/index.js";
 import type { Manifest } from "../project/project.js";
@@ -108,6 +109,36 @@ async def price_order(value: PriceOrderInput, caps: PriceOrderCaps) -> PriceOrde
   } as Record<string, unknown[]>,
 };
 
+/**
+ * The parts of a system that are not functions, as the files an agent writes
+ * to draw them: a database with its schema, and a block joined to it.
+ *
+ * The same domain as the worked example above, so the two read as one project
+ * rather than two. Held by test to pass the checks exactly as shown.
+ */
+export const architectureExample: Record<string, Record<string, unknown>> = {
+  "orders-db": {
+    name: "Orders Database",
+    role: "database",
+    responsibility: "Holds every order and who placed it.",
+    exposes: {
+      orders: { type: "{ id: string; owner: string; total: number }", description: "One row per order." },
+      owners: "{ id: string; email: string }",
+    },
+  },
+  billing: {
+    role: "external",
+    responsibility: "Someone else's payment service. We cannot see inside it.",
+    exposes: { charge: { accepts: "{ orderId: string; amount: number }", returns: "{ receipt: string }" } },
+  },
+  "load-orders": {
+    responsibility: "Read one owner's orders.",
+    inputs: { owner: "string" },
+    outputs: { orders: "{ id: string; total: number }[]" },
+    access: ["reads orders-db.orders"],
+  },
+};
+
 /** The same program in a visual project, drawn over code that already exists in `src/pricing.ts`. */
 export const visualExample: Record<string, Record<string, unknown>> = {
   "price-orders": {
@@ -193,6 +224,10 @@ function layout(value: unknown, indent: string, used: number): string {
  */
 export function compactJson(value: unknown): string {
   return layout(value, "", 0);
+}
+
+function rolesSection(): string {
+  return ARCHITECTURE_ROLES.map((role) => `- **\`"${role}"\`** — ${ROLES[role].description}`).join("\n");
 }
 
 function capabilitiesSection(pack: LanguagePack): string {
@@ -314,6 +349,10 @@ export function agentGuide(manifest: Manifest): string {
     level: String(manifest.granularity.level),
     granularity: GRANULARITY[manifest.mode][manifest.granularity.level]!,
     maxDepth: String(manifest.granularity.maxDepth),
+    roles: rolesSection(),
+    architectureBlock: compactJson(architectureExample["orders-db"]),
+    operationEntry: compactJson((architectureExample.billing!.exposes as Record<string, unknown>).charge),
+    accessBlock: compactJson(architectureExample["load-orders"]),
   };
 
   if (manifest.mode === "visual") {

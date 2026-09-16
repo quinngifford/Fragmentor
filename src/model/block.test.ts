@@ -273,3 +273,94 @@ describe("planned blocks", () => {
     if (!result.ok) expect(result.problems.join(" ")).toMatch(/code that does not exist yet/);
   });
 });
+
+describe("blocks that are not functions", () => {
+  const database = {
+    role: "database",
+    responsibility: "Holds the orders.",
+    exposes: {
+      orders: { type: "{ id: string; total: number }", description: "One row per order." },
+      audit: { accepts: "{ at: number; what: string }" },
+    },
+  };
+
+  it("reads a role, and an entry written as the one shape it holds", () => {
+    const block = blockFromFile(database, "orders-db");
+
+    expect(block.role).toBe("database");
+    // A store gives back what it was given, so one shape covers both ways.
+    expect(describeType(block.exposes.orders!.accepts!)).toBe("{ id: string; total: number }");
+    expect(describeType(block.exposes.orders!.returns!)).toBe("{ id: string; total: number }");
+    expect(block.exposes.orders!.description).toBe("One row per order.");
+    // Something only written to says so by having nothing come back.
+    expect(block.exposes.audit!.returns).toBeNull();
+  });
+
+  it("writes the same file back, in the short form it was written in", () => {
+    expect(blockToFileShape(blockFromFile(database, "orders-db"))).toEqual({
+      role: "database",
+      responsibility: "Holds the orders.",
+      exposes: {
+        orders: { type: "{ id: string; total: number }", description: "One row per order." },
+        audit: { accepts: "{ at: number; what: string }" },
+      },
+    });
+  });
+
+  it("keeps a shape it cannot parse as the words it was written in", () => {
+    // A database column has types the port language has never heard of, and
+    // losing the diagram over one would be a poor trade.
+    const block = blockFromFile(
+      { role: "database", responsibility: "Holds sessions.", exposes: { sessions: "jsonb" } },
+      "sessions-db",
+    );
+    expect(block.exposes.sessions!.returns).toEqual({ kind: "text", text: "jsonb" });
+  });
+
+  it("refuses ports and capabilities on a block that is not called", () => {
+    expect(problemsWith({ role: "queue", responsibility: "Carries clicks.", inputs: { click: "string" } })).toEqual([
+      expect.stringContaining("is not called, so it has no inputs or outputs"),
+    ]);
+    expect(
+      problemsWith({ role: "queue", responsibility: "Carries clicks.", capabilities: { log: "Logger" } }),
+    ).toEqual([expect.stringContaining("An architecture block is not code Fragmentor runs")]);
+  });
+
+  it("refuses exposed entries on an ordinary function block", () => {
+    expect(problemsWith({ responsibility: "Scores a posting.", exposes: { rows: "string" } })).toEqual([
+      expect.stringContaining("A function block's interface is its inputs and outputs"),
+    ]);
+  });
+
+  it("names an unknown role and says what the roles are", () => {
+    expect(problemsWith({ role: "lambda", responsibility: "Runs." })).toEqual([
+      expect.stringContaining("must be one of function, service, external, database, storage, queue, client"),
+    ]);
+  });
+});
+
+describe("what a block reaches", () => {
+  const reaching = (access: unknown) => ({ responsibility: "Reads orders.", access });
+
+  it("reads an access, with or without an entry", () => {
+    const block = blockFromFile(reaching(["reads orders-db.orders", "calls billing"]), "load-orders");
+
+    expect(block.access).toEqual([
+      { verb: "reads", resource: "orders-db", entry: "orders" },
+      { verb: "calls", resource: "billing", entry: null },
+    ]);
+    expect(blockToFileShape(block).access).toEqual(["reads orders-db.orders", "calls billing"]);
+  });
+
+  it("says what is wrong with one that is not written as an access", () => {
+    expect(problemsWith(reaching(["orders-db.orders"]))).toEqual([
+      expect.stringContaining('An access must be written as "reads app-db.users"'),
+    ]);
+    expect(problemsWith(reaching(["peeks orders-db.orders"]))).toEqual([
+      expect.stringContaining('"peeks" is not one of reads, writes, calls'),
+    ]);
+    expect(problemsWith(reaching(["reads OrdersDb.orders"]))).toEqual([
+      expect.stringContaining('"OrdersDb" is not a block id'),
+    ]);
+  });
+});

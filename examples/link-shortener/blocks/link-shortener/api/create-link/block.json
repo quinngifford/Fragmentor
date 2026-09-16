@@ -1,0 +1,17 @@
+{
+  "responsibility": "Store a new short code for a URL, refusing an owner who already has too many.",
+  "code": "src/api.ts#createLink",
+  "inputs": {
+    "url": "string",
+    "code": "string",
+    "owner": "string",
+    "now": "number"
+  },
+  "outputs": {
+    "link": "Link"
+  },
+  "access": [
+    "reads links-db.links",
+    "writes links-db.links"
+  ]
+}

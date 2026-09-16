@@ -1,0 +1,11 @@
+{
+  "name": "Geolocation Service",
+  "role": "external",
+  "responsibility": "Someone else's service: turns an address into a country. We do not run it and cannot see inside it.",
+  "exposes": {
+    "locate": {
+      "accepts": "{ ip: string }",
+      "returns": "{ country: string }"
+    }
+  }
+}

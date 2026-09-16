@@ -2,7 +2,17 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { blockDir, createProject, holdsPlan, loadProject, locateCode, validateProject, writeBlock } from "./project.js";
+import {
+  blockDir,
+  createProject,
+  holdsArchitecture,
+  holdsPlan,
+  loadProject,
+  locateCode,
+  resolveAccess,
+  validateProject,
+  writeBlock,
+} from "./project.js";
 import type { Manifest } from "./project.js";
 import { makeBlock, t } from "../model/testing.js";
 
@@ -371,5 +381,114 @@ describe("a project file written before the questions were asked", () => {
     const project = await loadProject(dir);
     expect(project.manifest.existingCode).toBe(false);
     expect(project.manifest.start).toBe("build");
+  });
+});
+
+describe("blocks that are pieces of the architecture", () => {
+  /**
+   * A shape a real application has: an application holding a client, a
+   * service and a database, with the handlers that do the work one level
+   * further in, inside the service.
+   */
+  async function writeApplication() {
+    const application = makeBlock({
+      id: "orders-app",
+      name: "Orders",
+      kind: "composite",
+      children: [
+        { block: "orders-api", mode: "once" },
+        { block: "orders-db", mode: "once" },
+      ],
+    });
+
+    const api = makeBlock({
+      id: "orders-api",
+      role: "service",
+      kind: "composite",
+      exposes: { listOrders: { accepts: t.object({ owner: t.string }), returns: null } },
+      children: [{ block: "load-orders", mode: "once" }],
+    });
+
+    const database = makeBlock({
+      id: "orders-db",
+      role: "database",
+      exposes: { orders: { accepts: t.object({ id: t.string }), returns: t.object({ id: t.string }) } },
+    });
+
+    const handler = makeBlock({
+      id: "load-orders",
+      inputs: { owner: { type: t.string } },
+      outputs: { orders: { type: t.array(t.object({ id: t.string })) } },
+      access: [{ verb: "reads", resource: "orders-db", entry: "orders" }],
+    });
+
+    await createProject(dir, { ...manifest, systems: [{ rootBlock: "orders-app", language: "typescript" }] }, [
+      application,
+    ]);
+    await writeBlock(blockDir(dir, "orders-app/orders-api"), api);
+    await writeBlock(blockDir(dir, "orders-app/orders-db"), database);
+    await writeBlock(blockDir(dir, "orders-app/orders-api/load-orders"), handler);
+  }
+
+  it("finds a database the handler's own parent does not hold", async () => {
+    await writeApplication();
+    const project = await loadProject(dir);
+
+    // `orders-db` sits beside the service, not inside it, so it is found by
+    // looking outward from the handler that named it.
+    expect(resolveAccess(project, "orders-app/orders-api/load-orders", "orders-db")?.path).toBe("orders-app/orders-db");
+    expect(validateProject(project)).toEqual([]);
+  });
+
+  it("holds no code where architecture sits at or beneath a block", async () => {
+    await writeApplication();
+    const project = await loadProject(dir);
+    const at = (blockPath: string) => holdsArchitecture(project.byPath.get(blockPath)!);
+
+    expect(at("orders-app")).toBe(true);
+    expect(at("orders-app/orders-api")).toBe(true);
+    expect(at("orders-app/orders-db")).toBe(true);
+    // The handler inside the service is an ordinary block, and stays one.
+    expect(at("orders-app/orders-api/load-orders")).toBe(false);
+  });
+
+  it("says so when an access names something that is not there", async () => {
+    await writeApplication();
+    await writeBlock(
+      blockDir(dir, "orders-app/orders-api/load-orders"),
+      makeBlock({
+        id: "load-orders",
+        inputs: { owner: { type: t.string } },
+        access: [
+          { verb: "reads", resource: "billing", entry: null },
+          { verb: "reads", resource: "orders-db", entry: "invoices" },
+          { verb: "reads", resource: "orders-api", entry: "listOrders" },
+        ],
+      }),
+    );
+
+    expect(validateProject(await loadProject(dir)).map((d) => d.message)).toEqual([
+      expect.stringContaining('there is no block called "billing" beside it or anywhere above it'),
+      expect.stringContaining('exposes no table called "invoices". It exposes: orders.'),
+      // A service that answers nothing back is worth pointing out, not refusing.
+      expect.stringContaining('which says nothing comes back from it'),
+    ]);
+  });
+
+  it("refuses an access to an ordinary function block", async () => {
+    await writeSmallProject();
+    await writeBlock(
+      blockDir(dir, "rank-jobs/score-posting"),
+      makeBlock({
+        id: "score-posting",
+        inputs: { posting: { type: t.object({ title: t.string }) } },
+        outputs: { score: { type: t.number } },
+        access: [{ verb: "reads", resource: "score-posting", entry: null }],
+      }),
+    );
+
+    expect(validateProject(await loadProject(dir)).map((d) => d.message)).toContainEqual(
+      expect.stringContaining("is an ordinary function block"),
+    );
   });
 });

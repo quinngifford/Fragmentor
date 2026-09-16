@@ -63,6 +63,29 @@ A block without children, `price-order`:
 
 There is no branching on the diagram. Conditions, loops and error handling belong inside blocks without children.
 
+## The rest of the system
+
+Not every block is a function. A database, a queue, another team's service and the browser that starts a request are parts of the system too, and a diagram without them shows values arriving from nowhere. Give a block a `role` and it stands for one of them:
+
+{{roles}}
+
+A block with a role is not called, so it has no `inputs`, `outputs` or `capabilities`. It says what it offers with `exposes`, and other blocks say what they reach with `access`:
+
+```json
+{{architectureBlock}}
+```
+
+```json
+{{accessBlock}}
+```
+
+- A store's entry is written once, as the shape it holds. An operation writes its two directions apart, `{{operationEntry}}`, and may leave either out.
+- Write a shape as a type wherever you can, so the block can be drawn column by column. Anything the type language cannot say, such as `timestamp`, is kept as the words you write.
+- `reads` takes data out, `writes` puts data in, `calls` does both. Name the entry, as in `reads orders-db.orders`, or leave it off to mean the whole thing.
+- The block named is looked for beside the one reaching it, then above it, up to the top of the system, so a handler inside a service reaches a database the service keeps beside it. Put the access on the block that really touches the resource; the diagrams above gather it up.
+
+Nothing is generated, checked or run for a block with a role, nor for any block holding one: a database is not something you call, so there is no chain of calls to write, and the code that opens the connections belongs outside `blocks/`. Blocks **inside** a service are ordinary blocks, generated, checked and tested as usual, and nothing needs to be wired to them. `access` says where data comes from and where it goes; block code still reaches the world only through its capabilities, so put the access on whichever block really talks to the store.
+
 ## Types
 
 `string`, `number`, `boolean`, `null` and `unknown`; literals such as `"remote"` or `42`; unions such as `"remote" | "onsite"`; arrays such as `string[]` or `(string | number)[]`; objects such as `{ title: string; salary?: number }`. There are no named types, generics, `any`, `Date` or `Record`, so write each shape out in full.

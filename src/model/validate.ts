@@ -78,6 +78,14 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
    */
   const noCode = isArchitecture(parent.role) || [...children.values()].some((child) => isArchitecture(child.role));
   const incomplete = loose || noCode ? warn : error;
+  /**
+   * Whether the children here are reached from outside rather than from each
+   * other. Inside a service or another piece of the architecture they are:
+   * the framework code that calls a handler lives outside `blocks/`, so a
+   * handler with nothing wired to it is the normal case and not worth
+   * remarking on.
+   */
+  const entryPoints = isArchitecture(parent.role);
 
   if (parent.kind !== "composite") {
     if (parent.children.length > 0 || parent.wires.length > 0) {
@@ -242,7 +250,7 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
     const def = childOf(ref.block);
     // A planned block's wiring is the thing being planned. A port with
     // nothing on it yet is the point of drawing it, not a fault in it.
-    if (!def || def.planned) continue;
+    if (!def || def.planned || entryPoints) continue;
     for (const port of Object.keys(def.inputs)) {
       const count = drivers.get(`block:${ref.block}:${port}`) ?? 0;
       if (count === 0) {
@@ -272,7 +280,7 @@ export function validateComposite(parent: Block, children: Map<string, Block>, m
 
   for (const ref of present) {
     const def = childOf(ref.block);
-    if (!def || def.planned) continue;
+    if (!def || def.planned || entryPoints) continue;
     for (const port of Object.keys(def.outputs)) {
       if (!usedSources.has(`block:${ref.block}:${port}`)) {
         warn(`"${ref.block}" produces an output "${port}" that nothing uses.`);

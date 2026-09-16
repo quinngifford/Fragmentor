@@ -1,0 +1,12 @@
+{
+  "name": "Click Events",
+  "role": "queue",
+  "responsibility": "Carries clicks away from the request that caused them, so counting never holds up a redirect.",
+  "code": "src/events.ts",
+  "exposes": {
+    "clicks": {
+      "type": "{ code: string; country: string; at: number }",
+      "description": "One message per visit to a short link."
+    }
+  }
+}

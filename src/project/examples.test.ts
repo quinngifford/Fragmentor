@@ -1,8 +1,9 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { languageOf, loadProject, validateProject } from "./project.js";
+import { holdsArchitecture, languageOf, loadProject, resolveAccess, validateProject } from "./project.js";
 import { executionOrder } from "../model/validate.js";
+import { describeType } from "../model/types.js";
 
 /**
  * The example projects are checked in exactly as an agent would leave them,
@@ -102,5 +103,50 @@ describe("the job-ranker example", () => {
 describe("the contract-generator example", () => {
   it("reads off disk and validates cleanly", async () => {
     expect(validateProject(await loadProject(path.join(examples, "contract-generator")))).toEqual([]);
+  });
+});
+
+describe("the link-shortener example", () => {
+  const linkShortener = path.join(examples, "link-shortener");
+
+  it("draws a whole application, not just its functions, and validates cleanly", async () => {
+    const project = await loadProject(linkShortener);
+    expect(validateProject(project)).toEqual([]);
+
+    const roleOf = (blockPath: string) => project.byPath.get(blockPath)!.block.role;
+    expect(roleOf("link-shortener/browser")).toBe("client");
+    expect(roleOf("link-shortener/api")).toBe("service");
+    expect(roleOf("link-shortener/links-db")).toBe("database");
+    expect(roleOf("link-shortener/click-events")).toBe("queue");
+    expect(roleOf("link-shortener/geo-lookup")).toBe("external");
+    // What the service is made of stays ordinary blocks.
+    expect(roleOf("link-shortener/api/resolve-link")).toBe("function");
+  });
+
+  it("shows a table as its columns, which is what makes the database worth drawing", async () => {
+    const project = await loadProject(linkShortener);
+    const links = project.byPath.get("link-shortener/links-db")!.block.exposes.links!;
+
+    expect(describeType(links.returns!)).toBe("{ code: string; url: string; owner: string; createdAt: number }");
+    // A store gives back what it was given, so the file wrote the shape once.
+    expect(links.accepts).toEqual(links.returns);
+  });
+
+  it("joins a handler to a database its own parent does not hold", async () => {
+    const project = await loadProject(linkShortener);
+    const resolve = project.byPath.get("link-shortener/api/resolve-link")!.block;
+
+    expect(resolve.access).toEqual([{ verb: "reads", resource: "links-db", entry: "links" }]);
+    // links-db sits beside the service, one level further out than the handler.
+    expect(resolveAccess(project, "link-shortener/api/resolve-link", "links-db")?.path).toBe("link-shortener/links-db");
+  });
+
+  it("leaves the whole application and its service with no code of their own", async () => {
+    const project = await loadProject(linkShortener);
+    const at = (blockPath: string) => holdsArchitecture(project.byPath.get(blockPath)!);
+
+    expect(at("link-shortener")).toBe(true);
+    expect(at("link-shortener/api")).toBe(true);
+    expect(at("link-shortener/api/create-link")).toBe(false);
   });
 });

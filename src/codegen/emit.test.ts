@@ -329,3 +329,76 @@ describe("planned blocks", () => {
     expect(await readFile(compositeFile(), "utf8")).toBe(byHand);
   });
 });
+
+describe("generating around a piece of the architecture", () => {
+  /** The same tiny project, with a database beside the block that reads it. */
+  async function addDatabase() {
+    await writeBlock(
+      blockDir(dir, "double-it/numbers-db"),
+      makeBlock({
+        id: "numbers-db",
+        role: "database",
+        exposes: { numbers: { accepts: parseType("{ value: number }"), returns: parseType("{ value: number }") } },
+      }),
+    );
+    await writeBlock(blockDir(dir, "double-it"), {
+      ...root,
+      children: [...root.children, { block: "numbers-db", mode: "once" }],
+    });
+  }
+
+  it("writes neither a contract nor code for it, and holds back the code above it", async () => {
+    await addDatabase();
+    const result = await emitProject(await loadProject(dir));
+
+    expect(result.problems).toEqual([]);
+    const written = result.written.join(" ");
+    expect(written).not.toContain("numbers-db");
+    // Its own code would be a call to a database, which is not a function.
+    expect(written).not.toContain("double-it/impl.ts");
+
+    await expect(access(path.join(blockDir(dir, "double-it/numbers-db"), "contract.ts"))).rejects.toThrow();
+    await expect(access(path.join(blockDir(dir, "double-it/numbers-db"), "impl.ts"))).rejects.toThrow();
+  });
+
+  it("still generates the ordinary blocks beside it", async () => {
+    await addDatabase();
+    await emitProject(await loadProject(dir));
+
+    // The block that reads the database is a function like any other.
+    const contract = await readFile(path.join(blockDir(dir, "double-it/add-to-self"), "contract.ts"), "utf8");
+    expect(contract).toContain("AddToSelfInput");
+    expect(await readFile(path.join(blockDir(dir, "double-it/add-to-self"), "impl.ts"), "utf8")).toContain("addToSelf");
+  });
+
+  it("takes back a contract written before the block became a database", async () => {
+    await emitProject(await loadProject(dir));
+    const contract = path.join(blockDir(dir, "double-it/add-to-self"), "contract.ts");
+    await access(contract);
+
+    await writeBlock(
+      blockDir(dir, "double-it/add-to-self"),
+      makeBlock({ id: "add-to-self", role: "storage", exposes: { sums: { accepts: parseType("{ value: number }"), returns: parseType("{ value: number }") } } }),
+    );
+    const result = await emitProject(await loadProject(dir));
+
+    expect(result.removed).toContain("blocks/double-it/add-to-self/contract.ts");
+    await expect(access(contract)).rejects.toThrow();
+  });
+
+  it("reports code left in a block that has become a database, rather than deleting it", async () => {
+    await emitProject(await loadProject(dir));
+    const impl = path.join(blockDir(dir, "double-it/add-to-self"), "impl.ts");
+    await writeFile(impl, "export async function addToSelf() { return { sum: 1 }; }\n", "utf8");
+
+    await writeBlock(
+      blockDir(dir, "double-it/add-to-self"),
+      makeBlock({ id: "add-to-self", role: "storage", exposes: { sums: { accepts: parseType("{ value: number }"), returns: parseType("{ value: number }") } } }),
+    );
+
+    expect((await emitProject(await loadProject(dir))).problems).toEqual([
+      expect.stringContaining("is storage rather than a function, so Fragmentor writes no code for it"),
+    ]);
+    await access(impl);
+  });
+});

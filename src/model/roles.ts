@@ -53,7 +53,7 @@ export const ROLES: Record<Role, RoleDefinition> = {
     id: "service",
     label: "SERVICE",
     description:
-      "A program of ours that answers requests: a backend, a microservice, a web server, a worker. Its children, if it has any, are ordinary blocks.",
+      "A program of ours that answers requests: a backend, a microservice, a web server, a worker.",
     entryNoun: "operation",
     shape: "operations",
     isCode: false,
@@ -62,7 +62,7 @@ export const ROLES: Record<Role, RoleDefinition> = {
     id: "external",
     label: "EXTERNAL",
     description:
-      "Something outside the system that we do not write: a third-party API, a payment provider, another team's service. A black box with a known interface.",
+      "Something outside the system we do not write: a third-party API, another team's service. A black box with a known interface.",
     entryNoun: "operation",
     shape: "operations",
     isCode: false,
@@ -78,7 +78,7 @@ export const ROLES: Record<Role, RoleDefinition> = {
   storage: {
     id: "storage",
     label: "STORAGE",
-    description: "Files, objects, blobs or a cache. Each entry is a bucket, a path or a set of keys, and its shape is what is kept there.",
+    description: "Files, objects, blobs or a cache. Each entry is a bucket or a set of keys, and its shape is what is kept there.",
     entryNoun: "store",
     shape: "store",
     isCode: false,
@@ -95,7 +95,7 @@ export const ROLES: Record<Role, RoleDefinition> = {
     id: "client",
     label: "CLIENT",
     description:
-      "Who or what sets the system going: a browser, a mobile app, a command-line tool, a scheduled job, a webhook from outside. This is where data originates.",
+      "Who or what sets the system going, and where data first comes from: a browser, a mobile app, a command-line tool, a scheduled job.",
     entryNoun: "action",
     shape: "operations",
     isCode: false,
