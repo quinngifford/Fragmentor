@@ -776,7 +776,14 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("planned", "explained") === true &&
         value("planned", "noTesting") === true,
     ],
-    ["a new project waits for its agent", value("waiting", "waiting") === true],
+    [
+      "a new project waits for its agent, and says what to ask for in the words of the answers given",
+      value("waiting", "waiting") === true &&
+        /greyed out/.test(String(value("waiting", "note"))) &&
+        /planned blocks appear here/.test(String(value("waiting", "note"))) &&
+        !/greyed out/.test(String(value("building", "note"))) &&
+        /describe what you want to build/.test(String(value("building", "note"))),
+    ],
     ["the diagram appears once the agent writes the project", value("appeared", "appeared") === true],
     [
       "the interface draws, and nothing crashed",
@@ -988,13 +995,15 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
           return { closed: !document.querySelector("dialog.new-project") };
         `);
 
-        // New project: what the person chose, and no system for the agent to have defined yet.
+        // New project: what the person chose, and no system for the agent to
+        // have defined yet. It is started as a plan, because the first thing
+        // the empty canvas says is supposed to follow the answers given.
         await startProject(check.projectDir, {
           mode: "structured",
           granularity: 3,
           language: "typescript",
           existingCode: false,
-          start: "build",
+          start: "plan",
         });
         await run("waiting", `
           await wait(400);
@@ -1002,9 +1011,25 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
           if (!link) return { waiting: false, links: [...document.querySelectorAll(".welcome-link")].map((b) => b.title || b.textContent) };
           link.click();
           const waiting = await until(() => /FRAGMENTOR\\.md/.test(text(".canvas-empty")));
-          return { waiting, note: text(".canvas-empty").slice(0, 120) };
+          return { waiting, note: text(".canvas-empty") };
         `);
         await capture(window, "self-check-waiting");
+
+        // The same project set to build instead. Nothing else about it
+        // changes, so whatever the canvas now says came from that answer.
+        const startFile = inProject("fragmentor.json");
+        await writeFile(
+          startFile,
+          JSON.stringify({ ...JSON.parse(await readFile(startFile, "utf8")), start: "build" }, null, 2),
+          "utf8",
+        );
+        await run("building", `
+          const note = await until(() => {
+            const shown = text(".canvas-empty");
+            return /greyed out/.test(shown) ? null : shown;
+          });
+          return { note: note || text(".canvas-empty") };
+        `);
 
         // The agent defines and builds the system — here, all at once.
         await cp(path.join(repoRoot, "examples", "job-ranker"), check.projectDir, { recursive: true });
