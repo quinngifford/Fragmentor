@@ -470,29 +470,56 @@ function renderStatus(): void {
   }
 }
 
+/**
+ * What to ask the agent for, in the words of the project the person just made.
+ *
+ * They answered where they were starting from and whether to plan first when
+ * they created it, so these first instructions say what to do in that one
+ * case rather than listing every case and leaving them to work out which is
+ * theirs. `headline` names what is missing, `ask` is the sentence they act on,
+ * and `note` says what to expect next.
+ */
+function firstInstructions(): { headline: string; ask: string; note: string } {
+  const snapshot = ui.snapshot;
+  const existingCode = snapshot?.existingCode ?? false;
+  const planFirst = snapshot?.start === "plan";
+
+  if (snapshot?.mode === "visual") {
+    return {
+      headline: "Nothing has been drawn yet.",
+      ask: existingCode
+        ? "Open your coding agent (Claude Code or Codex) in this folder and ask it to map the code into a Fragmentor diagram:"
+        : planFirst
+          ? "Open your coding agent (Claude Code or Codex) in this folder, describe what you want built, and ask it to draw the shape of it before it writes anything:"
+          : "Open your coding agent (Claude Code or Codex) in this folder and describe what you want built. It writes the program however suits it best and keeps the diagram describing what it wrote:",
+      note: "It learns how from FRAGMENTOR.md, and it never changes the code. The diagram appears here as soon as it defines the first system.",
+    };
+  }
+
+  if (existingCode) {
+    return {
+      headline: "No system has been defined here yet.",
+      ask: "Open your coding agent (Claude Code or Codex) in this folder and ask it to rebuild this code as blocks. Commit the code first: it is genuinely rewritten.",
+      note: "It learns how this project works from FRAGMENTOR.md. The diagram appears here as soon as it defines the first system.",
+    };
+  }
+
+  return {
+    headline: "No system has been defined here yet.",
+    ask: planFirst
+      ? "Open your coding agent (Claude Code or Codex) in this folder and describe what you want to build. It draws the whole architecture first, greyed out, for you to agree to before it writes any code:"
+      : "Open your coding agent (Claude Code or Codex) in this folder and describe what you want to build:",
+    note: planFirst
+      ? "It learns how this project works from FRAGMENTOR.md. The planned blocks appear here as soon as it defines the first system, and fill in as you agree to them and it builds them."
+      : "It learns how this project works from FRAGMENTOR.md. The diagram appears here as soon as it defines the first system, and fills in as it builds.",
+  };
+}
+
 /** What the canvas says when a folder is open but there is no diagram to draw. */
 function noDiagramText(): string {
-  if (ui.waiting && ui.snapshot?.mode === "visual") {
-    return [
-      "Nothing has been drawn yet.",
-      "",
-      "Open your coding agent (Claude Code or Codex) in this folder and ask it to map the code into a Fragmentor diagram:",
-      "",
-      `  ${ui.dir ?? ""}`,
-      "",
-      "It learns how from FRAGMENTOR.md, and it never changes the code. The diagram appears here as soon as it defines the first system.",
-    ].join("\n");
-  }
   if (ui.waiting) {
-    return [
-      "No system has been defined here yet.",
-      "",
-      "Open your coding agent (Claude Code or Codex) in this folder and describe what you want to build. If the folder already holds code, ask it to rebuild that code as blocks:",
-      "",
-      `  ${ui.dir ?? ""}`,
-      "",
-      "It learns how this project works from FRAGMENTOR.md. The diagram appears here as soon as it defines the first system.",
-    ].join("\n");
+    const { headline, ask, note } = firstInstructions();
+    return [headline, "", ask, "", `  ${ui.dir ?? ""}`, "", note].join("\n");
   }
   return [
     "This project could not be read.",

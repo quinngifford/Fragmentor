@@ -154,8 +154,10 @@ describe("the guide", () => {
 
   it("describes only the granularity the person chose", () => {
     expect(guides["structured TypeScript"]).toContain("## Granularity: level 3");
-    expect(guides["structured TypeScript"]).toContain("roughly 30 to 80 lines");
-    expect(guides["structured TypeScript"]).not.toContain("roughly 10 to 30 lines");
+    expect(guides["structured TypeScript"]).toContain("around 30 to 80 lines");
+    expect(guides["structured TypeScript"]).not.toContain("around 10 to 30 lines");
+    // The size is something to aim at, not a rule the agent has to satisfy.
+    expect(guides["structured TypeScript"]).toContain("aims rather than rules");
     expect(guides.visual).toContain("## Granularity: level 2");
     expect(guides.visual).toContain("at most 5 levels deep");
   });
@@ -334,6 +336,17 @@ describe("the guide says where the project starts", () => {
     expect(planning).toContain("**This project starts as a plan.**");
     expect(planning).toContain('Give every block `"planned": true` to begin with');
     expect(agentGuide(withAnswers({ start: "build" }))).not.toContain("starts as a plan");
+  });
+
+  it("tells an agent building straight away not to stop for agreement", () => {
+    const building = agentGuide(withAnswers({ start: "build" }));
+    expect(building).toContain("Carry straight on to the code.");
+    expect(building).toContain("do not stop to ask for agreement");
+    expect(building).not.toContain("wait for them to agree");
+
+    const planning = agentGuide(withAnswers({ start: "plan" }));
+    expect(planning).toContain("wait for them to agree before you write any code");
+    expect(planning).not.toContain("Carry straight on");
   });
 
   it("says the same to a visual agent, in its own terms", () => {

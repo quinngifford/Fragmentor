@@ -127,20 +127,28 @@ export const visualExample: Record<string, Record<string, unknown>> = {
   },
 };
 
+/**
+ * The size of block to reach for, at each level.
+ *
+ * Every one of these is written as something to aim at rather than something
+ * to meet. A rule an agent cannot satisfy without writing worse code is a rule
+ * it will either break quietly or contort the design around, and neither is
+ * what the person choosing a granularity wanted. Nothing here is checked.
+ */
 const GRANULARITY: Record<Mode, Record<number, string>> = {
   structured: {
-    1: "Split a block only where it plainly holds separate responsibilities, into 2 or 3 substantial children, and leave real work inside each.",
-    2: "Split a block into 2 to 4 children, each a substantial piece of work.",
-    3: "Split a block into 3 to 5 children, each with one clear responsibility and roughly 30 to 80 lines of code.",
-    4: "Split a block into 4 to 6 fairly small children, each roughly 20 to 50 lines of code.",
-    5: "Break the work down into small single-purpose children, each roughly 10 to 30 lines of code, but never one that is a single expression.",
+    1: "Try to split a block only where it plainly holds separate responsibilities, into two or three substantial children, with real work left inside each.",
+    2: "Try for two to four children per block, each a substantial piece of work.",
+    3: "Try for three to five children per block, each with one clear responsibility and somewhere around 30 to 80 lines of code.",
+    4: "Try for four to six fairly small children per block, of somewhere around 20 to 50 lines of code each.",
+    5: "Try to break the work into small single-purpose children of somewhere around 10 to 30 lines, though never one that is a single expression.",
   },
   visual: {
-    1: "Show only the program's major parts: 2 or 3 children per block.",
-    2: "Show 2 to 4 children per block, each a substantial part of the program.",
-    3: "Show 3 to 5 children per block, each with one clear job, down to functions of roughly 30 to 80 lines.",
-    4: "Show 4 to 6 children per block, down to functions of roughly 20 to 50 lines.",
-    5: "Show the code in fine detail, down to small single-purpose functions.",
+    1: "Try to show only the program's major parts: two or three children per block.",
+    2: "Try for two to four children per block, each a substantial part of the program.",
+    3: "Try for three to five children per block, each with one clear job, down to functions of somewhere around 30 to 80 lines.",
+    4: "Try for four to six children per block, down to functions of somewhere around 20 to 50 lines.",
+    5: "Try to show the code in fine detail, down to small single-purpose functions.",
   },
 };
 
@@ -256,6 +264,20 @@ function startingPoint(manifest: Manifest): string {
   return parts.join("\n\n");
 }
 
+/**
+ * What the agent does once the diagram is first drawn.
+ *
+ * The person already answered this when they created the project, so the
+ * guide tells the agent which it is rather than leaving it a judgement call.
+ * Waiting for agreement is what plan-first is for; a person who chose to
+ * build does not want the agent stopping to ask.
+ */
+function reviewStep(manifest: Manifest): string {
+  return manifest.start === "plan"
+    ? "Show the person the diagram and wait for them to agree before you write any code. This project starts as a plan, so the architecture is theirs to settle first."
+    : "Carry straight on to the code. They can watch the diagram fill in as you work, and will say if they want the shape changed, so do not stop to ask for agreement.";
+}
+
 function structuredLanguageRule(manifest: Manifest, pack: LanguagePack): string {
   if (manifest.language === undefined) {
     const choices = knownLanguages()
@@ -310,6 +332,7 @@ export function agentGuide(manifest: Manifest): string {
   return fill(template("structured"), {
     ...common,
     languageRule: structuredLanguageRule(manifest, pack),
+    reviewStep: reviewStep(manifest),
     startingPoint: startingPoint(manifest),
     implFile: pack.implFile,
     contractFile: pack.contractFile,

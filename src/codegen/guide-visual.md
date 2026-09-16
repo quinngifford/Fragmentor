@@ -60,4 +60,6 @@ A block without children, `price-order`:
 
 ## Granularity: level {{level}}
 
-{{granularity}} The diagram may be at most {{maxDepth}} levels deep, counting a system's top block.
+{{granularity}}
+
+These are aims rather than rules. Reach for that size, but a part of the program that has to be bigger or smaller to make sense is the right block: never split one job in two, or press two together, to hit a number. Fragmentor does not check any of it, except that the diagram may be at most {{maxDepth}} levels deep, counting a system's top block, which it warns about.

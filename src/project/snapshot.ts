@@ -8,7 +8,7 @@ import { executionOrder, wireCarriedType } from "../model/validate.js";
 import { loadLayout } from "./layout.js";
 import type { Layout } from "./layout.js";
 import { holdsPlan, loadProject, locateCode, systemOf, validateProject } from "./project.js";
-import type { CodeLocation, Granularity, ProjectDiagnostic } from "./project.js";
+import type { CodeLocation, Granularity, ProjectDiagnostic, Start } from "./project.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
 import { readCases } from "../run/cases.js";
 import type { TestCase } from "../run/cases.js";
@@ -118,6 +118,10 @@ export interface ProjectSnapshot {
   name: string;
   goal: string;
   mode: Mode;
+  /** Whether the folder already held code when the project was started. */
+  existingCode: boolean;
+  /** Whether the agent draws the architecture as a plan before building it. */
+  start: Start;
   /** The language the person chose for the whole project, if they did. */
   language: string | null;
   granularity: Granularity;
@@ -246,6 +250,8 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
     name: project.manifest.name,
     goal: project.manifest.goal,
     mode,
+    existingCode: project.manifest.existingCode,
+    start: project.manifest.start,
     language: project.manifest.language ?? null,
     granularity: project.manifest.granularity,
     systems: project.systems.map((system) => {

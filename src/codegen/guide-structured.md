@@ -8,7 +8,7 @@ The person you work with sees this project in Fragmentor as a diagram of **block
 
 1. Fill in `goal` and `systems` in `fragmentor.json`. Then write a `block.json` for every block, keeping any the person already wrote.
 2. Run `fragmentor check` and fix everything it reports. It generates the code of every block that has children, and a starting file for every block that has none.
-3. Show the person the diagram and wait for them to agree before you write code, unless they told you to carry on.
+3. {{reviewStep}}
 4. Write the code of each block without children, and tests for every block.
 5. Run `fragmentor check` and `fragmentor test` until both pass.
 
@@ -97,4 +97,6 @@ Leave out `expected` to record what the block returns without checking it. A blo
 
 ## Granularity: level {{level}}
 
-{{granularity}} A step too small to be its own function is a line of code, not a block. The diagram may be at most {{maxDepth}} levels deep, counting a system's top block.
+{{granularity}} A step too small to be its own function is a line of code, not a block.
+
+These are aims rather than rules. Reach for that size, but a block that has to be bigger or smaller to make sense is the right block: never split one responsibility in two, or press two together, to hit a number. Fragmentor does not check any of it, except that the diagram may be at most {{maxDepth}} levels deep, counting a system's top block, which it warns about.
