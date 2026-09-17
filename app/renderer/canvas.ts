@@ -16,6 +16,7 @@ import {
   busInPoint,
   busOutPoint,
   entryLines,
+  fitLine,
   layoutFor,
   measure,
 } from "./graph.js";
@@ -952,7 +953,11 @@ function drawExposed(node: GraphNode, body: Element): void {
     if (entry.description) svgEl("title", {}, title).textContent = entry.description;
 
     lines.forEach((line, i) => {
-      svgEl("text", { x: 17, y: y + GROUP_HEAD_H + i * FIELD_H + 9, class: "exposed-field" }, body).textContent = line;
+      const shown = fitLine(line);
+      const field = svgEl("text", { x: 17, y: y + GROUP_HEAD_H + i * FIELD_H + 9, class: "exposed-field" }, body);
+      field.textContent = shown;
+      // A type too long for the block is folded, not lost.
+      if (shown !== line) svgEl("title", {}, field).textContent = line;
     });
 
     y += height + GROUP_GAP;

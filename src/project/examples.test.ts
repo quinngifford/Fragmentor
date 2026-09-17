@@ -5,6 +5,7 @@ import { holdsArchitecture, languageOf, loadProject, resolveAccess, validateProj
 import { executionOrder } from "../model/validate.js";
 import { describeType } from "../model/types.js";
 import { boundStores, describeBound } from "./stores.js";
+import { runBlock } from "../run/run.js";
 
 /**
  * The example projects are checked in exactly as an agent would leave them,
@@ -236,5 +237,75 @@ describe("the link-shortener example", () => {
     expect(at("link-shortener/api")).toBe(true);
     expect(at("link-shortener/api/create-link")).toBe(false);
     expect(at("link-shortener/api/follow-link")).toBe(false);
+  });
+});
+
+describe("the lending-desk example", () => {
+  const lendingDesk = path.join(examples, "lending-desk");
+
+  it("draws a whole application whose stores its code really reaches", async () => {
+    const project = await loadProject(lendingDesk);
+    expect(validateProject(project)).toEqual([]);
+
+    const roleOf = (blockPath: string) => project.byPath.get(blockPath)!.block.role;
+    expect(roleOf("lending/kiosk")).toBe("client");
+    expect(roleOf("lending/lending-api")).toBe("service");
+    expect(roleOf("lending/catalogue")).toBe("database");
+    expect(roleOf("lending/notices")).toBe("queue");
+  });
+
+  it("gives the request path a way into each thing it touches", async () => {
+    const project = await loadProject(lendingDesk);
+    const node = project.byPath.get("lending/lending-api/borrow-book")!;
+
+    expect(boundStores(project, node).map((store) => [store.port, store.capability, store.target])).toEqual([
+      ["books", "Store", "lending/catalogue.books"],
+      ["members", "Store", "lending/catalogue.members"],
+      ["notices", "Queue", "lending/notices.issued"],
+    ]);
+  });
+
+  it("runs the whole way from the kiosk's request, writing the shelf and the queue", async () => {
+    const outcome = await runBlock({
+      projectDir: lendingDesk,
+      blockPath: "lending/lending-api/borrow-book",
+      input: { memberId: "m-1", isbn: "978-1" },
+      stores: {
+        "lending/catalogue.books": { "978-1": { isbn: "978-1", title: "Piranesi", copies: 1, onLoan: 0 } },
+        "lending/catalogue.members": { "m-1": { id: "m-1", name: "Ada", onLoan: 0, suspended: false } },
+      },
+    });
+
+    expect(outcome.error).toBeUndefined();
+    expect(outcome.output).toEqual({
+      receipt: {
+        title: "Piranesi",
+        dueInDays: 7,
+        message: 'Enjoy "Piranesi". Back in 7 days, because the library holds only one copy — 0 left on the shelf.',
+      },
+    });
+
+    // The book left the shelf, and the member was told about it: neither is
+    // visible in what the block returned.
+    expect(outcome.stores["lending/catalogue.books"]).toEqual({
+      kind: "store",
+      rows: { "978-1": { isbn: "978-1", title: "Piranesi", copies: 1, onLoan: 1 } },
+    });
+    expect(outcome.stores["lending/notices.issued"]).toEqual({
+      kind: "queue",
+      sent: [{ memberId: "m-1", title: "Piranesi", dueInDays: 7 }],
+    });
+  });
+
+  it("puts a block where the shapes would otherwise have to be converted", async () => {
+    const project = await loadProject(lendingDesk);
+    const path_ = "lending/lending-api/borrow-book";
+
+    // The pipeline produces facts; one block turns them into the response,
+    // which is what lets the operation and the block be the same shape.
+    const adapter = project.byPath.get(`${path_}/write-receipt`)!.block;
+    expect(Object.keys(adapter.inputs).sort()).toEqual(["allowed", "book", "copiesLeft", "dueInDays", "reason"]);
+    expect(Object.keys(adapter.outputs)).toEqual(["receipt"]);
+    expect(Object.keys(project.byPath.get(path_)!.block.outputs)).toEqual(["receipt"]);
   });
 });

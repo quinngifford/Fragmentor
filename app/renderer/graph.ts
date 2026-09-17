@@ -452,6 +452,21 @@ const MOST_FIELDS = 5;
  * it has them, and otherwise the one line that says what it carries. This is
  * the whole reason a database is worth drawing rather than naming.
  */
+/**
+ * How much of a line fits across a block, in characters.
+ *
+ * A block is a fixed width and its fields are drawn in a monospaced 9px, so
+ * about this much reaches the far edge. A type longer than that has to be cut
+ * somewhere, and cutting it here keeps it from being drawn straight across
+ * whatever sits to the right of the block. The whole of it is still one hover
+ * away, so nothing is lost, only folded.
+ */
+const MOST_CHARS = 32;
+
+export function fitLine(line: string): string {
+  return line.length <= MOST_CHARS ? line : `${line.slice(0, MOST_CHARS - 1)}…`;
+}
+
 export function entryLines(entry: SnapshotExposed): string[] {
   if (entry.fields.length > 0) {
     const shown = entry.fields.slice(0, MOST_FIELDS).map((field) => `${field.name}${field.optional ? "?" : ""}: ${field.type}`);

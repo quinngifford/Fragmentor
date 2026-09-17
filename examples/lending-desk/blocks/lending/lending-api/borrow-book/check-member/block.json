@@ -1,0 +1,7 @@
+{
+  "responsibility": "Find the member whose card was scanned.",
+  "inputs": { "memberId": "string" },
+  "outputs": { "member": "{ id: string; name: string; onLoan: number; suspended: boolean }" },
+  "capabilities": { "members": { "capability": "Store", "description": "The membership, by card number." } },
+  "access": ["members reads catalogue.members"]
+}

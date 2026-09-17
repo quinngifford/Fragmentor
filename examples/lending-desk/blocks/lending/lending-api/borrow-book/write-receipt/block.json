@@ -1,0 +1,11 @@
+{
+  "responsibility": "Turn what the desk worked out into the one thing the kiosk shows.",
+  "inputs": {
+    "book": "{ isbn: string; title: string; copies: number; onLoan: number }",
+    "allowed": "boolean",
+    "reason": "string",
+    "dueInDays": "number",
+    "copiesLeft": "number"
+  },
+  "outputs": { "receipt": "{ title: string; dueInDays: number; message: string }" }
+}

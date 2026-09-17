@@ -1,0 +1,42 @@
+[
+  {
+    "name": "an ordinary title goes out for three weeks",
+    "input": {
+      "book": { "isbn": "978-0", "title": "The Left Hand of Darkness", "copies": 3, "onLoan": 1 },
+      "member": { "id": "m-1", "name": "Ada", "onLoan": 0, "suspended": false }
+    },
+    "expected": { "allowed": true, "reason": "", "dueInDays": 21 }
+  },
+  {
+    "name": "the library's only copy goes out for a week",
+    "input": {
+      "book": { "isbn": "978-1", "title": "Piranesi", "copies": 1, "onLoan": 0 },
+      "member": { "id": "m-1", "name": "Ada", "onLoan": 0, "suspended": false }
+    },
+    "expected": { "allowed": true, "reason": "the library holds only one copy", "dueInDays": 7 }
+  },
+  {
+    "name": "a suspended membership is refused before anything else is considered",
+    "input": {
+      "book": { "isbn": "978-0", "title": "The Left Hand of Darkness", "copies": 3, "onLoan": 1 },
+      "member": { "id": "m-3", "name": "Alan", "onLoan": 0, "suspended": true }
+    },
+    "expected": { "allowed": false, "reason": "this membership is suspended", "dueInDays": 0 }
+  },
+  {
+    "name": "a member already holding five is refused",
+    "input": {
+      "book": { "isbn": "978-0", "title": "The Left Hand of Darkness", "copies": 3, "onLoan": 1 },
+      "member": { "id": "m-4", "name": "Katherine", "onLoan": 5, "suspended": false }
+    },
+    "expected": { "allowed": false, "reason": "5 books at a time is the limit, and 5 are already out", "dueInDays": 0 }
+  },
+  {
+    "name": "a title whose every copy is out is refused",
+    "input": {
+      "book": { "isbn": "978-2", "title": "Ancillary Justice", "copies": 2, "onLoan": 2 },
+      "member": { "id": "m-1", "name": "Ada", "onLoan": 0, "suspended": false }
+    },
+    "expected": { "allowed": false, "reason": "every copy of this one is already out", "dueInDays": 0 }
+  }
+]

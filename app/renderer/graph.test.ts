@@ -2,7 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { projectSnapshot } from "../../src/project/snapshot.js";
-import { accessEnds, autoLayout, buildGraph, entryLines, exposedRow, measure } from "./graph.js";
+import { accessEnds, autoLayout, buildGraph, entryLines, exposedRow, fitLine, measure } from "./graph.js";
 import type { Graph } from "./graph.js";
 import { ui } from "./state.js";
 
@@ -223,5 +223,20 @@ describe("inside the request path", () => {
       "resolve-link.link",
       "record-click.click",
     ].sort());
+  });
+});
+
+describe("a line too long for a block", () => {
+  it("is folded rather than drawn across whatever sits to the right", () => {
+    const long = "receipt: { title: string; dueInDays: number; message: string }";
+    const folded = fitLine(long);
+
+    expect(folded.length).toBeLessThan(long.length);
+    expect(folded.endsWith("…")).toBe(true);
+    expect(long.startsWith(folded.slice(0, -1))).toBe(true);
+  });
+
+  it("leaves a line that fits exactly as it was written", () => {
+    expect(fitLine("isbn: string")).toBe("isbn: string");
   });
 });

@@ -1,0 +1,11 @@
+{
+  "role": "queue",
+  "subtype": "member notifications",
+  "responsibility": "Carries the 'you have borrowed this' message away, so nobody waits at the desk for an email to send.",
+  "exposes": {
+    "issued": {
+      "accepts": "{ memberId: string; title: string; dueInDays: number }",
+      "description": "One message per book actually lent."
+    }
+  }
+}

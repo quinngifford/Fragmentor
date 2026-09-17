@@ -1,0 +1,32 @@
+[
+  {
+    "name": "a lent book leaves the shelf and the member is told",
+    "input": {
+      "book": { "isbn": "978-0", "title": "The Left Hand of Darkness", "copies": 3, "onLoan": 1 },
+      "member": { "id": "m-1", "name": "Ada", "onLoan": 0, "suspended": false },
+      "allowed": true,
+      "dueInDays": 21
+    },
+    "stores": {
+      "lending/catalogue.books": {
+        "978-0": { "isbn": "978-0", "title": "The Left Hand of Darkness", "copies": 3, "onLoan": 1 }
+      }
+    },
+    "expected": { "copiesLeft": 1 }
+  },
+  {
+    "name": "a refused request changes nothing and sends nothing",
+    "input": {
+      "book": { "isbn": "978-2", "title": "Ancillary Justice", "copies": 2, "onLoan": 2 },
+      "member": { "id": "m-3", "name": "Alan", "onLoan": 0, "suspended": true },
+      "allowed": false,
+      "dueInDays": 0
+    },
+    "stores": {
+      "lending/catalogue.books": {
+        "978-2": { "isbn": "978-2", "title": "Ancillary Justice", "copies": 2, "onLoan": 2 }
+      }
+    },
+    "expected": { "copiesLeft": 0 }
+  }
+]

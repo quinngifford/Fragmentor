@@ -52,7 +52,7 @@ function selfChecking(): boolean {
  */
 const selfCheck = selfChecking() ? prepareSelfCheck() : null;
 
-function prepareSelfCheck(): { root: string; projectDir: string; application: string; structured: string } {
+function prepareSelfCheck(): { root: string; projectDir: string; application: string; structured: string; lending: string } {
   const root = mkdtempSync(path.join(tmpdir(), "fragmentor-self-check-"));
   const projectDir = path.join(root, "project");
   const userData = path.join(root, "user-data");
@@ -67,10 +67,18 @@ function prepareSelfCheck(): { root: string; projectDir: string; application: st
   const structured = path.join(root, "support-desk");
   cpSync(path.join(repoRoot, "examples", "support-desk"), structured, { recursive: true });
 
+  // And the one that puts something on a queue, which is the other half of
+  // reaching a store and the only example that does it.
+  const lending = path.join(root, "lending-desk");
+  cpSync(path.join(repoRoot, "examples", "lending-desk"), lending, { recursive: true });
+
   // Offered on the welcome screen as recent projects, which is how the check opens them.
-  writeFileSync(path.join(userData, "recent-projects.json"), JSON.stringify([projectDir, application, structured]));
+  writeFileSync(
+    path.join(userData, "recent-projects.json"),
+    JSON.stringify([projectDir, application, structured, lending]),
+  );
   app.setPath("userData", userData);
-  return { root, projectDir, application, structured };
+  return { root, projectDir, application, structured, lending };
 }
 
 function ok<T>(value: T): Result<T> {
@@ -372,6 +380,7 @@ function registerHandlers(): void {
   ipcMain.handle(CHANNELS.exampleProjects, async (): Promise<Result<{ dir: string; name: string }[]>> => {
     try {
       const examples = [
+        { dir: path.join(repoRoot, "examples", "lending-desk"), name: "Lending Desk" },
         { dir: path.join(repoRoot, "examples", "support-desk"), name: "Support Desk" },
         { dir: path.join(repoRoot, "examples", "link-shortener"), name: "Link Shortener" },
         { dir: path.join(repoRoot, "examples", "job-ranker"), name: "Job Relevance Ranker" },
@@ -804,6 +813,15 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("structured", "benchThere") === true,
     ],
     [
+      "a book is borrowed from the kiosk: the shelf is written and the notice goes on a queue",
+      value("lending", "opened") === true &&
+        value("lending", "offered") === true &&
+        value("lending", "withinTheBlocks") === true &&
+        value("lending", "ran") === true &&
+        value("lending", "sent") === true &&
+        value("lending", "shelf") === true,
+    ],
+    [
       "a client's action runs the system that answers it, without naming the block that does",
       value("fromTheTop", "offered") === true &&
         value("fromTheTop", "label") === "Run raiseTicket" &&
@@ -1001,7 +1019,7 @@ async function capture(window: BrowserWindow, name: string): Promise<void> {
 // self-check exits explicitly, or a failed check would pass as a command.
 function attachSelfCheck(
   window: BrowserWindow,
-  check: { root: string; projectDir: string; application: string; structured: string },
+  check: { root: string; projectDir: string; application: string; structured: string; lending: string },
 ): void {
   window.webContents.on("did-fail-load", (_event, code, description) => {
     console.error(`The window failed to load: ${description} (${code})`);
@@ -1846,6 +1864,69 @@ function attachSelfCheck(
           };
         `);
         await capture(window, "self-check-from-the-top");
+
+        // The lending desk, opened from nothing: a member borrows a book, and
+        // the notice about it goes on a queue.
+        await run("lending", `
+          document.getElementById("close-project").click();
+          await until(() => document.body.dataset.project !== "open");
+          await wait(300);
+          const link = [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.lending)});
+          if (!link) return { opened: false };
+          link.click();
+          if (!(await until(() => document.querySelector('.block-box[data-key="kiosk"]')))) return { opened: false };
+          document.getElementById("zoom-fit").click();
+          await wait(500);
+
+          const drawn = [...document.querySelectorAll(".block-box[data-key]")].map((box) => box.dataset.key).sort().join(" ");
+
+          // No field may be drawn wider than the block holding it, or it
+          // would run across whatever sits to the right.
+          const overflowed = [...document.querySelectorAll(".block-box")].some((box) => {
+            const edge = box.getBoundingClientRect().right;
+            return [...box.querySelectorAll(".exposed-field, .exposed-name")].some((f) => f.getBoundingClientRect().right > edge);
+          });
+
+          const kiosk = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "kiosk");
+          kiosk.click();
+          await wait(500);
+
+          const trying = [...document.querySelectorAll(".section")].find((each) => /Try borrowBook/.test(each.textContent));
+          if (!trying) return { opened: true, drawn, offered: false };
+
+          const seed = (label, rows) => {
+            const area = [...trying.querySelectorAll("textarea")].find((a) => new RegExp(label).test((a.closest(".field").querySelector("label") || {}).textContent || ""));
+            area.value = JSON.stringify(rows);
+            area.dispatchEvent(new Event("input", { bubbles: true }));
+          };
+          seed("books", { "978-1": { isbn: "978-1", title: "Piranesi", copies: 1, onLoan: 0 } });
+          seed("members", { "m-1": { id: "m-1", name: "Ada", onLoan: 0, suspended: false } });
+
+          const set = (label, value) => {
+            const field = [...trying.querySelectorAll(".field")].find((f) => (f.querySelector("label") || {}).textContent === label);
+            field.querySelector("input").value = value;
+            field.querySelector("input").dispatchEvent(new Event("input", { bubbles: true }));
+          };
+          set("memberId", "m-1");
+          set("isbn", "978-1");
+
+          [...trying.querySelectorAll(".btn")].find((b) => b.textContent === "Run borrowBook").click();
+          const arrived = await until(() => document.body.textContent.includes("Back in 7 days"), 20000);
+
+          return {
+            opened: true,
+            drawn,
+            offered: true,
+            withinTheBlocks: !overflowed,
+            ran: Boolean(arrived),
+            // The queue is the other half: nothing is returned along it, so
+            // the only evidence is what the run left on it.
+            sent: document.body.textContent.includes("1 message sent"),
+            // And the book left the shelf, which is a write rather than a read.
+            shelf: document.body.textContent.includes('"onLoan": 1'),
+          };
+        `);
+        await capture(window, "self-check-lending");
 
         await run("backToKind", `
           document.getElementById("colour-by").click();
