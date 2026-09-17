@@ -308,30 +308,29 @@ export const busColors = {
  * browser profile.
  */
 export const DEFAULT_ROLE_COLOURS: Record<Role, string> = {
-  function: "#5be49b",
-  structure: "#2dd4bf",
-  queue: "#22d3ee",
-  storage: "#7dd3fc",
-  database: "#5b9cf8",
-  service: "#a78bfa",
-  client: "#f0b429",
-  external: "#ef7c57",
+  function: "#66E3A4",   // bright mint green
+  structure: "#67D8FF",  // bright cyan
+  queue: "#FFD166",      // warm yellow
+  storage: "#5EEAD4",    // aqua/teal
+  database: "#7C9CFF",   // periwinkle blue
+  service: "#C084FC",    // bright purple
+  client: "#FFB86B",     // soft bright orange
+  external: "#F472B6",   // pink, distinct without reading as error
 };
 
 /**
- * Colours a block can be given when the diagram is coloured block by block.
- * Warm and cool alternate, so blocks near each other in a diagram are never
- * near each other on the wheel.
+ * Colours used when blocks are coloured individually instead of by role.
+ * Ordered so neighbouring colours stay visually distinct.
  */
 export const BLOCK_PALETTE = [
-  "#5be49b",
-  "#f0b429",
-  "#5b9cf8",
-  "#ef7c57",
-  "#2dd4bf",
-  "#a78bfa",
-  "#e4879b",
-  "#b5e06a",
+  "#66E3A4", // mint
+  "#C084FC", // purple
+  "#FFD166", // yellow
+  "#67D8FF", // cyan
+  "#FF8FA3", // coral pink
+  "#7C9CFF", // periwinkle
+  "#FFB86B", // orange
+  "#5EEAD4", // aqua
 ];
 
 const ROLE_COLOURS_KEY = "fragmentor.roleColours";
