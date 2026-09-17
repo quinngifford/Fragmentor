@@ -369,6 +369,8 @@ function registerHandlers(): void {
   ipcMain.handle(CHANNELS.exampleProjects, async (): Promise<Result<{ dir: string; name: string }[]>> => {
     try {
       const examples = [
+        { dir: path.join(repoRoot, "examples", "support-desk"), name: "Support Desk" },
+        { dir: path.join(repoRoot, "examples", "link-shortener"), name: "Link Shortener" },
         { dir: path.join(repoRoot, "examples", "job-ranker"), name: "Job Relevance Ranker" },
         { dir: path.join(repoRoot, "examples", "contract-generator"), name: "Contract Generator" },
       ];

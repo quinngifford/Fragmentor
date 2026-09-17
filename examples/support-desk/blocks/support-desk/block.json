@@ -1,0 +1,9 @@
+{
+  "responsibility": "The support desk: take a ticket in, and put an alert out about it.",
+  "children": [
+    "agent-console",
+    "triage",
+    "accounts-file",
+    "alerts"
+  ]
+}

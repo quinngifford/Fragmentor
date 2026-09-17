@@ -1,0 +1,47 @@
+{
+  "responsibility": "Work out how urgent one ticket is for the customer who raised it, and draft the alert to go out about it.",
+  "inputs": {
+    "accountsPath": {
+      "type": "string",
+      "description": "The JSON file holding the accounts."
+    },
+    "accountId": "string",
+    "ticket": {
+      "type": "{ subject: string; body: string }",
+      "description": "What the agent typed."
+    }
+  },
+  "outputs": {
+    "priority": {
+      "type": "number",
+      "description": "0 is routine, 100 is drop everything."
+    },
+    "alert": "{ headline: string; priority: number; reason: string }"
+  },
+  "capabilities": {
+    "files": {
+      "capability": "FileSystem",
+      "description": "Reads the accounts file."
+    }
+  },
+  "children": [
+    "load-account",
+    "classify-ticket",
+    "score-priority",
+    "draft-alert"
+  ],
+  "wires": [
+    "input.accountsPath -> load-account.path",
+    "input.accountId -> load-account.accountId",
+    "input.ticket -> classify-ticket.ticket",
+    "load-account.account -> score-priority.account",
+    "classify-ticket.category -> score-priority.category",
+    "classify-ticket.urgent -> score-priority.urgent",
+    "score-priority.priority -> draft-alert.priority",
+    "score-priority.reason -> draft-alert.reason",
+    "load-account.account -> draft-alert.account",
+    "input.ticket -> draft-alert.ticket",
+    "score-priority.priority -> output.priority",
+    "draft-alert.alert -> output.alert"
+  ]
+}

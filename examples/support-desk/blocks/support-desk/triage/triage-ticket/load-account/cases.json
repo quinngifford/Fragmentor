@@ -1,0 +1,32 @@
+[
+  {
+    "name": "finds the account the ticket was raised against",
+    "input": {
+      "path": "accounts.json",
+      "accountId": "acc-2"
+    },
+    "expected": {
+      "account": {
+        "id": "acc-2",
+        "name": "Kite and Co",
+        "plan": "pro",
+        "openTickets": 0
+      }
+    }
+  },
+  {
+    "name": "reads the account by id rather than by position in the file",
+    "input": {
+      "path": "accounts.json",
+      "accountId": "acc-3"
+    },
+    "expected": {
+      "account": {
+        "id": "acc-3",
+        "name": "Harbour Freight",
+        "plan": "free",
+        "openTickets": 7
+      }
+    }
+  }
+]

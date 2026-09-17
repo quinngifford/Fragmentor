@@ -100,6 +100,48 @@ describe("the job-ranker example", () => {
   });
 });
 
+describe("the support-desk example", () => {
+  const supportDesk = path.join(examples, "support-desk");
+
+  it("puts a whole architecture over blocks that are still generated and run", async () => {
+    const project = await loadProject(supportDesk);
+    expect(validateProject(project)).toEqual([]);
+
+    const roleOf = (blockPath: string) => project.byPath.get(blockPath)!.block.role;
+    expect(roleOf("support-desk/agent-console")).toBe("client");
+    expect(roleOf("support-desk/triage")).toBe("service");
+    expect(roleOf("support-desk/accounts-file")).toBe("storage");
+    expect(roleOf("support-desk/alerts")).toBe("queue");
+
+    // The request path inside the service is an ordinary composite, which is
+    // the whole point: it can be generated, checked, run and paused.
+    const path4 = "support-desk/triage/triage-ticket";
+    expect(holdsArchitecture(project.byPath.get(path4)!)).toBe(false);
+    expect(project.byPath.get(path4)!.block.kind).toBe("composite");
+  });
+
+  it("names what each piece of the architecture is exactly", async () => {
+    const project = await loadProject(supportDesk);
+    const subtypeOf = (blockPath: string) => project.byPath.get(blockPath)!.block.subtype;
+
+    expect(subtypeOf("support-desk/triage")).toBe("REST API");
+    expect(subtypeOf("support-desk/accounts-file")).toBe("JSON file");
+    expect(subtypeOf("support-desk/alerts")).toBe("notification topic");
+  });
+
+  it("reaches the accounts file from the one block whose code really reads it", async () => {
+    const project = await loadProject(supportDesk);
+    const loader = "support-desk/triage/triage-ticket/load-account";
+
+    // It declares a FileSystem capability as well, because an access says
+    // where the data comes from and a capability is how the code gets there.
+    const block = project.byPath.get(loader)!.block;
+    expect(block.access).toEqual([{ verb: "reads", resource: "accounts-file", entry: "accounts" }]);
+    expect(block.capabilities.files?.capability).toBe("FileSystem");
+    expect(resolveAccess(project, loader, "accounts-file")?.path).toBe("support-desk/accounts-file");
+  });
+});
+
 describe("the contract-generator example", () => {
   it("reads off disk and validates cleanly", async () => {
     expect(validateProject(await loadProject(path.join(examples, "contract-generator")))).toEqual([]);

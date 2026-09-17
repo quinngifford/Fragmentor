@@ -1,0 +1,40 @@
+[
+  {
+    "name": "an outage raised by an enterprise customer comes out near the top",
+    "input": {
+      "accountsPath": "accounts.json",
+      "accountId": "acc-1",
+      "ticket": {
+        "subject": "Site is down",
+        "body": "Nobody can log in."
+      }
+    },
+    "expected": {
+      "priority": 96,
+      "alert": {
+        "headline": "!! Northwind Labs: Site is down",
+        "priority": 96,
+        "reason": "outage is worth 60, enterprise adds 30, 2 already open adds 6"
+      }
+    }
+  },
+  {
+    "name": "a question from a free account comes out near the bottom",
+    "input": {
+      "accountsPath": "accounts.json",
+      "accountId": "acc-3",
+      "ticket": {
+        "subject": "Exporting reports",
+        "body": "Where do I find the export button?"
+      }
+    },
+    "expected": {
+      "priority": 25,
+      "alert": {
+        "headline": "Harbour Freight: Exporting reports",
+        "priority": 25,
+        "reason": "howto is worth 10, free adds 0, 7 already open adds 15"
+      }
+    }
+  }
+]

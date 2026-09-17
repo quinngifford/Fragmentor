@@ -1,0 +1,41 @@
+[
+  {
+    "name": "an outage beats the other words in the same ticket",
+    "input": {
+      "ticket": {
+        "subject": "Site is down",
+        "body": "Nobody can log in and there is an error page."
+      }
+    },
+    "expected": {
+      "category": "outage",
+      "urgent": false
+    }
+  },
+  {
+    "name": "hears that somebody is not willing to wait",
+    "input": {
+      "ticket": {
+        "subject": "Refund not received",
+        "body": "This is urgent, the invoice was wrong."
+      }
+    },
+    "expected": {
+      "category": "billing",
+      "urgent": true
+    }
+  },
+  {
+    "name": "a ticket that matches nothing is somebody asking how",
+    "input": {
+      "ticket": {
+        "subject": "Exporting reports",
+        "body": "Where do I find the export button?"
+      }
+    },
+    "expected": {
+      "category": "howto",
+      "urgent": false
+    }
+  }
+]

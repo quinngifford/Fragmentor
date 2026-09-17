@@ -1,0 +1,15 @@
+{
+  "name": "Agent Console",
+  "role": "client",
+  "subtype": "web console",
+  "responsibility": "Where a support agent raises a ticket and sees what came back.",
+  "exposes": {
+    "raiseTicket": {
+      "accepts": "{ accountId: string; subject: string; body: string }",
+      "returns": "{ priority: number; headline: string }"
+    }
+  },
+  "access": [
+    "calls triage.triageTicket"
+  ]
+}

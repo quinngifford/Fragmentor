@@ -1,0 +1,12 @@
+{
+  "name": "Alerts",
+  "role": "queue",
+  "subtype": "notification topic",
+  "responsibility": "Carries drafted alerts away to whatever sends them, so triage never waits on delivery.",
+  "exposes": {
+    "notifications": {
+      "type": "{ headline: string; priority: number; reason: string }",
+      "description": "One message per triaged ticket."
+    }
+  }
+}
