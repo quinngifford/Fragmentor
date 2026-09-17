@@ -504,8 +504,23 @@ function casesSection(block: SnapshotBlock): HTMLElement {
   return node;
 }
 
-export function benchSection(block: SnapshotBlock): HTMLElement {
-  const node = section("Test bench", "bench");
+/**
+ * How a bench presents itself.
+ *
+ * The same bench serves two places: a block's own panel, and the entry of a
+ * client or service that leads to it. The second is the point of the first —
+ * pressing a button is what the system is for — and the values, the stores
+ * and the result are the same, so the only difference is what it is called.
+ */
+interface BenchLook {
+  title: string;
+  /** What running it means here, when "run this block" is not what the person is doing. */
+  note: string;
+  runLabel: string;
+}
+
+export function benchSection(block: SnapshotBlock, look?: BenchLook): HTMLElement {
+  const node = section(look?.title ?? "Test bench", "bench");
 
   const draft = draftFor(block);
 
@@ -520,12 +535,14 @@ export function benchSection(block: SnapshotBlock): HTMLElement {
   const stores = storesForm(block);
   if (stores) node.append(stores);
 
-  const run = el("button", "btn", "Run block");
+  const run = el("button", "btn", look?.runLabel ?? "Run block");
   const unrunnable = whyNotRunnable(block);
   const note = el(
     "p",
     "bench-note",
-    unrunnable ?? "Runs the real block in a separate process, with substitutes for its capabilities, and plays the run back on the diagram.",
+    unrunnable ??
+      look?.note ??
+      "Runs the real block in a separate process, with substitutes for its capabilities, and plays the run back on the diagram.",
   );
   run.disabled = unrunnable !== null || ui.running.has(block.path);
 
@@ -549,4 +566,22 @@ export function benchSection(block: SnapshotBlock): HTMLElement {
 /** The bench and the block's saved tests, which the inspector shows with the run between them. */
 export function benchSections(block: SnapshotBlock): [bench: HTMLElement, cases: HTMLElement] {
   return [benchSection(block), casesSection(block)];
+}
+
+/**
+ * The bench for what one entry sets going, shown where the entry is rather
+ * than where the code is.
+ *
+ * This is what makes a diagram runnable from the top: an agent presses
+ * `raiseTicket` on a console, and the blocks that answer it run and are
+ * watched, without having to know which of them it lands in. The form is the
+ * answering block's, which is the operation's too — `check` holds the two to
+ * the same shape, so there is nothing to convert between them.
+ */
+export function entryBenchSection(entry: string, answering: SnapshotBlock, route: string): HTMLElement {
+  return benchSection(answering, {
+    title: `Try ${entry}`,
+    note: `Runs what answers this: ${route}. The blocks light up as they go, and any breakpoint still stops it.`,
+    runLabel: `Run ${entry}`,
+  });
 }

@@ -5,7 +5,7 @@ import { blockColour, busColour, connectionCode } from "./graph.js";
 import type { AccessLink, Bus, Graph } from "./graph.js";
 import { ROLES } from "../../src/model/roles.js";
 import { graphInView, openDiagram, showBlock } from "./canvas.js";
-import { benchSections } from "./bench.js";
+import { benchSections, entryBenchSection } from "./bench.js";
 import { busWatchSection, watchSection } from "./watch.js";
 import { el, group, section } from "./dom.js";
 import { codeBlock, codeFragment, codeLines, languageOf } from "./highlight.js";
@@ -362,6 +362,34 @@ function whatHappens(block: SnapshotBlock, entry: string): Step[] {
 }
 
 /**
+ * The entries of this block that can actually be set going: those whose route
+ * ends at code that has been written.
+ *
+ * It is the same walk the panel already shows, asked a different question, so
+ * a button that leads somewhere and a button that can be pressed can never
+ * disagree about where it leads.
+ */
+function runnableEntries(block: SnapshotBlock): { entry: string; answering: SnapshotBlock; route: string }[] {
+  return block.exposes.flatMap((entry) => {
+    const route = whatHappens(block, entry.name);
+    const last = route.at(-1);
+    if (route.length < 2 || !last || last.block.architecture) return [];
+    if (!last.block.implemented || last.block.planned || last.block.holdsPlan || last.block.holdsArchitecture) return [];
+
+    return [
+      {
+        entry: entry.name,
+        answering: last.block,
+        route: route
+          .slice(1)
+          .map((step) => (step.entry ? `${step.block.name} · ${step.entry}` : step.block.name))
+          .join(" → "),
+      },
+    ];
+  });
+}
+
+/**
  * Where an entry leads, and a way to get there.
  *
  * Shown on an architecture block, which has no bench of its own: the bench
@@ -579,6 +607,19 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
     const reached = accessSection(block);
     if (reached) offers.append(reached);
     panel.append(offers);
+
+    // Pressing the button, rather than only following where it leads. The
+    // route ends at code, and the code is what runs.
+    if (!visual) {
+      const runnable = runnableEntries(block);
+      if (runnable.length > 0) {
+        const trying = group("Running it");
+        for (const { entry, answering, route } of runnable) {
+          trying.append(entryBenchSection(entry, answering, route));
+        }
+        panel.append(trying);
+      }
+    }
 
     // In a visual project even a service points at real code, and reading it
     // is the whole reason the diagram is there.

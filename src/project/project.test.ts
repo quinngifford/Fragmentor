@@ -664,3 +664,63 @@ describe("a capability port that is a way into a store", () => {
     expect(found).toContainEqual(expect.stringContaining("is a Queue port and"));
   });
 });
+
+describe("an operation and the block that answers it", () => {
+  /** A service whose one operation is answered by a handler of whatever shape the test gives it. */
+  async function writeService(operation: object, handler: object) {
+    await createProject(dir, { ...manifest, systems: [{ rootBlock: "orders-app", language: "typescript" }] }, [
+      makeBlock({ id: "orders-app", kind: "composite", children: [{ block: "orders-api", mode: "once" }] }),
+    ]);
+    await writeBlock(
+      blockDir(dir, "orders-app/orders-api"),
+      makeBlock({
+        id: "orders-api",
+        role: "service",
+        kind: "composite",
+        exposes: { listOrders: operation as never },
+        children: [{ block: "load-orders", mode: "once" }],
+      }),
+    );
+    await writeBlock(blockDir(dir, "orders-app/orders-api/load-orders"), makeBlock({ id: "load-orders", ...handler }));
+    return validateProject(await loadProject(dir)).map((d) => d.message);
+  }
+
+  const owner = { accepts: t.object({ owner: t.string }), returns: t.object({ found: t.number }), block: "load-orders" };
+  const handler = { inputs: { owner: { type: t.string } }, outputs: { found: { type: t.number } } };
+
+  it("says nothing when the two are the same shape", async () => {
+    const found = await writeService(owner, handler);
+    expect(found.filter((message) => message.includes("answers it"))).toEqual([]);
+  });
+
+  it("reports a request the block does not take", async () => {
+    const found = await writeService({ ...owner, accepts: t.object({ customer: t.string }) }, handler);
+    expect(found).toContainEqual(expect.stringContaining("put a block in between that converts"));
+  });
+
+  it("reports a response the block does not produce", async () => {
+    const found = await writeService({ ...owner, returns: t.object({ found: t.string }) }, handler);
+    expect(found).toContainEqual(expect.stringContaining('"listOrders" returns { found: string }'));
+  });
+
+  it("reports an operation that says it takes nothing while the block wants something", async () => {
+    const found = await writeService({ accepts: null, returns: t.object({ found: t.number }), block: "load-orders" }, handler);
+    expect(found).toContainEqual(expect.stringContaining("accepts nothing, but"));
+  });
+
+  it("leaves a shape written in words alone, having no way to compare it", async () => {
+    const found = await writeService({ ...owner, accepts: { kind: "text", text: "an order request" } }, handler);
+    expect(found.filter((message) => message.includes("accepts"))).toEqual([]);
+  });
+
+  it("says nothing where the block's own ports are words, as under a plan", async () => {
+    // A planned block's ports say what is meant to flow rather than what
+    // does, so there is no shape to hold the operation to.
+    const found = await writeService(owner, {
+      planned: true,
+      inputs: { owner: { type: { kind: "text", text: "the owner" } } },
+      outputs: { found: { type: { kind: "text", text: "how many" } } },
+    });
+    expect(found.filter((message) => message.includes("answers it"))).toEqual([]);
+  });
+});

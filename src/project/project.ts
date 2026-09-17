@@ -2,7 +2,9 @@ import { access, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promi
 import path from "node:path";
 import { z } from "zod/v4";
 import { blockIdPattern, blockToFileShape, formatAccess, parseBlockFile } from "../model/block.js";
-import type { Access, Block, Mode } from "../model/block.js";
+import type { Access, Block, Exposed, Mode, Port } from "../model/block.js";
+import { describeType, typesEqual } from "../model/types.js";
+import type { PortType } from "../model/types.js";
 import { CAPABILITIES, capabilitiesReaching, reachesResource } from "../model/capabilities.js";
 import { ROLES, isArchitecture } from "../model/roles.js";
 import { validateComposite } from "../model/validate.js";
@@ -352,6 +354,10 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
           blockPath: node.path,
           message: `"${node.block.name}" says its "${name}" is answered by "${entry.block}", which is ${ROLES[answering.block.role].label.toLowerCase()} rather than code. An operation is answered by a function block.`,
         });
+      } else {
+        for (const problem of answeringShapeProblems(node.block.name, name, entry, answering.block)) {
+          diagnostics.push({ severity, blockPath: node.path, message: problem });
+        }
       }
     }
 
@@ -411,6 +417,57 @@ export function resolveAccess(project: Project, blockPath: string, resource: str
  */
 export function holdsArchitecture(node: LoadedBlock): boolean {
   return isArchitecture(node.block.role) || node.children.some(holdsArchitecture);
+}
+
+/**
+ * Whether an operation and the block answering it are the same shape.
+ *
+ * They have to be, because nothing stands between them. The alternative was a
+ * mapping written on the operation saying which field became which, and that
+ * would put a piece of the dataflow somewhere the diagram does not show it:
+ * the one place a reader cannot see. Where the outside world's shape really
+ * does differ, the conversion is a block, drawn like any other.
+ *
+ * A shape written in words is not checked, at either end. In a visual project
+ * every port is words, and so is every port of a planned block, because
+ * neither is Fragmentor's to enforce; comparing a parsed operation against
+ * them would report a mismatch on every diagram that has one.
+ */
+function answeringShapeProblems(name: string, entryName: string, entry: Exposed, answering: Block): string[] {
+  const asPorts = (ports: Record<string, Port>): PortType => ({
+    kind: "object",
+    fields: Object.fromEntries(Object.entries(ports).map(([port, spec]) => [port, { type: spec.type }])),
+  });
+
+  const compare = (
+    declared: PortType | null,
+    ports: Record<string, Port>,
+    direction: "accepts" | "returns",
+    noun: string,
+  ): string[] => {
+    if (Object.values(ports).some((port) => port.type.kind === "text")) return [];
+
+    const expected = asPorts(ports);
+    const empty = Object.keys(ports).length === 0;
+
+    if (declared === null) {
+      return empty ? [] : [`"${name}" says its "${entryName}" ${direction} nothing, but "${answering.id}" has ${noun}: ${describeType(expected)}.`];
+    }
+    if (declared.kind === "text") return [];
+    if (empty) {
+      return [`"${name}" says its "${entryName}" ${direction} ${describeType(declared)}, but "${answering.id}" has no ${noun}.`];
+    }
+    if (typesEqual(declared, expected)) return [];
+
+    return [
+      `"${name}" says its "${entryName}" ${direction} ${describeType(declared)}, but "${answering.id}", which answers it, has ${noun} ${describeType(expected)}. Nothing stands between an operation and the block that answers it, so give them the same shape, or put a block in between that converts one into the other.`,
+    ];
+  };
+
+  return [
+    ...compare(entry.accepts, answering.inputs, "accepts", "inputs"),
+    ...compare(entry.returns, answering.outputs, "returns", "outputs"),
+  ];
 }
 
 /**

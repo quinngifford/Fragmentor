@@ -804,6 +804,13 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("structured", "benchThere") === true,
     ],
     [
+      "a client's action runs the system that answers it, without naming the block that does",
+      value("fromTheTop", "offered") === true &&
+        value("fromTheTop", "label") === "Run raiseTicket" &&
+        value("fromTheTop", "ran") === true &&
+        value("fromTheTop", "priority") === true,
+    ],
+    [
       "a store can be seeded from the bench, and the run reads what was put there",
       value("store", "offered") === true &&
         value("store", "ran") === true &&
@@ -1795,6 +1802,50 @@ function attachSelfCheck(
           };
         `);
         await capture(window, "self-check-store");
+
+        // The whole point: press the button on the client, and the system
+        // runs. Nothing here says which block answers it.
+        await run("fromTheTop", `
+          const console_ = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "agent-console");
+          console_.click();
+          await wait(500);
+
+          const trying = [...document.querySelectorAll(".section")].find((each) => /Try raiseTicket/.test(each.textContent));
+          if (!trying) return { offered: false };
+
+          const rows = [...trying.querySelectorAll("textarea")].find((area) => /Accounts/.test((area.closest(".field").querySelector("label") || {}).textContent || ""));
+          rows.value = JSON.stringify({ "acc-3": { id: "acc-3", name: "Harbour Freight", plan: "free", openTickets: 7 } });
+          rows.dispatchEvent(new Event("input", { bubbles: true }));
+
+          const set = (label, value) => {
+            const field = [...trying.querySelectorAll(".field")].find((f) => (f.querySelector("label") || {}).textContent === label);
+            const control = field.querySelector("input");
+            control.value = value;
+            control.dispatchEvent(new Event("input", { bubbles: true }));
+          };
+          set("accountId", "acc-3");
+          set("subject", "Exporting reports");
+          set("body", "Where do I find the export button?");
+
+          const button = [...trying.querySelectorAll(".btn")].find((b) => b.textContent === "Run raiseTicket");
+          const label = button ? button.textContent : "";
+          button.click();
+
+          // The headline this ticket produces, and no other: it names the
+          // account that only the seeded row could have supplied, and the
+          // subject that only this request carried. Waiting for it is both
+          // "the run finished" and "it went the whole way".
+          const headline = "Harbour Freight: Exporting reports";
+          const arrived = await until(() => document.body.textContent.includes(headline), 20000);
+
+          return {
+            offered: true,
+            label,
+            ran: Boolean(arrived),
+            priority: document.body.textContent.includes('"priority": 25'),
+          };
+        `);
+        await capture(window, "self-check-from-the-top");
 
         await run("backToKind", `
           document.getElementById("colour-by").click();
