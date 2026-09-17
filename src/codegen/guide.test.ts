@@ -383,17 +383,24 @@ describe("the architecture the guide shows", () => {
     // children so that everything it shows is checked in one place.
     await writeFile(
       manifestPath(dir),
-      JSON.stringify({ ...workedExample.manifest, systems: [{ rootBlock: "price-orders" }] }, null, 2),
+      JSON.stringify({ ...workedExample.manifest, systems: [{ rootBlock: "orders-app" }] }, null, 2),
       "utf8",
     );
     await writeBlocks({
-      "price-orders": {
+      // The client sits beside the service it calls, not inside it, which is
+      // the shape every one of these examples is written for.
+      "orders-app": {
+        responsibility: "The orders application.",
+        children: ["orders-page", "orders-api"],
+      },
+      "orders-app/orders-page": architectureExample["orders-page"]!,
+      "orders-app/orders-api": {
         ...architectureExample["orders-api"]!,
         children: ["orders-db", "billing", "load-orders"],
       },
-      "price-orders/orders-db": architectureExample["orders-db"]!,
-      "price-orders/billing": architectureExample.billing!,
-      "price-orders/load-orders": architectureExample["load-orders"]!,
+      "orders-app/orders-api/orders-db": architectureExample["orders-db"]!,
+      "orders-app/orders-api/billing": architectureExample.billing!,
+      "orders-app/orders-api/load-orders": architectureExample["load-orders"]!,
     });
 
     const report = await checkProject(dir);
@@ -401,12 +408,13 @@ describe("the architecture the guide shows", () => {
     expect(report.errorCount).toBe(0);
     // Neither a database nor someone else's payment service is unfinished work.
     expect([...report.architecture].sort()).toEqual([
-      "price-orders",
-      "price-orders/billing",
-      "price-orders/orders-db",
+      "orders-app/orders-api",
+      "orders-app/orders-api/billing",
+      "orders-app/orders-api/orders-db",
+      "orders-app/orders-page",
     ]);
     // The one block that is code is the one still to be written.
-    expect(report.unimplemented).toEqual(["price-orders/load-orders"]);
+    expect(report.unimplemented).toEqual(["orders-app/orders-api/load-orders"]);
   });
 
   it("names every role it offers, and shows both halves of joining one up", () => {
@@ -417,6 +425,9 @@ describe("the architecture the guide shows", () => {
       // And which block answers an operation, without which the blocks inside
       // a service show inputs arriving from nowhere.
       expect(guide).toContain('"block": "load-orders"');
+      // And which of a block's own entries does the reaching, without which
+      // two buttons calling two operations would be one line.
+      expect(guide).toContain('"showOrders calls orders-api.listOrders"');
     }
   });
 });

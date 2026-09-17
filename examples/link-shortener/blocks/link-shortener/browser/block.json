@@ -13,7 +13,7 @@
     }
   },
   "access": [
-    "calls api.createLink",
-    "calls api.followLink"
+    "shorten calls api.createLink",
+    "follow calls api.followLink"
   ]
 }

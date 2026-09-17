@@ -58,6 +58,8 @@ export interface SnapshotExposed {
 export interface SnapshotAccess {
   /** As written, e.g. `reads app-db.users`. */
   text: string;
+  /** Which of the reaching block's own entries does it, or null for the block as a whole. */
+  from: string | null;
   verb: AccessVerb;
   resource: string;
   /** Where the resource is in the project, or null when nothing of that id is in scope. */
@@ -253,6 +255,7 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       const found = resolveAccess(project, blockPath, entry.resource);
       return {
         text: formatAccess(entry),
+        from: entry.from,
         verb: entry.verb,
         resource: entry.resource,
         resourcePath: found?.path ?? null,

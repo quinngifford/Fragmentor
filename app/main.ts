@@ -790,7 +790,15 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("structured", "wayIn") === true &&
         value("structured", "answers") === "triageTicket" &&
         // The service's diagram is the block it holds and the way into it.
-        value("structured", "drawn") === "input triage-ticket",
+        value("structured", "drawn") === "input triage-ticket" &&
+        // One line from the button to the operation it triggers, and a route
+        // from that button to the code that answers it, with a bench there.
+        value("structured", "triggers") === "agent-console.raiseTicket=>triage:calls" &&
+        /Triage Service/.test(String(value("structured", "route"))) &&
+        /Triage Ticket/.test(String(value("structured", "route"))) &&
+        value("structured", "canGo") === true &&
+        value("structured", "wentTo") === "support-desk/triage/triage-ticket" &&
+        value("structured", "benchThere") === true,
     ],
     [
       "colouring changes what is drawn, and the legend explains it and folds away",
@@ -1676,6 +1684,27 @@ function attachSelfCheck(
           await wait(500);
           const top = { subtype: text('.block-box[data-key="triage"] .block-kind') };
 
+          // The console's button, and where pressing it leads. One line from
+          // that action to that operation, and a route from it to the code.
+          top.triggers = [...document.querySelectorAll(".access-group")]
+            .map((group) => group.dataset.access)
+            .filter((id) => id.startsWith("agent-console"))
+            .join(" ");
+          const console_ = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "agent-console");
+          console_.click();
+          await wait(500);
+          const happens = [...document.querySelectorAll(".section")].find((each) => /When this happens/.test(each.textContent));
+          // Read from inside that section, or the first shape on the panel
+          // would answer instead.
+          top.route = happens ? (happens.querySelector(".ptype") || {}).textContent : "";
+          top.canGo = Boolean(happens && [...happens.querySelectorAll(".btn")].find((b) => b.textContent === "Go there"));
+          if (top.canGo) {
+            [...happens.querySelectorAll(".btn")].find((b) => b.textContent === "Go there").click();
+            await wait(600);
+            top.wentTo = text(".insp-id");
+            top.benchThere = Boolean(document.querySelector(".bench"));
+          }
+
           // Into the service first, where its boundary should be drawn.
           const service = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "triage");
           service.click();
@@ -1703,6 +1732,11 @@ function attachSelfCheck(
             wayIn: top.wayIn,
             answers: top.answers,
             drawn: top.drawn,
+            triggers: top.triggers,
+            route: top.route,
+            canGo: top.canGo,
+            wentTo: top.wentTo,
+            benchThere: top.benchThere,
           };
         `);
         await capture(window, "self-check-structured");

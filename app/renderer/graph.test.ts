@@ -2,7 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { projectSnapshot } from "../../src/project/snapshot.js";
-import { accessEnds, autoLayout, buildGraph, entryLines, measure } from "./graph.js";
+import { accessEnds, autoLayout, buildGraph, entryLines, exposedRow, measure } from "./graph.js";
 import type { Graph } from "./graph.js";
 import { ui } from "./state.js";
 
@@ -52,6 +52,28 @@ describe("the whole application, drawn", () => {
     expect(graph.nodes.get("geo-lookup")!.sublabel).toBe("PLANNED");
     // Nothing is handed from one of these to the next, so there are no wires.
     expect(graph.signals).toEqual([]);
+  });
+
+  it("joins a button to the operation it triggers, not the block it is in", () => {
+    const fromBrowser = [...graph.accesses.values()].filter((link) => link.source === "browser");
+
+    // Two buttons calling two operations are two lines, each naming both ends.
+    expect(fromBrowser.map((link) => `${link.from} -> ${link.entries[0]!.entry}`).sort()).toEqual([
+      "follow -> followLink",
+      "shorten -> createLink",
+    ]);
+
+    // And each meets the rows it names rather than the edges of the boxes.
+    const placed = autoLayout(graph);
+    const shorten = fromBrowser.find((link) => link.from === "shorten")!;
+    const follow = fromBrowser.find((link) => link.from === "follow")!;
+    const first = accessEnds(graph, placed, shorten)!;
+    const second = accessEnds(graph, placed, follow)!;
+
+    expect(first.from.y).toBeLessThan(second.from.y);
+    expect(first.to.y).toBeLessThan(second.to.y);
+    expect(first.from.y).toBe(placed.get("browser")!.y + exposedRow(graph.nodes.get("browser")!, "shorten")!);
+    expect(first.to.y).toBe(placed.get("api")!.y + exposedRow(graph.nodes.get("api")!, "createLink")!);
   });
 
   it("gathers what the handlers inside the service reach, so the top level shows it", () => {

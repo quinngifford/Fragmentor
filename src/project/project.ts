@@ -426,6 +426,19 @@ function accessDiagnostics(project: Project, node: LoadedBlock, access: Access, 
     message,
   });
 
+  // What does the reaching, when the block says which of its own entries does.
+  if (access.from !== null && !(access.from in node.block.exposes)) {
+    const names = Object.keys(node.block.exposes);
+    return [
+      at(
+        "error",
+        `"${node.block.name}" ${written}, but it exposes nothing called "${access.from}"${
+          names.length > 0 ? `. It exposes: ${names.join(", ")}.` : ", and exposes nothing at all."
+        }`,
+      ),
+    ];
+  }
+
   if (!found) {
     return [
       at(

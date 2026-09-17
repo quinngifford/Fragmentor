@@ -11,7 +11,7 @@
     }
   },
   "access": [
-    "writes alerts.notifications"
+    "triageTicket writes alerts.notifications"
   ],
   "children": [
     "triage-ticket"

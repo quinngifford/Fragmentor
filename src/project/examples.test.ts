@@ -136,7 +136,7 @@ describe("the support-desk example", () => {
     // It declares a FileSystem capability as well, because an access says
     // where the data comes from and a capability is how the code gets there.
     const block = project.byPath.get(loader)!.block;
-    expect(block.access).toEqual([{ verb: "reads", resource: "accounts-file", entry: "accounts" }]);
+    expect(block.access).toEqual([{ from: null, verb: "reads", resource: "accounts-file", entry: "accounts" }]);
     expect(block.capabilities.files?.capability).toBe("FileSystem");
     expect(resolveAccess(project, loader, "accounts-file")?.path).toBe("support-desk/accounts-file");
   });
@@ -183,7 +183,7 @@ describe("the link-shortener example", () => {
     const path = "link-shortener/api/follow-link/resolve-link";
     const resolve = project.byPath.get(path)!.block;
 
-    expect(resolve.access).toEqual([{ verb: "reads", resource: "links-db", entry: "links" }]);
+    expect(resolve.access).toEqual([{ from: null, verb: "reads", resource: "links-db", entry: "links" }]);
     // links-db sits beside the service, past the request path and the service.
     expect(resolveAccess(project, path, "links-db")?.path).toBe("link-shortener/links-db");
   });

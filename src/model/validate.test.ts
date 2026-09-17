@@ -387,7 +387,7 @@ describe("a composite holding a piece of the architecture", () => {
     id: "load-orders",
     inputs: { owner: { type: t.string } },
     outputs: { orders: { type: t.array(t.object({ id: t.string })) } },
-    access: [{ verb: "reads", resource: "orders-db", entry: "orders" }],
+    access: [{ from: null, verb: "reads", resource: "orders-db", entry: "orders" }],
   });
 
   function service(): { parent: Block; children: Map<string, Block> } {

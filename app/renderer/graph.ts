@@ -68,6 +68,8 @@ export interface AccessLink {
   id: string;
   /** The block that reaches, which is always the one that declared it. */
   source: string;
+  /** Which of its own entries does the reaching, or null for the block as a whole. */
+  from: string | null;
   /** The block reached. */
   target: string;
   verb: AccessVerb;
@@ -291,12 +293,16 @@ function buildAccesses(parent: SnapshotBlock, nodes: Map<string, GraphNode>): Ma
         const key = childPaths.get(target);
         if (key === undefined) continue;
 
-        const id = `${child.block}=>${key}:${access.verb}`;
+        // Grouped by what does the reaching as well as by what is reached, so
+        // two buttons calling two operations are two lines rather than one
+        // saying the blocks are connected.
+        const id = `${child.block}${access.from === null ? "" : `.${access.from}`}=>${key}:${access.verb}`;
         let link = links.get(id);
         if (!link) {
           link = {
             id,
             source: child.block,
+            from: access.from,
             target: key,
             verb: access.verb,
             direction: directionOf(access.verb),
@@ -316,7 +322,7 @@ function buildAccesses(parent: SnapshotBlock, nodes: Map<string, GraphNode>): Ma
   // land on the same point and read as one.
   const lanes = new Map<string, number>();
   for (const link of links.values()) {
-    const side = `${link.source}:${link.direction}`;
+    const side = `${link.source}:${link.direction}:${link.from ?? ""}`;
     link.lane = lanes.get(side) ?? 0;
     lanes.set(side, link.lane + 1);
   }
@@ -359,12 +365,14 @@ function addAnsweredOperations(
     accesses.set(id, {
       id,
       source: "input",
+      from: entry.name,
       target: entry.block!,
       verb: "calls",
       direction: "out",
       entries: [
         {
           text: `answers ${entry.name}`,
+          from: entry.name,
           verb: "calls",
           resource: entry.block!,
           resourcePath: null,
@@ -514,6 +522,24 @@ export function busInPoint(node: GraphNode, point: Point, sourceKey: string): Po
 const LANE_H = 11;
 
 /**
+ * The middle of one exposed entry, measured down from the top of the block.
+ *
+ * A line that names an entry at either end meets it there rather than at the
+ * edge of the box, so a button joins the operation it triggers rather than
+ * the service it happens to be in. Null when the block has no such entry.
+ */
+export function exposedRow(node: GraphNode, name: string | null): number | null {
+  if (name === null) return null;
+  let y = HEAD_H + BODY_PAD;
+  for (const entry of node.exposes) {
+    const height = GROUP_HEAD_H + entryLines(entry).length * FIELD_H;
+    if (entry.name === name) return y + height / 2;
+    y += height + GROUP_GAP;
+  }
+  return null;
+}
+
+/**
  * Where an access line meets the block that declared it.
  *
  * Data leaves a block on its right and arrives on its left, the same way its
@@ -524,7 +550,9 @@ const LANE_H = 11;
  */
 function ownEnd(node: GraphNode, point: Point, link: AccessLink): Point {
   const height = measure(node).height;
-  const y = Math.max(point.y + HEAD_H + ROW_H, point.y + height - BODY_PAD - link.lane * LANE_H);
+  const row = exposedRow(node, link.from);
+  const y =
+    row === null ? Math.max(point.y + HEAD_H + ROW_H, point.y + height - BODY_PAD - link.lane * LANE_H) : point.y + row;
   return { x: link.direction === "out" ? point.x + NODE_W : point.x, y };
 }
 
@@ -536,17 +564,24 @@ function ownEnd(node: GraphNode, point: Point, link: AccessLink): Point {
  * two lines crossing. One standing beside the block is met on its near edge,
  * so the line stays short.
  */
-function resourceEnd(node: GraphNode, point: Point, from: Point, direction: "out" | "in"): Point {
+function resourceEnd(
+  node: GraphNode,
+  point: Point,
+  from: Point,
+  direction: "out" | "in",
+  entry: string | null,
+): Point {
   const height = measure(node).height;
+  const row = exposedRow(node, entry);
   if (point.y > from.y) {
     // Below: what goes in arrives on its right, what comes back leaves on its
     // left. Both ends of each line are then on the same side of the column,
     // so the loop runs down the outside of it rather than through whatever
     // happens to stand in between.
-    return { x: direction === "out" ? point.x + NODE_W : point.x, y: point.y + height / 3 };
+    return { x: direction === "out" ? point.x + NODE_W : point.x, y: point.y + (row ?? height / 3) };
   }
   const nearRight = point.x + NODE_W / 2 < from.x;
-  return { x: nearRight ? point.x + NODE_W : point.x, y: point.y + height / 2 };
+  return { x: nearRight ? point.x + NODE_W : point.x, y: point.y + (row ?? height / 2) };
 }
 
 /** The two ends of an access line, in the order the data travels. */
@@ -562,7 +597,7 @@ export function accessEnds(
   if (!owner || !resource || !ownerAt || !resourceAt) return null;
 
   const own = ownEnd(owner, ownerAt, link);
-  const theirs = resourceEnd(resource, resourceAt, own, link.direction);
+  const theirs = resourceEnd(resource, resourceAt, own, link.direction, link.entries[0]?.entry ?? null);
   return link.direction === "out" ? { from: own, to: theirs } : { from: theirs, to: own };
 }
 

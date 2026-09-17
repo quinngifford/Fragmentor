@@ -846,6 +846,9 @@ function accessLabel(link: AccessLink, resource: GraphNode | undefined): string 
   if (link.source === "input") return link.entries[0]?.entry ?? "answers";
   if (link.entries.length === 1) {
     const only = link.entries[0]!;
+    // Named at both ends, the line already meets the two entries it joins, so
+    // the label says what it does rather than repeating where it lands.
+    if (link.from !== null) return only.verb;
     return only.entry === null ? only.verb : `${only.verb} ${only.entry}`;
   }
   const named = link.entries.filter((entry) => entry.entry !== null).length;

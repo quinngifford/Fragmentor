@@ -112,21 +112,20 @@ export type AccessVerb = "reads" | "writes" | "calls";
 
 export const ACCESS_VERBS: AccessVerb[] = ["reads", "writes", "calls"];
 
-/**
- * A block reaching a piece of the architecture: `reads app-db.users`.
- *
- * This is declared by the block that does the touching, the way a capability
- * is, rather than by its parent the way a wire is. A wire is a value handed
- * from one call to the next, which only the parent knows about; reaching a
- * database is something the block itself does, and stays true wherever the
- * block is moved to.
- *
- * The resource is named by id and found by looking outward: the block's
- * parent first, then its parent, up to the top of the system. That is how a
- * handler deep inside a service reaches a database the service keeps beside
- * it, without every level in between having to mention it.
- */
 export interface Access {
+  /**
+   * Which of this block's own entries does the reaching, or null for the
+   * block as a whole.
+   *
+   * A client with five buttons calling five operations is five separate
+   * things happening, and without this they would all leave the block at one
+   * point and say only that the two are connected. Named at both ends, the
+   * line runs from the button to the operation it triggers, which is what it
+   * actually does.
+   *
+   * A function block has ports rather than entries, so it never names one.
+   */
+  from: string | null;
   verb: AccessVerb;
   /** The id of the architecture block being touched. */
   resource: string;
@@ -136,16 +135,21 @@ export interface Access {
 
 export function parseAccessText(text: string): { ok: true; access: Access } | { ok: false; error: string } {
   const parts = text.trim().split(/[ ]+/);
-  if (parts.length !== 2) {
+  if (parts.length !== 2 && parts.length !== 3) {
     return {
       ok: false,
-      error: `An access must be written as "reads app-db.users" or "calls billing.charge", but this reads "${text}".`,
+      error: `An access must be written as "reads app-db.users", or "shorten calls api.createLink" to say which of this block's own entries does it, but this reads "${text}".`,
     };
   }
 
-  const [verb, target] = parts as [string, string];
+  const [from, verb, target] =
+    parts.length === 3 ? (parts as [string, string, string]) : [null, ...(parts as [string, string])];
+
   if (!(ACCESS_VERBS as string[]).includes(verb)) {
     return { ok: false, error: `"${verb}" is not one of ${ACCESS_VERBS.join(", ")}.` };
+  }
+  if (from !== null && !identifierPattern.test(from)) {
+    return { ok: false, error: `"${from}" is not a valid name for one of this block's own entries.` };
   }
 
   const split = target.lastIndexOf(".");
@@ -159,11 +163,12 @@ export function parseAccessText(text: string): { ok: true; access: Access } | { 
     return { ok: false, error: `"${entry}" is not a valid name for one of "${resource}"'s entries.` };
   }
 
-  return { ok: true, access: { verb: verb as AccessVerb, resource, entry } };
+  return { ok: true, access: { from, verb: verb as AccessVerb, resource, entry } };
 }
 
 export function formatAccess(access: Access): string {
-  return `${access.verb} ${access.resource}${access.entry === null ? "" : `.${access.entry}`}`;
+  const target = `${access.resource}${access.entry === null ? "" : `.${access.entry}`}`;
+  return `${access.from === null ? "" : `${access.from} `}${access.verb} ${target}`;
 }
 
 export interface Block {

@@ -143,6 +143,13 @@ export const architectureExample: Record<string, Record<string, unknown>> = {
     outputs: { orders: "{ id: string; total: number }[]" },
     access: ["reads orders-db.orders"],
   },
+  "orders-page": {
+    role: "client",
+    subtype: "browser",
+    responsibility: "Where someone asks to see their orders.",
+    exposes: { showOrders: { accepts: "{ owner: string }", returns: "{ id: string }[]" } },
+    access: ["showOrders calls orders-api.listOrders"],
+  },
 };
 
 /** The same program in a visual project, drawn over code that already exists in `src/pricing.ts`. */

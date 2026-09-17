@@ -84,6 +84,7 @@ A block with a role has no `inputs` or `outputs`. It says what it offers with `e
 {{serviceBlock}}
 ```
 
+- Put the name of one of this block's own entries first, and the line joins those two rather than the two blocks: `"showOrders calls orders-api.listOrders"` runs from that button to that operation. A block with several buttons calling several operations needs this, or they would all leave it at the same point.
 - `reads` takes data out, `writes` puts data in, `calls` does both. Name the entry, as in `reads orders-db.orders`, or leave it off to mean the whole thing.
 - The block named is looked for beside the one reaching it, then above it, up to the top of the system, so a handler inside a service reaches a database the service keeps beside it. Put the access on the block whose code really touches the resource; the diagrams above gather it up.
 

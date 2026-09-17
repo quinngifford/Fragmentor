@@ -419,7 +419,7 @@ describe("blocks that are pieces of the architecture", () => {
       id: "load-orders",
       inputs: { owner: { type: t.string } },
       outputs: { orders: { type: t.array(t.object({ id: t.string })) } },
-      access: [{ verb: "reads", resource: "orders-db", entry: "orders" }],
+      access: [{ from: null, verb: "reads", resource: "orders-db", entry: "orders" }],
     });
 
     await createProject(dir, { ...manifest, systems: [{ rootBlock: "orders-app", language: "typescript" }] }, [
@@ -460,9 +460,9 @@ describe("blocks that are pieces of the architecture", () => {
         id: "load-orders",
         inputs: { owner: { type: t.string } },
         access: [
-          { verb: "reads", resource: "billing", entry: null },
-          { verb: "reads", resource: "orders-db", entry: "invoices" },
-          { verb: "writes", resource: "orders-db", entry: "orders" },
+          { from: null, verb: "reads", resource: "billing", entry: null },
+          { from: null, verb: "reads", resource: "orders-db", entry: "invoices" },
+          { from: null, verb: "writes", resource: "orders-db", entry: "orders" },
         ],
       }),
     );
@@ -491,8 +491,8 @@ describe("blocks that are pieces of the architecture", () => {
         id: "load-orders",
         inputs: { owner: { type: t.string } },
         access: [
-          { verb: "reads", resource: "load-orders", entry: null },
-          { verb: "calls", resource: "orders-api", entry: "listOrders" },
+          { from: null, verb: "reads", resource: "load-orders", entry: null },
+          { from: null, verb: "calls", resource: "orders-api", entry: "listOrders" },
         ],
       }),
     );
@@ -503,6 +503,25 @@ describe("blocks that are pieces of the architecture", () => {
       expect.stringContaining("but that is the block itself"),
       expect.stringContaining("is the block it sits inside"),
     ]);
+  });
+
+  it("refuses an access that starts from an entry the block does not expose", async () => {
+    await writeApplication();
+    await writeBlock(
+      blockDir(dir, "orders-app/orders-api"),
+      makeBlock({
+        id: "orders-api",
+        role: "service",
+        kind: "composite",
+        exposes: { listOrders: { accepts: t.object({ owner: t.string }), returns: null } },
+        access: [{ from: "listInvoices", verb: "reads", resource: "orders-db", entry: "orders" }],
+        children: [{ block: "load-orders", mode: "once" }],
+      }),
+    );
+
+    expect(validateProject(await loadProject(dir)).map((d) => d.message)).toContainEqual(
+      expect.stringContaining('exposes nothing called "listInvoices". It exposes: listOrders.'),
+    );
   });
 
   it("refuses an access to an ordinary function block beside it", async () => {
@@ -517,7 +536,7 @@ describe("blocks that are pieces of the architecture", () => {
         id: "score-posting",
         inputs: { posting: { type: t.object({ title: t.string }) } },
         outputs: { score: { type: t.number } },
-        access: [{ verb: "reads", resource: "label-score", entry: null }],
+        access: [{ from: null, verb: "reads", resource: "label-score", entry: null }],
       }),
     );
 
@@ -537,7 +556,7 @@ describe("blocks that are pieces of the architecture", () => {
       makeBlock({
         id: "load-orders",
         inputs: { owner: { type: t.string } },
-        access: [{ verb: "reads", resource: "orders-db", entry: "orders" }],
+        access: [{ from: null, verb: "reads", resource: "orders-db", entry: "orders" }],
       }),
     );
 

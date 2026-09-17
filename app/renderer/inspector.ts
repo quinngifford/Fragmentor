@@ -310,6 +310,94 @@ function roleBadge(block: SnapshotBlock): HTMLElement {
   return badge;
 }
 
+/** One step of what happens when an entry is triggered. */
+interface Step {
+  block: SnapshotBlock;
+  entry: string | null;
+}
+
+/** Long enough for any real chain, short enough that a loop cannot hang the panel. */
+const MOST_STEPS = 12;
+
+/**
+ * What actually runs when one entry happens.
+ *
+ * A button on a client calls an operation on a service; that operation says
+ * which block answers it; and that block is code, with a contract and a test
+ * bench. Following those two links end to end turns "this button" into "this
+ * function", which is the whole reason for saying which entry does the
+ * reaching rather than only that two blocks are connected.
+ *
+ * Returns every step of the way, so the panel can show the route and not only
+ * where it ends up.
+ */
+function whatHappens(block: SnapshotBlock, entry: string): Step[] {
+  const snapshot = requireSnapshot();
+  const route: Step[] = [];
+  let at: Step | null = { block, entry };
+
+  while (at && route.length < MOST_STEPS) {
+    route.push(at);
+    const here: Step = at;
+    at = null;
+
+    // A function block is where it ends: that is the code that runs.
+    if (!here.block.architecture || here.entry === null) break;
+
+    // An operation that names the block answering it leads straight into code.
+    const exposed = here.block.exposes.find((each) => each.name === here.entry);
+    if (exposed?.block) {
+      const answering = snapshot.blocks[`${here.block.path}/${exposed.block}`];
+      if (answering) at = { block: answering, entry: null };
+      if (at) continue;
+    }
+
+    // Otherwise this entry may call another block's entry, and on it goes.
+    const call = here.block.access.find((each) => each.from === here.entry && each.resourcePath !== null);
+    const next = call?.resourcePath ? snapshot.blocks[call.resourcePath] : undefined;
+    if (next) at = { block: next, entry: call!.entry };
+  }
+
+  return route;
+}
+
+/**
+ * Where an entry leads, and a way to get there.
+ *
+ * Shown on an architecture block, which has no bench of its own: the bench
+ * belongs to whatever code answers it, and this is how you reach it.
+ */
+function whatHappensSection(block: SnapshotBlock): HTMLElement | null {
+  const routes = block.exposes
+    .map((entry) => ({ entry, route: whatHappens(block, entry.name) }))
+    .filter(({ route }) => route.length > 1);
+  if (routes.length === 0) return null;
+
+  const node = section("When this happens");
+  const list = el("div", "ports");
+
+  for (const { entry, route } of routes) {
+    const row = el("div", "port-row cap");
+    row.append(el("div", "pname", entry.name));
+
+    const rest = route.slice(1);
+    row.append(el("div", "ptype", rest.map((step) => (step.entry ? `${step.block.name} · ${step.entry}` : step.block.name)).join("  →  ")));
+
+    // Only worth offering where the chain ends at code that can be run.
+    const last = rest.at(-1)!;
+    if (!last.block.architecture) {
+      const open = el("button", "btn quiet tiny", "Go there");
+      open.title = `Show ${last.block.name}, where this is answered`;
+      open.addEventListener("click", () => showBlock(last.block.path));
+      row.append(open);
+    }
+    list.append(row);
+  }
+
+  node.append(list);
+  return node;
+}
+
 /** What an architecture block offers, in place of the contract it has none of. */
 function exposedSection(block: SnapshotBlock): HTMLElement {
   const noun = ROLES[block.role].entryNoun;
@@ -486,6 +574,8 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
 
     const offers = group("Offers");
     offers.append(exposedSection(block));
+    const happens = whatHappensSection(block);
+    if (happens) offers.append(happens);
     const reached = accessSection(block);
     if (reached) offers.append(reached);
     panel.append(offers);

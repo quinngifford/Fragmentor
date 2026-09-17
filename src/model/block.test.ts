@@ -378,10 +378,30 @@ describe("what a block reaches", () => {
     const block = blockFromFile(reaching(["reads orders-db.orders", "calls billing"]), "load-orders");
 
     expect(block.access).toEqual([
-      { verb: "reads", resource: "orders-db", entry: "orders" },
-      { verb: "calls", resource: "billing", entry: null },
+      { from: null, verb: "reads", resource: "orders-db", entry: "orders" },
+      { from: null, verb: "calls", resource: "billing", entry: null },
     ]);
     expect(blockToFileShape(block).access).toEqual(["reads orders-db.orders", "calls billing"]);
+  });
+
+  it("reads which of the block's own entries does the reaching", () => {
+    // Without this a client with two buttons calling two operations would say
+    // only that the two blocks are connected.
+    const block = blockFromFile(
+      {
+        role: "client",
+        responsibility: "Where a person starts.",
+        exposes: { shorten: "{ url: string }", follow: "{ code: string }" },
+        access: ["shorten calls api.createLink", "follow calls api.followLink"],
+      },
+      "browser",
+    );
+
+    expect(block.access).toEqual([
+      { from: "shorten", verb: "calls", resource: "api", entry: "createLink" },
+      { from: "follow", verb: "calls", resource: "api", entry: "followLink" },
+    ]);
+    expect(blockToFileShape(block).access).toEqual(["shorten calls api.createLink", "follow calls api.followLink"]);
   });
 
   it("says what is wrong with one that is not written as an access", () => {
@@ -393,6 +413,9 @@ describe("what a block reaches", () => {
     ]);
     expect(problemsWith(reaching(["reads OrdersDb.orders"]))).toEqual([
       expect.stringContaining('"OrdersDb" is not a block id'),
+    ]);
+    expect(problemsWith(reaching(["a b reads orders-db.orders"]))).toEqual([
+      expect.stringContaining("An access must be written as"),
     ]);
   });
 });
