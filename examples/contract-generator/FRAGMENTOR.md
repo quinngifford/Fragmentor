@@ -92,12 +92,15 @@ There is no branching on the diagram. Conditions, loops and error handling belon
 
 Not every block is a function. A database, a queue, another team's service and the browser that starts a request are parts of the system too, and a diagram without them shows values arriving from nowhere. Give a block a `role` and it stands for one of them:
 
-- **`"service"`** — A program of ours that answers requests: a backend, a microservice, a web server, a worker.
-- **`"external"`** — Something outside the system we do not write: a third-party API, another team's service. A black box with a known interface.
-- **`"database"`** — A database. Each entry is a table or collection, and its shape is that table's schema.
-- **`"storage"`** — Files, objects, blobs or a cache. Each entry is a bucket or a set of keys, and its shape is what is kept there.
-- **`"queue"`** — A queue, topic or event stream. Each entry is a channel, and its shape is the message carried on it.
-- **`"client"`** — Who or what sets the system going, and where data first comes from: a browser, a mobile app, a command-line tool, a scheduled job.
+- **`"service"`** — A program of ours that answers requests. The blocks inside one are ordinary blocks, written, checked and run as usual. Subtypes: `REST API`, `GraphQL API`, `worker`, `scheduled job`.
+- **`"external"`** — Something outside the system we do not write: a third-party API, another team's service. A black box with a known interface. Subtypes: `payment provider`, `mail service`, `another team's API`.
+- **`"database"`** — A database. Each entry is a table or collection, and its shape is that table's schema. Subtypes: `PostgreSQL`, `MongoDB`, `SQLite`.
+- **`"storage"`** — Files, objects or blobs kept outside the program. Each entry is a bucket, a path or a set of keys. Subtypes: `JSON file`, `S3 bucket`, `object store`.
+- **`"queue"`** — A queue, topic or event stream. Each entry is a channel, and its shape is the message carried on it. Subtypes: `Kafka topic`, `message queue`, `event stream`.
+- **`"structure"`** — Data the program holds in memory rather than keeps outside itself: an index, a cache, a table of state that several blocks read. Subtypes: `dictionary`, `array`, `set`, `LRU cache`.
+- **`"client"`** — Who or what sets the system going, and where data first comes from: a browser, a mobile app, a command-line tool, a scheduled job. Subtypes: `browser`, `mobile app`, `command-line tool`.
+
+Say what it is exactly with `subtype`, in whatever words fit: `"subtype": "Dictionary"`, `"subtype": "REST API"`, `"subtype": "S3 bucket"`. It is only a label — the block is drawn the same as any other of its role — but a diagram reading `DATA STRUCTURE: Dictionary` says more than one reading `DATA STRUCTURE`.
 
 A block with a role is not called, so it has no `inputs`, `outputs` or `capabilities`. It says what it offers with `exposes`, and other blocks say what they reach with `access`:
 
@@ -105,6 +108,7 @@ A block with a role is not called, so it has no `inputs`, `outputs` or `capabili
 {
   "name": "Orders Database",
   "role": "database",
+  "subtype": "PostgreSQL",
   "responsibility": "Holds every order and who placed it.",
   "exposes": {
     "orders": {

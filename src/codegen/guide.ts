@@ -120,6 +120,7 @@ export const architectureExample: Record<string, Record<string, unknown>> = {
   "orders-db": {
     name: "Orders Database",
     role: "database",
+    subtype: "PostgreSQL",
     responsibility: "Holds every order and who placed it.",
     exposes: {
       orders: { type: "{ id: string; owner: string; total: number }", description: "One row per order." },
@@ -128,6 +129,7 @@ export const architectureExample: Record<string, Record<string, unknown>> = {
   },
   billing: {
     role: "external",
+    subtype: "payment provider",
     responsibility: "Someone else's payment service. We cannot see inside it.",
     exposes: { charge: { accepts: "{ orderId: string; amount: number }", returns: "{ receipt: string }" } },
   },
@@ -227,7 +229,11 @@ export function compactJson(value: unknown): string {
 }
 
 function rolesSection(): string {
-  return ARCHITECTURE_ROLES.map((role) => `- **\`"${role}"\`** — ${ROLES[role].description}`).join("\n");
+  return ARCHITECTURE_ROLES.map((role) => {
+    const examples = ROLES[role].subtypes;
+    const like = examples.length > 0 ? ` Subtypes: ${examples.map((each) => `\`${each}\``).join(", ")}.` : "";
+    return `- **\`"${role}"\`** — ${ROLES[role].description}${like}`;
+  }).join("\n");
 }
 
 function capabilitiesSection(pack: LanguagePack): string {

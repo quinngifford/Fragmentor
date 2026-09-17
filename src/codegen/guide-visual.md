@@ -64,6 +64,8 @@ Not every block is a piece of code. A database, a queue, another team's service 
 
 {{roles}}
 
+Say what it is exactly with `subtype`, in whatever words fit: `"subtype": "Dictionary"`, `"subtype": "REST API"`, `"subtype": "S3 bucket"`. It is only a label — the block is drawn the same as any other of its role — but a diagram reading `DATA STRUCTURE: Dictionary` says more than one reading `DATA STRUCTURE`.
+
 A block with a role has no `inputs` or `outputs`. It says what it offers with `exposes`, and other blocks say what they reach with `access`. It may still have `code`, pointing at the module that wraps it, and may be left without one when it lives outside this codebase.
 
 ```json

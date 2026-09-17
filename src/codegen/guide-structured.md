@@ -69,6 +69,8 @@ Not every block is a function. A database, a queue, another team's service and t
 
 {{roles}}
 
+Say what it is exactly with `subtype`, in whatever words fit: `"subtype": "Dictionary"`, `"subtype": "REST API"`, `"subtype": "S3 bucket"`. It is only a label — the block is drawn the same as any other of its role — but a diagram reading `DATA STRUCTURE: Dictionary` says more than one reading `DATA STRUCTURE`.
+
 A block with a role is not called, so it has no `inputs`, `outputs` or `capabilities`. It says what it offers with `exposes`, and other blocks say what they reach with `access`:
 
 ```json
