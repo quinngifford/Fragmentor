@@ -625,9 +625,11 @@ function renderLegend(graph: Graph | null): void {
   legend.replaceChildren();
 
   const head = el("div", "legend-head");
+  head.append(el("span", "legend-title", "Colours"));
+
   const toggle = el("button", "legend-toggle");
   toggle.type = "button";
-  toggle.textContent = ui.legendCollapsed ? "▸ Colours" : "▾ Colours";
+  toggle.textContent = ui.legendCollapsed ? "▾" : "▴";
   toggle.title = ui.legendCollapsed ? "Show what the colours mean" : "Hide the colours";
   toggle.addEventListener("click", () => {
     ui.setLegendCollapsed(!ui.legendCollapsed);
@@ -657,7 +659,7 @@ function renderLegend(graph: Graph | null): void {
       roleColours.set(role, swatch.value);
     });
 
-    const name = el("span", "legend-text", role === "function" ? "code, and what passes between it" : ROLES[role].label.toLowerCase());
+    const name = el("span", "legend-text", role === "function" ? "code" : ROLES[role].label.toLowerCase());
     row.append(swatch, name);
     legend.append(row);
   }
@@ -960,7 +962,6 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
     "data-tinted": String(
       node.block !== null && (viewSettings.colourBy === "block" || node.block.architecture),
     ),
-    "data-referenced": String(node.referenced),
     "data-key": node.key,
   }, layer);
 
@@ -978,7 +979,6 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
   svgEl("title", {}, group).textContent = node.block
     ? [
         node.block.planned ? "Planned: drawn, but not built yet." : "",
-        node.referenced ? "Kept outside this diagram, and drawn here because something in it reaches this." : "",
         node.block.responsibility,
         node.block.kind === "composite" ? "Double-click to open this block's diagram." : "",
       ]
@@ -1016,13 +1016,6 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
   svgEl("text", { x: 10, y: 27, class: "block-kind" }, body).textContent = node.sublabel;
   // How the block is doing in a run being watched; empty otherwise.
   svgEl("text", { x: NODE_W - 10, y: 27, class: "run-note", "text-anchor": "end" }, body);
-
-  // Said plainly on a resource drawn from a diagram above this one, because
-  // otherwise it looks like a child that someone forgot to list.
-  if (node.referenced) {
-    svgEl("text", { x: NODE_W - 10, y: 15, class: "elsewhere-badge", "text-anchor": "end" }, body)
-      .textContent = "elsewhere";
-  }
 
   if (node.child?.mode === "each" && node.child.eachOver) {
     svgEl("text", { x: NODE_W - 10, y: 15, class: "each-badge", "text-anchor": "end" }, body)

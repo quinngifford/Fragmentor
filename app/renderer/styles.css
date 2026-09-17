@@ -216,15 +216,21 @@ body[data-resizing="true"] { cursor: col-resize; }
 /* `display: flex` above would otherwise beat the hidden attribute's own rule. */
 .legend[hidden] { display: none; }
 
-.legend-head { display: flex; }
-.legend-toggle {
-  background: none;
-  border: none;
-  padding: 0;
+/* The heading on the left, the arrow that folds it away on the right. */
+.legend-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.legend-title {
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.legend-toggle {
+  background: none;
+  border: none;
+  padding: 0 0 0 4px;
+  font-size: 11px;
+  line-height: 1;
   color: var(--ink-faint);
   cursor: pointer;
 }
@@ -405,12 +411,6 @@ body[data-project="open"] .welcome { display: none; }
 .block-box[data-tinted="true"] .block-kind { fill: var(--role); }
 .block-box[data-tinted="true"] .block-divider { stroke: color-mix(in srgb, var(--role) 30%, var(--ground)); }
 .block-box[data-tinted="true"] .block-body:hover .block-plate { stroke: var(--role); }
-
-/* Brought in from the diagram above this one, because something here reaches
-   it. Quieter than the blocks that really live here, and never solid. */
-.block-box[data-referenced="true"] .block-body { opacity: 0.82; }
-.block-box[data-referenced="true"] .block-plate { stroke-dasharray: 2 4; }
-.elsewhere-badge { font-family: var(--mono); font-size: 9px; fill: var(--ink-faint); pointer-events: none; }
 
 /* What a resource holds, drawn down its middle. */
 .exposed-plate { fill: var(--panel-high); stroke: color-mix(in srgb, var(--role) 22%, var(--ground)); stroke-width: 1; }

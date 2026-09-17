@@ -4,8 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { projectSnapshot } from "../../src/project/snapshot.js";
 import { accessEnds, autoLayout, buildGraph, entryLines, measure } from "./graph.js";
 import type { Graph } from "./graph.js";
-import { ui, viewSettings } from "./state.js";
-import type { StoresAt } from "./state.js";
+import { ui } from "./state.js";
 
 /**
  * The diagram the canvas draws, without drawing it.
@@ -32,10 +31,9 @@ function reachedBy(graph: Graph, source: string): string[] {
 }
 
 /** The canvas is handed a snapshot and nothing else, so that is all a test needs. */
-async function open(view: string, storesAt: StoresAt = "kept"): Promise<Graph> {
+async function open(view: string): Promise<Graph> {
   ui.snapshot = await projectSnapshot(linkShortener);
   ui.view = view;
-  viewSettings.storesAt = storesAt;
   const graph = buildGraph(view);
   if (!graph) throw new Error(`${view} has no diagram.`);
   return graph;
@@ -143,30 +141,14 @@ describe("the whole application, drawn", () => {
 describe("inside the service", () => {
   let graph: Graph;
   beforeAll(async () => {
-    graph = await open("link-shortener/api", "everywhere");
+    graph = await open("link-shortener/api");
   });
 
-  it("brings in a resource that lives outside this diagram, and says so", () => {
-    // links-db sits beside the service, so nothing here lists it as a child;
-    // asked for on every level it is drawn anyway, or the handlers that read
-    // it would point at nothing.
-    const database = graph.nodes.get("links-db")!;
-    expect(database.referenced).toBe(true);
-    expect(graph.nodes.get("create-link")!.referenced).toBe(false);
-  });
-
-  it("shows what a request path reaches, gathered from the blocks inside it", () => {
-    // create-link touches the database itself; follow-link does not, but the
-    // three blocks inside it touch all three resources.
-    expect(reachedBy(graph, "create-link")).toEqual(["links-db"]);
-    expect(reachedBy(graph, "follow-link")).toEqual(["click-events", "geo-lookup", "links-db"]);
-  });
-
-  it("marks an access the block itself declared apart from one gathered from inside", () => {
-    const own = [...graph.accesses.values()].find((link) => link.source === "create-link")!;
-    const gathered = [...graph.accesses.values()].find((link) => link.source === "follow-link")!;
-    expect(own.fromWithin).toBe(false);
-    expect(gathered.fromWithin).toBe(true);
+  it("shows the blocks that are there, and nothing kept on another level", () => {
+    // Every store this service touches is kept beside the service, not in it,
+    // so its own diagram is the two handlers and the work between them.
+    expect([...graph.nodes.keys()]).toEqual(["create-link", "follow-link"]);
+    expect(graph.accesses.size).toBe(0);
   });
 
   it("draws no line from a block to the one whose diagram this is", () => {
@@ -190,40 +172,10 @@ describe("inside the service", () => {
   });
 });
 
-describe("which diagram a store is drawn on", () => {
-  it("draws it where it is kept, and leaves the diagrams under that to their own work", async () => {
-    // The database is a child of the application, so the application's own
-    // diagram is where it belongs, and nothing under it borrows it.
-    const top = await open("link-shortener", "kept");
-    expect(top.nodes.has("links-db")).toBe(true);
-
-    const service = await open("link-shortener/api", "kept");
-    expect(service.nodes.has("links-db")).toBe(false);
-    expect([...service.nodes.keys()]).toEqual(["create-link", "follow-link"]);
-  });
-
-  it("draws it on every level when every level should say where its data comes from", async () => {
-    const service = await open("link-shortener/api", "everywhere");
-    expect(service.nodes.get("links-db")!.referenced).toBe(true);
-    expect(reachedBy(service, "follow-link")).toContain("links-db");
-  });
-
-  it("draws it beside the block that truly touches it, and nowhere else", async () => {
-    const service = await open("link-shortener/api", "used");
-    // create-link says so itself; follow-link only contains a block that does.
-    expect(reachedBy(service, "create-link")).toEqual(["links-db"]);
-    expect(reachedBy(service, "follow-link")).toEqual([]);
-
-    // And the level above says nothing at all, because nothing there declares it.
-    const top = await open("link-shortener", "used");
-    expect([...top.accesses.values()].map((link) => link.target)).toEqual(["api"]);
-  });
-});
-
 describe("inside the request path", () => {
   let graph: Graph;
   beforeAll(async () => {
-    graph = await open("link-shortener/api/follow-link", "everywhere");
+    graph = await open("link-shortener/api/follow-link");
   });
 
   it("keeps the handlers' own wires, which are still ordinary wires", () => {
@@ -236,17 +188,5 @@ describe("inside the request path", () => {
       "resolve-link.link",
       "record-click.click",
     ].sort());
-  });
-
-  it("reaches three resources, every one of them from further out", () => {
-    const targets = [...graph.accesses.values()].map((link) => `${link.source}->${link.target}`).sort();
-    expect(targets).toEqual([
-      "locate-visitor->geo-lookup",
-      "record-click->click-events",
-      "resolve-link->links-db",
-    ]);
-    for (const key of ["links-db", "geo-lookup", "click-events"]) {
-      expect(graph.nodes.get(key)!.referenced).toBe(true);
-    }
   });
 });

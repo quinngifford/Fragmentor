@@ -70,7 +70,9 @@ Colour says which world a thing belongs to, and runs from what is most yours to 
 
 A dashed line means one thing and only one thing: not built yet. Everything planned is grey and dashed, blocks and connections alike, whatever colour it would otherwise have taken.
 
-An arrangement is a default, not a rule. A person can move any block, and where they left it is remembered.
+A store is drawn on the diagram it belongs to and nowhere else, so where a store sits in the hierarchy is a decision that shows, and the diagrams under it are left to their own functions.
+
+An arrangement is a default, not a rule. A person can move any block, and where they left it is remembered. So is a colour: which colour a kind or a single block takes is the person's, and stays in their browser rather than in the files everyone shares.
 
 Nothing is generated, checked or run for an architecture block, or for a block holding one anywhere beneath it — the same rule as a plan, for the same reason: there is no chain of calls to write when one of the links is a database. The code that opens the real connections and calls into these is the framework's, and lives outside `blocks/`. The function blocks **inside** a service are ordinary blocks, generated, checked, run and tested as usual, which is what lets a project hold an honest end-to-end architecture at the top and a fully verified block hierarchy underneath each service.
 

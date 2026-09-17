@@ -44,12 +44,6 @@ export interface GraphNode {
   outputs: SnapshotPort[];
   /** Architecture blocks only: the tables, channels or operations drawn inside it. */
   exposes: SnapshotExposed[];
-  /**
-   * A resource that lives above this diagram rather than in it, drawn here
-   * because something in here reaches it. Dragging or opening it still works;
-   * it is simply not one of this parent's children.
-   */
-  referenced: boolean;
   capabilities: SnapshotCapability[];
   child: SnapshotChild | null;
   block: SnapshotBlock | null;
@@ -187,7 +181,6 @@ export function buildGraph(view: string): Graph | null {
       boundary: true,
       outputs: parent.inputs,
       exposes: [],
-      referenced: false,
       capabilities: [],
       child: null,
       block: null,
@@ -202,7 +195,7 @@ export function buildGraph(view: string): Graph | null {
     // it; only a function is worth labelling by whether it has children.
     nodes.set(child.block, {
       ...(block.architecture
-        ? resourceNode(child.block, block, false)
+        ? resourceNode(child.block, block)
         : {
             key: child.block,
             label: block.name,
@@ -210,8 +203,7 @@ export function buildGraph(view: string): Graph | null {
             boundary: false,
             outputs: block.outputs,
             exposes: [],
-            referenced: false,
-            capabilities: block.capabilities,
+                  capabilities: block.capabilities,
             block,
             groups: [],
           }),
@@ -227,7 +219,6 @@ export function buildGraph(view: string): Graph | null {
       boundary: true,
       outputs: [],
       exposes: [],
-      referenced: false,
       capabilities: [],
       child: null,
       block: null,
@@ -292,22 +283,11 @@ function buildAccesses(parent: SnapshotBlock, nodes: Map<string, GraphNode>): Ma
           continue;
         }
 
-        // Drawn only beside the block that truly touches it, so nothing is
-        // said about a store on a level that only contains it at a distance.
-        if (viewSettings.storesAt === "used" && block.path !== child.path) continue;
-
-        // The resource is a child of this parent, or it lives further out.
-        // Bringing one in from further out is what says, on every diagram
-        // under it, where the data comes from; left out, the diagrams below
-        // show their own functions and nothing else.
-        let key = childPaths.get(target);
-        if (key === undefined) {
-          if (viewSettings.storesAt === "kept") continue;
-          const resource = snapshot.blocks[target];
-          if (!resource) continue;
-          key = resource.id;
-          if (!nodes.has(key)) nodes.set(key, resourceNode(key, resource, true));
-        }
+        // A store is drawn on the diagram it belongs to and nowhere else, so
+        // an access to one kept further out belongs to that diagram, not this
+        // one. The diagrams underneath are left to their own functions.
+        const key = childPaths.get(target);
+        if (key === undefined) continue;
 
         const id = `${child.block}=>${key}:${access.verb}`;
         let link = links.get(id);
@@ -343,7 +323,7 @@ function buildAccesses(parent: SnapshotBlock, nodes: Map<string, GraphNode>): Ma
 }
 
 /** A block drawn as the thing it stands for rather than as a function. */
-function resourceNode(key: string, block: SnapshotBlock, referenced: boolean): GraphNode {
+function resourceNode(key: string, block: SnapshotBlock): GraphNode {
   return {
     key,
     label: block.name,
@@ -351,7 +331,6 @@ function resourceNode(key: string, block: SnapshotBlock, referenced: boolean): G
     boundary: false,
     outputs: [],
     exposes: block.exposes,
-    referenced,
     capabilities: [],
     child: null,
     block,

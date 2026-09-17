@@ -195,18 +195,6 @@ export function currentBlock() {
  */
 export type ColourBy = "role" | "block";
 
-/**
- * Which diagram a store is drawn on.
- *
- * `kept` draws it where it belongs, with everything reaching it from inside
- * the blocks beside it gathered onto one line; the diagrams underneath are
- * left to their own functions. `everywhere` also brings it into each of those
- * diagrams, so no level hides where its data comes from. `used` does the
- * opposite: it is drawn only beside the block that truly touches it, however
- * deep that is, and the levels above say nothing about it.
- */
-export type StoresAt = "kept" | "everywhere" | "used";
-
 /** A viewing preference rather than part of the design, so it stays in this profile. */
 function readChoice<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
   try {
@@ -225,19 +213,13 @@ function writeChoice(key: string, value: string): void {
   }
 }
 
-export const COLOUR_BY: readonly ColourBy[] = ["role", "block"];
-export const STORES_AT: readonly StoresAt[] = ["kept", "everywhere", "used"];
+export const COLOUR_BY: readonly ColourBy[] = ["block", "role"];
 
 export const viewSettings = {
-  colourBy: readChoice("fragmentor.colourBy", COLOUR_BY, "role"),
-  storesAt: readChoice("fragmentor.storesAt", STORES_AT, "kept"),
+  colourBy: readChoice("fragmentor.colourBy", COLOUR_BY, "block"),
   setColourBy(value: ColourBy): void {
     this.colourBy = value;
     writeChoice("fragmentor.colourBy", value);
-  },
-  setStoresAt(value: StoresAt): void {
-    this.storesAt = value;
-    writeChoice("fragmentor.storesAt", value);
   },
 };
 
@@ -308,7 +290,7 @@ export const busColors = {
  * browser profile.
  */
 export const DEFAULT_ROLE_COLOURS: Record<Role, string> = {
-  function: "#66E3A4",   // bright mint green
+  function: "#37dc89",   // bright mint green
   structure: "#67D8FF",  // bright cyan
   queue: "#FFD166",      // warm yellow
   storage: "#5EEAD4",    // aqua/teal
@@ -323,7 +305,7 @@ export const DEFAULT_ROLE_COLOURS: Record<Role, string> = {
  * Ordered so neighbouring colours stay visually distinct.
  */
 export const BLOCK_PALETTE = [
-  "#66E3A4", // mint
+  "#37dc89", // mint
   "#C084FC", // purple
   "#FFD166", // yellow
   "#67D8FF", // cyan
