@@ -20,6 +20,7 @@ import {
 } from "./graph.js";
 import type { AccessLink, Bus, Graph, GraphNode } from "./graph.js";
 import { requireSnapshot, ui } from "./state.js";
+import { ROLES } from "../../src/model/roles.js";
 
 /**
  * The diagram.
@@ -743,8 +744,9 @@ function accessGeometry(graph: Graph, layout: Map<string, Point>, link: AccessLi
 
   const stop = shortOf(ends.to, ends.from);
   // Out of a block goes down its right, back into it comes up its left, which
-  // is the loop a store below it makes.
-  const bow = link.direction === "out" ? BOW : -BOW;
+  // is the loop a store below it makes. Each further line on the same side
+  // swings wider, so one on its way past a nearer store goes round it.
+  const bow = (link.direction === "out" ? BOW : -BOW) * (1 + link.lane * 0.45);
   const dropping = Math.abs(stop.y - ends.from.y) > Math.abs(stop.x - ends.from.x);
   return {
     path: accessCurve(ends.from, stop, bow),
@@ -756,13 +758,17 @@ function accessGeometry(graph: Graph, layout: Map<string, Point>, link: AccessLi
 }
 
 /** `reads users`, then `reads 3 tables` once there are too many to name. */
-function accessLabel(link: AccessLink): string {
-  const named = link.entries.filter((entry) => entry.entry !== null);
+function accessLabel(link: AccessLink, resource: GraphNode | undefined): string {
   if (link.entries.length === 1) {
     const only = link.entries[0]!;
     return only.entry === null ? only.verb : `${only.verb} ${only.entry}`;
   }
-  return named.length === link.entries.length ? `${link.verb} ${named.length}` : link.verb;
+  const named = link.entries.filter((entry) => entry.entry !== null).length;
+  if (named !== link.entries.length) return link.verb;
+  // Counted in whatever the resource calls them, so "calls 2" reads as the
+  // two operations it is rather than as a number nobody can place.
+  const noun = resource?.block ? ROLES[resource.block.role].entryNoun : "in all";
+  return `${link.verb} ${named} ${noun}s`;
 }
 
 /** What an access carries, as the resource describes it. */
@@ -812,7 +818,7 @@ function drawAccesses(graph: Graph, layout: Map<string, Point>, layer: Element, 
       y: geometry.middle.y,
       class: "access-label",
       "text-anchor": "middle",
-    }, group).textContent = accessLabel(link);
+    }, group).textContent = accessLabel(link, resource);
 
     // An access is a standing relationship rather than a value travelling, so
     // it fades in where a new bus is drawn along its length.

@@ -273,6 +273,13 @@ function linkedCodeSection(block: SnapshotBlock): HTMLElement {
   return node;
 }
 
+/** Named and coloured the way the block is drawn on the canvas. */
+function roleBadge(block: SnapshotBlock): HTMLElement {
+  const badge = el("span", "badge role", block.roleLabel.toLowerCase());
+  badge.dataset.role = block.role;
+  return badge;
+}
+
 /** What an architecture block offers, in place of the contract it has none of. */
 function exposedSection(block: SnapshotBlock): HTMLElement {
   const noun = ROLES[block.role].entryNoun;
@@ -383,7 +390,7 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   // blocks inside it, so the role takes the first badge.
   badges.append(
     block.architecture
-      ? el("span", "badge role", block.roleLabel.toLowerCase())
+      ? roleBadge(block)
       : el("span", `badge${block.kind === "composite" ? " composite" : ""}`, block.kind),
   );
   badges.append(

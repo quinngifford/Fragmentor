@@ -412,7 +412,10 @@ function renderTree(): void {
       el("span", "glyph", block.architecture ? "◈" : block.kind === "composite" ? "▣" : "▫"),
       el("span", "label", block.id),
     );
-    if (block.architecture) button.dataset.architecture = "true";
+    if (block.architecture) {
+      button.dataset.architecture = "true";
+      button.dataset.role = block.role;
+    }
     if (before && !before.has(path)) button.classList.add("appearing");
     shown.add(path);
 

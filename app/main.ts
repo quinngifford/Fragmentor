@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, watch, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, watch, writeFileSync } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { access, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -52,16 +52,22 @@ function selfChecking(): boolean {
  */
 const selfCheck = selfChecking() ? prepareSelfCheck() : null;
 
-function prepareSelfCheck(): { root: string; projectDir: string } {
+function prepareSelfCheck(): { root: string; projectDir: string; application: string } {
   const root = mkdtempSync(path.join(tmpdir(), "fragmentor-self-check-"));
   const projectDir = path.join(root, "project");
   const userData = path.join(root, "user-data");
   mkdirSync(projectDir);
   mkdirSync(userData);
-  // Offered on the welcome screen as a recent project, which is how the check opens it.
-  writeFileSync(path.join(userData, "recent-projects.json"), JSON.stringify([projectDir]));
+
+  // A copy of the one example that draws a whole application, so the check
+  // can look at a real architecture without touching the repository's own.
+  const application = path.join(root, "link-shortener");
+  cpSync(path.join(repoRoot, "examples", "link-shortener"), application, { recursive: true });
+
+  // Offered on the welcome screen as recent projects, which is how the check opens them.
+  writeFileSync(path.join(userData, "recent-projects.json"), JSON.stringify([projectDir, application]));
   app.setPath("userData", userData);
-  return { root, projectDir };
+  return { root, projectDir, application };
 }
 
 function ok<T>(value: T): Result<T> {
@@ -756,6 +762,20 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("dialog", "answerableAgain") === true,
     ],
     [
+      "a whole application reads across and down: who starts it on the left, what it calls to the right, and what it keeps underneath",
+      value("application", "opened") === true &&
+        value("application", "clientLeft") === true &&
+        value("application", "callsRight") === true &&
+        value("application", "storeBelow") === true &&
+        value("application", "queueBelow") === true &&
+        value("application", "readAndWrite") === true &&
+        // Violet service, blue store, cyan queue, amber client.
+        value("application", "colours") ===
+          "rgb(185, 140, 230) rgb(90, 169, 230) rgb(79, 201, 227) rgb(226, 165, 75)" &&
+        value("application", "plannedBlock") === "true" &&
+        value("application", "plannedLine") === true,
+    ],
+    [
       "a database is drawn as itself, with its shape on show and the block that reads it joined to it",
       value("architecture", "drawn") === true &&
         value("architecture", "label") === "DATABASE" &&
@@ -919,7 +939,7 @@ async function capture(window: BrowserWindow, name: string): Promise<void> {
 
 // Electron exits with 0 on app.quit() whatever process.exitCode says, so the
 // self-check exits explicitly, or a failed check would pass as a command.
-function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDir: string }): void {
+function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDir: string; application: string }): void {
   window.webContents.on("did-fail-load", (_event, code, description) => {
     console.error(`The window failed to load: ${description} (${code})`);
     app.exit(1);
@@ -1486,6 +1506,40 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
             status: text("#status"),
           };
         `);
+
+
+        // A whole application, which is the only diagram that puts every kind
+        // of block and every kind of connection on screen at once.
+        await run("application", `
+          const link = [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.application)});
+          if (!link) return { opened: false };
+          link.click();
+          if (!(await until(() => document.querySelector('.block-box[data-key="links-db"]')))) return { opened: false };
+          document.getElementById("zoom-fit").click();
+          await wait(600);
+
+          const box = (key) => document.querySelector('.block-box[data-key="' + key + '"]').getBoundingClientRect();
+          const colour = (key) => getComputedStyle(document.querySelector('.block-box[data-key="' + key + '"] .block-kind')).fill;
+          const line = (id) => document.querySelector('.access-group[data-access="' + id + '"] .access');
+
+          return {
+            opened: true,
+            // Whoever starts the system on the left, what it calls to the right.
+            clientLeft: box("browser").left < box("api").left,
+            callsRight: box("api").left < box("geo-lookup").left,
+            // What it keeps, underneath rather than further along.
+            storeBelow: box("links-db").top >= box("api").bottom,
+            queueBelow: box("click-events").top >= box("api").bottom,
+            // One line each way to the database, not one line saying "connected".
+            readAndWrite: Boolean(line("api=>links-db:reads")) && Boolean(line("api=>links-db:writes")),
+            colours: [colour("api"), colour("links-db"), colour("click-events"), colour("browser")].join(" "),
+            // Nothing calls a geolocation provider yet, so both the block and
+            // the line to it are drawn as the plan they are.
+            plannedLine: getComputedStyle(line("api=>geo-lookup:calls")).strokeDasharray !== "none",
+            plannedBlock: document.querySelector('.block-box[data-key="geo-lookup"]').dataset.planned,
+          };
+        `);
+        await capture(window, "self-check-application");
 
         console.log(JSON.stringify(report, null, 2));
 

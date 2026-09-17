@@ -270,8 +270,9 @@ body[data-project="open"] .welcome { display: none; }
 
 .welcome-link:hover { color: var(--signal); border-color: var(--signal-dim); }
 
-/* A mark of its own in the rail for a block that is not code. */
-.node[data-architecture="true"] .glyph { color: var(--effect); }
+/* A mark of its own in the rail for a block that is not code, in the colour
+   it is drawn in on the canvas. */
+.node[data-architecture="true"] .glyph { color: var(--role); }
 
 .btn.tiny { padding: 1px 6px; font-size: 10px; }
 .ptype.bad { color: var(--bad); }
@@ -300,6 +301,14 @@ body[data-project="open"] .welcome { display: none; }
 
    These come before the planned rules deliberately: a planned database should
    read as planned first. */
+[data-role="function"] { --role: var(--role-function); }
+[data-role="service"] { --role: var(--role-service); }
+[data-role="external"] { --role: var(--role-external); }
+[data-role="database"] { --role: var(--role-database); }
+[data-role="storage"] { --role: var(--role-storage); }
+[data-role="queue"] { --role: var(--role-queue); }
+[data-role="client"] { --role: var(--role-client); }
+
 .block-box[data-role="function"] { --role: var(--role-function); }
 .block-box[data-role="service"] { --role: var(--role-service); }
 .block-box[data-role="external"] { --role: var(--role-external); }
@@ -426,7 +435,7 @@ body[data-project="open"] .welcome { display: none; }
 .badge.composite { border-color: var(--signal-dim); color: var(--signal); }
 .badge.state { border-color: #3d4a52; color: var(--pending); }
 .badge.state.planned { border-color: var(--rule-bright); color: var(--ink-faint); border-style: dashed; }
-.badge.role { border-color: #6b5327; color: var(--effect); }
+.badge.role { border-color: color-mix(in srgb, var(--role) 45%, var(--ground)); color: var(--role); }
 
 
 .responsibility { margin: 0; font-size: 13px; color: var(--ink); }
