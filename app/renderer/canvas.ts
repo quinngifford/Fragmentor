@@ -20,9 +20,9 @@ import {
   measure,
 } from "./graph.js";
 import type { AccessLink, Bus, Graph, GraphNode } from "./graph.js";
-import { requireSnapshot, ui, viewSettings } from "./state.js";
+import { requireSnapshot, roleColours, ui, viewSettings } from "./state.js";
 import { el } from "./dom.js";
-import { ROLES } from "../../src/model/roles.js";
+import { ROLES, ROLE_IDS } from "../../src/model/roles.js";
 
 /**
  * The diagram.
@@ -602,50 +602,79 @@ export function showCanvasMessage(text: string): void {
 }
 
 /**
- * What the colours on this diagram mean, for as long as they mean anything.
+ * What the colours mean, and where they are changed.
  *
- * Only what is actually on screen is listed, so the legend says something
- * about the diagram in front of you rather than reciting every kind of block
- * Fragmentor knows. Coloured block by block there is nothing to explain, so
- * it goes away.
+ * Every kind is listed whatever happens to be on this diagram, because the
+ * legend is also where a colour is chosen: a kind missing from the list would
+ * be a colour nobody could reach. What is on screen is marked, so the list
+ * still says something about the diagram in front of you.
+ *
+ * Coloured block by block there is nothing to explain and each block's colour
+ * is set in the inspector instead, so the legend goes away.
  */
 function renderLegend(graph: Graph | null): void {
   const legend = element<HTMLElement>("legend");
-  legend.replaceChildren();
 
   if (!graph || viewSettings.colourBy !== "role") {
     legend.hidden = true;
     return;
   }
 
-  const entry = (role: string, text: string) => {
+  legend.hidden = false;
+  legend.dataset.collapsed = String(ui.legendCollapsed);
+  legend.replaceChildren();
+
+  const head = el("div", "legend-head");
+  const toggle = el("button", "legend-toggle");
+  toggle.type = "button";
+  toggle.textContent = ui.legendCollapsed ? "▸ Colours" : "▾ Colours";
+  toggle.title = ui.legendCollapsed ? "Show what the colours mean" : "Hide the colours";
+  toggle.addEventListener("click", () => {
+    ui.setLegendCollapsed(!ui.legendCollapsed);
+    renderLegend(graph);
+  });
+  head.append(toggle);
+  legend.append(head);
+
+  if (ui.legendCollapsed) return;
+
+  const present = new Set(
+    [...graph.nodes.values()].flatMap((node) => (node.block && !node.block.planned ? [node.block.role] : [])),
+  );
+
+  for (const role of ROLE_IDS) {
     const row = el("div", "legend-row");
     row.dataset.role = role;
-    row.append(el("span", "legend-swatch"), el("span", "legend-text", text));
-    return row;
-  };
+    row.dataset.here = String(present.has(role));
 
-  const rows: HTMLElement[] = [];
-  // Green is on every diagram that hands a value from one call to the next,
-  // whether or not a wire happens to be drawn on this one.
-  if (graph.signals.length > 0 || [...graph.nodes.values()].some((node) => !node.block?.architecture)) {
-    rows.push(entry("function", "code, and what passes between it"));
+    // The swatch is the colour input itself, so one press opens the picker
+    // rather than a menu that then offers one.
+    const swatch = el("input", "legend-swatch");
+    swatch.type = "color";
+    swatch.value = roleColours.get(role);
+    swatch.title = `${ROLES[role].label}: ${ROLES[role].description}`;
+    swatch.addEventListener("input", () => {
+      roleColours.set(role, swatch.value);
+    });
+
+    const name = el("span", "legend-text", role === "function" ? "code, and what passes between it" : ROLES[role].label.toLowerCase());
+    row.append(swatch, name);
+    legend.append(row);
   }
 
-  const shown = new Set<string>();
-  for (const node of graph.nodes.values()) {
-    const block = node.block;
-    if (!block || !block.architecture || block.planned || shown.has(block.role)) continue;
-    shown.add(block.role);
-    rows.push(entry(block.role, ROLES[block.role].label.toLowerCase()));
-  }
+  const planned = el("div", "legend-row");
+  planned.dataset.role = "planned";
+  planned.dataset.here = String([...graph.nodes.values()].some((node) => node.block?.planned));
+  planned.append(el("span", "legend-swatch fixed"), el("span", "legend-text", "planned, not built yet"));
+  legend.append(planned);
 
-  if ([...graph.nodes.values()].some((node) => node.block?.planned)) {
-    rows.push(entry("planned", "planned, not built yet"));
-  }
-
-  legend.hidden = rows.length < 2;
-  legend.append(...rows);
+  const reset = el("button", "legend-reset", "Back to the defaults");
+  reset.type = "button";
+  reset.addEventListener("click", () => {
+    for (const role of ROLE_IDS) roleColours.set(role, null);
+    renderLegend(graph);
+  });
+  legend.append(reset);
 }
 
 /** Blocks arriving together come in one after another, the way they were written. */
@@ -855,7 +884,7 @@ function drawAccesses(graph: Graph, layout: Map<string, Point>, layer: Element, 
     // out of, so one colour can be followed from where it starts.
     if (viewSettings.colourBy === "block" && !planned) {
       const from = link.direction === "in" ? link.target : link.source;
-      group.style.setProperty("--role", blockColour(graph, from));
+      group.style.setProperty("--role", blockColour(graph, ui.view, from));
     }
 
     svgEl("path", { d: geometry.path, class: "access", "marker-end": "url(#access-arrow)" }, group);
@@ -939,7 +968,7 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
   // that cannot know where a block sits. A planned block keeps its grey: it
   // is not built, which outranks what kind of thing it would have been.
   if (viewSettings.colourBy === "block" && node.block && !node.block.planned) {
-    group.style.setProperty("--role", blockColour(graph, node.key));
+    group.style.setProperty("--role", blockColour(graph, ui.view, node.key));
   }
 
   // A planned block is on the diagram to be read, so what it is for and the

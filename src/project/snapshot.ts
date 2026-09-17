@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { AccessVerb, Mode } from "../model/block.js";
 import { formatAccess, formatWire } from "../model/block.js";
-import { ROLES, isArchitecture } from "../model/roles.js";
+import { isArchitecture, roleLabel } from "../model/roles.js";
 import type { Role } from "../model/roles.js";
 import { describeType } from "../model/types.js";
 import type { PortType } from "../model/types.js";
@@ -119,7 +119,9 @@ export interface SnapshotBlock {
   kind: "leaf" | "composite";
   /** What kind of thing the block stands for: a function, or a piece of the architecture. */
   role: Role;
-  /** Shown on the block: FUNCTION, DATABASE, QUEUE. */
+  /** What it is exactly within that role: `Dictionary`, `REST API`. */
+  subtype: string | null;
+  /** Shown on the block: `DATABASE`, or `DATA STRUCTURE: Dictionary`. */
   roleLabel: string;
   /** True for every role but `function`: something the system talks to rather than code. */
   architecture: boolean;
@@ -282,7 +284,8 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       responsibility: block.responsibility,
       kind: block.kind,
       role: block.role,
-      roleLabel: ROLES[block.role].label,
+      subtype: block.subtype ?? null,
+      roleLabel: roleLabel(block.role, block.subtype),
       architecture: isArchitecture(block.role),
       holdsArchitecture: holdsArchitecture(node),
       planned: block.planned,

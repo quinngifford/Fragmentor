@@ -8,7 +8,7 @@ import type {
   SnapshotPort,
 } from "../../src/project/snapshot.js";
 import type { Point } from "../../src/project/layout.js";
-import { BLOCK_PALETTE, BUS_PALETTE, busColors, requireSnapshot, viewSettings } from "./state.js";
+import { BLOCK_PALETTE, BUS_PALETTE, blockColours, busColors, requireSnapshot, viewSettings } from "./state.js";
 
 /**
  * The diagram as drawn.
@@ -132,6 +132,7 @@ function projectAsBlock(): SnapshotBlock {
     outputs: [],
     capabilities: [],
     role: "function" as const,
+    subtype: null,
     roleLabel: "",
     architecture: false,
     holdsArchitecture: false,
@@ -365,7 +366,9 @@ function resourceNode(key: string, block: SnapshotBlock, referenced: boolean): G
  * given neighbouring hues, and so the same block keeps its colour between
  * redraws for as long as the diagram holds the same blocks.
  */
-export function blockColour(graph: Graph, key: string): string {
+export function blockColour(graph: Graph, view: string, key: string): string {
+  const chosen = blockColours.get(view, key);
+  if (chosen) return chosen;
   const order = [...graph.nodes.keys()];
   const at = order.indexOf(key);
   return BLOCK_PALETTE[(at < 0 ? 0 : at) % BLOCK_PALETTE.length]!;
@@ -377,7 +380,7 @@ export function busColour(graph: Graph, view: string, bus: Bus): string {
   // Coloured block by block, what leaves a block matches it. Coloured by
   // role, every bus is data inside the program, so they are shades of the one
   // colour that means that.
-  if (viewSettings.colourBy === "block") return blockColour(graph, bus.source);
+  if (viewSettings.colourBy === "block") return blockColour(graph, view, bus.source);
   const order = [...graph.nodes.keys()];
   return BUS_PALETTE[order.indexOf(bus.source) % BUS_PALETTE.length]!;
 }

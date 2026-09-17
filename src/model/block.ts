@@ -163,6 +163,13 @@ export interface Block {
    * to, and nothing is generated, checked or run for it.
    */
   role: Role;
+  /**
+   * What it is exactly, within its role: `Dictionary`, `REST API`,
+   * `PostgreSQL`. Free text, because no list of these would ever be finished,
+   * and it changes nothing but the label — blocks of one role are drawn alike
+   * however their subtypes differ.
+   */
+  subtype?: string;
   inputs: Record<string, Port>;
   outputs: Record<string, Port>;
   /** Architecture blocks only: the tables, channels or operations it offers. */
@@ -411,6 +418,7 @@ function blockFileSchema(mode: Mode, planned: boolean) {
           error: `must be one of ${ROLE_IDS.join(", ")}. Leave it out for an ordinary function block.`,
         })
         .default("function"),
+      subtype: z.string().min(1, "a subtype cannot be empty").optional(),
       planned: z.boolean().default(false),
       code: z.string().min(1).optional(),
       inputs: z.record(portName, portSchema(freeText)).default({}),
@@ -449,6 +457,10 @@ function blockFileSchema(mode: Mode, planned: boolean) {
     .refine((file) => !isArchitecture(file.role) || Object.keys(file.capabilities).length === 0, {
       message: `capabilities are what a function's code is handed when it runs. An architecture block is not code Fragmentor runs, so it declares none.`,
       path: ["capabilities"],
+    })
+    .refine((file) => isArchitecture(file.role) || file.subtype === undefined, {
+      message: `"subtype" says what kind of thing a block is exactly, which only means something once it has a "role".`,
+      path: ["subtype"],
     })
     .refine((file) => isArchitecture(file.role) || Object.keys(file.exposes).length === 0, {
       message: `"exposes" describes the tables, channels or operations of an architecture block. A function block's interface is its inputs and outputs, so give it a "role" or use those.`,
@@ -511,6 +523,7 @@ export function parseBlockFile(
     planned,
   };
   if (file.code !== undefined) block.code = file.code;
+  if (file.subtype !== undefined) block.subtype = file.subtype;
   return { ok: true, block };
 }
 
@@ -563,6 +576,7 @@ export function blockToFileShape(block: Block): Record<string, unknown> {
   if (block.name !== nameFromId(block.id)) file.name = block.name;
   file.responsibility = block.responsibility;
   if (block.role !== "function") file.role = block.role;
+  if (block.subtype !== undefined) file.subtype = block.subtype;
   if (block.planned) file.planned = true;
   if (block.code !== undefined) file.code = block.code;
   if (Object.keys(block.inputs).length > 0) file.inputs = ports(block.inputs);

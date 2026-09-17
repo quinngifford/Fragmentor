@@ -350,9 +350,23 @@ describe("blocks that are not functions", () => {
     ]);
   });
 
+  it("keeps a subtype beside the role, and refuses one without a role", () => {
+    const block = blockFromFile(
+      { role: "structure", subtype: "Dictionary", responsibility: "Holds the open sessions." },
+      "sessions",
+    );
+    expect(block.subtype).toBe("Dictionary");
+    expect(blockToFileShape(block).subtype).toBe("Dictionary");
+
+    // Without a role there is no general kind for it to be a kind of.
+    expect(problemsWith({ responsibility: "Scores a posting.", subtype: "Dictionary" })).toEqual([
+      expect.stringContaining('only means something once it has a "role"'),
+    ]);
+  });
+
   it("names an unknown role and says what the roles are", () => {
     expect(problemsWith({ role: "lambda", responsibility: "Runs." })).toEqual([
-      expect.stringContaining("must be one of function, service, external, database, storage, queue, client"),
+      expect.stringContaining("must be one of function, service, external, database, storage, queue, structure, client"),
     ]);
   });
 });

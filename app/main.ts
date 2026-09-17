@@ -769,9 +769,10 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("application", "storeBelow") === true &&
         value("application", "queueBelow") === true &&
         value("application", "readAndWrite") === true &&
-        // Violet service, blue store, cyan queue, amber client.
-        value("application", "colours") ===
-          "rgb(185, 140, 230) rgb(90, 169, 230) rgb(79, 201, 227) rgb(226, 165, 75)" &&
+        // Four kinds, four colours. Which exact colours is the person's to
+        // choose, and a screen can shift them, so what is held here is that
+        // they are told apart rather than what they are.
+        value("application", "distinctColours") === true &&
         value("application", "plannedBlock") === "true" &&
         value("application", "plannedLine") === true,
     ],
@@ -797,12 +798,16 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         Number(value("architecture", "columns")) === 3 &&
         value("architecture", "joined") === true &&
         value("architecture", "joinLabel") === "reads postings" &&
-        // Blue, the colour a store and everything reaching it is drawn in.
-        value("architecture", "joinColour") === "rgb(90, 169, 230)" &&
+        // A line takes the colour of what it reaches, so the two agree.
+        value("architecture", "lineMatchesStore") === true &&
         // Dashed means not built yet, and this one is built.
         ["none", ""].includes(String(value("architecture", "solid"))) &&
         value("architecture", "below") === true &&
-        /not code/.test(String(value("architecture", "notCode"))) &&
+        // It says what kind of thing it is. It used to say "not code" of a
+        // service as well, which is plainly untrue of one: the blocks inside
+        // it are code, and right there.
+        /database/.test(String(value("architecture", "badges"))) &&
+        !/not code/.test(String(value("architecture", "badges"))) &&
         /postings/.test(String(value("architecture", "offers"))) &&
         value("architecture", "noPorts") === true,
     ],
@@ -1496,13 +1501,15 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
             columns: box.querySelectorAll(".exposed-field").length,
             joined: Boolean(document.querySelector('.access-group[data-access="load-postings=>postings-db:reads"]')),
             joinLabel: text(".access-label"),
-            joinColour: getComputedStyle(document.querySelector(".access")).stroke,
+            lineMatchesStore:
+              getComputedStyle(document.querySelector(".access")).stroke ===
+              getComputedStyle(box.querySelector(".block-kind")).fill,
             solid: getComputedStyle(document.querySelector(".access")).strokeDasharray,
             below: (() => {
               const reader = document.querySelector('.block-box[data-key="load-postings"]').getBoundingClientRect();
               return box.getBoundingClientRect().top >= reader.bottom;
             })(),
-            notCode: [...document.querySelectorAll(".badge")].map((b) => b.textContent).join(" "),
+            badges: [...document.querySelectorAll(".badge")].map((b) => b.textContent).join(" "),
             offers: [...document.querySelectorAll(".insp-body .pname, .ports .pname")].map((n) => n.textContent).join(" "),
             noPorts: ![...document.querySelectorAll(".section h4")].some((h) => h.textContent === "Inputs"),
           };
@@ -1547,7 +1554,7 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
             queueBelow: box("click-events").top >= box("api").bottom,
             // One line each way to the database, not one line saying "connected".
             readAndWrite: Boolean(line("api=>links-db:reads")) && Boolean(line("api=>links-db:writes")),
-            colours: [colour("api"), colour("links-db"), colour("click-events"), colour("browser")].join(" "),
+            distinctColours: new Set([colour("api"), colour("links-db"), colour("click-events"), colour("browser")]).size === 4,
             // Nothing calls a geolocation provider yet, so both the block and
             // the line to it are drawn as the plan they are.
             plannedLine: getComputedStyle(line("api=>geo-lookup:calls")).strokeDasharray !== "none",
@@ -1560,9 +1567,11 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
         // is actually drawn rather than only what the button says.
         await run("toggles", `
           const legendRows = () => document.querySelectorAll("#legend .legend-row").length;
-          const swatch = (role) => {
-            const row = document.querySelector('#legend .legend-row[data-role="' + role + '"] .legend-swatch');
-            return row ? getComputedStyle(row).backgroundColor : "";
+          // Read as the variable rather than as a painted colour, so the two
+          // can be compared without minding how each one is written out.
+          const roleOf = (selector) => {
+            const found = document.querySelector(selector);
+            return found ? getComputedStyle(found).getPropertyValue("--role").trim() : "";
           };
           // Clicking a composite in the rail opens its diagram, which is what
           // the check wants; only a leaf would merely be selected.
@@ -1574,7 +1583,11 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
             return text(".crumbs") && text(".crumbs").includes(id) ? null : "did not open " + id;
           };
 
-          const named = legendRows() > 0 && swatch("database") === "rgb(90, 169, 230)";
+          // Every kind is listed whatever is on this diagram, because the
+          // legend is also where a colour is chosen — and each swatch shows
+          // the colour that kind is actually drawn in.
+          const swatch = roleOf('#legend .legend-row[data-role="database"]');
+          const named = legendRows() === 9 && swatch !== "" && swatch === roleOf('.block-box[data-key="links-db"]');
 
           // Inside the service, where the database is kept one level further
           // out: shown only when stores are asked for on every level.

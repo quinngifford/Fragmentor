@@ -1,7 +1,7 @@
 import type { SnapshotBlock, SnapshotCode } from "../../src/project/snapshot.js";
 import type { ProjectDiagnostic } from "../../src/project/project.js";
-import { BUS_PALETTE, busColors, requireSnapshot, ui } from "./state.js";
-import { busColour, connectionCode } from "./graph.js";
+import { BUS_PALETTE, blockColours, busColors, requireSnapshot, ui, viewSettings } from "./state.js";
+import { blockColour, busColour, connectionCode } from "./graph.js";
 import type { AccessLink, Bus, Graph } from "./graph.js";
 import { ROLES } from "../../src/model/roles.js";
 import { graphInView, openDiagram, showBlock } from "./canvas.js";
@@ -273,6 +273,36 @@ function linkedCodeSection(block: SnapshotBlock): HTMLElement {
   return node;
 }
 
+/**
+ * What this one block is drawn in, when the diagram is coloured block by
+ * block. Its own colour is a viewing preference like the legend's, so it is
+ * remembered for this diagram in this profile rather than written into the
+ * project, where it would be someone else's diagram too.
+ */
+function blockColourControl(block: SnapshotBlock): HTMLElement | null {
+  const graph = graphInView();
+  if (viewSettings.colourBy !== "block" || !graph || !graph.nodes.has(block.id)) return null;
+
+  const row = el("div", "block-colour");
+  const swatch = el("input", "legend-swatch");
+  swatch.type = "color";
+  swatch.value = blockColour(graph, ui.view, block.id);
+  swatch.title = `What "${block.name}" is drawn in`;
+  swatch.addEventListener("input", () => {
+    blockColours.set(ui.view, block.id, swatch.value);
+    notify();
+  });
+
+  const reset = el("button", "btn quiet tiny", "Default");
+  reset.addEventListener("click", () => {
+    blockColours.set(ui.view, block.id, null);
+    notify();
+  });
+
+  row.append(el("span", "block-colour-label", "Colour"), swatch, reset);
+  return row;
+}
+
 /** Named and coloured the way the block is drawn on the canvas. */
 function roleBadge(block: SnapshotBlock): HTMLElement {
   const badge = el("span", "badge role", block.roleLabel.toLowerCase());
@@ -393,25 +423,33 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
       ? roleBadge(block)
       : el("span", `badge${block.kind === "composite" ? " composite" : ""}`, block.kind),
   );
-  badges.append(
-    el(
-      "span",
-      `badge state${block.planned ? " planned" : ""}`,
-      block.planned
-        ? "planned"
-        : block.architecture
-          ? "not code"
-          : visual
-            ? block.implemented
-              ? "linked to code"
-              : "not linked"
-            : block.implemented
-              ? "implemented"
-              : "specified",
-    ),
-  );
+  // What state a block is in only means something for one Fragmentor writes
+  // or runs. A service is code — its blocks are right there inside it — so
+  // saying "not code" of it was worse than saying nothing. In a visual
+  // project it still points at a file, and that is worth saying.
+  const state = block.planned
+    ? "planned"
+    : block.architecture
+      ? visual
+        ? block.implemented
+          ? "linked to code"
+          : "not linked"
+        : null
+      : visual
+        ? block.implemented
+          ? "linked to code"
+          : "not linked"
+        : block.implemented
+          ? "implemented"
+          : "specified";
+  if (state) badges.append(el("span", `badge state${block.planned ? " planned" : ""}`, state));
   if (block.language) badges.append(el("span", "badge", block.language));
   head.append(badges);
+
+  // Coloured block by block, this is where a block's colour is chosen; the
+  // legend is where a kind's colour is chosen, and it is showing instead.
+  const colour = blockColourControl(block);
+  if (colour) head.append(colour);
 
   if (block.kind === "composite" && block.path !== ui.view) {
     const open = el("button", "btn", "Open diagram");

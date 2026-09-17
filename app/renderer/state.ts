@@ -1,5 +1,6 @@
 import type { ProjectSnapshot } from "../../src/project/snapshot.js";
 import type { CaseResult, RunEvent, RunOutcome } from "../../src/run/run.js";
+import type { Role } from "../../src/model/roles.js";
 
 /**
  * What the interface is currently showing. Kernel types are imported for their
@@ -63,6 +64,9 @@ export interface UiState {
   panY: number;
   showRail: boolean;
   showInspector: boolean;
+  /** Whether the legend is folded away to its heading. */
+  legendCollapsed: boolean;
+  setLegendCollapsed(value: boolean): void;
   /** How wide the inspector is, in pixels. Dragged by hand and kept between sessions. */
   inspectorWidth: number;
   codeTab: "impl" | "contract";
@@ -131,6 +135,23 @@ export const ui: UiState = {
   panY: 30,
   showRail: true,
   showInspector: true,
+  // Folded away or not is a preference like the others, and outlives a
+  // project, so it is remembered here rather than reset on every open.
+  legendCollapsed: (() => {
+    try {
+      return localStorage.getItem("fragmentor.legendCollapsed") === "true";
+    } catch {
+      return false;
+    }
+  })(),
+  setLegendCollapsed(value: boolean): void {
+    this.legendCollapsed = value;
+    try {
+      localStorage.setItem("fragmentor.legendCollapsed", String(value));
+    } catch {
+      // Remembering is a nicety; folding it away still works.
+    }
+  },
   inspectorWidth: readWidth(),
   codeTab: "impl",
   userAdjusted: false,
@@ -186,22 +207,6 @@ export type ColourBy = "role" | "block";
  */
 export type StoresAt = "kept" | "everywhere" | "used";
 
-/**
- * Colours a block can be given when the diagram is coloured block by block.
- * Warm and cool alternate, so blocks near each other in a diagram are never
- * near each other on the wheel.
- */
-export const BLOCK_PALETTE = [
-  "#4fe38f",
-  "#e2a54b",
-  "#4fc9e3",
-  "#e3778c",
-  "#b5e06a",
-  "#b98ce6",
-  "#dd6a4a",
-  "#5aa9e6",
-];
-
 /** A viewing preference rather than part of the design, so it stays in this profile. */
 function readChoice<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
   try {
@@ -250,6 +255,14 @@ export const BUS_PALETTE = ["#4fe38f", "#8fe34f", "#3fcf9e", "#b5e06a", "#5fd8c0
 
 const COLORS_KEY = "fragmentor.busColors";
 
+function writeStore(key: string, value: Record<string, string>): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage can be unavailable; a choice simply falls back to the default.
+  }
+}
+
 function readStore(key: string): Record<string, string> {
   try {
     const raw = localStorage.getItem(key);
@@ -278,10 +291,92 @@ export const busColors = {
     if (colour === null) delete next[key];
     else next[key] = colour;
     this.all = next;
-    try {
-      localStorage.setItem(COLORS_KEY, JSON.stringify(next));
-    } catch {
-      // Storage can be unavailable; colours simply fall back to the defaults.
+    writeStore(COLORS_KEY, next);
+  },
+};
+
+/**
+ * What each kind of block is drawn in.
+ *
+ * Ordered as a wheel from what is most yours to what is least — code, the
+ * data it holds, the data it keeps, the programs it owns, the people it
+ * serves, the services it does not control — so the hues run in the same
+ * direction the meaning does. Green stays the signal colour it always was.
+ *
+ * These are the defaults. A person can change any of them from the legend,
+ * and their choice is theirs rather than the project's, so it stays in this
+ * browser profile.
+ */
+export const DEFAULT_ROLE_COLOURS: Record<Role, string> = {
+  function: "#5be49b",
+  structure: "#2dd4bf",
+  queue: "#22d3ee",
+  storage: "#7dd3fc",
+  database: "#5b9cf8",
+  service: "#a78bfa",
+  client: "#f0b429",
+  external: "#ef7c57",
+};
+
+/**
+ * Colours a block can be given when the diagram is coloured block by block.
+ * Warm and cool alternate, so blocks near each other in a diagram are never
+ * near each other on the wheel.
+ */
+export const BLOCK_PALETTE = [
+  "#5be49b",
+  "#f0b429",
+  "#5b9cf8",
+  "#ef7c57",
+  "#2dd4bf",
+  "#a78bfa",
+  "#e4879b",
+  "#b5e06a",
+];
+
+const ROLE_COLOURS_KEY = "fragmentor.roleColours";
+const BLOCK_COLOURS_KEY = "fragmentor.blockColours";
+
+/** What each kind is drawn in, as changed from the legend. */
+export const roleColours = {
+  all: readStore(ROLE_COLOURS_KEY) as Partial<Record<Role, string>>,
+  get(role: Role): string {
+    return this.all[role] ?? DEFAULT_ROLE_COLOURS[role];
+  },
+  set(role: Role, colour: string | null): void {
+    const next = { ...this.all };
+    if (colour === null) delete next[role];
+    else next[role] = colour;
+    this.all = next;
+    writeStore(ROLE_COLOURS_KEY, next as Record<string, string>);
+    this.apply();
+  },
+  /**
+   * Put on the document itself, so every block, line, badge and swatch of
+   * that kind follows from one place rather than each working it out.
+   */
+  apply(): void {
+    for (const role of Object.keys(DEFAULT_ROLE_COLOURS) as Role[]) {
+      document.documentElement.style.setProperty(`--role-${role}`, this.get(role));
     }
+  },
+};
+
+/** What one block is drawn in, when the diagram is coloured block by block. */
+export const blockColours = {
+  all: readStore(BLOCK_COLOURS_KEY),
+  key(view: string, blockKey: string): string {
+    return `${ui.snapshot?.dir ?? ""}|${view}|${blockKey}`;
+  },
+  get(view: string, blockKey: string): string | undefined {
+    return this.all[this.key(view, blockKey)];
+  },
+  set(view: string, blockKey: string, colour: string | null): void {
+    const key = this.key(view, blockKey);
+    const next = { ...this.all };
+    if (colour === null) delete next[key];
+    else next[key] = colour;
+    this.all = next;
+    writeStore(BLOCK_COLOURS_KEY, next);
   },
 };

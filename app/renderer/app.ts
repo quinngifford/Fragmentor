@@ -5,6 +5,7 @@ import {
   STORES_AT,
   rememberInspectorWidth,
   requireSnapshot,
+  roleColours,
   ui,
   viewSettings,
 } from "./state.js";
@@ -646,6 +647,9 @@ function wireToolbar(): void {
   element("generate-code").addEventListener("click", () => void generateCode());
   element("reload-project").addEventListener("click", () => void reload());
 
+  // The chosen colours go onto the document itself, so every block, line,
+  // badge and swatch of a kind follows from one place.
+  roleColours.apply();
   wireViewSettings();
 
   element("zoom-in").addEventListener("click", () => {

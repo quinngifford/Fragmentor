@@ -16,15 +16,8 @@
   --effect: #e2a54b;
   --pending: #7a8b96;
   --bad: #e3778c;
-  /* What kind of thing a block is, from what is most yours to what is least.
-     Change one of these and every block, line and label of that kind follows. */
-  --role-function: #4fe38f;
-  --role-service: #b98ce6;
-  --role-database: #5aa9e6;
-  --role-storage: #5aa9e6;
-  --role-queue: #4fc9e3;
-  --role-client: #e2a54b;
-  --role-external: #dd6a4a;
+  /* What kind of thing a block is: set on the document by the renderer, which
+     holds the defaults and whatever the person has changed them to. */
   /* Code colours. Quiet enough to sit beside the diagram, and distinct enough
      to be read apart at 11px. None of them is the signal green, which on this
      panel means something else. */
@@ -209,6 +202,8 @@ body[data-resizing="true"] { cursor: col-resize; }
   position: absolute;
   left: 14px;
   bottom: 56px;
+  max-height: calc(100% - 92px);
+  overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -216,18 +211,73 @@ body[data-resizing="true"] { cursor: col-resize; }
   border: 1px solid var(--rule-bright);
   border-radius: var(--radius);
   padding: 7px 9px;
-  pointer-events: none;
 }
 
 /* `display: flex` above would otherwise beat the hidden attribute's own rule. */
 .legend[hidden] { display: none; }
 
+.legend-head { display: flex; }
+.legend-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+.legend-toggle:hover { color: var(--ink-dim); }
+.legend[data-collapsed="false"] .legend-head { margin-bottom: 3px; }
+
 .legend-row { display: flex; align-items: center; gap: 7px; }
-.legend-swatch { width: 18px; height: 3px; border-radius: 2px; background: var(--role); }
-.legend-row[data-role="planned"] .legend-swatch {
+/* A kind that is not on this diagram is still listed, because the legend is
+   where its colour is chosen, but it is kept quiet. */
+.legend-row[data-here="false"] { opacity: 0.45; }
+
+/* The swatch is the colour input itself, stripped back to the colour. */
+.legend-swatch {
+  width: 20px;
+  height: 11px;
+  padding: 0;
+  border: 1px solid var(--rule-bright);
+  border-radius: 2px;
+  background: var(--role);
+  cursor: pointer;
+  appearance: none;
+  flex: none;
+}
+.legend-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+.legend-swatch::-webkit-color-swatch { border: none; border-radius: 1px; }
+.legend-swatch.fixed {
+  cursor: default;
   background: repeating-linear-gradient(90deg, var(--pending) 0 5px, transparent 5px 9px);
 }
 .legend-text { font-family: var(--mono); font-size: 10px; color: var(--ink-dim); letter-spacing: 0.03em; }
+
+.legend-reset {
+  margin-top: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink-faint);
+  cursor: pointer;
+  text-align: left;
+}
+.legend-reset:hover { color: var(--signal); }
+
+/* Where one block's colour is chosen, when the diagram is coloured that way. */
+.block-colour { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.block-colour-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
 
 .hint {
   position: absolute;
@@ -334,6 +384,7 @@ body[data-project="open"] .welcome { display: none; }
 [data-role="database"] { --role: var(--role-database); }
 [data-role="storage"] { --role: var(--role-storage); }
 [data-role="queue"] { --role: var(--role-queue); }
+[data-role="structure"] { --role: var(--role-structure); }
 [data-role="client"] { --role: var(--role-client); }
 
 .block-box[data-role="function"] { --role: var(--role-function); }
@@ -342,11 +393,13 @@ body[data-project="open"] .welcome { display: none; }
 .block-box[data-role="database"] { --role: var(--role-database); }
 .block-box[data-role="storage"] { --role: var(--role-storage); }
 .block-box[data-role="queue"] { --role: var(--role-queue); }
+.block-box[data-role="structure"] { --role: var(--role-structure); }
 .block-box[data-role="client"] { --role: var(--role-client); }
 
 .block-box[data-tinted="true"] .block-plate {
   fill: color-mix(in srgb, var(--role) 5%, var(--panel));
-  stroke: color-mix(in srgb, var(--role) 42%, var(--ground));
+  stroke: color-mix(in srgb, var(--role) 55%, var(--ground));
+  stroke-width: 1.6;
 }
 .block-box[data-tinted="true"] .block-head { fill: color-mix(in srgb, var(--role) 9%, var(--ground)); }
 .block-box[data-tinted="true"] .block-kind { fill: var(--role); }
@@ -373,6 +426,7 @@ body[data-project="open"] .welcome { display: none; }
 .access-group[data-role="database"] { --role: var(--role-database); }
 .access-group[data-role="storage"] { --role: var(--role-storage); }
 .access-group[data-role="queue"] { --role: var(--role-queue); }
+.access-group[data-role="structure"] { --role: var(--role-structure); }
 .access-group[data-role="client"] { --role: var(--role-client); }
 
 .access { fill: none; stroke: var(--role); stroke-width: 1.6; opacity: 0.6; }
