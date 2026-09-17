@@ -52,22 +52,25 @@ function selfChecking(): boolean {
  */
 const selfCheck = selfChecking() ? prepareSelfCheck() : null;
 
-function prepareSelfCheck(): { root: string; projectDir: string; application: string } {
+function prepareSelfCheck(): { root: string; projectDir: string; application: string; structured: string } {
   const root = mkdtempSync(path.join(tmpdir(), "fragmentor-self-check-"));
   const projectDir = path.join(root, "project");
   const userData = path.join(root, "user-data");
   mkdirSync(projectDir);
   mkdirSync(userData);
 
-  // A copy of the one example that draws a whole application, so the check
-  // can look at a real architecture without touching the repository's own.
+  // Copies of the two examples that draw a whole system, so the check can
+  // look at a real architecture without touching the repository's own: one
+  // visual, and one structured with blocks that run.
   const application = path.join(root, "link-shortener");
   cpSync(path.join(repoRoot, "examples", "link-shortener"), application, { recursive: true });
+  const structured = path.join(root, "support-desk");
+  cpSync(path.join(repoRoot, "examples", "support-desk"), structured, { recursive: true });
 
   // Offered on the welcome screen as recent projects, which is how the check opens them.
-  writeFileSync(path.join(userData, "recent-projects.json"), JSON.stringify([projectDir, application]));
+  writeFileSync(path.join(userData, "recent-projects.json"), JSON.stringify([projectDir, application, structured]));
   app.setPath("userData", userData);
-  return { root, projectDir, application };
+  return { root, projectDir, application, structured };
 }
 
 function ok<T>(value: T): Result<T> {
@@ -779,6 +782,13 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("application", "plannedLine") === true,
     ],
     [
+      "an architecture over blocks that still have a bench and a run behind them",
+      value("structured", "opened") === true &&
+        value("structured", "subtype") === "SERVICE: REST API" &&
+        value("structured", "bench") === true &&
+        value("structured", "runnable") === true,
+    ],
+    [
       "the two ways of reading a diagram each change what is drawn, not only what the button says",
       value("toggles", "named") === true &&
         value("toggles", "keptOut") === true &&
@@ -961,7 +971,10 @@ async function capture(window: BrowserWindow, name: string): Promise<void> {
 
 // Electron exits with 0 on app.quit() whatever process.exitCode says, so the
 // self-check exits explicitly, or a failed check would pass as a command.
-function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDir: string; application: string }): void {
+function attachSelfCheck(
+  window: BrowserWindow,
+  check: { root: string; projectDir: string; application: string; structured: string },
+): void {
   window.webContents.on("did-fail-load", (_event, code, description) => {
     console.error(`The window failed to load: ${description} (${code})`);
     app.exit(1);
@@ -1646,6 +1659,37 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
           return { apart: plate("browser") !== plate("api") && plate("api") !== plate("links-db") };
         `);
         await capture(window, "self-check-by-block");
+
+        // The structured example, where the blocks inside the service are
+        // ordinary blocks with a bench and a run behind them.
+        await run("structured", `
+          document.getElementById("close-project").click();
+          await until(() => document.body.dataset.project !== "open");
+          await wait(300);
+          const link = [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.structured)});
+          if (!link) return { opened: false };
+          link.click();
+          if (!(await until(() => document.querySelector('.block-box[data-key="triage"]')))) return { opened: false };
+          document.getElementById("zoom-fit").click();
+          await wait(500);
+          const top = { subtype: text('.block-box[data-key="triage"] .block-kind') };
+
+          // Into the service, and into the request path inside it, which is
+          // an ordinary composite with a bench.
+          for (const id of ["triage", "triage-ticket"]) {
+            const node = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === id);
+            node.click();
+            await wait(500);
+          }
+          const bench = Boolean(await until(() => document.querySelector(".bench")));
+          return {
+            opened: true,
+            subtype: top.subtype,
+            bench,
+            runnable: Boolean(document.querySelector('.block-box[data-key="load-account"] .breakpoint')),
+          };
+        `);
+        await capture(window, "self-check-structured");
         await run("backToKind", `
           document.getElementById("colour-by").click();
           await wait(400);
