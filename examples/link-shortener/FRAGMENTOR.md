@@ -119,7 +119,8 @@ A block with a role has no `inputs` or `outputs`. It says what it offers with `e
   "responsibility": "Read one owner's orders.",
   "inputs": { "owner": "string" },
   "outputs": { "orders": "{ id: string; total: number }[]" },
-  "access": ["reads orders-db.orders"]
+  "capabilities": { "orders": "Store" },
+  "access": ["orders reads orders-db.orders"]
 }
 ```
 
@@ -135,7 +136,7 @@ A block with a role has no `inputs` or `outputs`. It says what it offers with `e
   "exposes": {
     "listOrders": {
       "accepts": "{ owner: string }",
-      "returns": "{ id: string }[]",
+      "returns": "{ orders: { id: string; total: number }[] }",
       "block": "load-orders"
     }
   },

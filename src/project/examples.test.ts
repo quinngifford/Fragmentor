@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { holdsArchitecture, languageOf, loadProject, resolveAccess, validateProject } from "./project.js";
 import { executionOrder } from "../model/validate.js";
 import { describeType } from "../model/types.js";
+import { boundStores, describeBound } from "./stores.js";
 
 /**
  * The example projects are checked in exactly as an agent would leave them,
@@ -133,12 +134,51 @@ describe("the support-desk example", () => {
     const project = await loadProject(supportDesk);
     const loader = "support-desk/triage/triage-ticket/load-account";
 
-    // It declares a FileSystem capability as well, because an access says
-    // where the data comes from and a capability is how the code gets there.
+    // The access names the capability port at this end, which is what makes
+    // the line on the diagram the same line the code runs along: the port is
+    // a way into that entry and nothing else.
     const block = project.byPath.get(loader)!.block;
-    expect(block.access).toEqual([{ from: null, verb: "reads", resource: "accounts-file", entry: "accounts" }]);
-    expect(block.capabilities.files?.capability).toBe("FileSystem");
+    expect(block.access).toEqual([{ from: "accounts", verb: "reads", resource: "accounts-file", entry: "accounts" }]);
+    expect(block.capabilities.accounts?.capability).toBe("Store");
     expect(resolveAccess(project, loader, "accounts-file")?.path).toBe("support-desk/accounts-file");
+  });
+
+  it("types the store by what the block it reaches says it holds", async () => {
+    const project = await loadProject(supportDesk);
+    const node = project.byPath.get("support-desk/triage/triage-ticket/load-account")!;
+
+    const [store] = boundStores(project, node);
+    expect(store).toMatchObject({
+      port: "accounts",
+      capability: "Store",
+      target: "support-desk/accounts-file.accounts",
+      entry: "accounts",
+      seedable: true,
+    });
+    expect(describeBound(store!)).toBe("Store<{ id: string; name: string; plan: string; openTickets: number }>");
+  });
+
+  it("gives an operation the shape of the block that answers it", async () => {
+    const project = await loadProject(supportDesk);
+    const operation = project.byPath.get("support-desk/triage")!.block.exposes.triageTicket!;
+    const answering = project.byPath.get("support-desk/triage/triage-ticket")!.block;
+
+    // No mapping stands between the two: what arrives at the edge of the
+    // service is what the block takes, so following the route and running it
+    // are the same journey.
+    expect(operation.block).toBe("triage-ticket");
+    expect(describeType(operation.accepts!)).toBe(
+      describeType({
+        kind: "object",
+        fields: Object.fromEntries(Object.entries(answering.inputs).map(([name, port]) => [name, { type: port.type }])),
+      }),
+    );
+    expect(describeType(operation.returns!)).toBe(
+      describeType({
+        kind: "object",
+        fields: Object.fromEntries(Object.entries(answering.outputs).map(([name, port]) => [name, { type: port.type }])),
+      }),
+    );
   });
 });
 

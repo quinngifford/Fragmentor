@@ -2,8 +2,14 @@
   {
     "name": "finds the account the ticket was raised against",
     "input": {
-      "path": "accounts.json",
       "accountId": "acc-2"
+    },
+    "stores": {
+      "support-desk/accounts-file.accounts": {
+        "acc-1": { "id": "acc-1", "name": "Northwind Labs", "plan": "enterprise", "openTickets": 2 },
+        "acc-2": { "id": "acc-2", "name": "Kite and Co", "plan": "pro", "openTickets": 0 },
+        "acc-3": { "id": "acc-3", "name": "Harbour Freight", "plan": "free", "openTickets": 7 }
+      }
     },
     "expected": {
       "account": {
@@ -15,10 +21,16 @@
     }
   },
   {
-    "name": "reads the account by id rather than by position in the file",
+    "name": "reads the account by id rather than by position in the store",
     "input": {
-      "path": "accounts.json",
       "accountId": "acc-3"
+    },
+    "stores": {
+      "support-desk/accounts-file.accounts": {
+        "acc-1": { "id": "acc-1", "name": "Northwind Labs", "plan": "enterprise", "openTickets": 2 },
+        "acc-2": { "id": "acc-2", "name": "Kite and Co", "plan": "pro", "openTickets": 0 },
+        "acc-3": { "id": "acc-3", "name": "Harbour Freight", "plan": "free", "openTickets": 7 }
+      }
     },
     "expected": {
       "account": {

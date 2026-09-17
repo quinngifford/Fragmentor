@@ -2,7 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Generic, Protocol, TypeVar
+
+
+Row = TypeVar("Row")
+Message = TypeVar("Message")
+
+
+class Store(Protocol, Generic[Row]):
+    """Reads and writes the rows of one table, file or structure."""
+
+    async def read(self, key: str) -> Row | None: ...
+    async def list(self) -> list[Row]: ...
+    async def write(self, key: str, row: Row) -> None: ...
+    async def remove(self, key: str) -> None: ...
+
+
+class Queue(Protocol, Generic[Message]):
+    """Puts messages on one channel. Nothing waits for them to arrive."""
+
+    async def send(self, message: Message) -> None: ...
 
 
 class FileSystem(Protocol):

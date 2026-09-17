@@ -7,9 +7,9 @@ import { draftAlert } from "./draft-alert/impl.js";
 
 /** Work out how urgent one ticket is for the customer who raised it, and draft the alert to go out about it. */
 export async function triageTicket(input: TriageTicketInput, caps: TriageTicketCaps): Promise<TriageTicketOutput> {
-  const { accountsPath, accountId, ticket } = input;
+  const { accountId, ticket } = input;
 
-  const { account } = await loadAccount({ path: accountsPath, accountId }, caps);
+  const { account } = await loadAccount({ accountId }, caps);
 
   const { category, urgent } = await classifyTicket({ ticket }, caps);
 

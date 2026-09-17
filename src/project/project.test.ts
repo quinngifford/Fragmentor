@@ -14,6 +14,7 @@ import {
   writeBlock,
 } from "./project.js";
 import type { Manifest } from "./project.js";
+import type { Block } from "../model/block.js";
 import { makeBlock, t } from "../model/testing.js";
 
 let dir: string;
@@ -565,5 +566,101 @@ describe("blocks that are pieces of the architecture", () => {
     const found = validateProject(await loadProject(dir));
     expect(found.filter((d) => d.severity === "error")).toEqual([]);
     expect(found.map((d) => d.message)).toContainEqual(expect.stringContaining("exposes nothing at all yet"));
+  });
+});
+
+describe("a capability port that is a way into a store", () => {
+  /** An application whose database offers two tables, so a port can be pointed at the wrong one. */
+  async function writeApplicationForStores() {
+    await createProject(dir, { ...manifest, systems: [{ rootBlock: "orders-app", language: "typescript" }] }, [
+      makeBlock({
+        id: "orders-app",
+        kind: "composite",
+        children: [
+          { block: "orders-api", mode: "once" },
+          { block: "orders-db", mode: "once" },
+        ],
+      }),
+    ]);
+    await writeBlock(
+      blockDir(dir, "orders-app/orders-api"),
+      makeBlock({
+        id: "orders-api",
+        role: "service",
+        kind: "composite",
+        exposes: { listOrders: { accepts: t.object({ owner: t.string }), returns: null } },
+        children: [{ block: "load-orders", mode: "once" }],
+      }),
+    );
+    await writeBlock(
+      blockDir(dir, "orders-app/orders-db"),
+      makeBlock({
+        id: "orders-db",
+        role: "database",
+        exposes: {
+          orders: { accepts: t.object({ id: t.string }), returns: t.object({ id: t.string }) },
+          customers: { accepts: t.object({ id: t.string }), returns: t.object({ id: t.string }) },
+        },
+      }),
+    );
+  }
+
+  /** The handler, with whatever capabilities and accesses the test is about. */
+  async function writeHandler(over: Partial<Pick<Block, "capabilities" | "access">>) {
+    await writeApplicationForStores();
+    await writeBlock(
+      blockDir(dir, "orders-app/orders-api/load-orders"),
+      makeBlock({
+        id: "load-orders",
+        inputs: { owner: { type: t.string } },
+        outputs: { orders: { type: t.array(t.object({ id: t.string })) } },
+        capabilities: { orders: { capability: "Store" } },
+        access: [{ from: "orders", verb: "reads", resource: "orders-db", entry: "orders" }],
+        ...over,
+      }),
+    );
+    return validateProject(await loadProject(dir)).map((d) => d.message);
+  }
+
+  it("takes a port bound to an entry of the right kind of block", async () => {
+    const found = await writeHandler({});
+    expect(found.filter((message) => message.includes("Store"))).toEqual([]);
+  });
+
+  it("reports a store port that nothing says what it is a way into", async () => {
+    const found = await writeHandler({ access: [] });
+    expect(found).toContainEqual(expect.stringContaining('nothing says what it is a way into'));
+  });
+
+  it("reports an access naming a port the block never asked for", async () => {
+    const found = await writeHandler({
+      access: [{ from: "customers", verb: "reads", resource: "orders-db", entry: "orders" }],
+    });
+    expect(found).toContainEqual(expect.stringContaining('no capability port called "customers"'));
+  });
+
+  it("reports a port that would be a way into two different things at once", async () => {
+    const found = await writeHandler({
+      access: [
+        { from: "orders", verb: "reads", resource: "orders-db", entry: "orders" },
+        { from: "orders", verb: "reads", resource: "orders-db", entry: "customers" },
+      ],
+    });
+    expect(found).toContainEqual(expect.stringContaining("2 different things"));
+  });
+
+  it("insists a bound port name the entry, not just the block", async () => {
+    const found = await writeHandler({
+      access: [{ from: "orders", verb: "reads", resource: "orders-db", entry: null }],
+    });
+    expect(found).toContainEqual(expect.stringContaining("is a way into one table rather than into"));
+  });
+
+  it("reports a Store pointed at something that is not a store", async () => {
+    const found = await writeHandler({
+      capabilities: { orders: { capability: "Queue" } },
+      access: [{ from: "orders", verb: "reads", resource: "orders-db", entry: "orders" }],
+    });
+    expect(found).toContainEqual(expect.stringContaining("is a Queue port and"));
   });
 });

@@ -1,7 +1,7 @@
 import type { PortType } from "../../src/model/types.js";
-import type { SnapshotBlock } from "../../src/project/snapshot.js";
+import type { SnapshotBlock, SnapshotStore } from "../../src/project/snapshot.js";
 import type { TestCase } from "../../src/run/cases.js";
-import type { CaseResult } from "../../src/run/run.js";
+import type { CaseResult, RunOutcome, StoreEffect, StoreSeeds } from "../../src/run/run.js";
 import { requireSnapshot, ui } from "./state.js";
 import { runWatched } from "./watch.js";
 import { el, section, subsection } from "./dom.js";
@@ -156,6 +156,90 @@ function draftFor(block: SnapshotBlock): Draft {
   return seeded;
 }
 
+/**
+ * What this block's bench will put in each store it reaches before it runs.
+ *
+ * A block whose job is reading a table cannot be tried out against an empty
+ * one, so the rows belong with the input rather than somewhere else: they are
+ * as much a part of "what this run starts from" as the values in the form.
+ */
+function storesFor(block: SnapshotBlock): StoreSeeds {
+  const existing = ui.benchStores.get(block.path);
+  if (existing) return existing;
+
+  const seeded: StoreSeeds = {};
+  for (const store of block.stores) if (store.seedable) seeded[store.target] = {};
+  ui.benchStores.set(block.path, seeded);
+  return seeded;
+}
+
+/**
+ * Somewhere to put the rows a run will read, one store at a time.
+ *
+ * A store is keyed, and what the key means is the store's business rather
+ * than Fragmentor's, so the rows are typed in as an object of key to row
+ * instead of being built field by field the way an input is. The shape is
+ * shown above the box, because it is what the run will hold the rows to.
+ */
+function storesForm(block: SnapshotBlock): HTMLElement | null {
+  const seedable = block.stores.filter((store) => store.seedable);
+  if (seedable.length === 0) return null;
+
+  const node = subsection("What the stores hold before it runs");
+  const seeds = storesFor(block);
+
+  for (const store of seedable) {
+    const area = el("textarea");
+    area.spellcheck = false;
+    area.value = JSON.stringify(seeds[store.target] ?? {}, null, 1);
+
+    const problem = el("p", "bench-note");
+    area.addEventListener("input", () => {
+      try {
+        const parsed: unknown = JSON.parse(area.value);
+        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("rows are given by key");
+        }
+        seeds[store.target] = parsed as Record<string, unknown>;
+        delete area.dataset.invalid;
+        problem.textContent = "";
+      } catch {
+        area.dataset.invalid = "true";
+        problem.textContent = `Write the rows by key, as { "acc-1": … }.`;
+      }
+    });
+
+    const wrap = labelled(`${store.resourceName} · ${store.entry}`, area);
+    if (store.shape) wrap.append(el("div", "pdesc", `each row: ${store.shape}`));
+    wrap.append(problem);
+    node.append(wrap);
+  }
+
+  return node;
+}
+
+/** What the run left in the stores it touched, which for some blocks is the whole result. */
+function storeEffects(block: SnapshotBlock, outcome: RunOutcome): HTMLElement | null {
+  const touched = block.stores
+    .map((store) => ({ store, effect: outcome.stores[store.target] }))
+    .filter((each): each is { store: SnapshotStore; effect: StoreEffect } => each.effect !== undefined);
+  if (touched.length === 0) return null;
+
+  const node = subsection("What the stores hold now");
+  for (const { store, effect } of touched) {
+    const what = effect.kind === "queue" ? effect.sent : effect.rows;
+    const count = effect.kind === "queue" ? effect.sent.length : Object.keys(effect.rows).length;
+    const noun = effect.kind === "queue" ? "message" : "row";
+
+    node.append(
+      el("div", "pname", `${store.resourceName} · ${store.entry}`),
+      el("div", "pdesc", `${count} ${noun}${count === 1 ? "" : "s"}${effect.kind === "queue" ? " sent" : ""}`),
+      codeBlock(JSON.stringify(what, null, 2), "json"),
+    );
+  }
+  return node;
+}
+
 function problemList(title: string, problems: string[], tone: string): HTMLElement {
   const wrap = subsection(title, tone);
   wrap.classList.add("run-problems");
@@ -190,6 +274,9 @@ function resultPanel(block: SnapshotBlock): HTMLElement | null {
     panel.append(problemList("The result does not match what this block promises", outcome.outputProblems, "bad"));
   }
 
+  const effects = storeEffects(block, outcome);
+  if (effects) panel.append(effects);
+
   if (outcome.logs.length > 0) {
     const logged = subsection("Logged");
     logged.append(el("pre", "code", outcome.logs.join("\n")));
@@ -207,12 +294,12 @@ function whyNotRunnable(block: SnapshotBlock): string | null {
 }
 
 /** Runs a block from the bench, with the diagram following the run. */
-async function runFromBench(block: SnapshotBlock, input: unknown): Promise<void> {
+async function runFromBench(block: SnapshotBlock, input: unknown, stores: StoreSeeds): Promise<void> {
   ui.running.add(block.path);
   ui.runs.delete(block.path);
   notify();
 
-  const result = await runWatched(block, input);
+  const result = await runWatched(block, input, stores);
   ui.running.delete(block.path);
 
   if (!result.ok) {
@@ -264,14 +351,17 @@ function caseRow(block: SnapshotBlock, testCase: TestCase, result: CaseResult | 
   watch.disabled = whyNotRunnable(block) !== null || ui.running.has(block.path);
   watch.addEventListener("click", () => {
     const input = structuredClone(testCase.input) as Draft;
+    const stores = structuredClone(testCase.stores ?? {});
     ui.benchInputs.set(block.path, input);
-    void runFromBench(block, structuredClone(input));
+    ui.benchStores.set(block.path, stores);
+    void runFromBench(block, structuredClone(input), structuredClone(stores));
   });
 
   const load = el("button", undefined, "Load");
   load.title = "Put this test's input into the form above.";
   load.addEventListener("click", () => {
     ui.benchInputs.set(block.path, structuredClone(testCase.input) as Draft);
+    ui.benchStores.set(block.path, structuredClone(testCase.stores ?? {}));
     ui.status = { text: `Loaded "${testCase.name}".`, tone: "info" };
     notify();
   });
@@ -322,9 +412,15 @@ function newCaseBox(block: SnapshotBlock): HTMLElement {
     }
 
     const draft = structuredClone(draftFor(block)) as unknown;
-    const testCase: TestCase = expectBox.checked && lastRun?.ok
-      ? { name, input: draft, expected: structuredClone(lastRun.output) }
-      : { name, input: draft };
+    // The rows travel with the case: without them it would run against an
+    // empty store and fail for a reason that has nothing to do with the code.
+    const seeded = structuredClone(storesFor(block));
+    const testCase: TestCase = {
+      name,
+      input: draft,
+      ...(Object.values(seeded).some((rows) => Object.keys(rows).length > 0) ? { stores: seeded } : {}),
+      ...(expectBox.checked && lastRun?.ok ? { expected: structuredClone(lastRun.output) } : {}),
+    };
 
     // Saving under an existing name replaces that test rather than adding a
     // second one with the same name, which nothing could tell apart.
@@ -421,6 +517,9 @@ export function benchSection(block: SnapshotBlock): HTMLElement {
     }
   }
 
+  const stores = storesForm(block);
+  if (stores) node.append(stores);
+
   const run = el("button", "btn", "Run block");
   const unrunnable = whyNotRunnable(block);
   const note = el(
@@ -436,7 +535,7 @@ export function benchSection(block: SnapshotBlock): HTMLElement {
       notify();
       return;
     }
-    void runFromBench(block, { ...draft });
+    void runFromBench(block, { ...draft }, structuredClone(storesFor(block)));
   });
 
   node.append(run, note);

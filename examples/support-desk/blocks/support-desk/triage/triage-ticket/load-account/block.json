@@ -1,16 +1,18 @@
 {
-  "responsibility": "Find one customer's account in the accounts file.",
+  "responsibility": "Find one customer's account among the accounts we keep.",
   "inputs": {
-    "path": "string",
     "accountId": "string"
   },
   "outputs": {
     "account": "{ id: string; name: string; plan: string; openTickets: number }"
   },
   "capabilities": {
-    "files": "FileSystem"
+    "accounts": {
+      "capability": "Store",
+      "description": "The accounts, read by customer id."
+    }
   },
   "access": [
-    "reads accounts-file.accounts"
+    "accounts reads accounts-file.accounts"
   ]
 }

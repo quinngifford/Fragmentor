@@ -444,6 +444,7 @@ function registerHandlers(): void {
         projectDir: request.dir,
         blockPath: request.blockPath,
         input: request.input,
+        stores: request.stores ?? {},
         breakpoints: paths(request.breakpoints),
         onEvent: (runEvent) => {
           if (!contents.isDestroyed()) contents.send(CHANNELS.runEvent, request.runId, runEvent);
@@ -801,6 +802,13 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("structured", "canGo") === true &&
         value("structured", "wentTo") === "support-desk/triage/triage-ticket" &&
         value("structured", "benchThere") === true,
+    ],
+    [
+      "a store can be seeded from the bench, and the run reads what was put there",
+      value("store", "offered") === true &&
+        value("store", "ran") === true &&
+        value("store", "reachedTheStore") === true &&
+        String(value("store", "shape") ?? "").includes("openTickets"),
     ],
     [
       "colouring changes what is drawn, and the legend explains it and folds away",
@@ -1746,6 +1754,48 @@ function attachSelfCheck(
           };
         `);
         await capture(window, "self-check-structured");
+
+        // Seeding a store and running through it. The bench is on
+        // triage-ticket from the step above, whose load-account reads the
+        // accounts file through a Store port.
+        await run("store", `
+          const bench = document.querySelector(".bench");
+          const boxes = [...bench.querySelectorAll("textarea")];
+          const rows = boxes.find((area) => (area.closest(".field").querySelector("label") || {}).textContent === "Accounts · accounts");
+          if (!rows) return { offered: false };
+
+          const shape = (rows.closest(".field").querySelector(".pdesc") || {}).textContent;
+          rows.value = JSON.stringify({ "acc-1": { id: "acc-1", name: "Northwind Labs", plan: "enterprise", openTickets: 2 } });
+          rows.dispatchEvent(new Event("input", { bubbles: true }));
+
+          // The ticket the run is about.
+          const set = (label, value) => {
+            const field = [...bench.querySelectorAll(".field")].find((f) => (f.querySelector("label") || {}).textContent === label);
+            const control = field.querySelector("input");
+            control.value = value;
+            control.dispatchEvent(new Event("input", { bubbles: true }));
+          };
+          set("accountId", "acc-1");
+          set("subject", "Site is down");
+          set("body", "Nobody can log in.");
+
+          [...bench.querySelectorAll(".btn")].find((b) => b.textContent === "Run block").click();
+          const done = await until(() => {
+            const panel = document.querySelector(".run-result, .bench .subsection");
+            return document.body.textContent.includes("What the stores hold now");
+          }, 20000);
+
+          const output = text(".bench pre");
+          return {
+            offered: true,
+            shape,
+            ran: Boolean(done),
+            // The run reached a row nothing but the store could have supplied.
+            reachedTheStore: document.body.textContent.includes("Northwind Labs"),
+          };
+        `);
+        await capture(window, "self-check-store");
+
         await run("backToKind", `
           document.getElementById("colour-by").click();
           await wait(400);

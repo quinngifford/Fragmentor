@@ -1,10 +1,6 @@
 {
   "responsibility": "Work out how urgent one ticket is for the customer who raised it, and draft the alert to go out about it.",
   "inputs": {
-    "accountsPath": {
-      "type": "string",
-      "description": "The JSON file holding the accounts."
-    },
     "accountId": "string",
     "ticket": {
       "type": "{ subject: string; body: string }",
@@ -19,11 +15,14 @@
     "alert": "{ headline: string; priority: number; reason: string }"
   },
   "capabilities": {
-    "files": {
-      "capability": "FileSystem",
-      "description": "Reads the accounts file."
+    "accounts": {
+      "capability": "Store",
+      "description": "The accounts, passed down to the block that reads them."
     }
   },
+  "access": [
+    "accounts reads accounts-file.accounts"
+  ],
   "children": [
     "load-account",
     "classify-ticket",
@@ -31,7 +30,6 @@
     "draft-alert"
   ],
   "wires": [
-    "input.accountsPath -> load-account.path",
     "input.accountId -> load-account.accountId",
     "input.ticket -> classify-ticket.ticket",
     "load-account.account -> score-priority.account",

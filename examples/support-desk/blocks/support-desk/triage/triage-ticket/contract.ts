@@ -2,10 +2,9 @@
 // Triage Ticket: Work out how urgent one ticket is for the customer who raised it, and draft the alert to go out about it.
 
 import { z } from "zod";
-import type { FileSystem } from "../../../capabilities.js";
+import type { Store } from "../../../capabilities.js";
 
 export const triageTicketInput = z.object({
-  accountsPath: z.string(),
   accountId: z.string(),
   ticket: z.object({ subject: z.string(), body: z.string() }),
 });
@@ -20,6 +19,6 @@ export const triageTicketOutput = z.object({
 export type TriageTicketOutput = z.infer<typeof triageTicketOutput>;
 
 export interface TriageTicketCaps {
-  /** Reads the accounts file. */
-  files: FileSystem;
+  /** The accounts, passed down to the block that reads them. */
+  accounts: Store<{ id: string; name: string; plan: string; openTickets: number }>;
 }

@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod/v4";
 import { blockIdPattern, blockToFileShape, formatAccess, parseBlockFile } from "../model/block.js";
 import type { Access, Block, Mode } from "../model/block.js";
+import { CAPABILITIES, capabilitiesReaching, reachesResource } from "../model/capabilities.js";
 import { ROLES, isArchitecture } from "../model/roles.js";
 import { validateComposite } from "../model/validate.js";
 import type { Diagnostic } from "../model/validate.js";
@@ -361,6 +362,7 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
     for (const access of node.block.access) {
       diagnostics.push(...accessDiagnostics(project, node, access, loose));
     }
+    diagnostics.push(...storePortDiagnostics(node, loose));
 
     const depth = node.path.split("/").length;
     if (depth > maxDepth) {
@@ -411,6 +413,54 @@ export function holdsArchitecture(node: LoadedBlock): boolean {
   return isArchitecture(node.block.role) || node.children.some(holdsArchitecture);
 }
 
+/**
+ * What a block's capability ports say, seen from the ports rather than from
+ * the accesses.
+ *
+ * A `Store` or `Queue` is a way into one particular thing on the diagram, and
+ * the access naming the port is what says which. A port nobody named has no
+ * substitute to be given when the block runs, so it is reported here rather
+ * than failing later with nothing to point at.
+ */
+function storePortDiagnostics(node: LoadedBlock, declaredLoosely: boolean): ProjectDiagnostic[] {
+  if (isArchitecture(node.block.role)) return [];
+
+  return Object.entries(node.block.capabilities).flatMap(([name, port]) => {
+    if (!reachesResource(port.capability)) return [];
+
+    const bound = node.block.access.filter((each) => each.from === name);
+    const roles = CAPABILITIES[port.capability]!.reaches!.map((role) => ROLES[role].label.toLowerCase());
+    const at = (message: string): ProjectDiagnostic => ({
+      severity: declaredLoosely ? "warning" : "error",
+      blockPath: node.path,
+      message,
+    });
+
+    if (bound.length === 0) {
+      return [
+        at(
+          `"${node.block.name}" asks for a ${port.capability} called "${name}", but nothing says what it is a way into. Add an access such as "${name} reads <${roles[0]!.replace(/ /g, "-")}>.<entry>" beside it.`,
+        ),
+      ];
+    }
+
+    // Two accesses from one port are two different things for the code to
+    // reach through one object, and nothing would decide which it got.
+    const targets = [...new Set(bound.map((each) => `${each.resource}.${each.entry ?? ""}`))];
+    if (targets.length > 1) {
+      return [
+        at(
+          `"${node.block.name}" says its ${port.capability} port "${name}" is a way into ${targets.length} different things: ${bound
+            .map((each) => `"${formatAccess(each)}"`)
+            .join(", ")}. One port reaches one of them; ask for a port each.`,
+        ),
+      ];
+    }
+
+    return [];
+  });
+}
+
 /** What an access says about a block, once the block it names has been found. */
 function accessDiagnostics(project: Project, node: LoadedBlock, access: Access, declaredLoosely: boolean): ProjectDiagnostic[] {
   const written = `declares "${formatAccess(access)}"`;
@@ -426,14 +476,29 @@ function accessDiagnostics(project: Project, node: LoadedBlock, access: Access, 
     message,
   });
 
-  // What does the reaching, when the block says which of its own entries does.
-  if (access.from !== null && !(access.from in node.block.exposes)) {
+  // What does the reaching, when the block names it. On an architecture
+  // block that is one of its entries; on a function block it is the
+  // capability port whose substitute this access is a way into.
+  if (access.from !== null && isArchitecture(node.block.role) && !(access.from in node.block.exposes)) {
     const names = Object.keys(node.block.exposes);
     return [
       at(
         "error",
         `"${node.block.name}" ${written}, but it exposes nothing called "${access.from}"${
           names.length > 0 ? `. It exposes: ${names.join(", ")}.` : ", and exposes nothing at all."
+        }`,
+      ),
+    ];
+  }
+
+  const port = access.from !== null && !isArchitecture(node.block.role) ? node.block.capabilities[access.from] : undefined;
+  if (access.from !== null && !isArchitecture(node.block.role) && !port) {
+    const names = Object.keys(node.block.capabilities);
+    return [
+      at(
+        "error",
+        `"${node.block.name}" ${written}, but it has no capability port called "${access.from}"${
+          names.length > 0 ? `. Its ports are: ${names.join(", ")}.` : ", and asks for no capabilities at all."
         }`,
       ),
     ];
@@ -469,6 +534,33 @@ function accessDiagnostics(project: Project, node: LoadedBlock, access: Access, 
   }
 
   const role = ROLES[found.block.role];
+
+  // A bound capability port is a way into one particular entry, so it has to
+  // name one: a Store that knew only which database it belonged to would not
+  // know which table it read.
+  if (port && access.entry === null) {
+    return [
+      at(
+        "error",
+        `"${node.block.name}" ${written}, but "${access.from}" is a ${port.capability} port, which is a way into one ${role.entryNoun} rather than into "${found.block.name}" as a whole. Say which, as "${access.from} ${access.verb} ${access.resource}.<${role.entryNoun}>".`,
+      ),
+    ];
+  }
+
+  if (port && !CAPABILITIES[port.capability]?.reaches?.includes(found.block.role)) {
+    const instead = capabilitiesReaching(found.block.role);
+    return [
+      at(
+        "error",
+        `"${node.block.name}" ${written}, but "${access.from}" is a ${port.capability} port and "${found.block.name}" is ${role.label.toLowerCase()}. ${
+          instead.length > 0
+            ? `A block of that kind is reached through ${instead.join(" or ")}.`
+            : `Nothing reaches a block of that kind through a capability; ${role.label.toLowerCase()} is called, not read.`
+        }`,
+      ),
+    ];
+  }
+
   if (access.entry === null) return [];
 
   const entry = found.block.exposes[access.entry];

@@ -121,13 +121,14 @@ A block with a role is not called, so it has no `inputs`, `outputs` or `capabili
   "responsibility": "Read one owner's orders.",
   "inputs": { "owner": "string" },
   "outputs": { "orders": "{ id: string; total: number }[]" },
-  "access": ["reads orders-db.orders"]
+  "capabilities": { "orders": "Store" },
+  "access": ["orders reads orders-db.orders"]
 }
 ```
 
 - A store's entry is written once, as the shape it holds. An operation writes its two directions apart, `{ "accepts": "{ orderId: string; amount: number }", "returns": "{ receipt: string }" }`, and may leave either out.
 - Write a shape as a type wherever you can, so the block can be drawn column by column. Anything the type language cannot say, such as `timestamp`, is kept as the words you write.
-- A service's operation says which block answers it with `"block"`. Without that, the blocks inside it show inputs arriving from nowhere. The two shapes need not match: an operation is what arrives at the edge of the service, and the framework between parses and fills in the rest.
+- A service's operation says which block answers it with `"block"`. Without that, the blocks inside it show inputs arriving from nowhere. Give the operation the same shape as that block: `accepts` the block's inputs, `returns` its outputs, field for field. Where the outside world's shape genuinely differs, put a block in between that converts it, so the conversion is on the diagram like everything else rather than hidden in framework code.
 
 ```json
 {
@@ -137,7 +138,7 @@ A block with a role is not called, so it has no `inputs`, `outputs` or `capabili
   "exposes": {
     "listOrders": {
       "accepts": "{ owner: string }",
-      "returns": "{ id: string }[]",
+      "returns": "{ orders: { id: string; total: number }[] }",
       "block": "load-orders"
     }
   },
@@ -149,7 +150,9 @@ A block with a role is not called, so it has no `inputs`, `outputs` or `capabili
 - `reads` takes data out, `writes` puts data in, `calls` does both. Name the entry, as in `reads orders-db.orders`, or leave it off to mean the whole thing.
 - The block named is looked for beside the one reaching it, then above it, up to the top of the system, so a handler inside a service reaches a database the service keeps beside it. Put the access on the block that really touches the resource; the diagrams above gather it up.
 
-Nothing is generated, checked or run for a block with a role, nor for any block holding one: a database is not something you call, so there is no chain of calls to write, and the code that opens the connections belongs outside `blocks/`. Blocks **inside** a service are ordinary blocks, generated, checked and tested as usual, and nothing needs to be wired to them. `access` says where data comes from and where it goes; block code still reaches the world only through its capabilities, so put the access on whichever block really talks to the store.
+- Code reaches a `database`, `storage` or `structure` through a `Store` port, and a `queue` through a `Queue` port. Put the port's name at the start of the access — `"orders reads orders-db.orders"` — and that port is a way into that entry and nothing else, so the line drawn is the line the code runs along. Always name the entry; ask for a port each where a block reaches two; declare and bind it at every level above, as with any capability. The port is typed by what the entry holds, so `caps.orders.read(id)` gives back that shape rather than `unknown`.
+
+Nothing is generated, checked or run for a block with a role, nor for any block holding one: a database is not something you call, so there is no chain of calls to write, and the code that opens the connections belongs outside `blocks/`. Blocks **inside** a service are ordinary blocks, generated, checked and tested as usual, and nothing needs to be wired to them.
 
 ## Types
 
@@ -159,6 +162,8 @@ Nothing is generated, checked or run for a block with a role, nor for any block 
 
 Block code reaches the outside world only through capabilities, which arrive in its `caps` argument. That is what lets any block run on its own in a test.
 
+- **Store**: Reads and writes the rows of one table, file or structure. `read(key: string) → Row | null` (async), `list() → Row[]` (async), `write(key: string, row: Row)` (async), `remove(key: string)` (async)
+- **Queue**: Puts messages on one channel. Nothing waits for them to arrive. `send(message: Message)` (async)
 - **FileSystem**: Reads and writes files. `readFile(path: string) → string` (async), `writeFile(path: string, contents: string)` (async)
 - **Http**: Fetches over the network. `get(url: string) → string` (async)
 - **Clock**: Reads the current time. `now() → number`

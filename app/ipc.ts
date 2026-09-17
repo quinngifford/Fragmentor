@@ -1,7 +1,7 @@
 import type { ProjectSnapshot } from "../src/project/snapshot.js";
 import type { Point } from "../src/project/layout.js";
 import type { EmitResult, NewProjectSettings } from "../src/codegen/emit.js";
-import type { CaseResult, RunEvent, RunOutcome } from "../src/run/run.js";
+import type { CaseResult, RunEvent, RunOutcome, StoreSeeds } from "../src/run/run.js";
 import type { TestCase } from "../src/run/cases.js";
 
 /**
@@ -60,6 +60,8 @@ export interface WatchRunRequest {
   dir: string;
   blockPath: string;
   input: unknown;
+  /** What each store the block reaches holds before it runs, by target and then by key. */
+  stores: StoreSeeds;
   /** Blocks to pause before, by path. */
   breakpoints: string[];
 }

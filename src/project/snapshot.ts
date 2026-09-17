@@ -12,6 +12,7 @@ import type { Layout } from "./layout.js";
 import { holdsArchitecture, holdsPlan, loadProject, locateCode, resolveAccess, systemOf, validateProject } from "./project.js";
 import type { CodeLocation, Granularity, ProjectDiagnostic, Start } from "./project.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
+import { boundStores, describeBound } from "./stores.js";
 import { readCases } from "../run/cases.js";
 import type { TestCase } from "../run/cases.js";
 
@@ -72,6 +73,34 @@ export interface SnapshotCapability {
   name: string;
   capability: string;
   description: string | null;
+}
+
+/**
+ * A capability port that is a way into something drawn on the diagram, with
+ * that thing already found.
+ *
+ * The test bench needs this to offer somewhere to put the rows a run will
+ * read: without it a block whose whole job is reading a table could only ever
+ * be run against an empty one.
+ */
+export interface SnapshotStore {
+  /** The capability port, as the block's code refers to it. */
+  port: string;
+  /** `Store` or `Queue`. */
+  capability: string;
+  /** Written as the port's type: `Store<{ id: string }>`. */
+  type: string;
+  /** The name a run keeps this store's contents under: `app/orders-db.orders`. */
+  target: string;
+  /** Where it is in the project, for showing the person what they are filling in. */
+  resourcePath: string;
+  resourceName: string;
+  entry: string;
+  /** What one row looks like, written out. Null when the entry is described in words. */
+  shape: string | null;
+  shapeIr: PortType | null;
+  /** Whether rows can be put there before a run, or only watched as the run puts them there. */
+  seedable: boolean;
 }
 
 export interface SnapshotChild {
@@ -146,6 +175,8 @@ export interface SnapshotBlock {
   /** What this block reaches, with each resource already found. */
   access: SnapshotAccess[];
   capabilities: SnapshotCapability[];
+  /** The capability ports of this block that are ways into something on the diagram. */
+  stores: SnapshotStore[];
   children: SnapshotChild[];
   order: string[];
   wires: SnapshotWire[];
@@ -305,6 +336,18 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
         name,
         capability: cap.capability,
         description: cap.description ?? null,
+      })),
+      stores: boundStores(project, node).map((store) => ({
+        port: store.port,
+        capability: store.capability,
+        type: describeBound(store),
+        target: store.target,
+        resourcePath: store.target.slice(0, store.target.length - store.entry.length - 1),
+        resourceName: store.resourceName,
+        entry: store.entry,
+        shape: store.shape === null ? null : describeType(store.shape),
+        shapeIr: store.shape,
+        seedable: store.seedable,
       })),
       children: block.children.map((child) => ({
         block: child.block,

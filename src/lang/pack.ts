@@ -17,6 +17,15 @@ export interface ContractRequest {
   block: Block;
   /** Slash-joined path from the blocks root, used to reach shared modules. */
   blockPath: string;
+  /**
+   * For each capability port that is a way into something drawn on the
+   * diagram, the shape of what that thing holds: a `Store` bound to a table
+   * of accounts is written `Store<Account>` rather than left to `unknown`.
+   *
+   * It is passed in rather than read off the block because the shape belongs
+   * to the block being reached, which only the project has in hand.
+   */
+  bound?: Record<string, PortType>;
 }
 
 export interface LanguagePack {

@@ -84,10 +84,17 @@ export type RunEvent =
   | { type: "paused"; id: number }
   | { type: "resumed"; id: number };
 
+/** What a store was left holding, or a channel was given, by the time a run ended. */
+export type StoreEffect =
+  | { kind: "store"; rows: Record<string, unknown> }
+  | { kind: "queue"; sent: unknown[] };
+
 export interface HarnessResult {
   ok: boolean;
   output?: unknown;
   error?: string;
+  /** What each bound store held when the run ended, by target. */
+  stores?: Record<string, StoreEffect>;
   logs: string[];
   /** True when the run was stopped before it finished. */
   stopped?: boolean;
@@ -100,7 +107,12 @@ export interface SpawnOptions {
   functionName: string;
   /** The block being run and everything beneath it, each wrapped so its calls can be seen. */
   blocks: { path: string; functionName: string }[];
-  capabilities: { name: string; capability: string }[];
+  /**
+   * The ports to build substitutes for. A port that is a way into something
+   * on the diagram carries the name the run keeps that thing under, and the
+   * rows it starts out holding.
+   */
+  capabilities: { name: string; capability: string; target?: string; seed?: Record<string, unknown> }[];
   projectDir: string;
   input: unknown;
   timeoutMs: number;
@@ -180,6 +192,7 @@ export function startCompiledBlock(options: SpawnOptions): CompiledRun {
         ok: message.ok === true,
         output: message.output,
         error: typeof message.error === "string" ? message.error : undefined,
+        stores: (message.stores as Record<string, StoreEffect> | undefined) ?? {},
         logs: Array.isArray(message.logs) ? (message.logs as string[]) : [],
       });
       return;

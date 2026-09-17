@@ -36,7 +36,59 @@ function insideProject(target) {
   return resolved;
 }
 
+/**
+ * What the stores this run reaches are holding, by the name the run keeps each
+ * under. Seeded before anything runs and reported back at the end, so a test
+ * can put rows in and see what the block left behind.
+ *
+ * A store lives here rather than in the substitute itself because two ports
+ * can be ways into the same thing — a block that reads a table and another
+ * that writes it — and a write through one has to be visible through the
+ * other, exactly as it would be in the real system.
+ */
+const stores = new Map();
+
+function storeState(target, kind) {
+  let state = stores.get(target);
+  if (!state) {
+    state = kind === "queue" ? { kind: "queue", sent: [] } : { kind: "store", rows: {} };
+    stores.set(target, state);
+  }
+  return state;
+}
+
+/** A copy, so nothing a block keeps a reference to can change what the store holds behind its back. */
+function copy(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
 const CAPABILITIES = {
+  Store: (port) => {
+    const state = storeState(port.target, "store");
+    Object.assign(state.rows, copy(port.seed) ?? {});
+    return {
+      async read(key) {
+        return Object.hasOwn(state.rows, String(key)) ? copy(state.rows[String(key)]) : null;
+      },
+      async list() {
+        return Object.values(state.rows).map(copy);
+      },
+      async write(key, row) {
+        state.rows[String(key)] = copy(row);
+      },
+      async remove(key) {
+        delete state.rows[String(key)];
+      },
+    };
+  },
+  Queue: (port) => {
+    const state = storeState(port.target, "queue");
+    return {
+      async send(message) {
+        state.sent.push(copy(message));
+      },
+    };
+  },
   FileSystem: () => ({
     async readFile(target) {
       return fs.readFile(insideProject(target), "utf8");
@@ -72,9 +124,14 @@ function buildCapabilities(spec) {
   for (const entry of spec) {
     const make = CAPABILITIES[entry.capability];
     if (!make) throw new Error(`No test-bench substitute for the capability "${entry.capability}".`);
-    caps[entry.name] = make();
+    caps[entry.name] = make(entry);
   }
   return caps;
+}
+
+/** What every store this run touched was left holding, for the bench to show. */
+function storeEffects() {
+  return Object.fromEntries(stores);
 }
 
 function messageOf(error) {
@@ -225,9 +282,15 @@ async function run(spec) {
 
 function report(result) {
   try {
-    send({ type: "result", ...result, logs });
+    send({ type: "result", ...result, stores: storeEffects(), logs });
   } catch (error) {
-    send({ type: "result", ok: false, error: `The block returned something that cannot be sent back: ${messageOf(error)}`, logs });
+    send({
+      type: "result",
+      ok: false,
+      error: `The block returned something that cannot be sent back: ${messageOf(error)}`,
+      stores: storeEffects(),
+      logs,
+    });
   }
 }
 

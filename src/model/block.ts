@@ -114,16 +114,20 @@ export const ACCESS_VERBS: AccessVerb[] = ["reads", "writes", "calls"];
 
 export interface Access {
   /**
-   * Which of this block's own entries does the reaching, or null for the
-   * block as a whole.
+   * What at this end does the reaching, or null for the block as a whole.
    *
-   * A client with five buttons calling five operations is five separate
-   * things happening, and without this they would all leave the block at one
-   * point and say only that the two are connected. Named at both ends, the
-   * line runs from the button to the operation it triggers, which is what it
-   * actually does.
+   * On an architecture block it is one of its own entries. A client with five
+   * buttons calling five operations is five separate things happening, and
+   * without this they would all leave the block at one point and say only
+   * that the two are connected. Named at both ends, the line runs from the
+   * button to the operation it triggers, which is what it actually does.
    *
-   * A function block has ports rather than entries, so it never names one.
+   * On a function block it is one of its capability ports, and that is how a
+   * `Store` or `Queue` learns which block it is a way into. The alternative
+   * was a second field on the capability saying the same thing the access
+   * already says, which could then disagree with it. This way the line drawn
+   * on the diagram and the line the code runs along cannot come apart: there
+   * is only one of them.
    */
   from: string | null;
   verb: AccessVerb;
@@ -138,7 +142,7 @@ export function parseAccessText(text: string): { ok: true; access: Access } | { 
   if (parts.length !== 2 && parts.length !== 3) {
     return {
       ok: false,
-      error: `An access must be written as "reads app-db.users", or "shorten calls api.createLink" to say which of this block's own entries does it, but this reads "${text}".`,
+      error: `An access must be written as "reads app-db.users", or "accounts reads app-db.users" to name the capability port or entry at this end of it, but this reads "${text}".`,
     };
   }
 
@@ -149,7 +153,7 @@ export function parseAccessText(text: string): { ok: true; access: Access } | { 
     return { ok: false, error: `"${verb}" is not one of ${ACCESS_VERBS.join(", ")}.` };
   }
   if (from !== null && !identifierPattern.test(from)) {
-    return { ok: false, error: `"${from}" is not a valid name for one of this block's own entries.` };
+    return { ok: false, error: `"${from}" is not a valid name for a capability port or an entry of this block.` };
   }
 
   const split = target.lastIndexOf(".");

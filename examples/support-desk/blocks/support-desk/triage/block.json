@@ -5,8 +5,8 @@
   "responsibility": "Answers one ticket at a time. The server that receives the request and puts the alert on the queue lives outside blocks/.",
   "exposes": {
     "triageTicket": {
-      "accepts": "{ accountId: string; subject: string; body: string }",
-      "returns": "{ priority: number; headline: string }",
+      "accepts": "{ accountId: string; ticket: { subject: string; body: string } }",
+      "returns": "{ priority: number; alert: { headline: string; priority: number; reason: string } }",
       "block": "triage-ticket"
     }
   },

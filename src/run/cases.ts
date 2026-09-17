@@ -18,6 +18,12 @@ import { blockDir } from "../project/project.js";
 export interface TestCase {
   name: string;
   input: unknown;
+  /**
+   * What each store the block reaches holds before it runs, by target and
+   * then by key. A block that reads one has to bring its rows with it, or the
+   * case would only ever see an empty table.
+   */
+  stores?: Record<string, Record<string, unknown>>;
   /** Absent when the case has no expectation yet. */
   expected?: unknown;
 }
@@ -26,6 +32,7 @@ const caseSchema = z
   .object({
     name: z.string().min(1),
     input: z.unknown(),
+    stores: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
     expected: z.unknown().optional(),
   })
   .strict();
@@ -73,7 +80,7 @@ export async function readCases(
     const detail = parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
     return {
       cases: [],
-      problem: `Its tests could not be read: cases.json should be a list of { "name", "input", "expected" } (${detail}).`,
+      problem: `Its tests could not be read: cases.json should be a list of { "name", "input", "stores", "expected" } (${detail}).`,
     };
   }
 
@@ -91,11 +98,12 @@ export async function saveCases(projectDir: string, blockPath: string, cases: Te
     throw new Error(`Those tests are not valid: ${parsed.error.issues.map((i) => i.message).join(", ")}`);
   }
 
-  const tidied = (parsed.data as TestCase[]).map((testCase) =>
-    hasExpectation(testCase)
-      ? { name: testCase.name, input: testCase.input, expected: testCase.expected }
-      : { name: testCase.name, input: testCase.input },
-  );
+  const tidied = (parsed.data as TestCase[]).map((testCase) => ({
+    name: testCase.name,
+    input: testCase.input,
+    ...(testCase.stores && Object.keys(testCase.stores).length > 0 ? { stores: testCase.stores } : {}),
+    ...(hasExpectation(testCase) ? { expected: testCase.expected } : {}),
+  }));
 
   await writeFile(casesPath(projectDir, blockPath), `${JSON.stringify(tidied, null, 2)}\n`, "utf8");
 }

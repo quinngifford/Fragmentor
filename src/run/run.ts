@@ -2,6 +2,7 @@ import { getPack } from "../lang/index.js";
 import { checkValue } from "../model/types.js";
 import type { PortType } from "../model/types.js";
 import { loadProject, systemOf } from "../project/project.js";
+import { storesForRun } from "../project/stores.js";
 import type { LoadedBlock, LoadedSystem, Project } from "../project/project.js";
 import type { LanguagePack } from "../lang/pack.js";
 import { compileSystem, startCompiledBlock } from "./typescript.js";
@@ -30,6 +31,11 @@ export interface RunRequest {
   projectDir: string;
   blockPath: string;
   input: unknown;
+  /**
+   * What each store the block reaches holds before it runs, by target and
+   * then by key. A store left out starts empty.
+   */
+  stores?: StoreSeeds;
   timeoutMs?: number;
   /** Hears every block call as it happens. Without it nothing is recorded, and breakpoints are ignored. */
   onEvent?: (event: RunEvent) => void;
@@ -50,6 +56,14 @@ export interface RunControl {
   stop(): void;
 }
 
+/** What the stores a block reaches hold before it runs: target -> key -> row. */
+export type StoreSeeds = Record<string, Record<string, unknown>>;
+
+/** What a store was left holding, or a channel was given, by the time a run ended. */
+export type StoreEffect =
+  | { kind: "store"; rows: Record<string, unknown> }
+  | { kind: "queue"; sent: unknown[] };
+
 export interface RunOutcome {
   ok: boolean;
   output?: unknown;
@@ -58,6 +72,14 @@ export interface RunOutcome {
   inputProblems: string[];
   /** Ways the result did not match the block's declared outputs. */
   outputProblems: string[];
+  /**
+   * What each store the block reaches was left holding, by target.
+   *
+   * A block that writes is as worth watching as one that returns: a run that
+   * puts an alert on a queue does its whole job through the store, and
+   * without this the test bench would report it as having produced nothing.
+   */
+  stores: Record<string, StoreEffect>;
   logs: string[];
   durationMs: number;
   /** True when the run was stopped before it finished. */
@@ -87,7 +109,7 @@ function portsAsType(ports: Record<string, { type: PortType }>): PortType {
 }
 
 function failure(error: string, extra: Partial<RunOutcome> = {}): RunOutcome {
-  return { ok: false, error, inputProblems: [], outputProblems: [], logs: [], durationMs: 0, ...extra };
+  return { ok: false, error, inputProblems: [], outputProblems: [], stores: {}, logs: [], durationMs: 0, ...extra };
 }
 
 interface Prepared {
@@ -131,6 +153,7 @@ async function executeOnce(
   compiled: CompiledSystem,
   blockPath: string,
   input: unknown,
+  seeds: StoreSeeds,
   timeoutMs: number,
   watching?: Watching,
 ): Promise<RunOutcome> {
@@ -139,6 +162,21 @@ async function executeOnce(
   const inputProblems = checkValue(input, portsAsType(node.block.inputs), "input");
   if (inputProblems.length > 0) {
     return failure("The values given do not match what this block accepts.", { inputProblems });
+  }
+
+  // Rows are checked before anything runs for the same reason the input is:
+  // a row of the wrong shape is a mistake in the test, and finding it here
+  // says so plainly instead of failing somewhere inside the block.
+  const stores = storesForRun(project, blockPath);
+  const seedProblems = stores.flatMap((store) => {
+    const seeded = seeds[store.target];
+    if (!seeded || store.shape === null) return [];
+    return Object.entries(seeded).flatMap(([key, row]) =>
+      checkValue(row, store.shape!, `${store.resourceName} · ${store.entry}[${JSON.stringify(key)}]`),
+    );
+  });
+  if (seedProblems.length > 0) {
+    return failure("The rows given do not match what these stores hold.", { inputProblems: seedProblems });
   }
 
   // A run held at a breakpoint is waiting for the person, so that time is not
@@ -165,10 +203,14 @@ async function executeOnce(
     blocks: [...project.byPath.values()]
       .filter((each) => each.path === blockPath || each.path.startsWith(`${blockPath}/`))
       .map((each) => ({ path: each.path, functionName: pack.functionName(each.block.id) })),
-    capabilities: Object.entries(node.block.capabilities).map(([name, cap]) => ({
-      name,
-      capability: cap.capability,
-    })),
+    capabilities: Object.entries(node.block.capabilities).map(([name, cap]) => {
+      const bound = stores.find((store) => store.port === name);
+      return {
+        name,
+        capability: cap.capability,
+        ...(bound ? { target: bound.target, seed: seeds[bound.target] ?? {} } : {}),
+      };
+    }),
     projectDir: project.dir,
     input,
     timeoutMs,
@@ -186,6 +228,9 @@ async function executeOnce(
       error: result.error ?? "The block failed.",
       inputProblems: [],
       outputProblems: [],
+      // A block that failed halfway may already have written, and what it
+      // wrote is often the clue to why.
+      stores: result.stores ?? {},
       logs: result.logs,
       durationMs,
       ...(result.stopped ? { stopped: true } : {}),
@@ -197,6 +242,7 @@ async function executeOnce(
     output: result.output,
     inputProblems: [],
     outputProblems: checkValue(result.output, portsAsType(node.block.outputs), "output"),
+    stores: result.stores ?? {},
     logs: result.logs,
     durationMs,
   };
@@ -231,7 +277,7 @@ export function startRun(request: RunRequest): { control: RunControl; outcome: P
     const compiled = await compileSystem(prepared.project, prepared.system.rootBlock);
     try {
       if (stopped) return failure("The run was stopped before it started.", { stopped: true });
-      return await executeOnce(prepared, compiled, request.blockPath, request.input, request.timeoutMs ?? 15_000, {
+      return await executeOnce(prepared, compiled, request.blockPath, request.input, request.stores ?? {}, request.timeoutMs ?? 15_000, {
         onEvent: request.onEvent,
         breakpoints,
         attach: (started) => {
@@ -289,7 +335,7 @@ async function runOneCase(
   blockPath: string,
   testCase: TestCase,
 ): Promise<CaseResult> {
-  const outcome = await executeOnce(prepared, compiled, blockPath, testCase.input, 15_000);
+  const outcome = await executeOnce(prepared, compiled, blockPath, testCase.input, testCase.stores ?? {}, 15_000);
 
   const base = {
     name: testCase.name,

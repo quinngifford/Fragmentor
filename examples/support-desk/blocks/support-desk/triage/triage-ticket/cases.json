@@ -2,11 +2,16 @@
   {
     "name": "an outage raised by an enterprise customer comes out near the top",
     "input": {
-      "accountsPath": "accounts.json",
       "accountId": "acc-1",
       "ticket": {
         "subject": "Site is down",
         "body": "Nobody can log in."
+      }
+    },
+    "stores": {
+      "support-desk/accounts-file.accounts": {
+        "acc-1": { "id": "acc-1", "name": "Northwind Labs", "plan": "enterprise", "openTickets": 2 },
+        "acc-3": { "id": "acc-3", "name": "Harbour Freight", "plan": "free", "openTickets": 7 }
       }
     },
     "expected": {
@@ -21,11 +26,16 @@
   {
     "name": "a question from a free account comes out near the bottom",
     "input": {
-      "accountsPath": "accounts.json",
       "accountId": "acc-3",
       "ticket": {
         "subject": "Exporting reports",
         "body": "Where do I find the export button?"
+      }
+    },
+    "stores": {
+      "support-desk/accounts-file.accounts": {
+        "acc-1": { "id": "acc-1", "name": "Northwind Labs", "plan": "enterprise", "openTickets": 2 },
+        "acc-3": { "id": "acc-3", "name": "Harbour Freight", "plan": "free", "openTickets": 7 }
       }
     },
     "expected": {

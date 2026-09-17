@@ -6,7 +6,9 @@ import { validateComposite } from "../model/validate.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
 import { ROLES, isArchitecture } from "../model/roles.js";
 import { blocksRoot, holdsArchitecture, holdsPlan, manifestPath, systemOf, writeManifest } from "../project/project.js";
-import type { Manifest, Project, Start } from "../project/project.js";
+import { boundStores } from "../project/stores.js";
+import type { LoadedBlock, Manifest, Project, Start } from "../project/project.js";
+import type { PortType } from "../model/types.js";
 import { AGENTS_FILE, AGENTS_SCAFFOLD, CLAUDE_FILE, CLAUDE_SCAFFOLD, GUIDE_FILE, agentGuide } from "./guide.js";
 
 /**
@@ -151,6 +153,18 @@ export async function startProject(
   return { ...files, written: ["fragmentor.json", ...files.written] };
 }
 
+/**
+ * The shape behind each of a block's bound capability ports, so a `Store` is
+ * written in terms of what it actually holds rather than of `unknown`.
+ */
+function boundShapes(project: Project, node: LoadedBlock): Record<string, PortType> {
+  return Object.fromEntries(
+    boundStores(project, node)
+      .filter((store) => store.shape !== null)
+      .map((store) => [store.port, store.shape!]),
+  );
+}
+
 export async function emitProject(project: Project): Promise<EmitResult> {
   const written: string[] = [];
   const skipped: string[] = [];
@@ -252,7 +266,10 @@ export async function emitProject(project: Project): Promise<EmitResult> {
       continue;
     }
 
-    await write(path.join(node.dir, pack.contractFile), pack.contractSource({ block: node.block, blockPath: node.path }));
+    await write(
+      path.join(node.dir, pack.contractFile),
+      pack.contractSource({ block: node.block, blockPath: node.path, bound: boundShapes(project, node) }),
+    );
 
     if (node.block.kind === "composite") {
       // Its code would call a block nobody has written yet, so it waits for

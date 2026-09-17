@@ -1,5 +1,5 @@
 import type { ProjectSnapshot } from "../../src/project/snapshot.js";
-import type { CaseResult, RunEvent, RunOutcome } from "../../src/run/run.js";
+import type { CaseResult, RunEvent, RunOutcome, StoreSeeds } from "../../src/run/run.js";
 import type { Role } from "../../src/model/roles.js";
 
 /**
@@ -81,6 +81,13 @@ export interface UiState {
   edits: Map<string, { base: string | null; text: string }>;
   /** What has been typed into each block's test bench, kept across redraws. */
   benchInputs: Map<string, Record<string, unknown>>;
+  /**
+   * The rows each block's bench puts in the stores it reaches before a run,
+   * by block path and then by store target. Kept beside the inputs and for
+   * the same reason: running redraws the panel, and a store that emptied
+   * itself every time would make the bench useless for a block that reads one.
+   */
+  benchStores: Map<string, StoreSeeds>;
   /** The last result from running each block. */
   runs: Map<string, RunOutcome>;
   /** Blocks currently running. */
@@ -157,6 +164,7 @@ export const ui: UiState = {
   userAdjusted: false,
   edits: new Map(),
   benchInputs: new Map(),
+  benchStores: new Map(),
   runs: new Map(),
   running: new Set(),
   caseResults: new Map(),

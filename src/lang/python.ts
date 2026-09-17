@@ -102,11 +102,24 @@ function portsModel(name: string, ports: Block["inputs"], sink: ModelSink): stri
   return `class ${name}(BaseModel):\n${MODEL_CONFIG}\n${fields.join("\n")}`;
 }
 
-function operationSignature(operation: CapabilityOperation): string {
+/**
+ * A type in a capability's signature. The capability's own parameter is
+ * written as free text in the catalogue, which every other pack renders
+ * verbatim; here it has to survive as the TypeVar rather than collapse to
+ * `Any` the way free text otherwise does.
+ */
+function capabilityAnnotation(type: PortType, parameter: string | undefined): string {
+  if (parameter !== undefined && type.kind === "text" && type.text === parameter) return parameter;
+  if (type.kind === "array") return `list[${capabilityAnnotation(type.of, parameter)}]`;
+  if (type.kind === "union") return type.of.map((member) => capabilityAnnotation(member, parameter)).join(" | ");
+  return annotation(type, "Value", { declarations: [] });
+}
+
+function operationSignature(operation: CapabilityOperation, parameter?: string): string {
   const parameters = operation.parameters
-    .map((parameter) => `${snakeCase(parameter.name)}: ${annotation(parameter.type, "Value", { declarations: [] })}`)
+    .map((each) => `${snakeCase(each.name)}: ${capabilityAnnotation(each.type, parameter)}`)
     .join(", ");
-  const returns = operation.returns ? annotation(operation.returns, "Value", { declarations: [] }) : "None";
+  const returns = operation.returns ? capabilityAnnotation(operation.returns, parameter) : "None";
   const prefix = operation.async ? "async def" : "def";
   const args = parameters ? `self, ${parameters}` : "self";
   return `    ${prefix} ${snakeCase(operation.name)}(${args}) -> ${returns}: ...`;
@@ -194,7 +207,7 @@ export const pythonPack: LanguagePack = {
   typeName: (blockId, role) => `${pascalCase(blockId)}${role}`,
   typeExpression: (type) => annotation(type, "Value", { declarations: [] }),
 
-  contractSource({ block }: ContractRequest): string {
+  contractSource({ block, bound }: ContractRequest): string {
     const sink: ModelSink = { declarations: [] };
     const inputName = this.typeName(block.id, "Input");
     const outputName = this.typeName(block.id, "Output");
@@ -225,11 +238,18 @@ export const pythonPack: LanguagePack = {
       ? [`class ${capsName}(Protocol):`, `    """${block.name} needs no effects supplied from outside."""`]
       : [
           `class ${capsName}(Protocol):`,
-          ...capabilities.map(([name, cap]) =>
-            cap.description
-              ? `    ${snakeCase(name)}: ${cap.capability}\n    """${cap.description}"""`
-              : `    ${snakeCase(name)}: ${cap.capability}`,
-          ),
+          ...capabilities.map(([name, cap]) => {
+            // A parameterised capability is written in terms of what it is a
+            // way into, whose shape becomes a model like any other.
+            const parameter = CAPABILITIES[cap.capability]?.parameter;
+            const row = parameter ? bound?.[name] : undefined;
+            const type = parameter
+              ? `${cap.capability}[${row ? annotation(row, `${pascalCase(block.id)}${pascalCase(snakeCase(name).replace(/_/g, "-"))}`, sink) : "Any"}]`
+              : cap.capability;
+            return cap.description
+              ? `    ${snakeCase(name)}: ${type}\n    """${cap.description}"""`
+              : `    ${snakeCase(name)}: ${type}`;
+          }),
         ];
 
     // Nested models have to be declared before the models that use them.
@@ -258,9 +278,16 @@ export const pythonPack: LanguagePack = {
   compositeSource,
 
   capabilitiesSource(): string {
+    const parameters = [...new Set(Object.values(CAPABILITIES).map((each) => each.parameter).filter(Boolean))] as string[];
+
     const declarations = Object.values(CAPABILITIES).map((capability) => {
-      const operations = capability.operations.map(operationSignature).join("\n");
-      return `class ${capability.name}(Protocol):\n    """${capability.description}"""\n\n${operations}`;
+      const operations = capability.operations
+        .map((operation) => operationSignature(operation, capability.parameter))
+        .join("\n");
+      const head = capability.parameter
+        ? `class ${capability.name}(Protocol, Generic[${capability.parameter}])`
+        : `class ${capability.name}(Protocol)`;
+      return `${head}:\n    """${capability.description}"""\n\n${operations}`;
     });
 
     return [
@@ -268,9 +295,10 @@ export const pythonPack: LanguagePack = {
       ``,
       `from __future__ import annotations`,
       ``,
-      `from typing import Protocol`,
+      `from typing import Any, Generic, Protocol, TypeVar`,
       ``,
       ``,
+      ...(parameters.length > 0 ? [parameters.map((name) => `${name} = TypeVar("${name}")`).join("\n"), ``, ``] : []),
       declarations.join("\n\n\n"),
       ``,
     ].join("\n");

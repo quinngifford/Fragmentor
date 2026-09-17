@@ -421,7 +421,10 @@ describe("the architecture the guide shows", () => {
     for (const guide of [agentGuide(structured("typescript")), agentGuide(visual)]) {
       for (const role of ARCHITECTURE_ROLES) expect(guide).toContain(`\`"${role}"\``);
       expect(guide).toContain('"role": "database"');
-      expect(guide).toContain('"access": ["reads orders-db.orders"]');
+      // The access names the capability port at this end, which is what makes
+      // it the way the code actually gets there rather than only a description.
+      expect(guide).toContain('"access": ["orders reads orders-db.orders"]');
+      expect(guide).toContain('"capabilities": { "orders": "Store" }');
       // And which block answers an operation, without which the blocks inside
       // a service show inputs arriving from nowhere.
       expect(guide).toContain('"block": "load-orders"');

@@ -134,20 +134,23 @@ export const architectureExample: Record<string, Record<string, unknown>> = {
     role: "service",
     subtype: "REST API",
     responsibility: "Answers for one owner's orders.",
-    exposes: { listOrders: { accepts: "{ owner: string }", returns: "{ id: string }[]", block: "load-orders" } },
+    exposes: {
+      listOrders: { accepts: "{ owner: string }", returns: "{ orders: { id: string; total: number }[] }", block: "load-orders" },
+    },
     children: ["load-orders"],
   },
   "load-orders": {
     responsibility: "Read one owner's orders.",
     inputs: { owner: "string" },
     outputs: { orders: "{ id: string; total: number }[]" },
-    access: ["reads orders-db.orders"],
+    capabilities: { orders: "Store" },
+    access: ["orders reads orders-db.orders"],
   },
   "orders-page": {
     role: "client",
     subtype: "browser",
     responsibility: "Where someone asks to see their orders.",
-    exposes: { showOrders: { accepts: "{ owner: string }", returns: "{ id: string }[]" } },
+    exposes: { showOrders: { accepts: "{ owner: string }", returns: "{ orders: { id: string; total: number }[] }" } },
     access: ["showOrders calls orders-api.listOrders"],
   },
 };

@@ -1,4 +1,4 @@
-import type { RunEvent, RunOutcome } from "../../src/run/run.js";
+import type { RunEvent, RunOutcome, StoreSeeds } from "../../src/run/run.js";
 import type { SnapshotBlock } from "../../src/project/snapshot.js";
 import type { Result, RunCommand } from "../ipc.js";
 import {
@@ -353,7 +353,7 @@ let runs = 0;
  * inside, where its children can be seen taking their turns. Resolves with
  * the outcome once the run ends.
  */
-export async function runWatched(block: SnapshotBlock, input: unknown): Promise<Result<RunOutcome>> {
+export async function runWatched(block: SnapshotBlock, input: unknown, stores: StoreSeeds = {}): Promise<Result<RunOutcome>> {
   const previous = ui.watch;
   if (previous && !previous.outcome) command(previous, { type: "stop" });
   stopPlayback();
@@ -377,13 +377,14 @@ export async function runWatched(block: SnapshotBlock, input: unknown): Promise<
     dir: requireSnapshot().dir,
     blockPath: block.path,
     input,
+    stores,
     breakpoints: [...ui.breakpoints],
   });
 
   if (ui.watch === watch) {
     watch.outcome = result.ok
       ? result.value
-      : { ok: false, error: result.error, inputProblems: [], outputProblems: [], logs: [], durationMs: 0 };
+      : { ok: false, error: result.error, inputProblems: [], outputProblems: [], stores: {}, logs: [], durationMs: 0 };
     schedule();
   }
   return result;

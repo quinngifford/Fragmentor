@@ -127,6 +127,7 @@ function projectAsBlock(): SnapshotBlock {
     inputs: [],
     outputs: [],
     capabilities: [],
+    stores: [],
     role: "function" as const,
     subtype: null,
     roleLabel: "",
