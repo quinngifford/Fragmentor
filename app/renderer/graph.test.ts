@@ -42,7 +42,8 @@ describe("the whole application, drawn", () => {
   it("draws every part of the system, each as the thing it is", () => {
     expect([...graph.nodes.keys()]).toEqual(["browser", "api", "links-db", "click-events", "geo-lookup"]);
     expect(graph.nodes.get("links-db")!.sublabel).toBe("DATABASE");
-    expect(graph.nodes.get("geo-lookup")!.sublabel).toBe("EXTERNAL");
+    // Nothing calls a geolocation provider yet, so that one is still a plan.
+    expect(graph.nodes.get("geo-lookup")!.sublabel).toBe("PLANNED");
     // Nothing is handed from one of these to the next, so there are no wires.
     expect(graph.signals).toEqual([]);
   });
@@ -52,10 +53,10 @@ describe("the whole application, drawn", () => {
       [...graph.accesses.values()].filter((link) => link.source === source).map((link) => link.target);
 
     expect(from("browser")).toEqual(["api"]);
-    // The service itself declares none of these; its four handlers do.
+    // The service itself declares none of these; the blocks inside it do.
     expect(from("api").sort()).toEqual(["click-events", "geo-lookup", "links-db"]);
 
-    const toDatabase = graph.accesses.get("api=>links-db")!;
+    const toDatabase = [...graph.accesses.values()].find((link) => link.source === "api" && link.target === "links-db")!;
     expect(toDatabase.fromWithin).toBe(true);
     expect(toDatabase.entries.map((entry) => entry.text).sort()).toEqual([
       "reads links-db.links",
@@ -113,44 +114,74 @@ describe("inside the service", () => {
     // it is drawn anyway, or the handlers that read it would point at nothing.
     const database = graph.nodes.get("links-db")!;
     expect(database.referenced).toBe(true);
-    expect(graph.nodes.get("resolve-link")!.referenced).toBe(false);
-
-    expect([...graph.accesses.keys()].sort()).toEqual([
-      "create-link=>links-db",
-      "locate-visitor=>geo-lookup",
-      "record-click=>click-events",
-      "resolve-link=>links-db",
-    ]);
+    expect(graph.nodes.get("create-link")!.referenced).toBe(false);
   });
 
-  it("keeps the handlers' own wires, which are still ordinary wires", () => {
-    expect(graph.signals.map((signal) => `${signal.source}.${signal.sourcePort}`).sort()).toEqual([
-      "locate-visitor.country",
-      "resolve-link.link",
-    ]);
+  it("shows what a request path reaches, gathered from the blocks inside it", () => {
+    const from = (source: string) =>
+      [...graph.accesses.values()].filter((link) => link.source === source).map((link) => link.target).sort();
+
+    // create-link touches the database itself; follow-link does not, but the
+    // three blocks inside it touch all three resources.
+    expect(from("create-link")).toEqual(["links-db"]);
+    expect(from("follow-link")).toEqual(["click-events", "geo-lookup", "links-db"]);
   });
 
   it("marks an access the block itself declared apart from one gathered from inside", () => {
-    expect(graph.accesses.get("resolve-link=>links-db")!.fromWithin).toBe(false);
+    const own = [...graph.accesses.values()].find((link) => link.source === "create-link")!;
+    const gathered = [...graph.accesses.values()].find((link) => link.source === "follow-link")!;
+    expect(own.fromWithin).toBe(false);
+    expect(gathered.fromWithin).toBe(true);
   });
 
   it("draws no line from a block to the one whose diagram this is", () => {
     // Looking outward reaches the service the handlers are inside, so an
     // access naming it resolves; drawing it would be a line to the frame
     // around everything else. The checks refuse it; the canvas ignores it.
-    ui.snapshot!.blocks["link-shortener/api/resolve-link"]!.access = [
+    ui.snapshot!.blocks["link-shortener/api/create-link"]!.access = [
       {
-        text: "calls api.resolveLink",
+        text: "calls api.createLink",
         verb: "calls",
         resource: "api",
         resourcePath: "link-shortener/api",
         resourceName: "Link API",
-        entry: "resolveLink",
+        entry: "createLink",
       },
     ];
 
     const redrawn = buildGraph("link-shortener/api")!;
-    expect([...redrawn.accesses.keys()]).not.toContain("resolve-link=>api");
+    expect([...redrawn.accesses.values()].map((link) => link.target)).not.toContain("api");
     expect(redrawn.nodes.has("api")).toBe(false);
+  });
+});
+
+describe("inside the request path", () => {
+  let graph: Graph;
+  beforeAll(async () => {
+    graph = await open("link-shortener/api/follow-link");
+  });
+
+  it("keeps the handlers' own wires, which are still ordinary wires", () => {
+    expect(graph.signals.map((signal) => `${signal.source}.${signal.sourcePort}`).sort()).toEqual([
+      "input.code",
+      "input.ip",
+      "input.now",
+      "locate-visitor.country",
+      "resolve-link.link",
+      "resolve-link.link",
+      "record-click.click",
+    ].sort());
+  });
+
+  it("reaches three resources, every one of them from further out", () => {
+    const targets = [...graph.accesses.values()].map((link) => `${link.source}->${link.target}`).sort();
+    expect(targets).toEqual([
+      "locate-visitor->geo-lookup",
+      "record-click->click-events",
+      "resolve-link->links-db",
+    ]);
+    for (const key of ["links-db", "geo-lookup", "click-events"]) {
+      expect(graph.nodes.get(key)!.referenced).toBe(true);
+    }
   });
 });

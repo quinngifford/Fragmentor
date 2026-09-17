@@ -1,7 +1,7 @@
 {
   "name": "Link API",
   "role": "service",
-  "responsibility": "The HTTP service: creates short links, resolves them, and sends every visit on to be counted.",
+  "responsibility": "The HTTP service: creates short links, and answers a visit to one.",
   "code": "src/api.ts",
   "exposes": {
     "createLink": {
@@ -9,19 +9,14 @@
       "returns": "{ code: string; url: string; owner: string; createdAt: number }",
       "description": "Refuses an owner who is already at their limit."
     },
-    "resolveLink": {
+    "followLink": {
       "accepts": "{ code: string; ip: string }",
-      "returns": "{ url: string }"
+      "returns": "{ url: string }",
+      "description": "Nothing comes back for a code we never handed out."
     }
   },
   "children": [
     "create-link",
-    "resolve-link",
-    "locate-visitor",
-    "record-click"
-  ],
-  "wires": [
-    "resolve-link.link -> record-click.link",
-    "locate-visitor.country -> record-click.country"
+    "follow-link"
   ]
 }

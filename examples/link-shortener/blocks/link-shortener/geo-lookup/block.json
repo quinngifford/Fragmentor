@@ -1,7 +1,8 @@
 {
   "name": "Geolocation Service",
   "role": "external",
-  "responsibility": "Someone else's service: turns an address into a country. We do not run it and cannot see inside it.",
+  "planned": true,
+  "responsibility": "Someone else's service, turning an address into a country. Nothing calls one yet: src/geo.ts reads the country off the address instead.",
   "exposes": {
     "locate": {
       "accepts": "{ ip: string }",

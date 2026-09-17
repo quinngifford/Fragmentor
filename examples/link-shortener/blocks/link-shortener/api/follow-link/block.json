@@ -1,0 +1,27 @@
+{
+  "responsibility": "Answer one visit to a short link: where it goes, and a click recorded for it.",
+  "code": "src/api.ts#followLink",
+  "inputs": {
+    "code": "string",
+    "ip": "string",
+    "now": "number"
+  },
+  "outputs": {
+    "link": "Link",
+    "click": "Click"
+  },
+  "children": [
+    "resolve-link",
+    "locate-visitor",
+    "record-click"
+  ],
+  "wires": [
+    "input.code -> resolve-link.code",
+    "input.ip -> locate-visitor.ip",
+    "input.now -> record-click.at",
+    "resolve-link.link -> record-click.link",
+    "locate-visitor.country -> record-click.country",
+    "resolve-link.link -> output.link",
+    "record-click.click -> output.click"
+  ]
+}

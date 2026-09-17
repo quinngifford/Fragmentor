@@ -1,6 +1,9 @@
 /**
- * The country a visitor came from, asked of a geolocation service outside
- * this system. Stubbed here; `geo-lookup` is what the real one is drawn as.
+ * Which country a visitor came from.
+ *
+ * This is a stand-in: it reads the country off the address rather than asking
+ * anyone. The real geolocation service is drawn on the diagram as a planned
+ * block, because nothing here calls one yet.
  */
 export function lookupCountry(ip: string): string {
   const first = Number(ip.split(".")[0] ?? "0");

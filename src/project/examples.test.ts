@@ -120,7 +120,11 @@ describe("the link-shortener example", () => {
     expect(roleOf("link-shortener/click-events")).toBe("queue");
     expect(roleOf("link-shortener/geo-lookup")).toBe("external");
     // What the service is made of stays ordinary blocks.
-    expect(roleOf("link-shortener/api/resolve-link")).toBe("function");
+    expect(roleOf("link-shortener/api/follow-link/resolve-link")).toBe("function");
+
+    // Nothing in the code calls a geolocation provider, so the block that
+    // stands for one is part of the plan rather than of the program.
+    expect(project.byPath.get("link-shortener/geo-lookup")!.block.planned).toBe(true);
   });
 
   it("shows a table as its columns, which is what makes the database worth drawing", async () => {
@@ -132,13 +136,14 @@ describe("the link-shortener example", () => {
     expect(links.accepts).toEqual(links.returns);
   });
 
-  it("joins a handler to a database its own parent does not hold", async () => {
+  it("joins a handler to a database two levels further out than itself", async () => {
     const project = await loadProject(linkShortener);
-    const resolve = project.byPath.get("link-shortener/api/resolve-link")!.block;
+    const path = "link-shortener/api/follow-link/resolve-link";
+    const resolve = project.byPath.get(path)!.block;
 
     expect(resolve.access).toEqual([{ verb: "reads", resource: "links-db", entry: "links" }]);
-    // links-db sits beside the service, one level further out than the handler.
-    expect(resolveAccess(project, "link-shortener/api/resolve-link", "links-db")?.path).toBe("link-shortener/links-db");
+    // links-db sits beside the service, past the request path and the service.
+    expect(resolveAccess(project, path, "links-db")?.path).toBe("link-shortener/links-db");
   });
 
   it("leaves the whole application and its service with no code of their own", async () => {
@@ -148,5 +153,6 @@ describe("the link-shortener example", () => {
     expect(at("link-shortener")).toBe(true);
     expect(at("link-shortener/api")).toBe(true);
     expect(at("link-shortener/api/create-link")).toBe(false);
+    expect(at("link-shortener/api/follow-link")).toBe(false);
   });
 });
