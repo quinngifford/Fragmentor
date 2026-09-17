@@ -58,6 +58,18 @@ Any block declares what it reaches as **access**: `reads app-db.users`, `writes 
 
 A wire and an access mean different things and are drawn differently. A wire is a value handed from one call into the next, and generated code depends on that meaning exactly. An access is a relationship with something the system talks to. Nothing is wired to a database.
 
+Access is drawn per direction rather than per pair, because direction is the most important thing about it: a database that is read and written gets a line each way, not one line saying the two are connected. Everything leaves a block on its right and arrives on its left, the way its ports are drawn.
+
+## How a diagram is arranged and coloured
+
+The arrangement says something, so it has to be true. A diagram reads left to right from whoever sets the system going, through what they call, to what that calls in turn. Stores and queues are not steps in that: a service reads and writes a database in the same breath, and putting it further along would say it came after. They sit underneath instead, and the connection loops clockwise around the block — out of its right, down, and back up into its left. A queue written and never read is an endpoint but not the destination, because the system's answer goes back to whoever asked for it; it belongs under the flow rather than at the end of it.
+
+Colour says which world a thing belongs to, and runs from what is most yours to what is least: your code, your own separate programs, the data you keep, the data in motion, the people you serve, and the services you do not control. Green stays the signal colour it always was, so anything green is data moving inside the program and anything else is not. Red is spent on none of them: on this panel it means something is wrong.
+
+A dashed line means one thing and only one thing: not built yet. Everything planned is grey and dashed, blocks and connections alike, whatever colour it would otherwise have taken.
+
+An arrangement is a default, not a rule. A person can move any block, and where they left it is remembered.
+
 Nothing is generated, checked or run for an architecture block, or for a block holding one anywhere beneath it — the same rule as a plan, for the same reason: there is no chain of calls to write when one of the links is a database. The code that opens the real connections and calls into these is the framework's, and lives outside `blocks/`. The function blocks **inside** a service are ordinary blocks, generated, checked, run and tested as usual, which is what lets a project hold an honest end-to-end architecture at the top and a fully verified block hierarchy underneath each service.
 
 Access says where data comes from and where it goes. It is not how the code gets there: block code still reaches the outside world only through its capabilities, and there is no database capability today. So an access belongs on whichever block really talks to the store — a service, whose code is outside `blocks/`, or a block with a capability that reaches it.
