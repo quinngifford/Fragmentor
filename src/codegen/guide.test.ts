@@ -126,12 +126,13 @@ describe("the guide", () => {
 
   it("is short enough for an agent to take in at once", () => {
     // The guide these replaced ran to 375 lines. Keep it from growing back.
-    // The room above what they measured before is the section on the rest of
-    // the system, which a guide cannot do without once a diagram can hold a
-    // database or a queue. That section is the only thing allowed to add to
-    // these numbers.
-    expect(guides["structured TypeScript"]!.split("\n").length).toBeLessThan(205);
-    expect(guides.visual!.split("\n").length).toBeLessThan(145);
+    // The room above what they first measured is the section on the rest of
+    // the system: what the roles are, what a block exposes, what it reaches,
+    // and which block answers an operation. A guide cannot do without any of
+    // that once a diagram can hold a database, and that section is the only
+    // thing that has been allowed to add to these numbers.
+    expect(guides["structured TypeScript"]!.split("\n").length).toBeLessThan(225);
+    expect(guides.visual!.split("\n").length).toBeLessThan(165);
   });
 
   it("tells a structured agent about every capability, and how to check and test its work", () => {
@@ -378,6 +379,8 @@ describe("the guide says where the project starts", () => {
 
 describe("the architecture the guide shows", () => {
   it("checks clean exactly as printed, in a service that holds all three", async () => {
+    // The service is the one the guide prints, given the other two as
+    // children so that everything it shows is checked in one place.
     await writeFile(
       manifestPath(dir),
       JSON.stringify({ ...workedExample.manifest, systems: [{ rootBlock: "price-orders" }] }, null, 2),
@@ -385,8 +388,7 @@ describe("the architecture the guide shows", () => {
     );
     await writeBlocks({
       "price-orders": {
-        role: "service",
-        responsibility: "Answer for the orders one owner has placed.",
+        ...architectureExample["orders-api"]!,
         children: ["orders-db", "billing", "load-orders"],
       },
       "price-orders/orders-db": architectureExample["orders-db"]!,
@@ -412,6 +414,9 @@ describe("the architecture the guide shows", () => {
       for (const role of ARCHITECTURE_ROLES) expect(guide).toContain(`\`"${role}"\``);
       expect(guide).toContain('"role": "database"');
       expect(guide).toContain('"access": ["reads orders-db.orders"]');
+      // And which block answers an operation, without which the blocks inside
+      // a service show inputs arriving from nowhere.
+      expect(guide).toContain('"block": "load-orders"');
     }
   });
 });

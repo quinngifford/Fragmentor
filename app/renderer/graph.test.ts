@@ -146,9 +146,22 @@ describe("inside the service", () => {
 
   it("shows the blocks that are there, and nothing kept on another level", () => {
     // Every store this service touches is kept beside the service, not in it,
-    // so its own diagram is the two handlers and the work between them.
-    expect([...graph.nodes.keys()]).toEqual(["create-link", "follow-link"]);
-    expect(graph.accesses.size).toBe(0);
+    // so its own diagram is the two handlers and the way into them.
+    expect([...graph.nodes.keys()].sort()).toEqual(["create-link", "follow-link", "input"]);
+  });
+
+  it("draws the way in: each operation, and the block that answers it", () => {
+    // Without this the handlers show inputs arriving from nowhere, because
+    // the call that feeds them is the one thing the diagram does not say.
+    const wayIn = [...graph.accesses.values()].filter((link) => link.source === "input");
+    expect(wayIn.map((link) => `${link.entries[0]!.entry} -> ${link.target}`).sort()).toEqual([
+      "createLink -> create-link",
+      "followLink -> follow-link",
+    ]);
+
+    const boundary = graph.nodes.get("input")!;
+    expect(boundary.boundary).toBe(true);
+    expect(boundary.exposes.map((entry) => entry.name).sort()).toEqual(["createLink", "followLink"]);
   });
 
   it("draws no line from a block to the one whose diagram this is", () => {

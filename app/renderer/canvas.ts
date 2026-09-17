@@ -841,6 +841,9 @@ function accessGeometry(graph: Graph, layout: Map<string, Point>, link: AccessLi
 
 /** `reads users`, then `reads 3 tables` once there are too many to name. */
 function accessLabel(link: AccessLink, resource: GraphNode | undefined): string {
+  // The way into a service is named by the operation alone: "calls" would be
+  // the wrong word for a boundary that is answering rather than asking.
+  if (link.source === "input") return link.entries[0]?.entry ?? "answers";
   if (link.entries.length === 1) {
     const only = link.entries[0]!;
     return only.entry === null ? only.verb : `${only.verb} ${only.entry}`;
@@ -854,7 +857,15 @@ function accessLabel(link: AccessLink, resource: GraphNode | undefined): string 
 }
 
 /** What an access carries, as the resource describes it. */
-function accessDetail(link: AccessLink, resource: GraphNode | undefined): string[] {
+function accessDetail(link: AccessLink, resource: GraphNode | undefined, owner: GraphNode | undefined): string[] {
+  // Into a service, what the operation accepts is written on the boundary the
+  // line leaves rather than on the block it arrives at.
+  if (link.source === "input") {
+    return link.entries.map((each) => {
+      const operation = owner?.exposes.find((exposed) => exposed.name === each.entry);
+      return operation?.accepts ? `${each.entry}: ${operation.accepts}` : (each.entry ?? each.text);
+    });
+  }
   return link.entries.map((entry) => {
     if (entry.entry === null) return entry.text;
     const exposed = resource?.exposes.find((each) => each.name === entry.entry);
@@ -895,7 +906,7 @@ function drawAccesses(graph: Graph, layout: Map<string, Point>, layer: Element, 
       link.direction === "in"
         ? `${resource?.label} → ${owner?.label}`
         : `${owner?.label} → ${resource?.label}`,
-      ...accessDetail(link, resource),
+      ...accessDetail(link, resource, owner),
       link.fromWithin ? "Declared by a block inside." : "",
       planned ? "Planned: not built yet." : "",
     ]
@@ -1196,11 +1207,11 @@ function attachNodeBehaviour(group: SVGGElement, node: GraphNode): void {
 
   group.addEventListener("dblclick", (event) => {
     event.stopPropagation();
-    if (node.block?.kind === "composite") openDiagram(node.block.path);
+    if (node.block?.kind === "composite" && node.block.path !== ui.view) openDiagram(node.block.path);
   });
 
   group.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && node.block?.kind === "composite") {
+    if (event.key === "Enter" && node.block?.kind === "composite" && node.block.path !== ui.view) {
       event.preventDefault();
       openDiagram(node.block.path);
       return;

@@ -87,6 +87,20 @@ export interface Exposed {
   accepts: PortType | null;
   /** What comes back: a row read, a response returned. Null when nothing does. */
   returns: PortType | null;
+  /**
+   * The child block that answers this operation.
+   *
+   * Without it a service's operations and the blocks inside it are two lists
+   * that never meet: the blocks show inputs arriving from nowhere, because
+   * the call that feeds them is the one thing the diagram does not say. With
+   * it the call can be followed from whoever makes it all the way to the code
+   * that answers it.
+   *
+   * The two shapes need not match. An operation is what arrives at the edge
+   * of the service; the block is what the code calls, and the framework
+   * between them parses, validates and fills in whatever else it needs.
+   */
+  block?: string;
   description?: string;
 }
 
@@ -285,6 +299,7 @@ const exposedSchema = z.preprocess(
       type: describedType.optional(),
       accepts: describedType.optional(),
       returns: describedType.optional(),
+      block: blockId.optional(),
       description: z.string().optional(),
     })
     .strict()
@@ -299,6 +314,7 @@ const exposedSchema = z.preprocess(
     .transform((entry): Exposed => ({
       accepts: entry.type ?? entry.accepts ?? null,
       returns: entry.type ?? entry.returns ?? null,
+      ...(entry.block === undefined ? {} : { block: entry.block }),
       ...(entry.description === undefined ? {} : { description: entry.description }),
     })),
 );
@@ -556,17 +572,21 @@ export function blockToFileShape(block: Block): Record<string, unknown> {
     Object.entries(block.exposes).map(([name, entry]) => {
       const accepts = entry.accepts === null ? undefined : describeType(entry.accepts);
       const returns = entry.returns === null ? undefined : describeType(entry.returns);
+      const extra = {
+        ...(entry.block === undefined ? {} : { block: entry.block }),
+        ...(entry.description === undefined ? {} : { description: entry.description }),
+      };
       // A store holds one shape, so both directions collapse back to how it
       // was most likely written: the bare type, or the type with a note.
       if (accepts !== undefined && accepts === returns) {
-        return entry.description === undefined ? [name, accepts] : [name, { type: accepts, description: entry.description }];
+        return Object.keys(extra).length === 0 ? [name, accepts] : [name, { type: accepts, ...extra }];
       }
       return [
         name,
         {
           ...(accepts === undefined ? {} : { accepts }),
           ...(returns === undefined ? {} : { returns }),
-          ...(entry.description === undefined ? {} : { description: entry.description }),
+          ...extra,
         },
       ];
     }),

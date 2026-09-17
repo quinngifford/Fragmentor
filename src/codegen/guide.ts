@@ -122,16 +122,20 @@ export const architectureExample: Record<string, Record<string, unknown>> = {
     role: "database",
     subtype: "PostgreSQL",
     responsibility: "Holds every order and who placed it.",
-    exposes: {
-      orders: { type: "{ id: string; owner: string; total: number }", description: "One row per order." },
-      owners: "{ id: string; email: string }",
-    },
+    exposes: { orders: { type: "{ id: string; owner: string }", description: "One per order." } },
   },
   billing: {
     role: "external",
     subtype: "payment provider",
     responsibility: "Someone else's payment service. We cannot see inside it.",
     exposes: { charge: { accepts: "{ orderId: string; amount: number }", returns: "{ receipt: string }" } },
+  },
+  "orders-api": {
+    role: "service",
+    subtype: "REST API",
+    responsibility: "Answers for one owner's orders.",
+    exposes: { listOrders: { accepts: "{ owner: string }", returns: "{ id: string }[]", block: "load-orders" } },
+    children: ["load-orders"],
   },
   "load-orders": {
     responsibility: "Read one owner's orders.",
@@ -357,6 +361,7 @@ export function agentGuide(manifest: Manifest): string {
     maxDepth: String(manifest.granularity.maxDepth),
     roles: rolesSection(),
     architectureBlock: compactJson(architectureExample["orders-db"]),
+    serviceBlock: compactJson(architectureExample["orders-api"]),
     operationEntry: compactJson((architectureExample.billing!.exposes as Record<string, unknown>).charge),
     accessBlock: compactJson(architectureExample["load-orders"]),
   };

@@ -7,12 +7,14 @@
     "createLink": {
       "accepts": "{ url: string; owner: string }",
       "returns": "{ code: string; url: string; owner: string; createdAt: number }",
-      "description": "Refuses an owner who is already at their limit."
+      "description": "Refuses an owner who is already at their limit.",
+      "block": "create-link"
     },
     "followLink": {
       "accepts": "{ code: string; ip: string }",
       "returns": "{ url: string }",
-      "description": "Nothing comes back for a code we never handed out."
+      "description": "Nothing comes back for a code we never handed out.",
+      "block": "follow-link"
     }
   },
   "children": [

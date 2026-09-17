@@ -78,6 +78,12 @@ A block with a role has no `inputs` or `outputs`. It says what it offers with `e
 
 - A store's entry is written once, as the shape it holds. An operation writes its two directions apart, `{{operationEntry}}`, and may leave either out.
 - A shape written as an object, `{ code: string; url: string }`, is drawn column by column, which is what makes a database block worth looking at. Anything else is kept as the words you write.
+- A service's operation says which block answers it with `"block"`. Without that, the blocks inside it show inputs arriving from nowhere. The two shapes need not match: an operation is what arrives at the edge of the service, and the framework between parses and fills in the rest.
+
+```json
+{{serviceBlock}}
+```
+
 - `reads` takes data out, `writes` puts data in, `calls` does both. Name the entry, as in `reads orders-db.orders`, or leave it off to mean the whole thing.
 - The block named is looked for beside the one reaching it, then above it, up to the top of the system, so a handler inside a service reaches a database the service keeps beside it. Put the access on the block whose code really touches the resource; the diagrams above gather it up.
 

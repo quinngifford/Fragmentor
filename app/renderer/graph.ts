@@ -248,7 +248,9 @@ export function buildGraph(view: string): Graph | null {
     bus.signals.push(signal);
   }
 
-  return { parent, nodes, buses, signals, accesses: buildAccesses(parent, nodes) };
+  const accesses = buildAccesses(parent, nodes);
+  addAnsweredOperations(parent, nodes, accesses);
+  return { parent, nodes, buses, signals, accesses };
 }
 
 
@@ -320,6 +322,60 @@ function buildAccesses(parent: SnapshotBlock, nodes: Map<string, GraphNode>): Ma
   }
 
   return links;
+}
+
+/**
+ * The way into a service: its operations, and the block each one leads to.
+ *
+ * Without this a service's diagram is a set of blocks with their inputs
+ * arriving from nowhere, because the call that feeds them is the one thing it
+ * does not say. The boundary carries the operations the service answers, and
+ * a line runs from each to the block that answers it, so a call can be
+ * followed from whoever made it to the code that deals with it.
+ */
+function addAnsweredOperations(
+  parent: SnapshotBlock,
+  nodes: Map<string, GraphNode>,
+  accesses: Map<string, AccessLink>,
+): void {
+  const answered = parent.exposes.filter((entry) => entry.block !== null && nodes.has(entry.block));
+  if (!parent.architecture || answered.length === 0) return;
+
+  nodes.set("input", {
+    key: "input",
+    label: parent.name,
+    sublabel: "ANSWERS",
+    boundary: true,
+    outputs: [],
+    exposes: answered,
+    capabilities: [],
+    child: null,
+    block: parent,
+    groups: [],
+  });
+
+  answered.forEach((entry, lane) => {
+    const id = `input=>${entry.block}:${entry.name}`;
+    accesses.set(id, {
+      id,
+      source: "input",
+      target: entry.block!,
+      verb: "calls",
+      direction: "out",
+      entries: [
+        {
+          text: `answers ${entry.name}`,
+          verb: "calls",
+          resource: entry.block!,
+          resourcePath: null,
+          resourceName: entry.name,
+          entry: entry.name,
+        },
+      ],
+      fromWithin: false,
+      lane,
+    });
+  });
 }
 
 /** A block drawn as the thing it stands for rather than as a function. */

@@ -331,6 +331,29 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
       }
     }
 
+    // An operation that says which block answers it is checked here for the
+    // same reason: the block it names is a child, and only the project has
+    // the children in hand.
+    for (const [name, entry] of Object.entries(node.block.exposes)) {
+      if (entry.block === undefined) continue;
+      const answering = node.children.find((child) => child.block.id === entry.block);
+      const severity = mode === "visual" || node.block.planned ? "warning" : "error";
+
+      if (!answering) {
+        diagnostics.push({
+          severity,
+          blockPath: node.path,
+          message: `"${node.block.name}" says its "${name}" is answered by "${entry.block}", but there is no such block inside it.`,
+        });
+      } else if (isArchitecture(answering.block.role)) {
+        diagnostics.push({
+          severity,
+          blockPath: node.path,
+          message: `"${node.block.name}" says its "${name}" is answered by "${entry.block}", which is ${ROLES[answering.block.role].label.toLowerCase()} rather than code. An operation is answered by a function block.`,
+        });
+      }
+    }
+
     // Access is declared by the block that does the reaching, so it is
     // checked here rather than in the composite: only the project knows what
     // lies above a block.

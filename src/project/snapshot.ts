@@ -42,6 +42,8 @@ export interface SnapshotExposed {
   accepts: string | null;
   /** What comes back, as written. Null when nothing does. */
   returns: string | null;
+  /** The child block that answers this operation, by id. Null when none does. */
+  block: string | null;
   description: string | null;
   /**
    * The named parts of the shape, when it has any: a table's columns. Taken
@@ -242,6 +244,7 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       name,
       accepts: entry.accepts === null ? null : describeType(entry.accepts),
       returns: entry.returns === null ? null : describeType(entry.returns),
+      block: entry.block ?? null,
       description: entry.description ?? null,
       fields: fieldsOf(entry.returns ?? entry.accepts),
     }));

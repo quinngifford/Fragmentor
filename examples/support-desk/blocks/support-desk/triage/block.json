@@ -6,7 +6,8 @@
   "exposes": {
     "triageTicket": {
       "accepts": "{ accountId: string; subject: string; body: string }",
-      "returns": "{ priority: number; headline: string }"
+      "returns": "{ priority: number; headline: string }",
+      "block": "triage-ticket"
     }
   },
   "access": [

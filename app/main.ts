@@ -786,7 +786,9 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       value("structured", "opened") === true &&
         value("structured", "subtype") === "SERVICE: REST API" &&
         value("structured", "bench") === true &&
-        value("structured", "runnable") === true,
+        value("structured", "runnable") === true &&
+        value("structured", "wayIn") === true &&
+        value("structured", "answers") === "triageTicket",
     ],
     [
       "colouring changes what is drawn, and the legend explains it and folds away",
@@ -1258,7 +1260,13 @@ function attachSelfCheck(
             .find((node) => (node.querySelector(".label") || {}).textContent === "rank-jobs");
           if (!root) return { paused: false, stage: "no rank-jobs in the tree" };
           root.click();
-          await wait(300);
+
+          // Watching a run leaves the panel on whichever block it was last
+          // showing, which is somewhere inside. Wait for the panel to be the
+          // one this step means to run, or the bench found below would be
+          // another block's.
+          const onRoot = Boolean(await until(() => text(".insp-id") === "rank-jobs", 10000));
+          if (!onRoot) return { paused: false, stage: "panel stayed on " + text(".insp-id") };
 
           const runButton = await until(() => [...document.querySelectorAll(".bench .btn")]
             .find((button) => button.textContent === "Run block" && !button.disabled));
@@ -1666,9 +1674,16 @@ function attachSelfCheck(
           await wait(500);
           const top = { subtype: text('.block-box[data-key="triage"] .block-kind') };
 
-          // Into the service, and into the request path inside it, which is
-          // an ordinary composite with a bench.
-          for (const id of ["triage", "triage-ticket"]) {
+          // Into the service first, where its boundary should be drawn.
+          const service = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "triage");
+          service.click();
+          await wait(600);
+          top.wayIn = Boolean(document.querySelector('.block-box[data-key="input"]'));
+          top.answers = text('.access-group[data-access="input=>triage-ticket:triageTicket"] .access-label');
+
+          // And on into the request path, which is an ordinary composite
+          // with a bench behind it.
+          for (const id of ["triage-ticket"]) {
             const node = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === id);
             node.click();
             await wait(500);
@@ -1679,6 +1694,11 @@ function attachSelfCheck(
             subtype: top.subtype,
             bench,
             runnable: Boolean(document.querySelector('.block-box[data-key="load-account"] .breakpoint')),
+            // The way into the service: the operation it answers, and the
+            // block that answers it, so the blocks one level down no longer
+            // show inputs arriving from nowhere.
+            wayIn: top.wayIn,
+            answers: top.answers,
           };
         `);
         await capture(window, "self-check-structured");
