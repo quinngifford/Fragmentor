@@ -1,0 +1,54 @@
+{
+  "link-shortener/api": {
+    "create-link": {
+      "x": 300,
+      "y": 35
+    },
+    "resolve-link": {
+      "x": 300,
+      "y": 158
+    },
+    "locate-visitor": {
+      "x": 300,
+      "y": 281
+    },
+    "record-click": {
+      "x": 643,
+      "y": 24
+    },
+    "links-db": {
+      "x": 640,
+      "y": 224
+    },
+    "geo-lookup": {
+      "x": 643,
+      "y": 413
+    },
+    "click-events": {
+      "x": 964,
+      "y": 153
+    }
+  },
+  "link-shortener": {
+    "browser": {
+      "x": 300,
+      "y": 135
+    },
+    "api": {
+      "x": 600,
+      "y": 115
+    },
+    "links-db": {
+      "x": 898,
+      "y": 24
+    },
+    "click-events": {
+      "x": 900,
+      "y": 158
+    },
+    "geo-lookup": {
+      "x": 901,
+      "y": 278
+    }
+  }
+}
