@@ -16,6 +16,15 @@
   --effect: #e2a54b;
   --pending: #7a8b96;
   --bad: #e3778c;
+  /* What kind of thing a block is, from what is most yours to what is least.
+     Change one of these and every block, line and label of that kind follows. */
+  --role-function: #4fe38f;
+  --role-service: #b98ce6;
+  --role-database: #5aa9e6;
+  --role-storage: #5aa9e6;
+  --role-queue: #4fc9e3;
+  --role-client: #e2a54b;
+  --role-external: #dd6a4a;
   /* Code colours. Quiet enough to sit beside the diagram, and distinct enough
      to be read apart at 11px. None of them is the signal green, which on this
      panel means something else. */
@@ -282,15 +291,31 @@ body[data-project="open"] .welcome { display: none; }
 .block-box[data-boundary="true"] .block-plate { fill: var(--panel); stroke-dasharray: 3 3; }
 .block-head { fill: var(--panel); pointer-events: none; }
 
-/* The rest of the system: a block that stands for something the program talks
-   to rather than something it runs. Amber already marks an effect on this
-   panel, so it marks these, because everything here is outside the pure world
-   the functions live in. They come before the planned rules deliberately: a
-   planned database should read as planned first. */
-.block-box[data-architecture="true"] .block-plate { fill: var(--panel); stroke: #6b5327; }
-.block-box[data-architecture="true"] .block-head { fill: #16130d; }
-.block-box[data-architecture="true"] .block-kind { fill: var(--effect); }
-.block-box[data-architecture="true"] .block-body:hover .block-plate { stroke: var(--effect); }
+/* The rest of the system. Hue says which world a thing belongs to, and runs
+   from what is most yours to what is least: your code, your separate
+   programs, the data you keep, the data in motion, the people you serve, and
+   the services you do not control. Green stays the signal colour, so anything
+   green is data moving inside the program and anything else is not. Red is
+   not spent here; on this panel it means something is wrong.
+
+   These come before the planned rules deliberately: a planned database should
+   read as planned first. */
+.block-box[data-role="function"] { --role: var(--role-function); }
+.block-box[data-role="service"] { --role: var(--role-service); }
+.block-box[data-role="external"] { --role: var(--role-external); }
+.block-box[data-role="database"] { --role: var(--role-database); }
+.block-box[data-role="storage"] { --role: var(--role-storage); }
+.block-box[data-role="queue"] { --role: var(--role-queue); }
+.block-box[data-role="client"] { --role: var(--role-client); }
+
+.block-box[data-architecture="true"] .block-plate {
+  fill: color-mix(in srgb, var(--role) 5%, var(--panel));
+  stroke: color-mix(in srgb, var(--role) 42%, var(--ground));
+}
+.block-box[data-architecture="true"] .block-head { fill: color-mix(in srgb, var(--role) 9%, var(--ground)); }
+.block-box[data-architecture="true"] .block-kind { fill: var(--role); }
+.block-box[data-architecture="true"] .block-divider { stroke: color-mix(in srgb, var(--role) 30%, var(--ground)); }
+.block-box[data-architecture="true"] .block-body:hover .block-plate { stroke: var(--role); }
 
 /* Brought in from the diagram above this one, because something here reaches
    it. Quieter than the blocks that really live here, and never solid. */
@@ -299,35 +324,55 @@ body[data-project="open"] .welcome { display: none; }
 .elsewhere-badge { font-family: var(--mono); font-size: 9px; fill: var(--ink-faint); pointer-events: none; }
 
 /* What a resource holds, drawn down its middle. */
-.exposed-plate { fill: var(--panel-high); stroke: var(--rule); stroke-width: 1; }
-.exposed-name { font-family: var(--mono); font-size: 10px; fill: var(--effect); letter-spacing: 0.04em; pointer-events: none; }
+.exposed-plate { fill: var(--panel-high); stroke: color-mix(in srgb, var(--role) 22%, var(--ground)); stroke-width: 1; }
+.exposed-name { font-family: var(--mono); font-size: 10px; fill: var(--role); letter-spacing: 0.04em; pointer-events: none; }
 .exposed-field { font-family: var(--mono); font-size: 9px; fill: var(--ink-dim); pointer-events: none; }
 
-/* An access is an effect rather than a value on a wire, so it is drawn as
-   one: amber, dashed, and pointing the way the data really moves. */
-.access { fill: none; stroke: var(--effect); stroke-width: 1.5; stroke-dasharray: 5 4; opacity: 0.5; }
-.access-arrow { fill: var(--effect); opacity: 0.75; }
-.access-group:hover .access { opacity: 1; stroke-width: 2.5; }
+/* An access takes the colour of whatever it reaches, so a line and the block
+   at the end of it are plainly the same subject. Solid, because dashed on
+   this canvas means not built yet and nothing else. */
+.access-group[data-role="function"] { --role: var(--role-function); }
+.access-group[data-role="service"] { --role: var(--role-service); }
+.access-group[data-role="external"] { --role: var(--role-external); }
+.access-group[data-role="database"] { --role: var(--role-database); }
+.access-group[data-role="storage"] { --role: var(--role-storage); }
+.access-group[data-role="queue"] { --role: var(--role-queue); }
+.access-group[data-role="client"] { --role: var(--role-client); }
+
+.access { fill: none; stroke: var(--role); stroke-width: 1.6; opacity: 0.6; }
+/* The arrowhead takes the line's own colour rather than one of its own. */
+.access-arrow { fill: context-stroke; }
+.access-group:hover .access { opacity: 1; stroke-width: 2.6; }
 .access-group[data-selected="true"] .access { opacity: 1; stroke-width: 3; }
-.access-label { font-family: var(--mono); font-size: 9px; fill: var(--effect); opacity: 0.8; pointer-events: none; }
+.access-label { font-family: var(--mono); font-size: 9px; fill: var(--role); opacity: 0.85; pointer-events: none; }
+
+/* Gathered from a block inside this one rather than declared here, so it is
+   drawn as the summary it is. */
+.access-group[data-within="true"] .access { opacity: 0.38; }
+.access-group[data-within="true"] .access-label { opacity: 0.6; }
 
 /* A relationship that was already there, rather than a value on its way, so
    it appears rather than being drawn along its length. */
 .access-group.appearing { animation: fade-in 500ms ease-out backwards; }
 
-/* Gathered from a block inside this one rather than declared here, so it is
-   drawn as the summary it is. */
-.access-group[data-within="true"] .access { opacity: 0.3; }
-.access-group[data-within="true"] .access-label { opacity: 0.5; }
+/* Nothing about a plan is settled, including what runs between its blocks. */
+.access-group[data-planned="true"] { --role: var(--pending); }
+.access-group[data-planned="true"] .access { stroke-dasharray: 6 5; opacity: 0.3; }
+.access-group[data-planned="true"] .access-label { opacity: 0.55; }
 
 /* Planned: drawn, not built. It has to read as a block of the same kind as
    the others and still be unmistakably not one of them, so it keeps its shape
    and loses its solidity — a dashed edge, a flat plate, quiet lettering. */
+.block-box[data-planned="true"] { --role: var(--pending); }
 .block-box[data-planned="true"] .block-plate {
   fill: var(--ground);
   stroke: var(--rule-bright);
   stroke-dasharray: 5 4;
 }
+.block-box[data-planned="true"] .block-head { fill: transparent; }
+.block-box[data-planned="true"] .block-divider { stroke: var(--rule-bright); }
+.block-box[data-planned="true"] .exposed-plate { fill: transparent; stroke: var(--rule-bright); }
+.block-box[data-planned="true"] .exposed-name { fill: var(--pending); }
 .block-box[data-planned="true"] .block-head { fill: transparent; }
 .block-box[data-planned="true"] .block-name { fill: var(--ink-dim); }
 .block-box[data-planned="true"] .block-kind { fill: var(--pending); }

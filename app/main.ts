@@ -762,6 +762,11 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         Number(value("architecture", "columns")) === 3 &&
         value("architecture", "joined") === true &&
         value("architecture", "joinLabel") === "reads postings" &&
+        // Blue, the colour a store and everything reaching it is drawn in.
+        value("architecture", "joinColour") === "rgb(90, 169, 230)" &&
+        // Dashed means not built yet, and this one is built.
+        ["none", ""].includes(String(value("architecture", "solid"))) &&
+        value("architecture", "below") === true &&
         /not code/.test(String(value("architecture", "notCode"))) &&
         /postings/.test(String(value("architecture", "offers"))) &&
         value("architecture", "noPorts") === true,
@@ -1437,12 +1442,16 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
         await writeFile(pointed, JSON.stringify(reader, null, 2), "utf8");
 
         await run("architecture", `
-          const box = await until(() => document.querySelector('.block-box[data-key="postings-db"][data-architecture="true"]'));
-          if (!box) return { drawn: false };
+          if (!(await until(() => document.querySelector('.block-box[data-key="postings-db"][data-architecture="true"]')))) {
+            return { drawn: false };
+          }
           document.getElementById("layout-reset").click();
           await wait(500);
           document.getElementById("zoom-fit").click();
           await wait(500);
+          // Laying the diagram out afresh replaces every element, so the
+          // blocks have to be found again before anything is measured.
+          const box = document.querySelector('.block-box[data-key="postings-db"]');
           box.querySelector(".block-plate").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 11, clientX: 5, clientY: 5, isPrimary: true }));
           window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 11, clientX: 5, clientY: 5 }));
           await wait(400);
@@ -1450,8 +1459,14 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
             drawn: true,
             label: text('.block-box[data-key="postings-db"] .block-kind'),
             columns: box.querySelectorAll(".exposed-field").length,
-            joined: Boolean(document.querySelector('.access-group[data-access="load-postings=>postings-db"]')),
+            joined: Boolean(document.querySelector('.access-group[data-access="load-postings=>postings-db:reads"]')),
             joinLabel: text(".access-label"),
+            joinColour: getComputedStyle(document.querySelector(".access")).stroke,
+            solid: getComputedStyle(document.querySelector(".access")).strokeDasharray,
+            below: (() => {
+              const reader = document.querySelector('.block-box[data-key="load-postings"]').getBoundingClientRect();
+              return box.getBoundingClientRect().top >= reader.bottom;
+            })(),
             notCode: [...document.querySelectorAll(".badge")].map((b) => b.textContent).join(" "),
             offers: [...document.querySelectorAll(".insp-body .pname, .ports .pname")].map((n) => n.textContent).join(" "),
             noPorts: ![...document.querySelectorAll(".section h4")].some((h) => h.textContent === "Inputs"),

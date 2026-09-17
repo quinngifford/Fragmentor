@@ -11,6 +11,7 @@ import {
   ROW_H,
   buildGraph,
   busColour,
+  accessEnds,
   busInPoint,
   busOutPoint,
   entryLines,
@@ -709,60 +710,69 @@ const ARROW_ROOM = 11;
  *
  * `curve` is for wires, which always run left to right because a value does,
  * so it pushes its handles rightward whatever it is given. An access can run
- * either way, and pointing an arrowhead along a curve that approaches from
- * the wrong side would make a read look like a write.
+ * either way — down out of a block and back up into it, most often — and
+ * pointing an arrowhead along a curve that approached from the wrong side
+ * would make a read look like a write.
  */
-function accessCurve(a: Point, b: Point): string {
+/** How far a line to a store below swings clear of the column on its way. */
+const BOW = 58;
+
+function accessCurve(a: Point, b: Point, bow: number): string {
   const dx = (b.x - a.x) * 0.4;
+  const dy = (b.y - a.y) * 0.35;
+  // A line that mostly drops leaves and arrives sideways instead, bowed out
+  // past the column, so a store under one block does not send its line
+  // through the block beneath it.
+  if (Math.abs(b.y - a.y) > Math.abs(b.x - a.x)) {
+    return `M ${a.x} ${a.y} C ${a.x + bow} ${a.y + dy}, ${b.x + bow} ${b.y - dy}, ${b.x} ${b.y}`;
+  }
   return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
 }
 
-/**
- * Where an access line runs between two blocks.
- *
- * It leaves and lands on whichever sides face each other, so a line to a
- * database over on the right leaves the right edge, and one back to a client
- * on the left leaves the left. A wire always runs left to right because a
- * value does; an access is a relationship, and the two blocks can sit either
- * way round.
- */
+/** The last stretch, pulled back so the blocks drawn over this layer leave the arrowhead showing. */
+function shortOf(head: Point, tail: Point): Point {
+  const dx = head.x - tail.x;
+  const dy = head.y - tail.y;
+  const length = Math.hypot(dx, dy) || 1;
+  return { x: head.x - (dx / length) * ARROW_ROOM, y: head.y - (dy / length) * ARROW_ROOM };
+}
+
 function accessGeometry(graph: Graph, layout: Map<string, Point>, link: AccessLink) {
-  const sourceNode = graph.nodes.get(link.source);
-  const targetNode = graph.nodes.get(link.target);
-  const from = layout.get(link.source);
-  const to = layout.get(link.target);
-  if (!sourceNode || !targetNode || !from || !to) return null;
+  const ends = accessEnds(graph, layout, link);
+  if (!ends) return null;
 
-  const sourceMid = from.y + measure(sourceNode).height / 2;
-  const targetMid = to.y + measure(targetNode).height / 2;
-  const rightwards = to.x + NODE_W / 2 >= from.x + NODE_W / 2;
-
-  const start = { x: rightwards ? from.x + NODE_W : from.x, y: sourceMid };
-  const end = { x: rightwards ? to.x : to.x + NODE_W, y: targetMid };
-  // Reading takes data out of the resource, so the arrow points back at the
-  // block that asked for it. Writing and calling point the other way.
-  const reading = link.entries.every((entry) => entry.verb === "reads");
-  const head = reading ? start : end;
-  const tail = reading ? end : start;
-
-  // Stopped short of the block it points at, because the blocks are drawn
-  // over this layer and would otherwise swallow the arrowhead whole.
-  const stop = { x: head.x + (tail.x > head.x ? ARROW_ROOM : -ARROW_ROOM), y: head.y };
-
+  const stop = shortOf(ends.to, ends.from);
+  // Out of a block goes down its right, back into it comes up its left, which
+  // is the loop a store below it makes.
+  const bow = link.direction === "out" ? BOW : -BOW;
+  const dropping = Math.abs(stop.y - ends.from.y) > Math.abs(stop.x - ends.from.x);
   return {
-    path: accessCurve(tail, stop),
-    middle: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 - 6 },
+    path: accessCurve(ends.from, stop, bow),
+    middle: {
+      x: (ends.from.x + ends.to.x) / 2 + (dropping ? bow : 0),
+      y: (ends.from.y + ends.to.y) / 2 - 6,
+    },
   };
 }
 
-/** `reads users`, then `reads 3` and `reads and writes` as there are more to name. */
+/** `reads users`, then `reads 3 tables` once there are too many to name. */
 function accessLabel(link: AccessLink): string {
+  const named = link.entries.filter((entry) => entry.entry !== null);
   if (link.entries.length === 1) {
     const only = link.entries[0]!;
     return only.entry === null ? only.verb : `${only.verb} ${only.entry}`;
   }
-  const verbs = [...new Set(link.entries.map((entry) => entry.verb))];
-  return verbs.length === 1 ? `${verbs[0]} ${link.entries.length}` : verbs.join(" and ");
+  return named.length === link.entries.length ? `${link.verb} ${named.length}` : link.verb;
+}
+
+/** What an access carries, as the resource describes it. */
+function accessDetail(link: AccessLink, resource: GraphNode | undefined): string[] {
+  return link.entries.map((entry) => {
+    if (entry.entry === null) return entry.text;
+    const exposed = resource?.exposes.find((each) => each.name === entry.entry);
+    const shape = link.direction === "in" ? exposed?.returns : exposed?.accepts;
+    return shape ? `${entry.entry}: ${shape}` : entry.entry;
+  });
 }
 
 function drawAccesses(graph: Graph, layout: Map<string, Point>, layer: Element, delay: number, arriving: boolean): void {
@@ -770,18 +780,29 @@ function drawAccesses(graph: Graph, layout: Map<string, Point>, layer: Element, 
     const geometry = accessGeometry(graph, layout, link);
     if (!geometry) continue;
 
+    const owner = graph.nodes.get(link.source);
+    const resource = graph.nodes.get(link.target);
+    // Drawn as quietly as the block it reaches, because what an unbuilt
+    // resource holds is exactly what has not been decided.
+    const planned = Boolean(owner?.block?.planned) || Boolean(resource?.block?.planned);
+
     const group = svgEl("g", {
       class: "access-group",
       "data-access": link.id,
       "data-within": String(link.fromWithin),
+      "data-planned": String(planned),
+      "data-role": resource?.block?.role ?? "function",
     }, layer);
 
-    const line = svgEl("path", { d: geometry.path, class: "access", "marker-end": "url(#access-arrow)" }, group);
+    svgEl("path", { d: geometry.path, class: "access", "marker-end": "url(#access-arrow)" }, group);
     svgEl("path", { d: geometry.path, class: "bus-hit" }, group);
     svgEl("title", {}, group).textContent = [
-      `${graph.nodes.get(link.source)?.label} and ${graph.nodes.get(link.target)?.label}`,
-      ...link.entries.map((entry) => entry.text),
+      link.direction === "in"
+        ? `${resource?.label} → ${owner?.label}`
+        : `${owner?.label} → ${resource?.label}`,
+      ...accessDetail(link, resource),
       link.fromWithin ? "Declared by a block inside." : "",
+      planned ? "Planned: not built yet." : "",
     ]
       .filter(Boolean)
       .join("\n");
@@ -793,14 +814,6 @@ function drawAccesses(graph: Graph, layout: Map<string, Point>, layer: Element, 
       "text-anchor": "middle",
     }, group).textContent = accessLabel(link);
 
-    group.querySelector(".bus-hit")?.addEventListener("click", (event) => {
-      event.stopPropagation();
-      ui.selectedLink = link.id;
-      ui.selection.clear();
-      applySelection();
-      notify({ redraw: false });
-    });
-
     // An access is a standing relationship rather than a value travelling, so
     // it fades in where a new bus is drawn along its length.
     if (arriving) {
@@ -808,7 +821,11 @@ function drawAccesses(graph: Graph, layout: Map<string, Point>, layer: Element, 
       group.style.animationDelay = `${delay}ms`;
     }
 
-    accessElements.set(link.id, { group, paths: [...group.querySelectorAll("path")] as SVGPathElement[], label: group.querySelector("text")! });
+    accessElements.set(link.id, {
+      group,
+      paths: [...group.querySelectorAll("path")] as SVGPathElement[],
+      label: group.querySelector("text")!,
+    });
   }
 }
 

@@ -160,7 +160,16 @@ export function currentBlock() {
 }
 
 /** Colours a bus can be given. Restrained enough to stay an instrument panel. */
-export const BUS_PALETTE = ["#4fe38f", "#4fc9e3", "#e2a54b", "#b98ce6", "#e3778c", "#8fe34f"];
+/**
+ * The colours a bus can take, which are all greens.
+ *
+ * Hue means one thing on this canvas: green is data moving inside the
+ * program, and anything else belongs to the world outside it. So buses, which
+ * are always the first of those, are told apart by shade rather than by
+ * borrowing a hue that now says "database" or "someone else's service". A bus
+ * can still be given any colour by hand.
+ */
+export const BUS_PALETTE = ["#4fe38f", "#8fe34f", "#3fcf9e", "#b5e06a", "#5fd8c0", "#2fb87a"];
 
 const COLORS_KEY = "fragmentor.busColors";
 

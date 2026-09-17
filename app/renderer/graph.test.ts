@@ -2,7 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { projectSnapshot } from "../../src/project/snapshot.js";
-import { autoLayout, buildGraph, entryLines, measure } from "./graph.js";
+import { accessEnds, autoLayout, buildGraph, entryLines, measure } from "./graph.js";
 import type { Graph } from "./graph.js";
 import { ui } from "./state.js";
 
@@ -23,6 +23,12 @@ const linkShortener = path.join(
   "examples",
   "link-shortener",
 );
+
+/** Everything one block reaches, named once however many lines run to it. */
+function reachedBy(graph: Graph, source: string): string[] {
+  const targets = [...graph.accesses.values()].filter((link) => link.source === source).map((link) => link.target);
+  return [...new Set(targets)].sort();
+}
 
 /** The canvas is handed a snapshot and nothing else, so that is all a test needs. */
 async function open(view: string): Promise<Graph> {
@@ -49,19 +55,16 @@ describe("the whole application, drawn", () => {
   });
 
   it("gathers what the handlers inside the service reach, so the top level shows it", () => {
-    const from = (source: string) =>
-      [...graph.accesses.values()].filter((link) => link.source === source).map((link) => link.target);
-
-    expect(from("browser")).toEqual(["api"]);
+    expect(reachedBy(graph, "browser")).toEqual(["api"]);
     // The service itself declares none of these; the blocks inside it do.
-    expect(from("api").sort()).toEqual(["click-events", "geo-lookup", "links-db"]);
+    expect(reachedBy(graph, "api")).toEqual(["click-events", "geo-lookup", "links-db"]);
+  });
 
-    const toDatabase = [...graph.accesses.values()].find((link) => link.source === "api" && link.target === "links-db")!;
-    expect(toDatabase.fromWithin).toBe(true);
-    expect(toDatabase.entries.map((entry) => entry.text).sort()).toEqual([
-      "reads links-db.links",
-      "writes links-db.links",
-    ]);
+  it("keeps a read and a write to one database as two lines, each its own way round", () => {
+    const between = [...graph.accesses.values()].filter((link) => link.source === "api" && link.target === "links-db");
+
+    expect(between.map((link) => `${link.verb} ${link.direction}`).sort()).toEqual(["reads in", "writes out"]);
+    for (const link of between) expect(link.fromWithin).toBe(true);
   });
 
   it("shows a table as its columns", () => {
@@ -74,18 +77,50 @@ describe("the whole application, drawn", () => {
     ]);
   });
 
-  it("reads left to right, from whoever starts the system to what is behind it", () => {
+  it("reads left to right, from whoever starts the system to what it calls", () => {
     const placed = autoLayout(graph);
-    const column = (key: string) => placed.get(key)!.x;
 
-    expect(column("browser")).toBeLessThan(column("api"));
-    expect(column("api")).toBeLessThan(column("links-db"));
-    // Everything the service reaches stands together, one step behind it.
-    expect(column("links-db")).toBe(column("click-events"));
-    expect(column("links-db")).toBe(column("geo-lookup"));
+    // The browser calls the API, and the API calls the geolocation service,
+    // so the calls run along the diagram in the order they happen.
+    expect(placed.get("browser")!.x).toBeLessThan(placed.get("api")!.x);
+    expect(placed.get("api")!.x).toBeLessThan(placed.get("geo-lookup")!.x);
   });
 
-  it("leaves no two blocks on top of each other", () => {
+  it("keeps the data structures under what reaches them, not further along it", () => {
+    const placed = autoLayout(graph);
+    const api = placed.get("api")!;
+    const apiBottom = api.y + measure(graph.nodes.get("api")!).height;
+
+    // A store is not a step in the flow: the API reads and writes it in the
+    // same breath, so putting it further right would say something untrue
+    // about when it happens.
+    for (const key of ["links-db", "click-events"]) {
+      expect(placed.get(key)!.y, key).toBeGreaterThanOrEqual(apiBottom);
+    }
+    // The queue is where a click ends up, but the system's answer goes back
+    // to the browser, so the queue is not the far end of the diagram.
+    expect(placed.get("click-events")!.x).toBeLessThan(placed.get("geo-lookup")!.x);
+  });
+
+  it("loops a store clockwise: out of the right, down, and back into the left", () => {
+    const placed = autoLayout(graph);
+    const api = placed.get("api")!;
+    const write = graph.accesses.get("api=>links-db:writes")!;
+    const read = graph.accesses.get("api=>links-db:reads")!;
+
+    const out = accessEnds(graph, placed, write)!;
+    const back = accessEnds(graph, placed, read)!;
+
+    // What the API writes leaves its right edge; what it reads arrives on its
+    // left, the same way its ports would be drawn.
+    expect(out.from.x).toBe(api.x + 208);
+    expect(back.to.x).toBe(api.x);
+    // And the two never cross under the store: what comes back leaves the
+    // near side of it, what goes in arrives at the far side.
+    expect(back.from.x).toBeLessThan(out.to.x);
+  });
+
+  it("leaves no two blocks on top of each other, stores included", () => {
     const placed = autoLayout(graph);
     const boxes = [...graph.nodes.values()].map((node) => ({
       key: node.key,
@@ -118,13 +153,10 @@ describe("inside the service", () => {
   });
 
   it("shows what a request path reaches, gathered from the blocks inside it", () => {
-    const from = (source: string) =>
-      [...graph.accesses.values()].filter((link) => link.source === source).map((link) => link.target).sort();
-
     // create-link touches the database itself; follow-link does not, but the
     // three blocks inside it touch all three resources.
-    expect(from("create-link")).toEqual(["links-db"]);
-    expect(from("follow-link")).toEqual(["click-events", "geo-lookup", "links-db"]);
+    expect(reachedBy(graph, "create-link")).toEqual(["links-db"]);
+    expect(reachedBy(graph, "follow-link")).toEqual(["click-events", "geo-lookup", "links-db"]);
   });
 
   it("marks an access the block itself declared apart from one gathered from inside", () => {
