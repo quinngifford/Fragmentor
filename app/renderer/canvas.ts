@@ -12,6 +12,7 @@ import {
   buildGraph,
   busColour,
   accessEnds,
+  blockColour,
   busInPoint,
   busOutPoint,
   entryLines,
@@ -19,7 +20,8 @@ import {
   measure,
 } from "./graph.js";
 import type { AccessLink, Bus, Graph, GraphNode } from "./graph.js";
-import { requireSnapshot, ui } from "./state.js";
+import { requireSnapshot, ui, viewSettings } from "./state.js";
+import { el } from "./dom.js";
 import { ROLES } from "../../src/model/roles.js";
 
 /**
@@ -587,6 +589,7 @@ export function clearCanvas(): void {
   currentGraph = null;
   currentLayout = null;
   document.querySelectorAll(".canvas-empty").forEach((el) => el.remove());
+  renderLegend(null);
 }
 
 /** Empties the canvas and leaves a note where the diagram would be. */
@@ -596,6 +599,53 @@ export function showCanvasMessage(text: string): void {
   note.className = "canvas-empty";
   note.textContent = text;
   element("canvas-wrap").append(note);
+}
+
+/**
+ * What the colours on this diagram mean, for as long as they mean anything.
+ *
+ * Only what is actually on screen is listed, so the legend says something
+ * about the diagram in front of you rather than reciting every kind of block
+ * Fragmentor knows. Coloured block by block there is nothing to explain, so
+ * it goes away.
+ */
+function renderLegend(graph: Graph | null): void {
+  const legend = element<HTMLElement>("legend");
+  legend.replaceChildren();
+
+  if (!graph || viewSettings.colourBy !== "role") {
+    legend.hidden = true;
+    return;
+  }
+
+  const entry = (role: string, text: string) => {
+    const row = el("div", "legend-row");
+    row.dataset.role = role;
+    row.append(el("span", "legend-swatch"), el("span", "legend-text", text));
+    return row;
+  };
+
+  const rows: HTMLElement[] = [];
+  // Green is on every diagram that hands a value from one call to the next,
+  // whether or not a wire happens to be drawn on this one.
+  if (graph.signals.length > 0 || [...graph.nodes.values()].some((node) => !node.block?.architecture)) {
+    rows.push(entry("function", "code, and what passes between it"));
+  }
+
+  const shown = new Set<string>();
+  for (const node of graph.nodes.values()) {
+    const block = node.block;
+    if (!block || !block.architecture || block.planned || shown.has(block.role)) continue;
+    shown.add(block.role);
+    rows.push(entry(block.role, ROLES[block.role].label.toLowerCase()));
+  }
+
+  if ([...graph.nodes.values()].some((node) => node.block?.planned)) {
+    rows.push(entry("planned", "planned, not built yet"));
+  }
+
+  legend.hidden = rows.length < 2;
+  legend.append(...rows);
 }
 
 /** Blocks arriving together come in one after another, the way they were written. */
@@ -682,6 +732,7 @@ export function renderCanvas(): void {
     drawNode(graph, node, point, nodeLayer, arrival === -1 ? null : Math.min(arrival, 12) * ARRIVAL_STAGGER_MS);
   }
 
+  renderLegend(graph);
   drawnBefore.set(ui.view, { nodes: new Set(graph.nodes.keys()), buses: new Set(graph.buses.keys()) });
   everythingArrives = false;
 
@@ -800,6 +851,13 @@ function drawAccesses(graph: Graph, layout: Map<string, Point>, layer: Element, 
       "data-role": resource?.block?.role ?? "function",
     }, layer);
 
+    // Coloured block by block, a line matches whichever block the data comes
+    // out of, so one colour can be followed from where it starts.
+    if (viewSettings.colourBy === "block" && !planned) {
+      const from = link.direction === "in" ? link.target : link.source;
+      group.style.setProperty("--role", blockColour(graph, from));
+    }
+
     svgEl("path", { d: geometry.path, class: "access", "marker-end": "url(#access-arrow)" }, group);
     svgEl("path", { d: geometry.path, class: "bus-hit" }, group);
     svgEl("title", {}, group).textContent = [
@@ -868,9 +926,21 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
     // same weight as the ones for a planned block and can be overridden by
     // them: a planned database reads as planned first.
     "data-architecture": String(Boolean(node.block?.architecture)),
+    // Whether the plate takes a colour at all: by role, only what is not code
+    // does; block by block, everything but the boundary does.
+    "data-tinted": String(
+      node.block !== null && (viewSettings.colourBy === "block" || node.block.architecture),
+    ),
     "data-referenced": String(node.referenced),
     "data-key": node.key,
   }, layer);
+
+  // Block by block, the colour is worked out here rather than in a stylesheet
+  // that cannot know where a block sits. A planned block keeps its grey: it
+  // is not built, which outranks what kind of thing it would have been.
+  if (viewSettings.colourBy === "block" && node.block && !node.block.planned) {
+    group.style.setProperty("--role", blockColour(graph, node.key));
+  }
 
   // A planned block is on the diagram to be read, so what it is for and the
   // fact that it is not built yet are the first things its tooltip says. A

@@ -1,5 +1,14 @@
 import type { ProjectLoad } from "../ipc.js";
-import { INSPECTOR_WIDTH, rememberInspectorWidth, requireSnapshot, ui } from "./state.js";
+import {
+  COLOUR_BY,
+  INSPECTOR_WIDTH,
+  STORES_AT,
+  rememberInspectorWidth,
+  requireSnapshot,
+  ui,
+  viewSettings,
+} from "./state.js";
+import type { ColourBy, StoresAt } from "./state.js";
 import {
   clearCanvas,
   fitToView,
@@ -581,6 +590,47 @@ export function render(): void {
 /* Boot                                                                        */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The two ways of reading a diagram that are worth trying both of: what a
+ * colour means, and which diagram a store is drawn on. Each button says what
+ * it is showing now and moves on to the next when it is pressed, so nothing
+ * has to be opened to find out which way round it is.
+ */
+function wireViewSettings(): void {
+  const colourLabels: Record<ColourBy, string> = {
+    role: "Colour: by kind",
+    block: "Colour: by block",
+  };
+  const storeLabels: Record<StoresAt, string> = {
+    kept: "Stores: where kept",
+    everywhere: "Stores: every level",
+    used: "Stores: where used",
+  };
+
+  const colour = element("colour-by");
+  const stores = element("stores-at");
+
+  const show = () => {
+    colour.textContent = colourLabels[viewSettings.colourBy];
+    stores.textContent = storeLabels[viewSettings.storesAt];
+  };
+
+  const next = <T extends string>(all: readonly T[], current: T): T => all[(all.indexOf(current) + 1) % all.length]!;
+
+  colour.addEventListener("click", () => {
+    viewSettings.setColourBy(next(COLOUR_BY, viewSettings.colourBy));
+    show();
+    render();
+  });
+  stores.addEventListener("click", () => {
+    viewSettings.setStoresAt(next(STORES_AT, viewSettings.storesAt));
+    show();
+    render();
+  });
+
+  show();
+}
+
 function wireToolbar(): void {
   element("toggle-rail").addEventListener("click", () => {
     ui.showRail = !ui.showRail;
@@ -595,6 +645,8 @@ function wireToolbar(): void {
   element("close-project").addEventListener("click", () => void closeProject());
   element("generate-code").addEventListener("click", () => void generateCode());
   element("reload-project").addEventListener("click", () => void reload());
+
+  wireViewSettings();
 
   element("zoom-in").addEventListener("click", () => {
     const rect = element("canvas-svg").getBoundingClientRect();

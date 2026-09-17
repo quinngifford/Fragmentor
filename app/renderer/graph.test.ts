@@ -4,7 +4,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { projectSnapshot } from "../../src/project/snapshot.js";
 import { accessEnds, autoLayout, buildGraph, entryLines, measure } from "./graph.js";
 import type { Graph } from "./graph.js";
-import { ui } from "./state.js";
+import { ui, viewSettings } from "./state.js";
+import type { StoresAt } from "./state.js";
 
 /**
  * The diagram the canvas draws, without drawing it.
@@ -31,9 +32,10 @@ function reachedBy(graph: Graph, source: string): string[] {
 }
 
 /** The canvas is handed a snapshot and nothing else, so that is all a test needs. */
-async function open(view: string): Promise<Graph> {
+async function open(view: string, storesAt: StoresAt = "kept"): Promise<Graph> {
   ui.snapshot = await projectSnapshot(linkShortener);
   ui.view = view;
+  viewSettings.storesAt = storesAt;
   const graph = buildGraph(view);
   if (!graph) throw new Error(`${view} has no diagram.`);
   return graph;
@@ -141,12 +143,13 @@ describe("the whole application, drawn", () => {
 describe("inside the service", () => {
   let graph: Graph;
   beforeAll(async () => {
-    graph = await open("link-shortener/api");
+    graph = await open("link-shortener/api", "everywhere");
   });
 
   it("brings in a resource that lives outside this diagram, and says so", () => {
     // links-db sits beside the service, so nothing here lists it as a child;
-    // it is drawn anyway, or the handlers that read it would point at nothing.
+    // asked for on every level it is drawn anyway, or the handlers that read
+    // it would point at nothing.
     const database = graph.nodes.get("links-db")!;
     expect(database.referenced).toBe(true);
     expect(graph.nodes.get("create-link")!.referenced).toBe(false);
@@ -187,10 +190,40 @@ describe("inside the service", () => {
   });
 });
 
+describe("which diagram a store is drawn on", () => {
+  it("draws it where it is kept, and leaves the diagrams under that to their own work", async () => {
+    // The database is a child of the application, so the application's own
+    // diagram is where it belongs, and nothing under it borrows it.
+    const top = await open("link-shortener", "kept");
+    expect(top.nodes.has("links-db")).toBe(true);
+
+    const service = await open("link-shortener/api", "kept");
+    expect(service.nodes.has("links-db")).toBe(false);
+    expect([...service.nodes.keys()]).toEqual(["create-link", "follow-link"]);
+  });
+
+  it("draws it on every level when every level should say where its data comes from", async () => {
+    const service = await open("link-shortener/api", "everywhere");
+    expect(service.nodes.get("links-db")!.referenced).toBe(true);
+    expect(reachedBy(service, "follow-link")).toContain("links-db");
+  });
+
+  it("draws it beside the block that truly touches it, and nowhere else", async () => {
+    const service = await open("link-shortener/api", "used");
+    // create-link says so itself; follow-link only contains a block that does.
+    expect(reachedBy(service, "create-link")).toEqual(["links-db"]);
+    expect(reachedBy(service, "follow-link")).toEqual([]);
+
+    // And the level above says nothing at all, because nothing there declares it.
+    const top = await open("link-shortener", "used");
+    expect([...top.accesses.values()].map((link) => link.target)).toEqual(["api"]);
+  });
+});
+
 describe("inside the request path", () => {
   let graph: Graph;
   beforeAll(async () => {
-    graph = await open("link-shortener/api/follow-link");
+    graph = await open("link-shortener/api/follow-link", "everywhere");
   });
 
   it("keeps the handlers' own wires, which are still ordinary wires", () => {

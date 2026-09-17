@@ -159,6 +159,83 @@ export function currentBlock() {
   return blockAt(ui.view);
 }
 
+/* -------------------------------------------------------------------------- */
+/* How the diagram is drawn                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What a colour on the diagram means.
+ *
+ * `role` says what kind of thing something is: green for code inside the
+ * program, and a hue apiece for the databases, queues, services and people
+ * around it. `block` gives every block a colour of its own and paints what
+ * leaves it to match, which is easier to follow along one wire and says
+ * nothing about what anything is.
+ */
+export type ColourBy = "role" | "block";
+
+/**
+ * Which diagram a store is drawn on.
+ *
+ * `kept` draws it where it belongs, with everything reaching it from inside
+ * the blocks beside it gathered onto one line; the diagrams underneath are
+ * left to their own functions. `everywhere` also brings it into each of those
+ * diagrams, so no level hides where its data comes from. `used` does the
+ * opposite: it is drawn only beside the block that truly touches it, however
+ * deep that is, and the levels above say nothing about it.
+ */
+export type StoresAt = "kept" | "everywhere" | "used";
+
+/**
+ * Colours a block can be given when the diagram is coloured block by block.
+ * Warm and cool alternate, so blocks near each other in a diagram are never
+ * near each other on the wheel.
+ */
+export const BLOCK_PALETTE = [
+  "#4fe38f",
+  "#e2a54b",
+  "#4fc9e3",
+  "#e3778c",
+  "#b5e06a",
+  "#b98ce6",
+  "#dd6a4a",
+  "#5aa9e6",
+];
+
+/** A viewing preference rather than part of the design, so it stays in this profile. */
+function readChoice<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return allowed.includes(raw as T) ? (raw as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeChoice(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // A profile that will not store anything still draws; it just forgets.
+  }
+}
+
+export const COLOUR_BY: readonly ColourBy[] = ["role", "block"];
+export const STORES_AT: readonly StoresAt[] = ["kept", "everywhere", "used"];
+
+export const viewSettings = {
+  colourBy: readChoice("fragmentor.colourBy", COLOUR_BY, "role"),
+  storesAt: readChoice("fragmentor.storesAt", STORES_AT, "kept"),
+  setColourBy(value: ColourBy): void {
+    this.colourBy = value;
+    writeChoice("fragmentor.colourBy", value);
+  },
+  setStoresAt(value: StoresAt): void {
+    this.storesAt = value;
+    writeChoice("fragmentor.storesAt", value);
+  },
+};
+
 /** Colours a bus can be given. Restrained enough to stay an instrument panel. */
 /**
  * The colours a bus can take, which are all greens.

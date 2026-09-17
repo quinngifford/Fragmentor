@@ -776,6 +776,21 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("application", "plannedLine") === true,
     ],
     [
+      "the two ways of reading a diagram each change what is drawn, not only what the button says",
+      value("toggles", "named") === true &&
+        value("toggles", "keptOut") === true &&
+        value("toggles", "everyLevel") === "Stores: every level" &&
+        value("toggles", "broughtIn") === true &&
+        value("toggles", "whereUsed") === "Stores: where used" &&
+        value("toggles", "onlyDeclarer") === true &&
+        value("toggles", "byBlock") === "Colour: by block" &&
+        value("toggles", "tinted") === true &&
+        value("toggles", "legendGone") === true &&
+        // Every block a colour of its own, and the button back where it was.
+        value("byBlock", "apart") === true &&
+        value("backToKind", "label") === "Colour: by kind",
+    ],
+    [
       "a database is drawn as itself, with its shape on show and the block that reads it joined to it",
       value("architecture", "drawn") === true &&
         value("architecture", "label") === "DATABASE" &&
@@ -1540,6 +1555,87 @@ function attachSelfCheck(window: BrowserWindow, check: { root: string; projectDi
           };
         `);
         await capture(window, "self-check-application");
+
+        // The two ways of reading the same diagram, each shown to change what
+        // is actually drawn rather than only what the button says.
+        await run("toggles", `
+          const legendRows = () => document.querySelectorAll("#legend .legend-row").length;
+          const swatch = (role) => {
+            const row = document.querySelector('#legend .legend-row[data-role="' + role + '"] .legend-swatch');
+            return row ? getComputedStyle(row).backgroundColor : "";
+          };
+          // Clicking a composite in the rail opens its diagram, which is what
+          // the check wants; only a leaf would merely be selected.
+          const open = async (id) => {
+            const node = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === id);
+            if (!node) return "no tree node for " + id;
+            node.click();
+            await wait(600);
+            return text(".crumbs") && text(".crumbs").includes(id) ? null : "did not open " + id;
+          };
+
+          const named = legendRows() > 0 && swatch("database") === "rgb(90, 169, 230)";
+
+          // Inside the service, where the database is kept one level further
+          // out: shown only when stores are asked for on every level.
+          const failedToOpen = await open("api");
+          if (failedToOpen) return { failedToOpen };
+          const keptOut = !document.querySelector('.block-box[data-key="links-db"]');
+          document.getElementById("stores-at").click();
+          await wait(500);
+          const everyLevel = document.getElementById("stores-at").textContent;
+          const broughtIn = Boolean(document.querySelector('.block-box[data-key="links-db"][data-referenced="true"]'));
+
+          // Only the block that truly touches it, so the request path that
+          // merely contains such a block no longer claims to.
+          document.getElementById("stores-at").click();
+          await wait(500);
+          const whereUsed = document.getElementById("stores-at").textContent;
+          const onlyDeclarer =
+            Boolean(document.querySelector('.access-group[data-access="create-link=>links-db:reads"]')) &&
+            !document.querySelector('.access-group[data-access="follow-link=>links-db:reads"]');
+          document.getElementById("stores-at").click();
+          await wait(400);
+
+          // Coloured block by block: an ordinary function takes a colour too,
+          // and the legend has nothing left to explain.
+          const plainFunction = getComputedStyle(document.querySelector('.block-box[data-key="create-link"] .block-plate')).stroke;
+          document.getElementById("colour-by").click();
+          await wait(500);
+          const byBlock = document.getElementById("colour-by").textContent;
+          const tintedFunction = getComputedStyle(document.querySelector('.block-box[data-key="create-link"] .block-plate')).stroke;
+          const legend = document.getElementById("legend");
+          const legendGone = legend.hidden && getComputedStyle(legend).display === "none";
+
+          return {
+            named,
+            keptOut,
+            everyLevel,
+            broughtIn,
+            whereUsed,
+            onlyDeclarer,
+            byBlock,
+            tinted: plainFunction !== tintedFunction,
+            legendGone,
+          };
+        `);
+        // Coloured block by block, on the diagram that has every kind of
+        // thing on it, so the two ways of reading it can be put side by side.
+        await run("byBlock", `
+          const node = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "link-shortener");
+          node.click();
+          await wait(400);
+          document.getElementById("zoom-fit").click();
+          await wait(500);
+          const plate = (key) => getComputedStyle(document.querySelector('.block-box[data-key="' + key + '"] .block-plate')).stroke;
+          return { apart: plate("browser") !== plate("api") && plate("api") !== plate("links-db") };
+        `);
+        await capture(window, "self-check-by-block");
+        await run("backToKind", `
+          document.getElementById("colour-by").click();
+          await wait(400);
+          return { label: document.getElementById("colour-by").textContent };
+        `);
 
         console.log(JSON.stringify(report, null, 2));
 

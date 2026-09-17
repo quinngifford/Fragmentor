@@ -201,6 +201,33 @@ body[data-resizing="true"] { cursor: col-resize; }
 
 .zoom-btn { border-color: transparent; min-width: 28px; text-align: center; }
 .zoom-level { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); min-width: 44px; text-align: center; }
+.zoom-divider { width: 1px; align-self: stretch; background: var(--rule-bright); margin: 0 3px; }
+
+/* What the colours on this diagram mean, for as long as they mean anything.
+   It sits above the zoom bar, out of the way of the blocks. */
+.legend {
+  position: absolute;
+  left: 14px;
+  bottom: 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  padding: 7px 9px;
+  pointer-events: none;
+}
+
+/* `display: flex` above would otherwise beat the hidden attribute's own rule. */
+.legend[hidden] { display: none; }
+
+.legend-row { display: flex; align-items: center; gap: 7px; }
+.legend-swatch { width: 18px; height: 3px; border-radius: 2px; background: var(--role); }
+.legend-row[data-role="planned"] .legend-swatch {
+  background: repeating-linear-gradient(90deg, var(--pending) 0 5px, transparent 5px 9px);
+}
+.legend-text { font-family: var(--mono); font-size: 10px; color: var(--ink-dim); letter-spacing: 0.03em; }
 
 .hint {
   position: absolute;
@@ -317,14 +344,14 @@ body[data-project="open"] .welcome { display: none; }
 .block-box[data-role="queue"] { --role: var(--role-queue); }
 .block-box[data-role="client"] { --role: var(--role-client); }
 
-.block-box[data-architecture="true"] .block-plate {
+.block-box[data-tinted="true"] .block-plate {
   fill: color-mix(in srgb, var(--role) 5%, var(--panel));
   stroke: color-mix(in srgb, var(--role) 42%, var(--ground));
 }
-.block-box[data-architecture="true"] .block-head { fill: color-mix(in srgb, var(--role) 9%, var(--ground)); }
-.block-box[data-architecture="true"] .block-kind { fill: var(--role); }
-.block-box[data-architecture="true"] .block-divider { stroke: color-mix(in srgb, var(--role) 30%, var(--ground)); }
-.block-box[data-architecture="true"] .block-body:hover .block-plate { stroke: var(--role); }
+.block-box[data-tinted="true"] .block-head { fill: color-mix(in srgb, var(--role) 9%, var(--ground)); }
+.block-box[data-tinted="true"] .block-kind { fill: var(--role); }
+.block-box[data-tinted="true"] .block-divider { stroke: color-mix(in srgb, var(--role) 30%, var(--ground)); }
+.block-box[data-tinted="true"] .block-body:hover .block-plate { stroke: var(--role); }
 
 /* Brought in from the diagram above this one, because something here reaches
    it. Quieter than the blocks that really live here, and never solid. */

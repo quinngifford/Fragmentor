@@ -8,7 +8,7 @@ import type {
   SnapshotPort,
 } from "../../src/project/snapshot.js";
 import type { Point } from "../../src/project/layout.js";
-import { BUS_PALETTE, busColors, requireSnapshot } from "./state.js";
+import { BLOCK_PALETTE, BUS_PALETTE, busColors, requireSnapshot, viewSettings } from "./state.js";
 
 /**
  * The diagram as drawn.
@@ -291,10 +291,17 @@ function buildAccesses(parent: SnapshotBlock, nodes: Map<string, GraphNode>): Ma
           continue;
         }
 
-        // The resource is a child of this parent, or it lives further out and
-        // is brought in so the line has somewhere to land.
+        // Drawn only beside the block that truly touches it, so nothing is
+        // said about a store on a level that only contains it at a distance.
+        if (viewSettings.storesAt === "used" && block.path !== child.path) continue;
+
+        // The resource is a child of this parent, or it lives further out.
+        // Bringing one in from further out is what says, on every diagram
+        // under it, where the data comes from; left out, the diagrams below
+        // show their own functions and nothing else.
         let key = childPaths.get(target);
         if (key === undefined) {
+          if (viewSettings.storesAt === "kept") continue;
           const resource = snapshot.blocks[target];
           if (!resource) continue;
           key = resource.id;
@@ -351,9 +358,26 @@ function resourceNode(key: string, block: SnapshotBlock, referenced: boolean): G
   };
 }
 
+/**
+ * The colour a block is drawn in when the diagram is coloured block by block.
+ *
+ * Taken from where the block sits in the diagram, so neighbours are never
+ * given neighbouring hues, and so the same block keeps its colour between
+ * redraws for as long as the diagram holds the same blocks.
+ */
+export function blockColour(graph: Graph, key: string): string {
+  const order = [...graph.nodes.keys()];
+  const at = order.indexOf(key);
+  return BLOCK_PALETTE[(at < 0 ? 0 : at) % BLOCK_PALETTE.length]!;
+}
+
 export function busColour(graph: Graph, view: string, bus: Bus): string {
   const override = busColors.get(view, bus.id);
   if (override) return override;
+  // Coloured block by block, what leaves a block matches it. Coloured by
+  // role, every bus is data inside the program, so they are shades of the one
+  // colour that means that.
+  if (viewSettings.colourBy === "block") return blockColour(graph, bus.source);
   const order = [...graph.nodes.keys()];
   return BUS_PALETTE[order.indexOf(bus.source) % BUS_PALETTE.length]!;
 }
