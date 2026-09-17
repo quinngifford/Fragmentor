@@ -23,6 +23,7 @@ import type { AccessLink, Bus, Graph, GraphNode } from "./graph.js";
 import { requireSnapshot, roleColours, ui, viewSettings } from "./state.js";
 import { el } from "./dom.js";
 import { ROLES, ROLE_IDS } from "../../src/model/roles.js";
+import type { Role } from "../../src/model/roles.js";
 
 /**
  * The diagram.
@@ -958,6 +959,47 @@ function drawExposed(node: GraphNode, body: Element): void {
   }
 }
 
+/**
+ * A mark in the corner of every block saying what kind of thing it is.
+ *
+ * The label beneath the name already says it in words, but a word has to be
+ * read and a shape does not: at a glance across a whole diagram the cylinders
+ * are the stores and the people are the clients. Each is drawn in a 12 by 12
+ * box, as strokes only, so it takes the colour of whatever it sits on.
+ */
+const ROLE_ICONS: Record<Role, string[]> = {
+  // Angle brackets: code.
+  function: ["M4.5 3 L1.5 6 L4.5 9", "M7.5 3 L10.5 6 L7.5 9"],
+  // Two racked units: a program of ours, running somewhere.
+  service: ["M1.5 3 H10.5 V5.8 H1.5 Z", "M1.5 7 H10.5 V9.8 H1.5 Z", "M3 4.4 H3.01", "M3 8.4 H3.01"],
+  // A box with an arrow leaving it: not ours, and out of our hands.
+  external: ["M9.5 6.5 V10.5 H1.5 V2.5 H5.5", "M7 5 L10.5 1.5", "M7.5 1.5 H10.5 V4.5"],
+  // The cylinder everyone draws a database as.
+  database: [
+    "M2 3 C2 1.7 3.8 1 6 1 C8.2 1 10 1.7 10 3 V9 C10 10.3 8.2 11 6 11 C3.8 11 2 10.3 2 9 Z",
+    "M2 3 C2 4.3 3.8 5 6 5 C8.2 5 10 4.3 10 3",
+  ],
+  // A lidded box: things put away somewhere outside the program.
+  storage: ["M1.5 2.5 H10.5 V10 H1.5 Z", "M1.5 5.2 H10.5", "M5 7.6 H7"],
+  // Three waiting in a row.
+  queue: ["M1.5 3.5 H3.8 V8.5 H1.5 Z", "M4.9 3.5 H7.2 V8.5 H4.9 Z", "M8.3 3.5 H10.6 V8.5 H8.3 Z"],
+  // Braces: data the program is holding.
+  structure: ["M5 1.8 C3.6 1.8 4.1 5 2.6 6 C4.1 7 3.6 10.2 5 10.2", "M7 1.8 C8.4 1.8 7.9 5 9.4 6 C7.9 7 8.4 10.2 7 10.2"],
+  // A person: whoever sets the whole thing going.
+  client: ["M4 4 A2 2 0 1 1 8 4 A2 2 0 1 1 4 4", "M1.8 10.6 C1.8 7.6 10.2 7.6 10.2 10.6"],
+};
+
+/** Where the mark sits: the top right of the head, clear of everything else. */
+function drawRoleIcon(node: GraphNode, body: Element): void {
+  // A boundary stands for the way in or out rather than for a block, so it
+  // has no kind of its own to show.
+  if (node.boundary || !node.block) return;
+
+  const icon = svgEl("g", { class: "role-icon", transform: `translate(${NODE_W - 21} 4)` }, body);
+  svgEl("title", {}, icon).textContent = node.sublabel;
+  for (const d of ROLE_ICONS[node.block.role]) svgEl("path", { d, class: "role-icon-line" }, icon);
+}
+
 /** `arrivalDelay` is null for a block that was already there, and otherwise when it should arrive. */
 function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, arrivalDelay: number | null): void {
   const { height, rightHeight } = measure(node);
@@ -1028,11 +1070,12 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
   svgEl("line", { x1: 0, y1: HEAD_H, x2: NODE_W, y2: HEAD_H, class: "block-divider" }, body);
   svgEl("text", { x: 10, y: 15, class: "block-name" }, body).textContent = node.label;
   svgEl("text", { x: 10, y: 27, class: "block-kind" }, body).textContent = node.sublabel;
+  drawRoleIcon(node, body);
   // How the block is doing in a run being watched; empty otherwise.
   svgEl("text", { x: NODE_W - 10, y: 27, class: "run-note", "text-anchor": "end" }, body);
 
   if (node.child?.mode === "each" && node.child.eachOver) {
-    svgEl("text", { x: NODE_W - 10, y: 15, class: "each-badge", "text-anchor": "end" }, body)
+    svgEl("text", { x: NODE_W - 26, y: 15, class: "each-badge", "text-anchor": "end" }, body)
       .textContent = `× each ${node.child.eachOver}`;
   }
 

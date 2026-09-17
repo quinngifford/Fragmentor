@@ -472,6 +472,13 @@ body[data-project="open"] .welcome { display: none; }
 .bus-group[data-planned="true"] .bus { opacity: 0.28; stroke-dasharray: 6 5; }
 .bus-group[data-planned="true"] .bus-count { opacity: 0.5; }
 
+/* The mark in the corner saying what kind of block this is. Strokes only, so
+   it takes whatever colour the block is drawn in. */
+.role-icon-line { fill: none; stroke: var(--role, var(--ink-faint)); stroke-width: 1.1; stroke-linecap: round; stroke-linejoin: round; }
+.role-icon { opacity: 0.75; }
+.block-body:hover .role-icon { opacity: 1; }
+.block-box[data-planned="true"] .role-icon { opacity: 0.5; }
+
 .block-name { font-family: var(--sans); font-size: 12.5px; font-weight: 600; fill: var(--ink); pointer-events: none; }
 .block-kind { font-family: var(--mono); font-size: 9px; fill: var(--ink-faint); letter-spacing: 0.08em; pointer-events: none; }
 .group-label { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; pointer-events: none; }

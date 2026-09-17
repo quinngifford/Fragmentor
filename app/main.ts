@@ -778,6 +778,8 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         // choose, and a screen can shift them, so what is held here is that
         // they are told apart rather than what they are.
         value("application", "distinctColours") === true &&
+        value("application", "marks") === value("application", "blocks") &&
+        Number(value("application", "marks")) === 5 &&
         value("application", "plannedBlock") === "true" &&
         value("application", "plannedLine") === true,
     ],
@@ -1587,6 +1589,10 @@ function attachSelfCheck(
             // One line each way to the database, not one line saying "connected".
             readAndWrite: Boolean(line("api=>links-db:reads")) && Boolean(line("api=>links-db:writes")),
             distinctColours: new Set([colour("api"), colour("links-db"), colour("click-events"), colour("browser")]).size === 4,
+            // A mark in the corner of every block, and none on a boundary,
+            // which stands for the way in rather than for a block.
+            marks: document.querySelectorAll(".block-box .role-icon").length,
+            blocks: document.querySelectorAll(".block-box[data-key]").length,
             // Nothing calls a geolocation provider yet, so both the block and
             // the line to it are drawn as the plan they are.
             plannedLine: getComputedStyle(line("api=>geo-lookup:calls")).strokeDasharray !== "none",
