@@ -788,7 +788,9 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("structured", "bench") === true &&
         value("structured", "runnable") === true &&
         value("structured", "wayIn") === true &&
-        value("structured", "answers") === "triageTicket",
+        value("structured", "answers") === "triageTicket" &&
+        // The service's diagram is the block it holds and the way into it.
+        value("structured", "drawn") === "input triage-ticket",
     ],
     [
       "colouring changes what is drawn, and the legend explains it and folds away",
@@ -1680,6 +1682,7 @@ function attachSelfCheck(
           await wait(600);
           top.wayIn = Boolean(document.querySelector('.block-box[data-key="input"]'));
           top.answers = text('.access-group[data-access="input=>triage-ticket:triageTicket"] .access-label');
+          top.drawn = [...document.querySelectorAll(".block-box[data-key]")].map((box) => box.dataset.key).sort().join(" ");
 
           // And on into the request path, which is an ordinary composite
           // with a bench behind it.
@@ -1699,6 +1702,7 @@ function attachSelfCheck(
             // show inputs arriving from nowhere.
             wayIn: top.wayIn,
             answers: top.answers,
+            drawn: top.drawn,
           };
         `);
         await capture(window, "self-check-structured");
