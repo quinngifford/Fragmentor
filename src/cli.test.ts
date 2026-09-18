@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const launcher = path.join(repo, "bin", "fragmentor.js");
-const jobRanker = path.join(repo, "examples", "job-ranker");
+const tickets = path.join(repo, "examples", "tickets");
 
 function fragmentor(args: string[], cwd: string): { status: number | null; output: string } {
   const result = spawnSync(process.execPath, [launcher, ...args], { cwd, encoding: "utf8" });
@@ -75,42 +75,42 @@ describe("the fragmentor command", () => {
   }, 30_000);
 
   it("finds the project from inside a block's folder, and passes the example", async () => {
-    await cp(jobRanker, dir, { recursive: true });
+    await cp(tickets, dir, { recursive: true });
 
-    const result = fragmentor(["check"], path.join(dir, "blocks", "rank-jobs", "score-posting"));
-    expect(result.output).toContain("rank-jobs: typechecks against its contracts");
+    const result = fragmentor(["check"], path.join(dir, "blocks", "tickets", "booking-api", "pricing"));
+    expect(result.output).toContain("tickets: typechecks against its contracts");
     expect(result.output).toContain("Result: no errors");
     expect(result.status).toBe(0);
   }, 30_000);
 
-  it("fails on a wiring problem and says what it is", async () => {
-    await cp(jobRanker, dir, { recursive: true });
-    const blockFile = path.join(dir, "blocks", "rank-jobs", "block.json");
-    const block = JSON.parse(await readFile(blockFile, "utf8")) as { wires: string[] };
-    block.wires = block.wires.filter((wire) => wire !== "extract-profile-keywords.keywords -> score-posting.keywords");
+  it("fails on a problem with the diagram and says what it is", async () => {
+    await cp(tickets, dir, { recursive: true });
+    const blockFile = path.join(dir, "blocks", "tickets", "booking-api", "find-event", "block.json");
+    const block = JSON.parse(await readFile(blockFile, "utf8")) as { access: string[] };
+    block.access = ["events reads tickets-db.venues"];
     await writeFile(blockFile, JSON.stringify(block, null, 2), "utf8");
 
     const result = fragmentor(["check", "--project", dir], repo);
     expect(result.status).toBe(1);
-    expect(result.output).toContain('ERROR  rank-jobs: Nothing is connected to "score-posting" input "keywords".');
+    expect(result.output).toContain('ERROR  tickets/booking-api/find-event: "Find Event" declares "events reads tickets-db.venues"');
   }, 30_000);
 
   it("runs the saved tests, and fails when one does", async () => {
-    await cp(jobRanker, dir, { recursive: true });
+    await cp(tickets, dir, { recursive: true });
 
     const passing = fragmentor(["test"], dir);
-    expect(passing.output).toContain("PASS   ranks the TypeScript roles above the warehouse job");
+    expect(passing.output).toContain("PASS   turns someone away when there are not enough seats left");
     expect(passing.status).toBe(0);
 
     await writeFile(
-      path.join(dir, "blocks", "rank-jobs", "extract-profile-keywords", "cases.json"),
-      JSON.stringify([{ name: "wrong on purpose", input: { profile: { skills: ["TypeScript"] } }, expected: { keywords: ["rust"] } }]),
+      path.join(dir, "blocks", "tickets", "booking-api", "pricing", "price-seat", "cases.json"),
+      JSON.stringify([{ name: "wrong on purpose", input: { fullPrice: 25, seat: 1 }, expected: { price: 20 } }]),
       "utf8",
     );
 
-    const failing = fragmentor(["test", "rank-jobs/extract-profile-keywords"], dir);
+    const failing = fragmentor(["test", "tickets/booking-api/pricing/price-seat"], dir);
     expect(failing.status).toBe(1);
     expect(failing.output).toContain("FAIL   wrong on purpose");
-    expect(failing.output).toContain('output.keywords[0] was "typescript", expected "rust".');
+    expect(failing.output).toContain("output.price was 25, expected 20.");
   }, 60_000);
 });

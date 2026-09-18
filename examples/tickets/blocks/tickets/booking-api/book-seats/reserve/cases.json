@@ -1,0 +1,19 @@
+[
+  {
+    "name": "numbers the booking by the seats that were left",
+    "input": {
+      "event": {
+        "id": "gig",
+        "name": "Night Gig",
+        "seatsLeft": 10,
+        "price": 25
+      },
+      "seats": 2,
+      "email": "ada@example.com",
+      "total": 50
+    },
+    "expected": {
+      "bookingId": "gig-10"
+    }
+  }
+]

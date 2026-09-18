@@ -378,13 +378,13 @@ body[data-project="open"] .welcome { display: none; }
 /* The rest of the system. Hue says which world a thing belongs to, and runs
    from what is most yours to what is least: your code, your separate
    programs, the data you keep, the data in motion, the people you serve, and
-   the services you do not control. Green stays the signal colour, so anything
-   green is data moving inside the program and anything else is not. Red is
-   not spent here; on this panel it means something is wrong.
+   the services you do not control. Green is your own code. Red is not spent
+   here; on this panel it means something is wrong.
 
    These come before the planned rules deliberately: a planned database should
    read as planned first. */
 [data-role="function"] { --role: var(--role-function); }
+[data-role="component"] { --role: var(--role-component); }
 [data-role="service"] { --role: var(--role-service); }
 [data-role="external"] { --role: var(--role-external); }
 [data-role="database"] { --role: var(--role-database); }
@@ -394,6 +394,7 @@ body[data-project="open"] .welcome { display: none; }
 [data-role="client"] { --role: var(--role-client); }
 
 .block-box[data-role="function"] { --role: var(--role-function); }
+.block-box[data-role="component"] { --role: var(--role-component); }
 .block-box[data-role="service"] { --role: var(--role-service); }
 .block-box[data-role="external"] { --role: var(--role-external); }
 .block-box[data-role="database"] { --role: var(--role-database); }
@@ -421,6 +422,7 @@ body[data-project="open"] .welcome { display: none; }
    at the end of it are plainly the same subject. Solid, because dashed on
    this canvas means not built yet and nothing else. */
 .access-group[data-role="function"] { --role: var(--role-function); }
+.access-group[data-role="component"] { --role: var(--role-component); }
 .access-group[data-role="service"] { --role: var(--role-service); }
 .access-group[data-role="external"] { --role: var(--role-external); }
 .access-group[data-role="database"] { --role: var(--role-database); }
@@ -468,10 +470,6 @@ body[data-project="open"] .welcome { display: none; }
 .block-box[data-planned="true"] .block-kind { fill: var(--pending); }
 .block-box[data-planned="true"] .port-label { fill: var(--ink-faint); }
 
-/* A wire with a planned end carries something nobody has decided yet. */
-.bus-group[data-planned="true"] .bus { opacity: 0.28; stroke-dasharray: 6 5; }
-.bus-group[data-planned="true"] .bus-count { opacity: 0.5; }
-
 /* The mark in the corner saying what kind of block this is. Strokes only, so
    it takes whatever colour the block is drawn in. */
 .role-icon-line { fill: none; stroke: var(--role, var(--ink-faint)); stroke-width: 1.1; stroke-linecap: round; stroke-linejoin: round; }
@@ -481,23 +479,14 @@ body[data-project="open"] .welcome { display: none; }
 
 .block-name { font-family: var(--sans); font-size: 12.5px; font-weight: 600; fill: var(--ink); pointer-events: none; }
 .block-kind { font-family: var(--mono); font-size: 9px; fill: var(--ink-faint); letter-spacing: 0.08em; pointer-events: none; }
-.group-label { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; pointer-events: none; }
+.group-label { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; fill: var(--ink-faint); pointer-events: none; }
 .port-label { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-dim); pointer-events: none; }
-.bus-out-label { font-family: var(--mono); font-size: 9px; fill: var(--ink-faint); letter-spacing: 0.06em; pointer-events: none; }
-.each-badge { font-family: var(--mono); font-size: 9px; fill: var(--signal); pointer-events: none; }
 .block-divider { stroke: var(--rule-bright); pointer-events: none; }
 
-.group-bracket { stroke-width: 2; fill: none; }
-.bus-dot { stroke-width: 1.5; }
 .cap-line { stroke: var(--effect); stroke-width: 1.2; stroke-dasharray: 2 3; opacity: 0.65; pointer-events: none; }
 .cap-dot { fill: var(--panel); stroke: var(--effect); stroke-width: 1.5; }
 
-.bus { fill: none; stroke-width: 2; opacity: 0.55; }
-.bus-hit { fill: none; stroke: transparent; stroke-width: 16; cursor: pointer; }
-.bus-group:hover .bus { opacity: 1; stroke-width: 3; }
-.bus-group[data-selected="true"] .bus { opacity: 1; stroke-width: 3.5; }
-.bus-group[data-linked="true"] .bus { opacity: 1; stroke-width: 3; }
-.bus-count { font-family: var(--mono); font-size: 9px; pointer-events: none; }
+.line-hit { fill: none; stroke: transparent; stroke-width: 16; cursor: pointer; }
 
 /* ---- inspector ---- */
 
@@ -520,7 +509,6 @@ body[data-project="open"] .welcome { display: none; }
   color: var(--ink-dim);
 }
 
-.badge.composite { border-color: var(--signal-dim); color: var(--signal); }
 .badge.state { border-color: #3d4a52; color: var(--pending); }
 .badge.state.planned { border-color: var(--rule-bright); color: var(--ink-faint); border-style: dashed; }
 .badge.role { border-color: color-mix(in srgb, var(--role) 45%, var(--ground)); color: var(--role); }
@@ -812,15 +800,6 @@ pre.code-view { max-height: 420px; overflow: auto; }
   from, 30% { stroke: var(--signal); stroke-width: 2; }
 }
 
-/* A new bus is drawn along its length, after the blocks it joins. */
-.bus-group.appearing .bus { stroke-dasharray: 1; animation: bus-draw 700ms ease-out backwards; animation-delay: inherit; }
-.bus-group.appearing .bus-count { animation: fade-in 400ms ease-out backwards; animation-delay: inherit; }
-
-@keyframes bus-draw {
-  from { stroke-dashoffset: 1; }
-  to { stroke-dashoffset: 0; }
-}
-
 @keyframes fade-in {
   from { opacity: 0; }
 }
@@ -854,43 +833,6 @@ pre.code-view { max-height: 420px; overflow: auto; }
 .block-box[data-run="running"] .run-note { fill: var(--signal); }
 .block-box[data-run="paused"] .run-note { fill: var(--effect); }
 .block-box[data-run="failed"] .run-note { fill: var(--bad); }
-
-.bus-group[data-carried="true"] .bus { opacity: 0.9; }
-/* A value on a wire is edged in the ground colour, so it stays readable where it crosses other lines. */
-.bus-group[data-carried="true"] .bus-count {
-  font-weight: 600;
-  paint-order: stroke;
-  stroke: var(--ground);
-  stroke-width: 3px;
-  stroke-linejoin: round;
-}
-
-/* Data travelling along a wire: a short bright dash running from end to end. */
-.bus-pulse {
-  fill: none;
-  stroke-width: 5;
-  stroke-linecap: round;
-  stroke-dasharray: 0.1 1.2;
-  stroke-dashoffset: 0.1;
-  pointer-events: none;
-  animation: pulse-travel 520ms cubic-bezier(0.4, 0, 0.6, 1) forwards;
-}
-
-@keyframes pulse-travel {
-  from { stroke-dashoffset: 0.1; }
-  to { stroke-dashoffset: -1; }
-}
-
-/* While a run is held at a breakpoint nothing else on the diagram moves. The
-   wires that are holding a value go on flowing, so the paused diagram still
-   shows where the data is. Slower and fainter than a pulse in flight: this is
-   data waiting, not data arriving. */
-.bus-pulse.held {
-  stroke-width: 4;
-  opacity: 0.75;
-  stroke-dasharray: 0.06 0.94;
-  animation: pulse-travel 2200ms linear infinite;
-}
 
 /* A breakpoint sits beside a block's name: faint on hover, red when set. */
 .breakpoint-hit { fill: transparent; cursor: pointer; }
@@ -952,7 +894,6 @@ pre.code-view { max-height: 420px; overflow: auto; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
-  .bus-pulse { display: none; }
 }
 
 /* A system root in the hierarchy says which language it targets. */

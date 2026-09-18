@@ -1,0 +1,17 @@
+{
+  "name": "Tickets",
+  "goal": "Sell seats for events, let people cancel them, and send each booking a confirmation.",
+  "mode": "structured",
+  "existingCode": false,
+  "start": "build",
+  "granularity": {
+    "level": 3,
+    "maxDepth": 4
+  },
+  "systems": [
+    {
+      "rootBlock": "tickets",
+      "language": "typescript"
+    }
+  ]
+}

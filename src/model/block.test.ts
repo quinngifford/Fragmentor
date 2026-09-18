@@ -1,13 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  blockFromFile,
-  blockToFileShape,
-  formatWire,
-  functionNameOf,
-  parseBlockFile,
-  parseWireText,
-  typeStemOf,
-} from "./block.js";
+import { blockFromFile, blockToFileShape, functionNameOf, parseAccessText, parseBlockFile, typeStemOf } from "./block.js";
 import type { Mode } from "./block.js";
 import { describeType, typesEqual } from "./types.js";
 import { t } from "./testing.js";
@@ -26,15 +18,12 @@ describe("reading a block file", () => {
       id: "score-posting",
       name: "Score Posting",
       responsibility: minimal.responsibility,
-      kind: "leaf",
       role: "function",
       inputs: {},
       outputs: {},
       exposes: {},
       access: [],
       capabilities: {},
-      children: [],
-      wires: [],
       pinnedAsLeaf: false,
       planned: false,
     });
@@ -68,22 +57,12 @@ describe("reading a block file", () => {
     expect(problemsWith({ ...minimal, id: "score-posting", kind: "leaf" })).not.toEqual([]);
   });
 
-  it("is a composite exactly when it has children", () => {
-    expect(blockFromFile({ ...minimal, children: ["child"] }, "rank").kind).toBe("composite");
-    expect(blockFromFile(minimal, "rank").kind).toBe("leaf");
-  });
-
-  it("will not let a block without children have wires", () => {
-    expect(problemsWith({ ...minimal, wires: ["input.a -> output.b"] })).toEqual([
-      "wires: a block with no children cannot have wires",
+  it("says plainly that a block's parts are no longer listed, and that nothing is wired", () => {
+    expect(problemsWith({ ...minimal, children: ["load"] })).toEqual([
+      expect.stringMatching(/^children: a block's parts are the block folders inside its folder/),
     ]);
-  });
-
-  it("reads a child written as its id as running once, and one with `each` as running per item", () => {
-    const block = blockFromFile({ ...minimal, children: ["load", { block: "score", each: "posting" }] }, "rank");
-    expect(block.children).toEqual([
-      { block: "load", mode: "once" },
-      { block: "score", mode: "each", eachOver: "posting" },
+    expect(problemsWith({ ...minimal, wires: ["input.a -> b.a"] })).toEqual([
+      expect.stringMatching(/^wires: blocks are not wired together\. Code calls the blocks it needs directly/),
     ]);
   });
 
@@ -133,15 +112,8 @@ describe("reading a block file", () => {
     };
     expect(blockToFileShape(blockFromFile(leaf, "score-posting"))).toEqual(leaf);
 
-    const composite = {
-      responsibility: "Doubles each value.",
-      inputs: { values: "number[]" },
-      outputs: { doubled: "number[]" },
-      children: [{ block: "double", each: "value" }],
-      wires: ["input.values -> double.value", "double.result -> output.doubled"],
-      pinnedAsLeaf: true,
-    };
-    expect(blockToFileShape(blockFromFile(composite, "double-all"))).toEqual(composite);
+    const pinned = { responsibility: "Doubles each value.", inputs: { values: "number[]" }, pinnedAsLeaf: true };
+    expect(blockToFileShape(blockFromFile(pinned, "double-all"))).toEqual(pinned);
   });
 
   it("leaves out a name that only repeats the id", () => {
@@ -193,55 +165,6 @@ describe("typesEqual", () => {
     const required = { kind: "object" as const, fields: { a: { type: t.string } } };
     const optional = { kind: "object" as const, fields: { a: { type: t.string, optional: true } } };
     expect(typesEqual(required, optional)).toBe(false);
-  });
-});
-
-describe("wire syntax", () => {
-  const samples = [
-    "input.sourcePath -> load-postings.path",
-    "load-postings.postings -> score-posting.posting",
-    "rank-results.ranked -> output.ranked",
-  ];
-
-  for (const sample of samples) {
-    it(`round trips ${sample}`, () => {
-      const parsed = parseWireText(sample);
-      expect(parsed.ok).toBe(true);
-      expect(parsed.ok && formatWire(parsed.wire)).toBe(sample);
-    });
-  }
-
-  it("reads a wire off a composite block file", () => {
-    const block = blockFromFile(
-      {
-        responsibility: "Wraps a child.",
-        inputs: { value: "number" },
-        outputs: { doubled: "number" },
-        children: ["double"],
-        wires: ["input.value -> double.value", "double.result -> output.doubled"],
-      },
-      "parent",
-    );
-
-    expect(block.wires[0]).toEqual({
-      source: { from: "input", port: "value" },
-      target: { to: "block", block: "double", port: "value" },
-    });
-  });
-
-  it("rejects a wire with no arrow", () => {
-    const result = parseWireText("input.value double.value");
-    expect(result.ok).toBe(false);
-    expect(result.ok === false && result.error).toContain('must be written as "source -> destination"');
-  });
-
-  it("rejects a wire that runs out of an output", () => {
-    const result = parseWireText("output.done -> child.value");
-    expect(result.ok === false && result.error).toContain("outputs are destinations, not sources");
-  });
-
-  it("rejects an endpoint that is not a real block id", () => {
-    expect(parseWireText("Not_A_Block.value -> child.value").ok).toBe(false);
   });
 });
 
@@ -366,7 +289,7 @@ describe("blocks that are not functions", () => {
 
   it("names an unknown role and says what the roles are", () => {
     expect(problemsWith({ role: "lambda", responsibility: "Runs." })).toEqual([
-      expect.stringContaining("must be one of function, service, external, database, storage, queue, structure, client"),
+      expect.stringContaining("must be one of function, component, service, external, database, storage, queue, structure, client"),
     ]);
   });
 });
@@ -402,6 +325,14 @@ describe("what a block reaches", () => {
       { from: "follow", verb: "calls", resource: "api", entry: "followLink" },
     ]);
     expect(blockToFileShape(block).access).toEqual(["shorten calls api.createLink", "follow calls api.followLink"]);
+  });
+
+  it("reads a path to a block kept inside a group of them", () => {
+    expect(parseAccessText("orders reads infrastructure/orders-db.orders")).toEqual({
+      ok: true,
+      access: { from: "orders", verb: "reads", resource: "infrastructure/orders-db", entry: "orders" },
+    });
+    expect(parseAccessText("reads infrastructure//orders-db").ok).toBe(false);
   });
 
   it("says what is wrong with one that is not written as an access", () => {

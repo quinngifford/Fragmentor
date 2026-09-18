@@ -28,14 +28,6 @@ export const CLAUDE_FILE = "CLAUDE.md";
 
 const ORDER = "{ id: string; lines: { quantity: number; unitPrice: number }[] }";
 
-const PRICE_ORDERS_WIRES = [
-  "input.path -> load-orders.path",
-  "load-orders.orders -> price-order.order",
-  "price-order.total -> sum-totals.totals",
-  "price-order.total -> output.totals",
-  "sum-totals.sum -> output.grandTotal",
-];
-
 /** A small structured system, as the files an agent writes to build it. */
 export const workedExample = {
   manifest: {
@@ -50,12 +42,14 @@ export const workedExample = {
   },
   blocks: {
     "price-orders": {
-      responsibility: "Read orders from a file and return what each one costs and the grand total.",
+      role: "component",
+      responsibility: "Everything to do with pricing a file of orders.",
+    },
+    "price-orders/report-totals": {
+      responsibility: "Read a file of orders and report what each one costs and the grand total.",
       inputs: { path: { type: "string", description: "The JSON file holding the orders." } },
       outputs: { totals: "number[]", grandTotal: "number" },
       capabilities: { files: "FileSystem" },
-      children: ["load-orders", { block: "price-order", each: "order" }, "sum-totals"],
-      wires: PRICE_ORDERS_WIRES,
     },
     "price-orders/load-orders": {
       responsibility: "Read the orders file and parse it into orders.",
@@ -68,20 +62,25 @@ export const workedExample = {
       inputs: { order: ORDER },
       outputs: { total: "number" },
     },
-    "price-orders/sum-totals": {
-      responsibility: "Add the order totals together.",
-      inputs: { totals: "number[]" },
-      outputs: { sum: "number" },
-    },
   } as Record<string, Record<string, unknown>>,
-  /** The one leaf the guide shows written, in each language. */
-  leafCode: {
-    typescript: `import type { PriceOrderInput, PriceOrderOutput, PriceOrderCaps } from "./contract.js";
+  /**
+   * The code the guide shows written, in each language: in TypeScript, the
+   * block that calls two others, because calling another block is the thing
+   * to show; in Python, where how one block imports another is not settled,
+   * a block that calls nothing.
+   */
+  code: {
+    typescript: `import type { ReportTotalsInput, ReportTotalsOutput, ReportTotalsCaps } from "./contract.js";
+import { loadOrders } from "../load-orders/impl.js";
+import { priceOrder } from "../price-order/impl.js";
 
-/** Add up one order: each line's quantity times its unit price. */
-export async function priceOrder(input: PriceOrderInput, caps: PriceOrderCaps): Promise<PriceOrderOutput> {
-  const total = input.order.lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
-  return { total };
+/** Read a file of orders and report what each one costs and the grand total. */
+export async function reportTotals(input: ReportTotalsInput, caps: ReportTotalsCaps): Promise<ReportTotalsOutput> {
+  const { orders } = await loadOrders({ path: input.path }, caps);
+  if (orders.length === 0) return { totals: [], grandTotal: 0 };
+
+  const totals = await Promise.all(orders.map(async (order) => (await priceOrder({ order }, caps)).total));
+  return { totals, grandTotal: totals.reduce((sum, total) => sum + total, 0) };
 }
 `,
     python: `from contract import PriceOrderInput, PriceOrderOutput, PriceOrderCaps
@@ -93,6 +92,8 @@ async def price_order(value: PriceOrderInput, caps: PriceOrderCaps) -> PriceOrde
     return PriceOrderOutput(total=total)
 `,
   } as Record<string, string>,
+  /** The block the code above is, in each language. */
+  codeBlock: { typescript: "price-orders/report-totals", python: "price-orders/price-order" } as Record<string, string>,
   cases: {
     "price-orders/price-order": [
       {
@@ -137,7 +138,6 @@ export const architectureExample: Record<string, Record<string, unknown>> = {
     exposes: {
       listOrders: { accepts: "{ owner: string }", returns: "{ orders: { id: string; total: number }[] }", block: "load-orders" },
     },
-    children: ["load-orders"],
   },
   "load-orders": {
     responsibility: "Read one owner's orders.",
@@ -158,19 +158,17 @@ export const architectureExample: Record<string, Record<string, unknown>> = {
 /** The same program in a visual project, drawn over code that already exists in `src/pricing.ts`. */
 export const visualExample: Record<string, Record<string, unknown>> = {
   "price-orders": {
-    responsibility: "Read orders from a file and report what each one costs and the grand total.",
-    code: "src/pricing.ts#priceOrders",
+    role: "component",
+    subtype: "module",
+    responsibility: "Everything to do with pricing a file of orders.",
+    code: "src/pricing.ts",
+  },
+  "price-orders/report-totals": {
+    responsibility: "Read a file of orders and report what each one costs and the grand total.",
+    code: "src/pricing.ts#reportTotals",
     inputs: { path: "string" },
     outputs: { totals: "number[]", grandTotal: "number" },
     capabilities: { files: "FileSystem" },
-    children: ["load-orders", { block: "price-order", each: "order" }, "sum-totals"],
-    wires: PRICE_ORDERS_WIRES,
-  },
-  "price-orders/price-order": {
-    responsibility: "Add up one order: each line's quantity times its unit price.",
-    code: "src/pricing.ts#priceOrder",
-    inputs: { order: "Order" },
-    outputs: { total: "number" },
   },
 };
 
@@ -184,17 +182,17 @@ export const visualExample: Record<string, Record<string, unknown>> = {
  */
 const GRANULARITY: Record<Mode, Record<number, string>> = {
   structured: {
-    1: "Try to split a block only where it plainly holds separate responsibilities, into two or three substantial children, with real work left inside each.",
-    2: "Try for two to four children per block, each a substantial piece of work.",
-    3: "Try for three to five children per block, each with one clear responsibility and somewhere around 30 to 80 lines of code.",
-    4: "Try for four to six fairly small children per block, of somewhere around 20 to 50 lines of code each.",
-    5: "Try to break the work into small single-purpose children of somewhere around 10 to 30 lines, though never one that is a single expression.",
+    1: "Try to split the work only where it plainly holds separate responsibilities, into two or three substantial parts per block, with real work left inside each.",
+    2: "Try for two to four parts per block, each a substantial piece of work.",
+    3: "Try for three to five parts per block, and functions with one clear responsibility and somewhere around 30 to 80 lines of code.",
+    4: "Try for four to six fairly small parts per block, and functions of somewhere around 20 to 50 lines of code each.",
+    5: "Try to break the work into small single-purpose functions of somewhere around 10 to 30 lines, though never one that is a single expression.",
   },
   visual: {
-    1: "Try to show only the program's major parts: two or three children per block.",
-    2: "Try for two to four children per block, each a substantial part of the program.",
-    3: "Try for three to five children per block, each with one clear job, down to functions of somewhere around 30 to 80 lines.",
-    4: "Try for four to six children per block, down to functions of somewhere around 20 to 50 lines.",
+    1: "Try to show only the program's major parts: two or three parts per block.",
+    2: "Try for two to four parts per block, each a substantial part of the program.",
+    3: "Try for three to five parts per block, each with one clear job, down to functions of somewhere around 30 to 80 lines.",
+    4: "Try for four to six parts per block, down to functions of somewhere around 20 to 50 lines.",
     5: "Try to show the code in fine detail, down to small single-purpose functions.",
   },
 };
@@ -202,8 +200,9 @@ const GRANULARITY: Record<Mode, Record<number, string>> = {
 /** What a block may import, which differs by language. */
 const IMPORT_RULES: Record<string, string> = {
   typescript:
-    "A block may import types with `import type`, and packages installed in the project folder. It may not import another block's code, a shared helper file, or one of Node's built-in modules such as `fs`: use a capability, or add a block. `fragmentor check` reports any such import.",
-  python: "A block may import its contract and packages installed for the project. It reaches files and the network only through its capabilities.",
+    "A block may import another function block's code from its `impl.js`, wherever that block is in the system, types with `import type`, and packages installed in the project folder. Call another block with a value and your `caps`, only when you need it, and as many times as you need it. A block may not import a shared helper file or one of Node's built-in modules such as `fs`: make the helper a block, or use a capability. `fragmentor check` reports any such import.",
+  python:
+    "A block may import its contract and packages installed for the project. How one Python block imports another is not settled yet, so keep each Python block's work inside it for now. It reaches files and the network only through its capabilities.",
 };
 
 const WIDTH = 100;
@@ -281,7 +280,7 @@ function exampleManifest(manifest: Manifest): unknown {
 }
 
 const ENTRY_POINTS =
-  "Entry points such as a `main` function, a server or framework setup stay outside `blocks/`: they create the real capabilities and call a system's top block.";
+  "Entry points such as a `main` function, a server or framework setup stay outside `blocks/`: they create the real capabilities and call the blocks that answer them.";
 
 /**
  * Where this project starts, and whether it starts as a plan.
@@ -383,8 +382,8 @@ export function agentGuide(manifest: Manifest): string {
         ? " A system may say what its code is written in with `\"language\"`."
         : ` The code is written in ${manifest.language}.`,
       startingPoint: startingPoint(manifest),
-      compositeBlock: compactJson(visualExample["price-orders"]),
-      leafBlock: compactJson(visualExample["price-orders/price-order"]),
+      componentBlock: compactJson(visualExample["price-orders"]),
+      functionBlock: compactJson(visualExample["price-orders/report-totals"]),
     });
   }
 
@@ -397,11 +396,12 @@ export function agentGuide(manifest: Manifest): string {
     implFile: pack.implFile,
     contractFile: pack.contractFile,
     capabilitiesFile: pack.capabilitiesFile,
-    compositeBlock: compactJson(workedExample.blocks["price-orders"]),
-    leafBlock: compactJson(workedExample.blocks["price-orders/price-order"]),
+    componentBlock: compactJson(workedExample.blocks["price-orders"]),
+    functionBlock: compactJson(workedExample.blocks["price-orders/report-totals"]),
     capabilities: capabilitiesSection(pack),
     codeLanguage: pack.id,
-    leafCode: (workedExample.leafCode[pack.id] ?? "").trimEnd(),
+    codeBlock: (workedExample.codeBlock[pack.id] ?? "").split("/").at(-1)!,
+    code: (workedExample.code[pack.id] ?? "").trimEnd(),
     importRule: IMPORT_RULES[pack.id] ?? "",
     cases: compactJson(workedExample.cases["price-orders/price-order"]),
     testNote: pack.canRun ? "" : ` Fragmentor cannot run ${pack.displayName} yet, so \`fragmentor test\` skips these blocks.`,

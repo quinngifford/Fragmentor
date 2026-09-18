@@ -418,7 +418,7 @@ function renderTree(): void {
     // A block that is not code gets its own mark, so the rail says what kind
     // of thing each part of the system is at a glance.
     button.append(
-      el("span", "glyph", block.architecture ? "◈" : block.kind === "composite" ? "▣" : "▫"),
+      el("span", "glyph", block.architecture ? "◈" : block.children.length > 0 ? "▣" : "▫"),
       el("span", "label", block.id),
     );
     if (block.architecture) {
@@ -437,7 +437,7 @@ function renderTree(): void {
     button.addEventListener("click", () => showBlock(path));
 
     tree.append(button);
-    for (const child of block.children) walk(child.path, depth + 1);
+    for (const child of block.children) walk(child, depth + 1);
   };
 
   for (const system of snapshot.systems) walk(system.rootBlock, 0);
@@ -464,10 +464,9 @@ function renderStatus(): void {
   } else {
     const snapshot = ui.snapshot;
     const all = Object.values(snapshot.blocks);
-    const composites = all.filter((b) => b.kind === "composite").length;
-    // Only blocks that are code can be implemented, so only they are counted.
-    // A database is not unfinished work.
-    const code = all.filter((block) => !block.architecture && !block.holdsArchitecture);
+    // Only functions can be implemented, so only they are counted. A database
+    // is not unfinished work, and neither is a group of parts.
+    const code = all.filter((block) => !block.architecture);
     const architecture = all.length - code.length;
     const implemented = code.filter((block) => block.implemented).length;
     const graph = graphInView();
@@ -478,7 +477,6 @@ function renderStatus(): void {
     bar.append(el("span", `mode-tag ${snapshot.mode}`, snapshot.mode));
     bar.append(el("span", undefined, snapshot.systems.map((system) => `${system.rootBlock}${system.displayName ? ` (${system.displayName})` : ""}`).join("  ")));
     bar.append(stat("blocks", all.length));
-    bar.append(stat("composite", composites));
     bar.append(
       stat(
         snapshot.mode === "visual" ? "linked to code" : "implemented",
@@ -487,7 +485,7 @@ function renderStatus(): void {
       ),
     );
     if (architecture > 0) bar.append(stat("architecture", architecture));
-    if (graph) bar.append(stat("buses in view", graph.buses.size));
+    if (graph) bar.append(stat("in view", graph.nodes.size));
     bar.append(stat("errors", errors, errors > 0 ? "bad" : undefined));
     bar.append(stat("warnings", warnings, warnings > 0 ? "warn" : undefined));
   }

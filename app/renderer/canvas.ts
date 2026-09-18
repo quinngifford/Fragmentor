@@ -9,18 +9,16 @@ import {
   NODE_W,
   PROJECT_VIEW,
   ROW_H,
+  WAY_IN,
   buildGraph,
-  busColour,
   accessEnds,
   blockColour,
-  busInPoint,
-  busOutPoint,
   entryLines,
   fitLine,
   layoutFor,
   measure,
 } from "./graph.js";
-import type { AccessLink, Bus, Graph, GraphNode } from "./graph.js";
+import type { AccessLink, Graph, GraphNode } from "./graph.js";
 import { requireSnapshot, roleColours, ui, viewSettings } from "./state.js";
 import { el } from "./dom.js";
 import { ROLES, ROLE_IDS } from "../../src/model/roles.js";
@@ -40,6 +38,9 @@ import type { Role } from "../../src/model/roles.js";
  * rather than simply being there, so the person can see what just changed.
  * A run being watched is laid over the drawing in the same way: as attributes
  * on what is already drawn.
+ *
+ * A diagram is one block's parts. Nothing on it is a wire: what calls what is
+ * what a run shows, not what the diagram is.
  */
 
 let notify: (options: { redraw: boolean }) => void = () => {};
@@ -64,10 +65,7 @@ let currentLayout: Map<string, Point> | null = null;
 
 /** The drawn elements, so they can be updated rather than replaced. */
 const nodeElements = new Map<string, SVGGElement>();
-const busElements = new Map<string, { group: SVGGElement; paths: SVGPathElement[]; label: SVGTextElement }>();
 const accessElements = new Map<string, { group: SVGGElement; paths: SVGPathElement[]; label: SVGTextElement }>();
-/** The repeating pulse on each wire that is holding a value while a run is paused. */
-const heldPulses = new Map<string, SVGPathElement>();
 
 export function graphInView(): Graph | null {
   return currentGraph;
@@ -82,11 +80,6 @@ function svgEl<K extends keyof SVGElementTagNameMap>(
   for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
   parent?.append(node);
   return node;
-}
-
-function curve(a: Point, b: Point): string {
-  const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5);
-  return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
 }
 
 function element<T extends Element>(id: string): T {
@@ -108,37 +101,18 @@ export function applySelection(): void {
   for (const [key, group] of nodeElements) {
     group.dataset.selected = String(ui.selection.has(key));
   }
-  for (const [id, drawn] of busElements) {
-    const bus = currentGraph?.buses.get(id);
-    drawn.group.dataset.selected = String(ui.selectedLink === id);
-    drawn.group.dataset.linked = String(
-      Boolean(bus && ui.selection.has(bus.source) && ui.selection.has(bus.target)),
-    );
-  }
   for (const [id, drawn] of accessElements) {
     drawn.group.dataset.selected = String(ui.selectedLink === id);
   }
 }
 
-/** Moves the drawn blocks and re-routes their buses, without rebuilding them. */
+/** Moves the drawn blocks and re-routes the lines between them, without rebuilding them. */
 export function applyPositions(): void {
   if (!currentGraph || !currentLayout) return;
 
   for (const [key, group] of nodeElements) {
     const point = currentLayout.get(key);
     if (point) group.setAttribute("transform", `translate(${point.x} ${point.y})`);
-  }
-
-  for (const [id, drawn] of busElements) {
-    const bus = currentGraph.buses.get(id);
-    if (!bus) continue;
-    const geometry = busGeometry(currentGraph, currentLayout, bus);
-    if (!geometry) continue;
-
-    for (const path of drawn.paths) path.setAttribute("d", geometry.path);
-    heldPulses.get(id)?.setAttribute("d", geometry.path);
-    drawn.label.setAttribute("x", String(geometry.middle.x));
-    drawn.label.setAttribute("y", String(geometry.middle.y));
   }
 
   for (const [id, drawn] of accessElements) {
@@ -153,21 +127,6 @@ export function applyPositions(): void {
   }
 }
 
-function busGeometry(graph: Graph, layout: Map<string, Point>, bus: Bus) {
-  const sourceNode = graph.nodes.get(bus.source);
-  const targetNode = graph.nodes.get(bus.target);
-  const from = layout.get(bus.source);
-  const to = layout.get(bus.target);
-  if (!sourceNode || !targetNode || !from || !to) return null;
-
-  const start = busOutPoint(sourceNode, from);
-  const end = busInPoint(targetNode, to, bus.source);
-  return {
-    path: curve(start, end),
-    middle: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 - 6 },
-  };
-}
-
 export function applyBreakpoints(): void {
   for (const [key, group] of nodeElements) {
     const blockPath = currentGraph?.nodes.get(key)?.block?.path;
@@ -175,76 +134,19 @@ export function applyBreakpoints(): void {
   }
 }
 
-/** A run laid over the diagram on screen: how each block is doing, and what each bus carried. */
+/** A run laid over the diagram on screen: how each block, and whatever is inside it, is doing. */
 export interface RunOverlay {
   nodes: Map<string, { state: "running" | "paused" | "done" | "failed" | "stopped"; note: string }>;
-  /** Buses whose values are known, with the label to show on each. */
-  buses: Map<string, string>;
 }
 
-/**
- * Shows a run on what is already drawn. `pulses` are buses that data has just
- * travelled along, each sent a pulse of light from end to end. While the run
- * is `held` at a breakpoint nothing else moves, so the wires that are holding
- * a value keep pulsing: a paused diagram still shows where the data is.
- */
-export function applyRunOverlay(overlay: RunOverlay | null, pulses: string[] = [], held = false): void {
+/** Shows a run on what is already drawn. */
+export function applyRunOverlay(overlay: RunOverlay | null): void {
   for (const [key, group] of nodeElements) {
     const run = overlay?.nodes.get(key);
     if (run) group.dataset.run = run.state;
     else delete group.dataset.run;
     const note = group.querySelector(".run-note");
     if (note) note.textContent = run?.note ?? "";
-  }
-
-  for (const [id, drawn] of busElements) {
-    const label = overlay?.buses.get(id);
-    drawn.group.dataset.carried = String(label !== undefined);
-    drawn.label.textContent = label ?? drawn.label.dataset.plain ?? "";
-  }
-
-  const layer = element("pulse-layer");
-  applyHeldPulses(overlay, held, layer);
-
-  for (const id of pulses) {
-    const line = busElements.get(id)?.paths[0];
-    if (!line) continue;
-    const pulse = svgEl("path", {
-      d: line.getAttribute("d") ?? "",
-      class: "bus-pulse",
-      stroke: line.getAttribute("stroke") ?? "#4fe38f",
-      pathLength: 1,
-    }, layer);
-    pulse.addEventListener("animationend", () => pulse.remove());
-    // Where animation is turned off, nothing ends it.
-    window.setTimeout(() => pulse.remove(), 1500);
-  }
-}
-
-/** Keeps a slow repeating pulse on every wire carrying a value, for as long as the run is held. */
-function applyHeldPulses(overlay: RunOverlay | null, held: boolean, layer: Element): void {
-  const carrying = held && overlay ? new Set(overlay.buses.keys()) : new Set<string>();
-
-  for (const [id, pulse] of heldPulses) {
-    if (carrying.has(id)) continue;
-    pulse.remove();
-    heldPulses.delete(id);
-  }
-
-  for (const id of carrying) {
-    if (heldPulses.has(id)) continue;
-    const line = busElements.get(id)?.paths[0];
-    if (!line) continue;
-    const pulse = svgEl("path", {
-      d: line.getAttribute("d") ?? "",
-      class: "bus-pulse held",
-      stroke: line.getAttribute("stroke") ?? "#4fe38f",
-      pathLength: 1,
-    }, layer);
-    // Started part way in, and each wire a little behind the last, so the
-    // diagram does not march in step.
-    pulse.style.animationDelay = `${-330 * heldPulses.size}ms`;
-    heldPulses.set(id, pulse);
   }
 }
 
@@ -524,19 +426,19 @@ async function moveTo(path: string, arrive: () => void): Promise<void> {
   }
 }
 
-/** Opens a composite's diagram. `arrive` runs as it is put on screen, for choosing what to select there. */
+/** Opens a block's diagram: the parts it is made of. `arrive` runs as it is put on screen, for choosing what to select there. */
 export function openDiagram(path: string, arrive: () => void = () => {}): void {
   void moveTo(path, arrive);
 }
 
 /**
- * Brings a block into view: a composite opens its own diagram, and a leaf is
- * selected in its parent's.
+ * Brings a block into view: one made of parts opens to show them, and any
+ * other is selected in the diagram of the block it belongs to.
  */
 export function showBlock(path: string): void {
   const block = ui.snapshot?.blocks[path];
   if (!block) return;
-  if (block.kind === "composite") {
+  if (block.children.length > 0) {
     openDiagram(path);
     return;
   }
@@ -562,11 +464,11 @@ export function showBlock(path: string): void {
 /* -------------------------------------------------------------------------- */
 
 /**
- * What each diagram held when it was last drawn, so that blocks and buses the
- * agent adds can be told apart from those already there. Opening a project
+ * What each diagram held when it was last drawn, so that blocks the agent
+ * adds can be told apart from those already there. Opening a project
  * forgets it all: blocks that were there all along are simply there.
  */
-const drawnBefore = new Map<string, { nodes: Set<string>; buses: Set<string> }>();
+const drawnBefore = new Map<string, { nodes: Set<string> }>();
 let everythingArrives = false;
 
 /**
@@ -580,14 +482,10 @@ export function resetArrivals(projectIsEmpty: boolean): void {
 
 /** Takes the diagram off the canvas, as when a project is closed. */
 export function clearCanvas(): void {
-  element("bus-layer").replaceChildren();
   element("access-layer").replaceChildren();
-  element("pulse-layer").replaceChildren();
   element("node-layer").replaceChildren();
   nodeElements.clear();
-  busElements.clear();
   accessElements.clear();
-  heldPulses.clear();
   currentGraph = null;
   currentLayout = null;
   document.querySelectorAll(".canvas-empty").forEach((el) => el.remove());
@@ -692,71 +590,22 @@ export function renderCanvas(): void {
     const parent = requireSnapshot().blocks[ui.view];
     showCanvasMessage(
       parent
-        ? `${parent.name} is a leaf block.\nIts behaviour is code, not a diagram — the inspector shows its contract and source.`
+        ? `${parent.name} has no parts inside it.\nThe inspector shows what it is${parent.architecture ? "" : ", its contract and its code"}.`
         : "This block no longer exists.",
     );
     return;
   }
 
   currentGraph = graph;
-  const busLayer = element("bus-layer");
   const nodeLayer = element("node-layer");
   const layout = layoutFor(graph, ui.view);
   currentLayout = layout;
 
-  const before = drawnBefore.get(ui.view) ?? (everythingArrives ? { nodes: new Set<string>(), buses: new Set<string>() } : null);
+  const before = drawnBefore.get(ui.view) ?? (everythingArrives ? { nodes: new Set<string>() } : null);
   const arrivingNodes = before ? [...graph.nodes.keys()].filter((key) => !before.nodes.has(key)) : [];
-  const busDelay = Math.min(arrivingNodes.length, 12) * ARRIVAL_STAGGER_MS + 200;
+  const lineDelay = Math.min(arrivingNodes.length, 12) * ARRIVAL_STAGGER_MS + 200;
 
-  for (const bus of graph.buses.values()) {
-    const geometry = busGeometry(graph, layout, bus);
-    if (!geometry) continue;
-
-    const colour = busColour(graph, ui.view, bus);
-    // What a wire carries is only settled once both ends are real, so a wire
-    // reaching a planned block is drawn as quietly as the block it reaches.
-    const toPlan =
-      Boolean(graph.nodes.get(bus.source)?.block?.planned) || Boolean(graph.nodes.get(bus.target)?.block?.planned);
-    const group = svgEl("g", { class: "bus-group", "data-bus": bus.id, "data-planned": String(toPlan) }, busLayer);
-
-    const line = svgEl("path", { d: geometry.path, class: "bus", stroke: colour }, group);
-    const hit = svgEl("path", { d: geometry.path, class: "bus-hit" }, group);
-    svgEl("title", {}, group).textContent =
-      `${graph.nodes.get(bus.source)?.label} → ${graph.nodes.get(bus.target)?.label}\n${bus.signals
-        .map((s) => `${s.targetPort}: ${s.type ?? "unknown"}`)
-        .join("\n")}`;
-
-    const label = svgEl("text", {
-      x: geometry.middle.x,
-      y: geometry.middle.y,
-      class: "bus-count",
-      "text-anchor": "middle",
-      fill: colour,
-    }, group);
-    label.textContent = bus.signals.length === 1 ? bus.signals[0]!.targetPort : `${bus.signals.length} signals`;
-    // Kept, so the label can go back to it once a run is taken off the diagram.
-    label.dataset.plain = label.textContent;
-
-    if (before && !before.buses.has(bus.id)) {
-      // Drawn along its length, once the blocks it joins have arrived. A path
-      // length of 1 lets the dash be measured without knowing the curve's.
-      group.classList.add("appearing");
-      group.style.animationDelay = `${busDelay}ms`;
-      line.setAttribute("pathLength", "1");
-    }
-
-    hit.addEventListener("click", (event) => {
-      event.stopPropagation();
-      ui.selectedLink = bus.id;
-      ui.selection.clear();
-      applySelection();
-      notify({ redraw: false });
-    });
-
-    busElements.set(bus.id, { group, paths: [line, hit], label });
-  }
-
-  drawAccesses(graph, layout, element("access-layer"), busDelay, before !== null);
+  drawAccesses(graph, layout, element("access-layer"), lineDelay, before !== null);
 
   for (const node of graph.nodes.values()) {
     const point = layout.get(node.key);
@@ -766,7 +615,7 @@ export function renderCanvas(): void {
   }
 
   renderLegend(graph);
-  drawnBefore.set(ui.view, { nodes: new Set(graph.nodes.keys()), buses: new Set(graph.buses.keys()) });
+  drawnBefore.set(ui.view, { nodes: new Set(graph.nodes.keys()) });
   everythingArrives = false;
 
   applySelection();
@@ -781,9 +630,8 @@ function canPause(block: SnapshotBlock): boolean {
     ui.snapshot?.mode === "structured" &&
     block.language === "typescript" &&
     !block.planned &&
-    // A database is never called, and a block holding one has no code either.
-    !block.architecture &&
-    !block.holdsArchitecture
+    // A database is never called, and neither is a group of parts.
+    !block.architecture
   );
 }
 
@@ -793,11 +641,9 @@ const ARROW_ROOM = 11;
 /**
  * A curve that bends the way it actually travels.
  *
- * `curve` is for wires, which always run left to right because a value does,
- * so it pushes its handles rightward whatever it is given. An access can run
- * either way — down out of a block and back up into it, most often — and
- * pointing an arrowhead along a curve that approached from the wrong side
- * would make a read look like a write.
+ * An access can run either way — down out of a block and back up into it,
+ * most often — and pointing an arrowhead along a curve that approached from
+ * the wrong side would make a read look like a write.
  */
 /** How far a line to a store below swings clear of the column on its way. */
 const BOW = 58;
@@ -845,7 +691,7 @@ function accessGeometry(graph: Graph, layout: Map<string, Point>, link: AccessLi
 function accessLabel(link: AccessLink, resource: GraphNode | undefined): string {
   // The way into a service is named by the operation alone: "calls" would be
   // the wrong word for a boundary that is answering rather than asking.
-  if (link.source === "input") return link.entries[0]?.entry ?? "answers";
+  if (link.source === WAY_IN) return link.entries[0]?.entry ?? "answers";
   if (link.entries.length === 1) {
     const only = link.entries[0]!;
     // Named at both ends, the line already meets the two entries it joins, so
@@ -865,7 +711,7 @@ function accessLabel(link: AccessLink, resource: GraphNode | undefined): string 
 function accessDetail(link: AccessLink, resource: GraphNode | undefined, owner: GraphNode | undefined): string[] {
   // Into a service, what the operation accepts is written on the boundary the
   // line leaves rather than on the block it arrives at.
-  if (link.source === "input") {
+  if (link.source === WAY_IN) {
     return link.entries.map((each) => {
       const operation = owner?.exposes.find((exposed) => exposed.name === each.entry);
       return operation?.accepts ? `${each.entry}: ${operation.accepts}` : (each.entry ?? each.text);
@@ -906,7 +752,7 @@ function drawAccesses(graph: Graph, layout: Map<string, Point>, layer: Element, 
     }
 
     svgEl("path", { d: geometry.path, class: "access", "marker-end": "url(#access-arrow)" }, group);
-    svgEl("path", { d: geometry.path, class: "bus-hit" }, group);
+    svgEl("path", { d: geometry.path, class: "line-hit" }, group);
     svgEl("title", {}, group).textContent = [
       link.direction === "in"
         ? `${resource?.label} → ${owner?.label}`
@@ -926,7 +772,7 @@ function drawAccesses(graph: Graph, layout: Map<string, Point>, layer: Element, 
     }, group).textContent = accessLabel(link, resource);
 
     // An access is a standing relationship rather than a value travelling, so
-    // it fades in where a new bus is drawn along its length.
+    // it fades in rather than being drawn along its length.
     if (arriving) {
       group.classList.add("appearing");
       group.style.animationDelay = `${delay}ms`;
@@ -975,6 +821,8 @@ function drawExposed(node: GraphNode, body: Element): void {
 const ROLE_ICONS: Record<Role, string[]> = {
   // Angle brackets: code.
   function: ["M4.5 3 L1.5 6 L4.5 9", "M7.5 3 L10.5 6 L7.5 9"],
+  // A frame holding two smaller boxes: something made of parts.
+  component: ["M1.5 1.5 H10.5 V10.5 H1.5 Z", "M3.5 3.5 H6 V6 H3.5 Z", "M6.8 6.2 H8.8 V8.5 H6.8 Z"],
   // Two racked units: a program of ours, running somewhere.
   service: ["M1.5 3 H10.5 V5.8 H1.5 Z", "M1.5 7 H10.5 V9.8 H1.5 Z", "M3 4.4 H3.01", "M3 8.4 H3.01"],
   // A box with an arrow leaving it: not ours, and out of our hands.
@@ -1007,7 +855,7 @@ function drawRoleIcon(node: GraphNode, body: Element): void {
 
 /** `arrivalDelay` is null for a block that was already there, and otherwise when it should arrive. */
 function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, arrivalDelay: number | null): void {
-  const { height, rightHeight } = measure(node);
+  const { height } = measure(node);
   const group = svgEl("g", {
     class: "block-box",
     transform: `translate(${point.x} ${point.y})`,
@@ -1041,7 +889,7 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
     ? [
         node.block.planned ? "Planned: drawn, but not built yet." : "",
         node.block.responsibility,
-        node.block.kind === "composite" ? "Double-click to open this block's diagram." : "",
+        node.block.children.length > 0 ? "Double-click to see what it is made of." : "",
       ]
         .filter(Boolean)
         .join("\n\n")
@@ -1079,11 +927,6 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
   // How the block is doing in a run being watched; empty otherwise.
   svgEl("text", { x: NODE_W - 10, y: 27, class: "run-note", "text-anchor": "end" }, body);
 
-  if (node.child?.mode === "each" && node.child.eachOver) {
-    svgEl("text", { x: NODE_W - 26, y: 15, class: "each-badge", "text-anchor": "end" }, body)
-      .textContent = `× each ${node.child.eachOver}`;
-  }
-
   // A resource has no ports to stack up its sides. What it holds goes down
   // the middle instead, which is the whole reason a database is worth
   // drawing rather than naming.
@@ -1094,35 +937,17 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
     return;
   }
 
-  // Left edge: one bracket per incoming bus, with its signals inside it.
-  let y = HEAD_H + BODY_PAD;
-  for (const busGroup of node.groups) {
-    const bus = graph.buses.get(`${busGroup.source}->${node.key}`);
-    const colour = bus ? busColour(graph, ui.view, bus) : "#2b8d5c";
-    const groupHeight = GROUP_HEAD_H + busGroup.signals.length * ROW_H;
-    const sourceLabel = graph.nodes.get(busGroup.source)?.label ?? busGroup.source;
-
-    svgEl("path", {
-      d: `M 6 ${y + 2} L 1 ${y + 2} L 1 ${y + groupHeight - 2} L 6 ${y + groupHeight - 2}`,
-      class: "group-bracket",
-      stroke: colour,
-    }, body);
-    svgEl("circle", { cx: 0, cy: y + groupHeight / 2, r: 3.5, class: "bus-dot", fill: "#0d1113", stroke: colour }, body);
-    svgEl("text", { x: 11, y: y + 10, class: "group-label", fill: colour }, body).textContent = `from ${sourceLabel}`;
-
-    busGroup.signals.forEach((signal, i) => {
-      svgEl("text", { x: 15, y: y + GROUP_HEAD_H + i * ROW_H + 11, class: "port-label" }, body)
-        .textContent = signal.targetPort;
+  // A function's contract, as what it takes and what it gives back. These are
+  // not ends of anything: what calls it, and what it calls, is what a run shows.
+  const top = HEAD_H + BODY_PAD;
+  if (node.inputs.length > 0) {
+    svgEl("text", { x: 11, y: top + 10, class: "group-label" }, body).textContent = "takes";
+    node.inputs.forEach((port, i) => {
+      svgEl("text", { x: 15, y: top + GROUP_HEAD_H + i * ROW_H + 11, class: "port-label" }, body).textContent = port.name;
     });
-
-    y += groupHeight + 7;
   }
-
-  // Right edge: everything the block produces leaves on one bus.
   if (node.outputs.length > 0) {
-    const top = HEAD_H + BODY_PAD;
-    svgEl("text", { x: NODE_W - 15, y: top + 10, class: "bus-out-label", "text-anchor": "end" }, body)
-      .textContent = "bus out";
+    svgEl("text", { x: NODE_W - 11, y: top + 10, class: "group-label", "text-anchor": "end" }, body).textContent = "gives back";
     node.outputs.forEach((port, i) => {
       svgEl("text", {
         x: NODE_W - 15,
@@ -1131,7 +956,6 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
         "text-anchor": "end",
       }, body).textContent = port.name;
     });
-    svgEl("circle", { cx: NODE_W, cy: top + rightHeight / 2, r: 4, class: "bus-dot", fill: "#0d1113", stroke: "#2b8d5c" }, body);
   }
 
   node.capabilities.forEach((cap, i) => {
@@ -1258,11 +1082,11 @@ function attachNodeBehaviour(group: SVGGElement, node: GraphNode): void {
 
   group.addEventListener("dblclick", (event) => {
     event.stopPropagation();
-    if (node.block?.kind === "composite" && node.block.path !== ui.view) openDiagram(node.block.path);
+    if (node.block && node.block.children.length > 0 && node.block.path !== ui.view) openDiagram(node.block.path);
   });
 
   group.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && node.block?.kind === "composite" && node.block.path !== ui.view) {
+    if (event.key === "Enter" && node.block && node.block.children.length > 0 && node.block.path !== ui.view) {
       event.preventDefault();
       openDiagram(node.block.path);
       return;
@@ -1283,7 +1107,7 @@ export function setUpCanvasGestures(): void {
 
   svg.addEventListener("pointerdown", (event) => {
     const target = event.target as Element;
-    if (target.closest(".block-box") || target.closest(".bus-group")) return;
+    if (target.closest(".block-box") || target.closest(".access-group")) return;
     pan = { x: event.clientX, y: event.clientY, panX: ui.panX, panY: ui.panY, moved: false };
     svg.classList.add("panning");
     svg.setPointerCapture(event.pointerId);

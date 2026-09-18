@@ -11,7 +11,7 @@ import {
   openDiagram,
 } from "./canvas.js";
 import type { RunOverlay } from "./canvas.js";
-import type { Bus, Graph, Signal } from "./graph.js";
+import type { Graph } from "./graph.js";
 import { requireSnapshot, ui } from "./state.js";
 import type { Watch, WatchedCall } from "./state.js";
 import { el, section, subsection } from "./dom.js";
@@ -20,12 +20,13 @@ import { codeBlock } from "./highlight.js";
 /**
  * Watching a run on the diagram.
  *
- * A watched run reports every block call beneath the block that was run. A
- * whole run usually takes a few milliseconds, so the calls are played back at
- * a pace a person can follow, and everything shown is derived from the calls
- * played so far: which blocks are running or done, the value on each wire,
- * and where the run is held at a breakpoint. The diagram on screen can be any
- * part of the run; opening another block simply shows another part of it.
+ * A watched run reports every block call it makes, wherever in the system
+ * the block sits. A whole run usually takes a few milliseconds, so the calls
+ * are played back at a pace a person can follow, and everything shown is
+ * derived from the calls played so far: which blocks are running or done, and
+ * where the run is held at a breakpoint. A block on screen shows what is
+ * happening anywhere inside it, so the diagram on screen can be any part of
+ * the architecture; opening another block simply shows the run in more detail.
  */
 
 let notify: () => void = () => {};
@@ -35,17 +36,12 @@ export function onWatchChange(callback: () => void): void {
 
 const parentOf = (blockPath: string) => blockPath.split("/").slice(0, -1).join("/");
 const idOf = (blockPath: string) => blockPath.split("/").at(-1)!;
+const isWithin = (blockPath: string, ancestor: string) =>
+  ancestor === "" || blockPath === ancestor || blockPath.startsWith(`${ancestor}/`);
 
 /** A block's calls in the run so far, in the order they were made. */
 function callsOf(watch: Watch, blockPath: string): WatchedCall[] {
   return [...watch.calls.values()].filter((call) => call.block === blockPath);
-}
-
-/** The call of a block whose inside is shown, for a block that ran more than once. */
-function frameOf(watch: Watch, blockPath: string): WatchedCall | null {
-  const calls = callsOf(watch, blockPath);
-  if (calls.length === 0) return null;
-  return calls[Math.min(watch.frames.get(blockPath) ?? 0, calls.length - 1)]!;
 }
 
 /** Shows one more event. */
@@ -86,55 +82,6 @@ function settleUnfinished(watch: Watch): void {
 /* What the diagram on screen shows                                            */
 /* -------------------------------------------------------------------------- */
 
-function field(value: unknown, port: string): unknown {
-  return value !== null && typeof value === "object" ? (value as Record<string, unknown>)[port] : undefined;
-}
-
-type Carried = { known: true; value: unknown } | { known: false };
-
-/** The calls of each block drawn in the diagram on screen, within the call of the diagram's own block being shown. */
-function childCalls(watch: Watch, graph: Graph, frame: WatchedCall | null): Map<string, WatchedCall[]> {
-  const children = new Map<string, WatchedCall[]>();
-  for (const call of watch.calls.values()) {
-    if (parentOf(call.block) !== ui.view) continue;
-    if (frame && call.parent !== frame.id) continue;
-    const key = idOf(call.block);
-    if (!graph.nodes.has(key)) continue;
-    children.set(key, [...(children.get(key) ?? []), call]);
-  }
-  return children;
-}
-
-/** What a wire on screen carried. Unknown until whatever drives it has finished. */
-function carried(signal: Signal, frame: WatchedCall, children: Map<string, WatchedCall[]>, graph: Graph): Carried {
-  if (signal.source === "input") return { known: true, value: field(frame.input, signal.sourcePort) };
-
-  const calls = children.get(signal.source) ?? [];
-  if (calls.some((call) => call.state !== "returned")) return { known: false };
-
-  const child = graph.nodes.get(signal.source)?.child;
-  if (child?.mode === "each" && child.eachOver) {
-    // Called once per item, it produced one value per call, and the wire
-    // carries them all — once every item has had its call.
-    const over = graph.signals.find((each) => each.target === signal.source && each.targetPort === child.eachOver);
-    const items: Carried = over ? carried(over, frame, children, graph) : { known: false };
-    if (!items.known || !Array.isArray(items.value) || items.value.length !== calls.length) return { known: false };
-    return { known: true, value: calls.map((call) => field(call.output, signal.sourcePort)) };
-  }
-
-  if (calls.length === 0) return { known: false };
-  return { known: true, value: field(calls[0]!.output, signal.sourcePort) };
-}
-
-/** A value short enough to sit on a wire. */
-export function preview(value: unknown): string {
-  if (value === undefined) return "nothing";
-  if (value === null || typeof value === "number" || typeof value === "boolean") return String(value);
-  if (typeof value === "string") return JSON.stringify(value.length > 16 ? `${value.slice(0, 15)}…` : value);
-  if (Array.isArray(value)) return `[${value.length}]`;
-  return "{…}";
-}
-
 function nodeRun(calls: WatchedCall[]): { state: "running" | "paused" | "done" | "failed" | "stopped"; note: string } {
   const finished = calls.filter((call) => call.state === "returned").length;
   const has = (state: WatchedCall["state"]) => calls.some((call) => call.state === state);
@@ -143,41 +90,26 @@ function nodeRun(calls: WatchedCall[]): { state: "running" | "paused" | "done" |
   return { state, note: calls.length > 1 ? `${finished} of ${calls.length}` : state };
 }
 
+/**
+ * How each block on screen is doing: the calls made to it, or to anything
+ * inside it, from wherever they came.
+ */
 function overlayFor(watch: Watch, graph: Graph): RunOverlay {
-  const frame = frameOf(watch, ui.view);
-  const children = childCalls(watch, graph, frame);
-  const overlay: RunOverlay = { nodes: new Map(), buses: new Map() };
-
-  for (const [key, calls] of children) overlay.nodes.set(key, nodeRun(calls));
-  if (!frame) return overlay;
-
-  if (graph.nodes.has("input")) overlay.nodes.set("input", { state: "done", note: "" });
-  if (graph.nodes.has("output") && frame.state !== "running" && frame.state !== "paused") {
-    const state = frame.state === "returned" ? "done" : frame.state === "stopped" ? "stopped" : "failed";
-    overlay.nodes.set("output", { state, note: "" });
-  }
-
-  for (const bus of graph.buses.values()) {
-    const values = bus.signals.map((signal) => carried(signal, frame, children, graph));
-    if (!values.every((value) => value.known)) continue;
-    const only = values.length === 1 ? (values[0] as { value: unknown }) : null;
-    overlay.buses.set(bus.id, only ? `${bus.signals[0]!.targetPort} = ${preview(only.value)}` : `${bus.signals.length} signals`);
+  const overlay: RunOverlay = { nodes: new Map() };
+  for (const node of graph.nodes.values()) {
+    if (node.boundary || !node.block) continue;
+    const path = node.block.path;
+    const inside = [...watch.calls.values()].filter((call) => isWithin(call.block, path));
+    if (inside.length === 0) continue;
+    // A block that was called says how its own calls went; the calls made
+    // inside it are its own business, and counting them would make one call
+    // read as several. A group of parts is never called, so it says how many
+    // calls happened inside it instead.
+    const own = inside.filter((call) => call.block === path);
+    const run = nodeRun(own.length > 0 ? own : inside);
+    overlay.nodes.set(node.key, own.length > 0 || run.state !== "done" ? run : { state: "done", note: `${inside.length} inside` });
   }
   return overlay;
-}
-
-/** The buses a call's data travels along, for a call that can be seen from here. */
-function pulsesFor(event: RunEvent, watch: Watch, graph: Graph): string[] {
-  const frame = frameOf(watch, ui.view);
-  const into = (key: string) => [...graph.buses.values()].filter((bus) => bus.target === key).map((bus) => bus.id);
-
-  if (event.type === "call") {
-    const call = watch.calls.get(event.id);
-    if (!call || parentOf(call.block) !== ui.view || (frame && call.parent !== frame.id)) return [];
-    return into(idOf(call.block));
-  }
-  if (event.type === "return" && frame && event.id === frame.id) return into("output");
-  return [];
 }
 
 /** The call the run is really stopped at, waiting for the person. Null once it has moved on. */
@@ -187,9 +119,9 @@ function heldCall(watch: Watch | null): WatchedCall | null {
   return call?.state === "paused" ? call : null;
 }
 
-function paint(pulses: string[] = []): void {
+function paint(): void {
   const graph = graphInView();
-  applyRunOverlay(ui.watch && graph ? overlayFor(ui.watch, graph) : null, pulses, heldCall(ui.watch) !== null);
+  applyRunOverlay(ui.watch && graph ? overlayFor(ui.watch, graph) : null);
   renderRunBar();
 }
 
@@ -241,7 +173,7 @@ function followWhenSettled(watch: Watch): void {
 function pace(event: RunEvent, watch: Watch): number {
   if (event.type === "paused" || event.type === "resumed") return 0;
   const block = event.type === "call" ? event.block : watch.calls.get(event.id)?.block;
-  if (!block || (parentOf(block) !== ui.view && block !== ui.view)) return 0;
+  if (!block || !isWithin(block, ui.view) || block === ui.view) return 0;
   return event.type === "call" ? 280 : 140;
 }
 
@@ -249,10 +181,6 @@ function pace(event: RunEvent, watch: Watch): number {
 function follow(watch: Watch, id: number): void {
   const call = watch.calls.get(id);
   if (!call) return;
-
-  // Inside a block that ran more than once, show the run this call belongs to.
-  const parent = call.parent === null ? undefined : watch.calls.get(call.parent);
-  if (parent) watch.frames.set(parent.block, callsOf(watch, parent.block).indexOf(parent));
 
   const select = () => {
     ui.selection.clear();
@@ -272,8 +200,6 @@ function follow(watch: Watch, id: number): void {
 
 /** Plays the next event, and any after it that cannot be seen from here and so need no time. */
 function playNext(watch: Watch): void {
-  const graph = graphInView();
-  const pulses: string[] = [];
   let played = 0;
 
   do {
@@ -281,10 +207,9 @@ function playNext(watch: Watch): void {
     watch.played += 1;
     played += 1;
     play(watch, event);
-    if (graph) pulses.push(...pulsesFor(event, watch, graph));
   } while (watch.played < watch.events.length && pace(watch.events[watch.played]!, watch) === 0 && played < 500);
 
-  paint(pulses);
+  paint();
   // Follow the run to where it is held, once it has settled there. A replay of
   // a finished run stays where the person put it.
   if (heldCall(watch)) followWhenSettled(watch);
@@ -349,9 +274,9 @@ function clear(): void {
 let runs = 0;
 
 /**
- * Runs a block with the diagram following along. A composite is watched from
- * inside, where its children can be seen taking their turns. Resolves with
- * the outcome once the run ends.
+ * Runs a block with the diagram following along, wherever the person is
+ * looking: every block on screen shows what the run does inside it. Resolves
+ * with the outcome once the run ends.
  */
 export async function runWatched(block: SnapshotBlock, input: unknown, stores: StoreSeeds = {}): Promise<Result<RunOutcome>> {
   const previous = ui.watch;
@@ -369,8 +294,7 @@ export async function runWatched(block: SnapshotBlock, input: unknown, stores: S
     frames: new Map(),
   };
   ui.watch = watch;
-  if (block.kind === "composite" && ui.view !== block.path) openDiagram(block.path);
-  else paint();
+  paint();
 
   const result = await window.fragmentor.watchRun({
     runId: watch.runId,
@@ -524,7 +448,7 @@ export function watchSection(block: SnapshotBlock): HTMLElement | null {
   const calls = watch ? callsOf(watch, block.path) : [];
   if (!watch || calls.length === 0) {
     node.append(
-      el("p", "bench-note", watch ? "This block has not run in the run on the diagram." : "Run a block to watch the values flow through its diagram."),
+      el("p", "bench-note", watch ? "This block has not run in the run on the diagram." : "Run a block to watch it, and whatever it calls, on the diagram."),
     );
     return node;
   }
@@ -565,25 +489,6 @@ export function watchSection(block: SnapshotBlock): HTMLElement | null {
     node.append(failed);
   } else {
     node.append(el("p", "bench-note", STILL_GOING[call.state] ?? ""));
-  }
-  return node;
-}
-
-/** What each wire of a bus carried in the run on the diagram. */
-export function busWatchSection(bus: Bus, graph: Graph): HTMLElement | null {
-  const watch = ui.watch;
-  const frame = watch ? frameOf(watch, ui.view) : null;
-  if (!watch || !frame) return null;
-
-  const children = childCalls(watch, graph, frame);
-  const node = section("In the run on the diagram", "watch-section");
-  for (const signal of bus.signals) {
-    const value = carried(signal, frame, children, graph);
-    const part = subsection(`${signal.sourcePort} → ${signal.targetPort}`);
-    part.append(
-      value.known ? codeBlock(json(value.value), "json") : el("p", "bench-note", "Nothing has come down this wire yet."),
-    );
-    node.append(part);
   }
   return node;
 }

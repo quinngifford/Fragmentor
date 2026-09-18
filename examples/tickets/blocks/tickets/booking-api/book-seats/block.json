@@ -1,0 +1,39 @@
+{
+  "responsibility": "Book seats at one event for one person when there are enough left, and say what happened.",
+  "inputs": {
+    "eventId": "string",
+    "seats": {
+      "type": "number",
+      "description": "How many seats, from 1."
+    },
+    "email": "string"
+  },
+  "outputs": {
+    "booked": "boolean",
+    "message": "string",
+    "total": {
+      "type": "number",
+      "description": "What the seats cost altogether; 0 when nothing was booked."
+    }
+  },
+  "capabilities": {
+    "events": {
+      "capability": "Store",
+      "description": "Every event, by id."
+    },
+    "bookings": {
+      "capability": "Store",
+      "description": "Every booking, by id."
+    },
+    "confirmations": {
+      "capability": "Queue",
+      "description": "Where the confirmation email is sent from."
+    }
+  },
+  "access": [
+    "events reads tickets-db.events",
+    "events writes tickets-db.events",
+    "bookings writes tickets-db.bookings",
+    "confirmations writes outbox.confirmations"
+  ]
+}

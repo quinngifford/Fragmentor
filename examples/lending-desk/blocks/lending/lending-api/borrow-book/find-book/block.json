@@ -1,7 +1,0 @@
-{
-  "responsibility": "Find the book that was scanned.",
-  "inputs": { "isbn": "string" },
-  "outputs": { "book": "{ isbn: string; title: string; copies: number; onLoan: number }" },
-  "capabilities": { "books": { "capability": "Store", "description": "The catalogue, by ISBN." } },
-  "access": ["books reads catalogue.books"]
-}

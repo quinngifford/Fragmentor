@@ -88,10 +88,9 @@ export function boundStores(project: Project, node: LoadedBlock): BoundStore[] {
 /**
  * The bound ports a run has to supply: those of the block being run.
  *
- * Only that block's, because capabilities flow down by name — a child is
- * handed the same object its parent was given — so the ports the run must
- * build are exactly the ones the block at the top declares. Its descendants
- * declare the same names, and `check` holds them to the same kinds.
+ * Only that block's, because a block hands whatever it calls its own `caps`:
+ * the ports the run must build are exactly the ones the block at the top
+ * declares, and the typechecker holds each call to them.
  */
 export function storesForRun(project: Project, blockPath: string): BoundStore[] {
   const node = project.byPath.get(blockPath);

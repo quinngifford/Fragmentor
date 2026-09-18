@@ -3,51 +3,32 @@ import type {
   SnapshotAccess,
   SnapshotBlock,
   SnapshotCapability,
-  SnapshotChild,
   SnapshotExposed,
   SnapshotPort,
 } from "../../src/project/snapshot.js";
 import type { Point } from "../../src/project/layout.js";
-import { BLOCK_PALETTE, BUS_PALETTE, blockColours, busColors, requireSnapshot, viewSettings } from "./state.js";
+import { BLOCK_PALETTE, blockColours, requireSnapshot } from "./state.js";
 
 /**
- * The diagram as drawn.
+ * The diagram as drawn: one block's parts, and what they reach.
  *
- * Two things happen here that the kernel does not do. Connections are grouped
- * into buses — one per source block — so a diagram does not become a thicket of
- * single lines; and the parent's own ports become nodes, so the boundary obeys
- * the same rules as everything else instead of being a special case.
- *
- * Grouping is a view. The kernel still records every signal separately, which
- * is what validation and the conformance check need.
+ * A diagram shows what a block is made of. Nothing on it says what calls
+ * what or in what order; a function's inputs and outputs are drawn as what
+ * it takes and gives back, not as the ends of anything.
  */
-
-export interface Signal {
-  source: string;
-  target: string;
-  sourcePort: string;
-  targetPort: string;
-  type: string | null;
-  isArray: boolean;
-}
-
-export interface BusGroup {
-  source: string;
-  signals: Signal[];
-}
 
 export interface GraphNode {
   key: string;
   label: string;
   sublabel: string;
   boundary: boolean;
+  /** A function's contract, where it has one: what it takes and what it gives back. */
+  inputs: SnapshotPort[];
   outputs: SnapshotPort[];
   /** Architecture blocks only: the tables, channels or operations drawn inside it. */
   exposes: SnapshotExposed[];
   capabilities: SnapshotCapability[];
-  child: SnapshotChild | null;
   block: SnapshotBlock | null;
-  groups: BusGroup[];
 }
 
 /**
@@ -87,18 +68,9 @@ function directionOf(verb: AccessVerb): "out" | "in" {
   return verb === "reads" ? "in" : "out";
 }
 
-export interface Bus {
-  id: string;
-  source: string;
-  target: string;
-  signals: Signal[];
-}
-
 export interface Graph {
   parent: SnapshotBlock;
   nodes: Map<string, GraphNode>;
-  buses: Map<string, Bus>;
-  signals: Signal[];
   accesses: Map<string, AccessLink>;
 }
 
@@ -106,9 +78,15 @@ export interface Graph {
 export const PROJECT_VIEW = "";
 
 /**
- * The project drawn as if it were one composite whose children are its
- * systems. Systems are never connected, so this diagram has no wires — it
- * exists so a project with several systems can be seen at once.
+ * The key of the way into a service on its own diagram. Written so that no
+ * block id could ever be it: a block's id is lowercase letters, digits and
+ * hyphens, and a block called "input" must not be mistaken for this.
+ */
+export const WAY_IN = "(way in)";
+
+/**
+ * The project drawn as if it were one block whose parts are its systems, so
+ * a project with several systems can be seen at once.
  */
 function projectAsBlock(): SnapshotBlock {
   const snapshot = requireSnapshot();
@@ -118,11 +96,9 @@ function projectAsBlock(): SnapshotBlock {
     id: PROJECT_VIEW,
     name: snapshot.name,
     responsibility: snapshot.goal,
-    kind: "composite",
     // The project itself is never planned, and nothing reads these of it:
     // it is a frame around the systems, not a block anyone can open.
     planned: false,
-    holdsPlan: false,
     functionName: "",
     inputs: [],
     outputs: [],
@@ -132,23 +108,9 @@ function projectAsBlock(): SnapshotBlock {
     subtype: null,
     roleLabel: "",
     architecture: false,
-    holdsArchitecture: false,
     exposes: [],
     access: [],
-    children: snapshot.systems.map((system) => {
-      const root = snapshot.blocks[system.rootBlock];
-      return {
-        block: system.rootBlock,
-        mode: "once" as const,
-        eachOver: null,
-        path: system.rootBlock,
-        kind: root?.kind ?? "leaf",
-        name: root?.name ?? system.rootBlock,
-        functionName: root?.functionName ?? "",
-      };
-    }),
-    order: snapshot.systems.map((system) => system.rootBlock),
-    wires: [],
+    children: snapshot.systems.map((system) => system.rootBlock),
     sources: { impl: null, contract: null },
     language: "",
     files: { impl: "", contract: "" },
@@ -163,100 +125,34 @@ export function buildGraph(view: string): Graph | null {
   const parent = view === PROJECT_VIEW ? projectAsBlock() : snapshot.blocks[view];
   if (!parent || parent.children.length === 0) return null;
 
-  const signals: Signal[] = parent.wires.map((wire) => ({
-    source: wire.source.from === "input" ? "input" : wire.source.block,
-    target: wire.target.to === "output" ? "output" : wire.target.block,
-    sourcePort: wire.source.port,
-    targetPort: wire.target.port,
-    type: wire.type,
-    isArray: wire.isArray,
-  }));
-
   const nodes = new Map<string, GraphNode>();
-
-  // A boundary with no ports is not worth drawing, which is what makes the
-  // project view a plain row of systems rather than an empty IN and OUT.
-  if (parent.inputs.length > 0) {
-    nodes.set("input", {
-      key: "input",
-      label: "IN",
-      sublabel: parent.name,
-      boundary: true,
-      outputs: parent.inputs,
-      exposes: [],
-      capabilities: [],
-      child: null,
-      block: null,
-      groups: [],
-    });
-  }
-
-  for (const child of parent.children) {
-    const block = snapshot.blocks[child.path];
+  for (const childPath of parent.children) {
+    const block = snapshot.blocks[childPath];
     if (!block) continue;
-    // A database is drawn as a database, whether or not it has blocks inside
-    // it; only a function is worth labelling by whether it has children.
-    nodes.set(child.block, {
-      ...(block.architecture
-        ? resourceNode(child.block, block)
+    const key = childPath.split("/").at(-1)!;
+    // A database is drawn as a database, whatever is inside it.
+    nodes.set(
+      key,
+      block.architecture
+        ? resourceNode(key, block)
         : {
-            key: child.block,
+            key,
             label: block.name,
-            sublabel: block.planned ? "PLANNED" : block.kind === "composite" ? "COMPOSITE" : "LEAF",
+            sublabel: block.planned ? "PLANNED" : block.roleLabel,
             boundary: false,
+            inputs: block.inputs,
             outputs: block.outputs,
             exposes: [],
-                  capabilities: block.capabilities,
+            capabilities: block.capabilities,
             block,
-            groups: [],
-          }),
-      child,
-    });
-  }
-
-  if (parent.outputs.length > 0) {
-    nodes.set("output", {
-      key: "output",
-      label: "OUT",
-      sublabel: parent.name,
-      boundary: true,
-      outputs: [],
-      exposes: [],
-      capabilities: [],
-      child: null,
-      block: null,
-      groups: [],
-    });
-  }
-
-  for (const signal of signals) {
-    const node = nodes.get(signal.target);
-    if (!node) continue;
-    let group = node.groups.find((g) => g.source === signal.source);
-    if (!group) {
-      group = { source: signal.source, signals: [] };
-      node.groups.push(group);
-    }
-    group.signals.push(signal);
-  }
-
-  const buses = new Map<string, Bus>();
-  for (const signal of signals) {
-    const id = `${signal.source}->${signal.target}`;
-    let bus = buses.get(id);
-    if (!bus) {
-      bus = { id, source: signal.source, target: signal.target, signals: [] };
-      buses.set(id, bus);
-    }
-    bus.signals.push(signal);
+          },
+    );
   }
 
   const accesses = buildAccesses(parent, nodes);
   addAnsweredOperations(parent, nodes, accesses);
-  return { parent, nodes, buses, signals, accesses };
+  return { parent, nodes, accesses };
 }
-
-
 
 /**
  * The access lines this diagram shows, and any resource it has to bring in
@@ -273,7 +169,8 @@ function buildAccesses(parent: SnapshotBlock, nodes: Map<string, GraphNode>): Ma
   const links = new Map<string, AccessLink>();
   const childPaths = new Map([...nodes.values()].filter((node) => node.block).map((node) => [node.block!.path, node.key]));
 
-  for (const child of parent.children) {
+  for (const childPath of parent.children) {
+    const child = { path: childPath, block: childPath.split("/").at(-1)! };
     const inside = Object.values(snapshot.blocks).filter(
       (block) => block.path === child.path || block.path.startsWith(`${child.path}/`),
     );
@@ -288,22 +185,29 @@ function buildAccesses(parent: SnapshotBlock, nodes: Map<string, GraphNode>): Ma
           continue;
         }
 
-        // A store is drawn on the diagram it belongs to and nowhere else, so
-        // an access to one kept further out belongs to that diagram, not this
-        // one. The diagrams underneath are left to their own functions.
-        const key = childPaths.get(target);
-        if (key === undefined) continue;
+        // Drawn to whichever block on this diagram holds what is reached, so
+        // `infrastructure/db` lands on the infrastructure block while it is
+        // closed. A store kept further out belongs to the diagram it is on,
+        // not this one: the diagrams underneath are left to their own parts.
+        const holder = [...childPaths].find(([drawn]) => target === drawn || target.startsWith(`${drawn}/`));
+        if (holder === undefined) continue;
+        const key = holder[1];
 
         // Grouped by what does the reaching as well as by what is reached, so
         // two buttons calling two operations are two lines rather than one
-        // saying the blocks are connected.
-        const id = `${child.block}${access.from === null ? "" : `.${access.from}`}=>${key}:${access.verb}`;
+        // saying the blocks are connected. That is only an entry of the block
+        // on screen when the block itself declared it and is the kind of
+        // block that has entries. On a function, or on anything inside the
+        // block on screen, it names a capability port, which is how the code
+        // gets there rather than a separate line on this diagram.
+        const from = block.path === child.path && block.architecture ? access.from : null;
+        const id = `${child.block}${from === null ? "" : `.${from}`}=>${key}:${access.verb}`;
         let link = links.get(id);
         if (!link) {
           link = {
             id,
             source: child.block,
-            from: access.from,
+            from,
             target: key,
             verb: access.verb,
             direction: directionOf(access.verb),
@@ -348,24 +252,23 @@ function addAnsweredOperations(
   const answered = parent.exposes.filter((entry) => entry.block !== null && nodes.has(entry.block));
   if (!parent.architecture || answered.length === 0) return;
 
-  nodes.set("input", {
-    key: "input",
+  nodes.set(WAY_IN, {
+    key: WAY_IN,
     label: parent.name,
     sublabel: "ANSWERS",
     boundary: true,
+    inputs: [],
     outputs: [],
     exposes: answered,
     capabilities: [],
-    child: null,
     block: parent,
-    groups: [],
   });
 
   answered.forEach((entry, lane) => {
-    const id = `input=>${entry.block}:${entry.name}`;
+    const id = `${WAY_IN}=>${entry.block}:${entry.name}`;
     accesses.set(id, {
       id,
-      source: "input",
+      source: WAY_IN,
       from: entry.name,
       target: entry.block!,
       verb: "calls",
@@ -394,12 +297,11 @@ function resourceNode(key: string, block: SnapshotBlock): GraphNode {
     label: block.name,
     sublabel: block.planned ? "PLANNED" : block.roleLabel,
     boundary: false,
+    inputs: [],
     outputs: [],
     exposes: block.exposes,
     capabilities: [],
-    child: null,
     block,
-    groups: [],
   };
 }
 
@@ -416,17 +318,6 @@ export function blockColour(graph: Graph, view: string, key: string): string {
   const order = [...graph.nodes.keys()];
   const at = order.indexOf(key);
   return BLOCK_PALETTE[(at < 0 ? 0 : at) % BLOCK_PALETTE.length]!;
-}
-
-export function busColour(graph: Graph, view: string, bus: Bus): string {
-  const override = busColors.get(view, bus.id);
-  if (override) return override;
-  // Coloured block by block, what leaves a block matches it. Coloured by
-  // role, every bus is data inside the program, so they are shades of the one
-  // colour that means that.
-  if (viewSettings.colourBy === "block") return blockColour(graph, view, bus.source);
-  const order = [...graph.nodes.keys()];
-  return BUS_PALETTE[order.indexOf(bus.source) % BUS_PALETTE.length]!;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -498,10 +389,7 @@ export function measure(node: GraphNode): Measurement {
     };
   }
 
-  let left = 0;
-  for (const group of node.groups) left += GROUP_HEAD_H + group.signals.length * ROW_H + GROUP_GAP;
-  if (left > 0) left -= GROUP_GAP;
-
+  const left = node.inputs.length > 0 ? GROUP_HEAD_H + node.inputs.length * ROW_H : 0;
   const right = node.outputs.length > 0 ? GROUP_HEAD_H + node.outputs.length * ROW_H : 0;
   const body = Math.max(left, right, ROW_H);
 
@@ -510,24 +398,6 @@ export function measure(node: GraphNode): Measurement {
     rightHeight: right,
     height: HEAD_H + BODY_PAD + body + BODY_PAD + (node.capabilities.length > 0 ? 20 : 0),
   };
-}
-
-/** Where a bus leaves a node: one dot for everything the node produces. */
-export function busOutPoint(node: GraphNode, point: Point): Point {
-  const { rightHeight } = measure(node);
-  const top = point.y + HEAD_H + BODY_PAD;
-  return { x: point.x + NODE_W, y: top + (rightHeight > 0 ? rightHeight / 2 : ROW_H / 2) };
-}
-
-/** Where a bus lands: the middle of the group of inputs it feeds. */
-export function busInPoint(node: GraphNode, point: Point, sourceKey: string): Point {
-  let y = point.y + HEAD_H + BODY_PAD;
-  for (const group of node.groups) {
-    const height = GROUP_HEAD_H + group.signals.length * ROW_H;
-    if (group.source === sourceKey) return { x: point.x, y: y + height / 2 };
-    y += height + GROUP_GAP;
-  }
-  return { x: point.x, y: point.y + HEAD_H + BODY_PAD };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -561,8 +431,7 @@ export function exposedRow(node: GraphNode, name: string | null): number | null 
  * Data leaves a block on its right and arrives on its left, the same way its
  * ports are drawn, so a store kept below it makes a clockwise loop: out of the
  * right, down, and back up into the left. Access lines gather near the foot of
- * the block, clear of the ports, because they are a different kind of
- * connection and should not look like another wire.
+ * the block, clear of its contract, which they have nothing to do with.
  */
 function ownEnd(node: GraphNode, point: Point, link: AccessLink): Point {
   const height = measure(node).height;
@@ -645,21 +514,12 @@ export function autoLayout(graph: Graph): Map<string, Point> {
   const belowKeys = new Set(below.map((node) => node.key));
   const inFlow = [...graph.nodes.values()].filter((node) => !belowKeys.has(node.key));
 
-  const depth = new Map<string, number>([["input", 0]]);
-
-  for (const id of graph.parent.order) {
-    if (belowKeys.has(id)) continue;
-    let d = 1;
-    for (const signal of graph.signals) {
-      if (signal.target !== id || signal.source === "input") continue;
-      d = Math.max(d, (depth.get(signal.source) ?? 1) + 1);
-    }
-    depth.set(id, d);
-  }
+  const depth = new Map<string, number>([[WAY_IN, 0]]);
+  for (const node of inFlow) if (node.key !== WAY_IN) depth.set(node.key, 1);
 
   // What a block calls stands to its right, so a diagram reads from whoever
   // sets the system going through the services to what they depend on.
-  // Relaxed rather than sorted, because access can loop where wires cannot.
+  // Relaxed rather than sorted, because access can loop.
   for (let pass = 0; pass < graph.accesses.size; pass += 1) {
     let moved = false;
     for (const link of graph.accesses.values()) {
@@ -672,9 +532,6 @@ export function autoLayout(graph: Graph): Map<string, Point> {
     }
     if (!moved) break;
   }
-
-  const deepest = Math.max(0, ...[...depth.entries()].filter(([key]) => !belowKeys.has(key)).map(([, d]) => d));
-  if (graph.nodes.has("output")) depth.set("output", deepest + 1);
 
   const columns = new Map<number, GraphNode[]>();
   for (const node of inFlow) {
@@ -765,72 +622,4 @@ export function layoutFor(graph: Graph, view: string): Map<string, Point> {
     result.set(node.key, stored ? { ...stored } : (auto.get(node.key) ?? { x: 0, y: 0 }));
   }
   return result;
-}
-
-/* -------------------------------------------------------------------------- */
-/* The code a connection becomes                                               */
-/* -------------------------------------------------------------------------- */
-
-/** `port` when the names already agree, `port: source` when they do not. */
-function argFor(signal: Signal): string {
-  return signal.sourcePort === signal.targetPort ? signal.targetPort : `${signal.targetPort}: ${signal.sourcePort}`;
-}
-
-function signalsOf(node: GraphNode): Signal[] {
-  return node.groups.flatMap((group) => group.signals);
-}
-
-export function callStatement(graph: Graph, nodeKey: string): string | null {
-  if (nodeKey === "input") return null;
-
-  if (nodeKey === "output") {
-    const node = graph.nodes.get("output");
-    if (!node) return null;
-    return `return { ${signalsOf(node).map(argFor).join(", ")} };`;
-  }
-
-  const node = graph.nodes.get(nodeKey);
-  if (!node?.block) return null;
-
-  const fn = node.block.functionName;
-  const produced = node.outputs.map((output) => output.name);
-  const signals = signalsOf(node);
-
-  if (node.child && node.child.mode === "each" && node.child.eachOver) {
-    const item = node.child.eachOver;
-    const over = signals.find((signal) => signal.targetPort === item);
-    const arrayVar = over ? over.sourcePort : `${item}s`;
-    const rest = signals.filter((signal) => signal.targetPort !== item).map(argFor);
-    const results = `${fn}Results`;
-
-    return [
-      `const ${results} = await Promise.all(`,
-      `  ${arrayVar}.map((${item}) => ${fn}({ ${[item, ...rest].join(", ")} }, caps)),`,
-      `);`,
-      ...produced.map((name) => `const ${name} = ${results}.map((r) => r.${name});`),
-    ].join("\n");
-  }
-
-  const binding = produced.length > 0 ? `const { ${produced.join(", ")} } = ` : "";
-  return `${binding}await ${fn}({ ${signals.map(argFor).join(", ")} }, caps);`;
-}
-
-export function connectionCode(graph: Graph, bus: Bus): string {
-  const lines: string[] = [];
-  const sourceNode = graph.nodes.get(bus.source);
-  const targetNode = graph.nodes.get(bus.target);
-
-  if (bus.source === "input") {
-    lines.push(`// ${graph.parent.name} receives these as its own arguments`);
-    lines.push(`const { ${bus.signals.map((signal) => signal.sourcePort).join(", ")} } = input;`);
-  } else {
-    lines.push(`// produced by ${sourceNode?.label ?? bus.source}`);
-    lines.push(callStatement(graph, bus.source) ?? "");
-  }
-
-  lines.push("");
-  lines.push(bus.target === "output" ? `// returned by ${graph.parent.name}` : `// consumed by ${targetNode?.label ?? bus.target}`);
-  lines.push(callStatement(graph, bus.target) ?? "");
-
-  return lines.join("\n");
 }

@@ -1,0 +1,10 @@
+{
+  "responsibility": "Say how much of a cancelled booking comes back: all of it, less a fee for each seat.",
+  "inputs": {
+    "total": "number",
+    "seats": "number"
+  },
+  "outputs": {
+    "refund": "number"
+  }
+}

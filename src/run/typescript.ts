@@ -105,7 +105,7 @@ export interface SpawnOptions {
   /** Path of the block within the blocks root, e.g. `rank-jobs/load-postings`. */
   blockPath: string;
   functionName: string;
-  /** The block being run and everything beneath it, each wrapped so its calls can be seen. */
+  /** Every function in the system, each wrapped so its calls can be seen, whoever makes them. */
   blocks: { path: string; functionName: string }[];
   /**
    * The ports to build substitutes for. A port that is a way into something

@@ -1,0 +1,10 @@
+{
+  "role": "service",
+  "subtype": "scheduled job",
+  "planned": true,
+  "responsibility": "Every morning, reminds everyone whose event is tomorrow. Not built yet.",
+  "access": [
+    "reads tickets-db.bookings",
+    "writes outbox.reminders"
+  ]
+}

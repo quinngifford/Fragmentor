@@ -1,0 +1,18 @@
+{
+  "responsibility": "Find the event someone asked about, or say there is none. Both booking and cancelling use it, so it sits beside them.",
+  "inputs": {
+    "eventId": "string"
+  },
+  "outputs": {
+    "event": "{ id: string; name: string; seatsLeft: number; price: number } | null"
+  },
+  "capabilities": {
+    "events": {
+      "capability": "Store",
+      "description": "Every event, by id."
+    }
+  },
+  "access": [
+    "events reads tickets-db.events"
+  ]
+}

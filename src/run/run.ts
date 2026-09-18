@@ -1,4 +1,5 @@
 import { getPack } from "../lang/index.js";
+import { isArchitecture } from "../model/roles.js";
 import { checkValue } from "../model/types.js";
 import type { PortType } from "../model/types.js";
 import { loadProject, systemOf } from "../project/project.js";
@@ -21,10 +22,9 @@ export type { RunEvent } from "./typescript.js";
  * instead of a crash, and the output is checked afterwards, so a block that
  * quietly returns the wrong shape is caught rather than believed.
  *
- * A run can also be watched. Every block call beneath the one being run is
- * reported as it happens, which is what lets the diagram show the value on
- * each wire, and a call can be held at a breakpoint until the person lets it
- * go on.
+ * A run can also be watched. Every block call the run makes, anywhere in the
+ * system, is reported as it happens along with the call that made it, and a
+ * call can be held at a breakpoint until the person lets it go on.
  */
 
 export interface RunRequest {
@@ -200,8 +200,10 @@ async function executeOnce(
     compiledDir: compiled.dir,
     blockPath,
     functionName: pack.functionName(node.block.id),
+    // Every function in the system, not only those inside the block being
+    // run: code calls whatever block it needs, wherever that block sits.
     blocks: [...project.byPath.values()]
-      .filter((each) => each.path === blockPath || each.path.startsWith(`${blockPath}/`))
+      .filter((each) => systemOf(project, each.path) === prepared.system && !each.block.planned && !isArchitecture(each.block.role))
       .map((each) => ({ path: each.path, functionName: pack.functionName(each.block.id) })),
     capabilities: Object.entries(node.block.capabilities).map(([name, cap]) => {
       const bound = stores.find((store) => store.port === name);
@@ -237,11 +239,14 @@ async function executeOnce(
     };
   }
 
+  // A block that declares no outputs returns nothing, and whatever its code
+  // happens to hand back is not part of its contract, so it is not held to one.
+  const declaresOutputs = Object.keys(node.block.outputs).length > 0;
   return {
     ok: true,
     output: result.output,
     inputProblems: [],
-    outputProblems: checkValue(result.output, portsAsType(node.block.outputs), "output"),
+    outputProblems: declaresOutputs ? checkValue(result.output, portsAsType(node.block.outputs), "output") : [],
     stores: result.stores ?? {},
     logs: result.logs,
     durationMs,

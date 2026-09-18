@@ -1,9 +1,0 @@
-{
-  "name": "Lending Desk",
-  "goal": "Lend a book to a member, say when it is due back, and tell them.",
-  "mode": "structured",
-  "existingCode": false,
-  "start": "build",
-  "granularity": { "level": 3, "maxDepth": 4 },
-  "systems": [{ "rootBlock": "lending", "language": "typescript" }]
-}

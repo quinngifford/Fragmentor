@@ -2,14 +2,14 @@
 
 # Working in this Fragmentor project
 
-The person you work with sees this project in Fragmentor as a diagram of **blocks**: functions with typed inputs and outputs, wired together. You design the diagram and write the code of the blocks that have no children. Fragmentor writes all the other code, checks it, and runs the tests.
+The person you work with sees this project in Fragmentor as a diagram of **blocks**: the parts of the system, each drawn inside the part it belongs to. You design the blocks and write their code. Fragmentor writes each function block's types, checks the code against them, and runs the tests.
 
 ## How to work
 
 1. Fill in `goal` and `systems` in `fragmentor.json`. Then write a `block.json` for every block, keeping any the person already wrote.
-2. Run `fragmentor check` and fix everything it reports. It generates the code of every block that has children, and a starting file for every block that has none.
+2. Run `fragmentor check` and fix everything it reports. It generates each function block's types, and a starting file for its code.
 3. {{reviewStep}}
-4. Write the code of each block without children, and tests for every block.
+4. Write the code of each function block, and tests for every function block.
 5. Run `fragmentor check` and `fragmentor test` until both pass.
 
 When the design changes, change the `block.json` files first, then the code. If the `fragmentor` command is not found, ask the person to run `npm link` once in Fragmentor's folder.
@@ -20,15 +20,15 @@ When the design changes, change the `block.json` files first, then the code. If 
 
 ```text
 fragmentor.json           the project                    you fill in goal and systems
-blocks/<system>/          a system's top block           a child's folder sits inside its parent's
+blocks/<system>/          a system's top block           a block's parts are the folders inside it
   block.json              the block                      you write
-  {{implFile}}                 its code                       you write it if the block has no children
-  cases.json              its tests                      you write
-  {{contractFile}}             its types                      generated
+  {{implFile}}                 its code                       you write, for a function block
+  cases.json              its tests                      you write, for a function block
+  {{contractFile}}             its types                      generated, for a function block
 blocks/{{capabilitiesFile}}    the capability interfaces      generated
 ```
 
-A block's id is its folder name, in kebab-case. A block with children has its `{{implFile}}` generated too. Never edit a generated file, or `layout.json`.
+A block's id is its folder name, in kebab-case. Never edit a generated file, or `layout.json`.
 
 ## fragmentor.json
 
@@ -40,38 +40,37 @@ Each system is a separate program, and `rootBlock` is its folder under `blocks/`
 
 ## Blocks
 
-A block with children, `price-orders`. Its code is generated from its wires:
+**The diagram is the architecture: what the system is made of, and what owns what.** A block's parts are the block folders inside its folder. Put a block inside another only when it is part of that block — not because one calls the other. A block used by several others goes beside them, inside the lowest block that holds all of them; one used by a single block may go inside that block. Nothing on the diagram says what calls what, or in what order: that is the code's business.
+
+A block that is a group of parts rather than something called, `price-orders`:
 
 ```json
-{{compositeBlock}}
+{{componentBlock}}
 ```
 
-A block without children, `price-order`:
+A function block, `report-totals`:
 
 ```json
-{{leafBlock}}
+{{functionBlock}}
 ```
 
 - `responsibility` is required. Say specifically what the block does.
 - `name` labels it on the diagram. It defaults to the id in words.
-- `inputs` and `outputs` map a port name such as `grandTotal` to its type, or to `{ "type": ..., "description": ... }`.
+- A block is a function unless it has a `role`, described below. A function block is one function, which other code calls.
+- `inputs` and `outputs` map a port name such as `grandTotal` to its type, or to `{ "type": ..., "description": ... }`. Leave either out when the function takes or returns nothing: it is still called with a value and `caps`, and returns nothing.
 - `capabilities` names the effects a block needs, described below.
-- `children` lists the child ids in reading order. `{ "block": "price-order", "each": "order" }` calls a child once for each item of the array wired to its `order` input, and each of its outputs then leaves as an array.
-- `wires` connect `input.<port>` or `<child>.<output>` to `<child>.<input>` or `output.<port>`. Every child input and every output needs exactly one wire, and the types at its two ends must match exactly.
-- `pinnedAsLeaf: true` means the person wants the block kept as one piece of code. Never give it children.
-- `planned: true` marks a block as part of the plan rather than of the program. It is drawn greyed out; its port types may be plain words such as `"the scored postings"`; its wires need not be complete; and Fragmentor generates, checks and runs nothing for it, nor for any block above it until the plan beneath is built. Take it off when you build the block, and give it real types then.
-
-There is no branching on the diagram. Conditions, loops and error handling belong inside blocks without children.
+- `pinnedAsLeaf: true` means the person wants the block kept as one piece. Never put blocks inside it.
+- `planned: true` marks a block as part of the plan rather than of the program. It is drawn greyed out; its port types may be plain words such as `"the scored postings"`; and Fragmentor generates, checks and runs nothing for it. Everything inside a planned block is planned too. Take it off when you build the block, and give it real types then.
 
 ## The rest of the system
 
-Not every block is a function. A database, a queue, another team's service and the browser that starts a request are parts of the system too, and a diagram without them shows values arriving from nowhere. Give a block a `role` and it stands for one of them:
+Not every block is a function. A database, a queue, another team's service, the browser that starts a request, and a group of parts are parts of the system too. Give a block a `role` and it stands for one of them:
 
 {{roles}}
 
 Say what it is exactly with `subtype`, in whatever words fit: `"subtype": "Dictionary"`, `"subtype": "REST API"`, `"subtype": "S3 bucket"`. It is only a label — the block is drawn the same as any other of its role — but a diagram reading `DATA STRUCTURE: Dictionary` says more than one reading `DATA STRUCTURE`.
 
-A block with a role is not called, so it has no `inputs`, `outputs` or `capabilities`. It says what it offers with `exposes`, and other blocks say what they reach with `access`:
+A block with a role is not called, so it has no `inputs`, `outputs`, `capabilities` or code of its own. It says what it offers with `exposes`, and blocks say what they reach with `access`:
 
 ```json
 {{architectureBlock}}
@@ -83,7 +82,7 @@ A block with a role is not called, so it has no `inputs`, `outputs` or `capabili
 
 - A store's entry is written once, as the shape it holds. An operation writes its two directions apart, `{{operationEntry}}`, and may leave either out.
 - Write a shape as a type wherever you can, so the block can be drawn column by column. Anything the type language cannot say, such as `timestamp`, is kept as the words you write.
-- A service's operation says which block answers it with `"block"`. Without that, the blocks inside it show inputs arriving from nowhere. Give the operation the same shape as that block: `accepts` the block's inputs, `returns` its outputs, field for field. Where the outside world's shape genuinely differs, put a block in between that converts it, so the conversion is on the diagram like everything else rather than hidden in framework code.
+- A service's operation says which block inside it answers it with `"block"`. The block is handed what the operation accepts and returns what it returns, so give them the same shape, field for field; a block that needs nothing from the request may take no inputs. Where the outside world's shape genuinely differs, convert it in the code of the block that answers.
 
 ```json
 {{serviceBlock}}
@@ -91,11 +90,9 @@ A block with a role is not called, so it has no `inputs`, `outputs` or `capabili
 
 - Put the name of one of this block's own entries first, and the line joins those two rather than the two blocks: `"showOrders calls orders-api.listOrders"` runs from that button to that operation. A block with several buttons calling several operations needs this, or they would all leave it at the same point.
 - `reads` takes data out, `writes` puts data in, `calls` does both. Name the entry, as in `reads orders-db.orders`, or leave it off to mean the whole thing.
-- The block named is looked for beside the one reaching it, then above it, up to the top of the system, so a handler inside a service reaches a database the service keeps beside it. Put the access on the block that really touches the resource; the diagrams above gather it up.
+- The block named is looked for among this block's own parts, then beside it, then above it, up to the top of the system, so a handler inside a service reaches a database the service keeps beside it. Name one inside a group by its path from there: `reads infrastructure/orders-db.orders`. Put the access on the block that really touches the resource; the diagrams above gather it up.
 
-- Code reaches a `database`, `storage` or `structure` through a `Store` port, and a `queue` through a `Queue` port. Put the port's name at the start of the access — `"orders reads orders-db.orders"` — and that port is a way into that entry and nothing else, so the line drawn is the line the code runs along. Always name the entry; ask for a port each where a block reaches two; declare and bind it at every level above, as with any capability. The port is typed by what the entry holds, so `caps.orders.read(id)` gives back that shape rather than `unknown`.
-
-Nothing is generated, checked or run for a block with a role, nor for any block holding one: a database is not something you call, so there is no chain of calls to write, and the code that opens the connections belongs outside `blocks/`. Blocks **inside** a service are ordinary blocks, generated, checked and tested as usual, and nothing needs to be wired to them.
+- Code reaches a `database`, `storage` or `structure` through a `Store` port, and a `queue` through a `Queue` port. Put the port's name at the start of the access — `"orders reads orders-db.orders"` — and that port is a way into that entry and nothing else, so the line drawn is the line the code runs along. Always name the entry, and ask for a port each where a block reaches two. The port is typed by what the entry holds, so `caps.orders.read(id)` gives back that shape rather than `unknown`.
 
 ## Types
 
@@ -107,14 +104,14 @@ Block code reaches the outside world only through capabilities, which arrive in 
 
 {{capabilities}}
 
-A block with children declares every capability its children declare, under the same name. There is no `console`, so declare a `Logger`. Use `Clock` and `Random`, never the language's own clock or random numbers.
+A block that calls another passes it its own `caps`, so it declares every capability the blocks it calls need, under the same names; the typechecker says when one is missing. There is no `console`, so declare a `Logger`. Use `Clock` and `Random`, never the language's own clock or random numbers.
 
 ## Code
 
-`fragmentor check` creates `{{implFile}}` for each block without children. Fill in the body:
+`fragmentor check` creates `{{implFile}}` for each function block. Fill in the body. This is `{{codeBlock}}`:
 
 ```{{codeLanguage}}
-{{leafCode}}
+{{code}}
 ```
 
 {{importRule}}
@@ -127,7 +124,7 @@ A block with children declares every capability its children declare, under the 
 {{cases}}
 ```
 
-Leave out `expected` to record what the block returns without checking it. A block's tests run everything beneath it. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.{{testNote}}
+Leave out `expected` to record what the block returns without checking it. A block's test runs everything it calls. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.{{testNote}}
 
 ## Granularity: level {{level}}
 

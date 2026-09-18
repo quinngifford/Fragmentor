@@ -7,14 +7,17 @@ import { loadCases, saveCases } from "./cases.js";
 import { compareValues } from "./compare.js";
 import { runCases } from "./run.js";
 
-const example = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "examples", "job-ranker");
+const example = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "examples", "tickets");
+const block = "tickets/booking-api/pricing/price-seat";
 
 let dir: string;
 
 beforeEach(async () => {
-  // A copy, so running tests never writes into the example in the repository.
+  // A copy, so running tests never writes into the example in the repository,
+  // and without the tests the example ships with, so each test starts bare.
   dir = await mkdtemp(path.join(tmpdir(), "fragmentor-cases-"));
   await cp(example, dir, { recursive: true });
+  await rm(path.join(dir, "blocks", ...block.split("/"), "cases.json"));
 });
 
 afterEach(async () => {
@@ -46,36 +49,27 @@ describe("compareValues", () => {
 
 describe("saving and loading tests", () => {
   it("has none until some are saved", async () => {
-    // rank-results ships without tests; extract-profile-keywords ships with some.
-    expect(await loadCases(dir, "rank-jobs/rank-results")).toEqual([]);
+    expect(await loadCases(dir, block)).toEqual([]);
   });
 
   it("round trips a case with an expectation", async () => {
-    const cases = [
-      { name: "two skills", input: { profile: { skills: ["TypeScript"] } }, expected: { keywords: ["typescript"] } },
-    ];
-    await saveCases(dir, "rank-jobs/extract-profile-keywords", cases);
-    expect(await loadCases(dir, "rank-jobs/extract-profile-keywords")).toEqual(cases);
+    const cases = [{ name: "full price", input: { fullPrice: 10, seat: 1 }, expected: { price: 10 } }];
+    await saveCases(dir, block, cases);
+    expect(await loadCases(dir, block)).toEqual(cases);
   });
 
   it("keeps a case with no expectation distinguishable from one expecting nothing", async () => {
-    await saveCases(dir, "rank-jobs/extract-profile-keywords", [
-      { name: "just an input", input: { profile: { skills: [] } } },
-    ]);
+    await saveCases(dir, block, [{ name: "just an input", input: { fullPrice: 10, seat: 1 } }]);
 
-    const [loaded] = await loadCases(dir, "rank-jobs/extract-profile-keywords");
+    const [loaded] = await loadCases(dir, block);
     expect(loaded).toBeDefined();
     expect("expected" in loaded!).toBe(false);
   });
 });
 
 describe("running saved tests", () => {
-  const block = "rank-jobs/extract-profile-keywords";
-
   it("passes a case whose output matches", async () => {
-    await saveCases(dir, block, [
-      { name: "lowercases and sorts", input: { profile: { skills: ["TypeScript", "Node.js"] } }, expected: { keywords: ["node.js", "typescript"] } },
-    ]);
+    await saveCases(dir, block, [{ name: "the fifth is cheaper", input: { fullPrice: 10, seat: 5 }, expected: { price: 9 } }]);
 
     const [result] = await runCases(dir, block);
     expect(result?.status).toBe("passed");
@@ -83,36 +77,34 @@ describe("running saved tests", () => {
   });
 
   it("fails a case whose output differs, and says how", async () => {
-    await saveCases(dir, block, [
-      { name: "wrong on purpose", input: { profile: { skills: ["TypeScript"] } }, expected: { keywords: ["rust"] } },
-    ]);
+    await saveCases(dir, block, [{ name: "wrong on purpose", input: { fullPrice: 10, seat: 1 }, expected: { price: 12 } }]);
 
     const [result] = await runCases(dir, block);
     expect(result?.status).toBe("failed");
-    expect(result?.differences).toEqual(['output.keywords[0] was "typescript", expected "rust".']);
+    expect(result?.differences).toEqual(["output.price was 10, expected 12."]);
   });
 
   it("runs a case with no expectation and reports what came back", async () => {
-    await saveCases(dir, block, [{ name: "just look", input: { profile: { skills: ["Rust"] } } }]);
+    await saveCases(dir, block, [{ name: "just look", input: { fullPrice: 10, seat: 1 } }]);
 
     const [result] = await runCases(dir, block);
     expect(result?.status).toBe("unchecked");
-    expect(result?.output).toEqual({ keywords: ["rust"] });
+    expect(result?.output).toEqual({ price: 10 });
   });
 
   it("reports a case whose input the block will not accept", async () => {
-    await saveCases(dir, block, [{ name: "bad input", input: { profile: "not an object" } }]);
+    await saveCases(dir, block, [{ name: "bad input", input: { fullPrice: "ten", seat: 1 } }]);
 
     const [result] = await runCases(dir, block);
     expect(result?.status).toBe("error");
-    expect(result?.inputProblems.join(" ")).toContain("should be an object");
+    expect(result?.inputProblems.join(" ")).toContain("input.fullPrice");
   });
 
   it("runs several cases against one compilation", async () => {
     await saveCases(dir, block, [
-      { name: "one", input: { profile: { skills: ["TypeScript"] } }, expected: { keywords: ["typescript"] } },
-      { name: "two", input: { profile: { skills: ["Rust"] } }, expected: { keywords: ["rust"] } },
-      { name: "three", input: { profile: { skills: ["Go"] } }, expected: { keywords: ["wrong"] } },
+      { name: "one", input: { fullPrice: 10, seat: 1 }, expected: { price: 10 } },
+      { name: "two", input: { fullPrice: 10, seat: 5 }, expected: { price: 9 } },
+      { name: "three", input: { fullPrice: 10, seat: 2 }, expected: { price: 0 } },
     ]);
 
     const results = await runCases(dir, block);
@@ -120,6 +112,6 @@ describe("running saved tests", () => {
   }, 30_000);
 
   it("has nothing to run when a block has no tests", async () => {
-    expect(await runCases(dir, "rank-jobs/rank-results")).toEqual([]);
+    expect(await runCases(dir, block)).toEqual([]);
   });
 });

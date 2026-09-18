@@ -7,7 +7,7 @@ import { z } from "zod/v4";
  * three masters at once: it is stored in block.json, it is compiled to a zod
  * schema for runtime checking, and it is rendered as an input form in the test
  * bench. A construct that cannot be drawn as a form control does not belong
- * here. Anything richer lives inside a leaf block's own code.
+ * here. Anything richer lives inside a function's own code.
  */
 export type PortType =
   | { kind: "string" }

@@ -1,0 +1,26 @@
+{
+  "responsibility": "Cancel one booking, put its seats back on sale, and say how much is refunded.",
+  "inputs": {
+    "bookingId": "string"
+  },
+  "outputs": {
+    "refunded": "number",
+    "message": "string"
+  },
+  "capabilities": {
+    "events": {
+      "capability": "Store",
+      "description": "Every event, by id."
+    },
+    "bookings": {
+      "capability": "Store",
+      "description": "Every booking, by id."
+    }
+  },
+  "access": [
+    "bookings reads tickets-db.bookings",
+    "bookings writes tickets-db.bookings",
+    "events reads tickets-db.events",
+    "events writes tickets-db.events"
+  ]
+}

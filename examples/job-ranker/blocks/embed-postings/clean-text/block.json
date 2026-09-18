@@ -1,9 +1,0 @@
-{
-  "responsibility": "Flatten one posting into the plain text that should be embedded.",
-  "inputs": {
-    "posting": "{ title: string; description: string }"
-  },
-  "outputs": {
-    "text": "string"
-  }
-}

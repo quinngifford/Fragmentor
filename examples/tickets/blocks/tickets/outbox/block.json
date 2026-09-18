@@ -1,0 +1,16 @@
+{
+  "name": "Outbox",
+  "role": "queue",
+  "subtype": "message queue",
+  "responsibility": "Carries emails away from the request that caused them, so nobody waits for one to send before seeing their booking.",
+  "exposes": {
+    "confirmations": {
+      "accepts": "{ email: string; event: string; seats: number; total: number }",
+      "description": "One message per booking made."
+    },
+    "reminders": {
+      "accepts": "{ email: string; event: string }",
+      "description": "One message per booking whose event is tomorrow."
+    }
+  }
+}

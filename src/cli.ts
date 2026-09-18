@@ -6,7 +6,8 @@ import { startProject, writeAgentFiles } from "./codegen/emit.js";
 import type { NewProjectSettings } from "./codegen/emit.js";
 import { CLAUDE_FILE, GUIDE_FILE } from "./codegen/guide.js";
 import { getPack, isKnownLanguage } from "./lang/index.js";
-import { holdsArchitecture, holdsPlan, loadProject, manifestPath, readManifest, systemOf } from "./project/project.js";
+import { isArchitecture } from "./model/roles.js";
+import { loadProject, manifestPath, readManifest, systemOf } from "./project/project.js";
 import type { Project, ProjectDiagnostic } from "./project/project.js";
 import { readCases } from "./run/cases.js";
 import { runCases } from "./run/run.js";
@@ -191,19 +192,11 @@ function formatReport(report: CheckReport): string {
 
   if (report.architecture.length > 0) {
     lines.push("", "Architecture");
-    lines.push(`  ${plural(report.architecture.length, "block")} the system talks to rather than code Fragmentor writes:`);
+    lines.push(`  ${plural(report.architecture.length, "block")} that are not called, so have no code of their own:`);
     lines.push(...report.architecture.map((blockPath) => `    ${blockPath}`));
   }
 
-  if (report.waiting.length > 0) {
-    lines.push("", "No code of their own");
-    lines.push(
-      `  ${plural(report.waiting.length, "block")} with nothing to generate, because a plan or a piece of the architecture sits beneath:`,
-    );
-    lines.push(...report.waiting.map((blockPath) => `    ${blockPath}`));
-  }
-
-  const built = report.blockCount - report.planned.length - report.architecture.length - report.waiting.length;
+  const built = report.blockCount - report.planned.length - report.architecture.length;
   lines.push("", "Unfinished");
   if (built === 0) {
     lines.push("  nothing here is Fragmentor's to build: every block is a plan or a piece of the architecture");
@@ -298,16 +291,15 @@ async function test(dir: string, requested: string[]): Promise<number> {
 
   const counts = { passed: 0, failed: 0, error: 0, unchecked: 0, skipped: 0 };
   const untested: string[] = [];
-  /** Blocks with no code to run: a plan, a piece of the architecture, or a block waiting on either. */
+  /** Blocks with no code to run: a plan, or a block that is not called. */
   const inThePlan: string[] = [];
 
   for (const blockPath of requested.length > 0 ? requested : [...project.byPath.keys()]) {
-    // A planned block has no code to run, and neither has one whose code is
-    // held back until the plan beneath it is built, nor a piece of the
-    // architecture. Nothing about any of them is untested, so they are passed
-    // over rather than failing to load.
+    // A planned block has no code to run, and neither has a block that is not
+    // a function. Nothing about either is untested, so they are passed over
+    // rather than failing to load.
     const node = project.byPath.get(blockPath);
-    if (node && (holdsPlan(node) || holdsArchitecture(node))) {
+    if (node && (node.block.planned || isArchitecture(node.block.role))) {
       inThePlan.push(blockPath);
       continue;
     }

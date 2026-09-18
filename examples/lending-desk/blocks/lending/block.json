@@ -1,4 +1,0 @@
-{
-  "responsibility": "The lending desk: a member asks for a book, and either takes it away or is told why not.",
-  "children": ["kiosk", "lending-api", "catalogue", "notices"]
-}

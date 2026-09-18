@@ -41,10 +41,7 @@ beforeAll(async () => {
     "utf8",
   );
 
-  await block("ledger", {
-    responsibility: "Settle one account and say so.",
-    children: ["accounts-db", "receipts", "settle"],
-  });
+  await block("ledger", { role: "component", responsibility: "Settle one account and say so." });
 
   await block("ledger/accounts-db", {
     role: "database",
@@ -68,7 +65,6 @@ beforeAll(async () => {
       outputs: { paid: "number" },
       capabilities: { accounts: "Store", receipts: "Queue" },
       access: ["accounts reads accounts-db.accounts", "accounts writes accounts-db.accounts", "receipts writes receipts.settled"],
-      children: [],
     },
     [
       `import type { SettleInput, SettleOutput, SettleCaps } from "./contract.js";`,

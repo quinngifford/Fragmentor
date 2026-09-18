@@ -1,9 +1,0 @@
-{
-  "responsibility": "Say whether this member may take this book, and for how long.",
-  "inputs": { "book": "{ isbn: string; title: string; copies: number; onLoan: number }", "member": "{ id: string; name: string; onLoan: number; suspended: boolean }" },
-  "outputs": {
-    "allowed": "boolean",
-    "reason": { "type": "string", "description": "Why not, or why it is a short loan. Empty when there is nothing to say." },
-    "dueInDays": { "type": "number", "description": "0 when the book is not going anywhere." }
-  }
-}

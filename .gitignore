@@ -19,4 +19,3 @@ __pycache__/
 
 # A layout saved while looking at an example is the looker's, not the project's.
 examples/*/layout.json
-!examples/job-ranker/layout.json

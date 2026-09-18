@@ -1,0 +1,84 @@
+[
+  {
+    "name": "books two seats at full price",
+    "input": {
+      "eventId": "gig",
+      "seats": 2,
+      "email": "ada@example.com"
+    },
+    "stores": {
+      "tickets/tickets-db.events": {
+        "gig": {
+          "id": "gig",
+          "name": "Night Gig",
+          "seatsLeft": 10,
+          "price": 25
+        }
+      }
+    },
+    "expected": {
+      "booked": true,
+      "message": "Booked 2 for Night Gig: booking gig-10.",
+      "total": 50
+    }
+  },
+  {
+    "name": "the fifth seat onwards is ten percent off",
+    "input": {
+      "eventId": "gig",
+      "seats": 6,
+      "email": "ada@example.com"
+    },
+    "stores": {
+      "tickets/tickets-db.events": {
+        "gig": {
+          "id": "gig",
+          "name": "Night Gig",
+          "seatsLeft": 10,
+          "price": 25
+        }
+      }
+    },
+    "expected": {
+      "booked": true,
+      "message": "Booked 6 for Night Gig: booking gig-10.",
+      "total": 145
+    }
+  },
+  {
+    "name": "turns someone away when there are not enough seats left",
+    "input": {
+      "eventId": "gig",
+      "seats": 2,
+      "email": "ada@example.com"
+    },
+    "stores": {
+      "tickets/tickets-db.events": {
+        "gig": {
+          "id": "gig",
+          "name": "Night Gig",
+          "seatsLeft": 1,
+          "price": 25
+        }
+      }
+    },
+    "expected": {
+      "booked": false,
+      "message": "Sorry, only 1 left for Night Gig.",
+      "total": 0
+    }
+  },
+  {
+    "name": "says so when there is no such event",
+    "input": {
+      "eventId": "nope",
+      "seats": 1,
+      "email": "ada@example.com"
+    },
+    "expected": {
+      "booked": false,
+      "message": "There is no such event.",
+      "total": 0
+    }
+  }
+]

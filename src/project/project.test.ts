@@ -5,8 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   blockDir,
   createProject,
-  holdsArchitecture,
-  holdsPlan,
   loadProject,
   locateCode,
   resolveAccess,
@@ -39,20 +37,9 @@ afterEach(async () => {
 
 const writeManifestJson = (value: unknown) => writeFile(path.join(dir, "fragmentor.json"), JSON.stringify(value), "utf8");
 
-/** Root composite with one child that scores a posting. */
+/** A component holding one function that scores a posting. */
 async function writeSmallProject() {
-  const root = makeBlock({
-    id: "rank-jobs",
-    name: "Rank Jobs",
-    kind: "composite",
-    inputs: { posting: { type: t.object({ title: t.string }) } },
-    outputs: { score: { type: t.number } },
-    children: [{ block: "score-posting", mode: "once" }],
-    wires: [
-      { source: { from: "input", port: "posting" }, target: { to: "block", block: "score-posting", port: "posting" } },
-      { source: { from: "block", block: "score-posting", port: "score" }, target: { to: "output", port: "score" } },
-    ],
-  });
+  const root = makeBlock({ id: "rank-jobs", name: "Rank Jobs", role: "component" });
 
   const child = makeBlock({
     id: "score-posting",
@@ -80,39 +67,13 @@ describe("project round trip", () => {
     expect(validateProject(await loadProject(dir))).toEqual([]);
   });
 
-  it("reports a folder the diagram does not know about", async () => {
+  it("reports a block pinned as a leaf that has been given parts", async () => {
     await writeSmallProject();
-    await writeBlock(blockDir(dir, "rank-jobs/stray"), makeBlock({ id: "stray" }));
+    await writeBlock(blockDir(dir, "rank-jobs"), makeBlock({ id: "rank-jobs", name: "Rank Jobs", role: "component", pinnedAsLeaf: true }));
 
-    const found = validateProject(await loadProject(dir));
-    expect(found.map((d) => d.message)).toContain(
-      'There is a folder for "stray" inside "Rank Jobs", but the diagram does not list it as a child.',
-    );
-  });
-
-  it("reports a child the diagram lists but disk does not have", async () => {
-    await writeSmallProject();
-    const root = makeBlock({
-      id: "rank-jobs",
-      name: "Rank Jobs",
-      kind: "composite",
-      inputs: { posting: { type: t.object({ title: t.string }) } },
-      outputs: { score: { type: t.number } },
-      children: [{ block: "score-posting", mode: "once" }, { block: "missing", mode: "once" }],
-      wires: [
-        {
-          source: { from: "input", port: "posting" },
-          target: { to: "block", block: "score-posting", port: "posting" },
-        },
-        { source: { from: "block", block: "score-posting", port: "score" }, target: { to: "output", port: "score" } },
-      ],
-    });
-    await writeBlock(blockDir(dir, "rank-jobs"), root);
-
-    const found = validateProject(await loadProject(dir));
-    expect(found.map((d) => d.message)).toContain(
-      '"Rank Jobs" refers to a child block "missing" that does not exist.',
-    );
+    expect(validateProject(await loadProject(dir)).map((d) => d.message)).toEqual([
+      expect.stringContaining('"Rank Jobs" is pinned as a leaf, but it has been given parts inside it.'),
+    ]);
   });
 
   it("ignores folders that are not blocks, so build artefacts do not break it", async () => {
@@ -308,7 +269,7 @@ describe("locateCode", () => {
 });
 
 describe("planned blocks", () => {
-  it("spread downward, and are felt by every block above them", async () => {
+  it("spread downward, and stop at the block above them", async () => {
     await writeSmallProject();
 
     // Only the middle block says it is planned. The one inside it says
@@ -317,11 +278,9 @@ describe("planned blocks", () => {
       blockDir(dir, "rank-jobs/score-posting"),
       makeBlock({
         id: "score-posting",
-        kind: "composite",
         planned: true,
         inputs: { posting: { type: t.object({ title: t.string }) } },
         outputs: { score: { type: t.number } },
-        children: [{ block: "weigh-keywords", mode: "once" }],
       }),
     );
     await writeBlock(blockDir(dir, "rank-jobs/score-posting/weigh-keywords"), makeBlock({ id: "weigh-keywords" }));
@@ -330,10 +289,7 @@ describe("planned blocks", () => {
     expect(project.byPath.get("rank-jobs/score-posting")!.block.planned).toBe(true);
     expect(project.byPath.get("rank-jobs/score-posting/weigh-keywords")!.block.planned).toBe(true);
 
-    // The block above is real, but has no code to generate until the plan
-    // beneath it is built.
     expect(project.byPath.get("rank-jobs")!.block.planned).toBe(false);
-    expect(holdsPlan(project.byPath.get("rank-jobs")!)).toBe(true);
   });
 });
 
@@ -344,11 +300,9 @@ describe("a block inside a plan", () => {
       blockDir(dir, "rank-jobs/score-posting"),
       makeBlock({
         id: "score-posting",
-        kind: "composite",
         planned: true,
         inputs: { posting: { type: t.object({ title: t.string }) } },
         outputs: { score: { type: t.number } },
-        children: [{ block: "weigh-keywords", mode: "once" }],
       }),
     );
 
@@ -392,22 +346,12 @@ describe("blocks that are pieces of the architecture", () => {
    * further in, inside the service.
    */
   async function writeApplication() {
-    const application = makeBlock({
-      id: "orders-app",
-      name: "Orders",
-      kind: "composite",
-      children: [
-        { block: "orders-api", mode: "once" },
-        { block: "orders-db", mode: "once" },
-      ],
-    });
+    const application = makeBlock({ id: "orders-app", name: "Orders", role: "component" });
 
     const api = makeBlock({
       id: "orders-api",
       role: "service",
-      kind: "composite",
       exposes: { listOrders: { accepts: t.object({ owner: t.string }), returns: null } },
-      children: [{ block: "load-orders", mode: "once" }],
     });
 
     const database = makeBlock({
@@ -441,16 +385,40 @@ describe("blocks that are pieces of the architecture", () => {
     expect(validateProject(project)).toEqual([]);
   });
 
-  it("holds no code where architecture sits at or beneath a block", async () => {
+  it("finds a block kept inside a group by its path from the group", async () => {
     await writeApplication();
+    await writeBlock(blockDir(dir, "orders-app/infrastructure"), makeBlock({ id: "infrastructure", role: "component" }));
+    await writeBlock(
+      blockDir(dir, "orders-app/infrastructure/archive-db"),
+      makeBlock({
+        id: "archive-db",
+        role: "database",
+        exposes: { orders: { accepts: t.object({ id: t.string }), returns: t.object({ id: t.string }) } },
+      }),
+    );
     const project = await loadProject(dir);
-    const at = (blockPath: string) => holdsArchitecture(project.byPath.get(blockPath)!);
 
-    expect(at("orders-app")).toBe(true);
-    expect(at("orders-app/orders-api")).toBe(true);
-    expect(at("orders-app/orders-db")).toBe(true);
-    // The handler inside the service is an ordinary block, and stays one.
-    expect(at("orders-app/orders-api/load-orders")).toBe(false);
+    expect(resolveAccess(project, "orders-app/orders-api/load-orders", "infrastructure/archive-db")?.path).toBe(
+      "orders-app/infrastructure/archive-db",
+    );
+    expect(resolveAccess(project, "orders-app/orders-api/load-orders", "infrastructure/nothing")).toBeUndefined();
+  });
+
+  it("finds something a block owns inside itself", async () => {
+    await writeApplication();
+    await writeBlock(
+      blockDir(dir, "orders-app/orders-api/load-orders/recent"),
+      makeBlock({
+        id: "recent",
+        role: "structure",
+        exposes: { orders: { accepts: t.object({ id: t.string }), returns: t.object({ id: t.string }) } },
+      }),
+    );
+    const project = await loadProject(dir);
+
+    expect(resolveAccess(project, "orders-app/orders-api/load-orders", "recent")?.path).toBe(
+      "orders-app/orders-api/load-orders/recent",
+    );
   });
 
   it("says so when an access names something that is not there", async () => {
@@ -479,7 +447,7 @@ describe("blocks that are pieces of the architecture", () => {
     );
 
     expect(validateProject(await loadProject(dir)).map((d) => d.message)).toEqual([
-      expect.stringContaining('there is no block called "billing" beside it or anywhere above it'),
+      expect.stringContaining('there is no block called "billing" among its own parts, beside it, or anywhere above it'),
       expect.stringContaining('exposes no table called "invoices". It exposes: orders.'),
     ]);
   });
@@ -513,10 +481,8 @@ describe("blocks that are pieces of the architecture", () => {
       makeBlock({
         id: "orders-api",
         role: "service",
-        kind: "composite",
         exposes: { listOrders: { accepts: t.object({ owner: t.string }), returns: null } },
         access: [{ from: "listInvoices", verb: "reads", resource: "orders-db", entry: "orders" }],
-        children: [{ block: "load-orders", mode: "once" }],
       }),
     );
 
@@ -573,23 +539,14 @@ describe("a capability port that is a way into a store", () => {
   /** An application whose database offers two tables, so a port can be pointed at the wrong one. */
   async function writeApplicationForStores() {
     await createProject(dir, { ...manifest, systems: [{ rootBlock: "orders-app", language: "typescript" }] }, [
-      makeBlock({
-        id: "orders-app",
-        kind: "composite",
-        children: [
-          { block: "orders-api", mode: "once" },
-          { block: "orders-db", mode: "once" },
-        ],
-      }),
+      makeBlock({ id: "orders-app", role: "component" }),
     ]);
     await writeBlock(
       blockDir(dir, "orders-app/orders-api"),
       makeBlock({
         id: "orders-api",
         role: "service",
-        kind: "composite",
         exposes: { listOrders: { accepts: t.object({ owner: t.string }), returns: null } },
-        children: [{ block: "load-orders", mode: "once" }],
       }),
     );
     await writeBlock(
@@ -669,17 +626,11 @@ describe("an operation and the block that answers it", () => {
   /** A service whose one operation is answered by a handler of whatever shape the test gives it. */
   async function writeService(operation: object, handler: object) {
     await createProject(dir, { ...manifest, systems: [{ rootBlock: "orders-app", language: "typescript" }] }, [
-      makeBlock({ id: "orders-app", kind: "composite", children: [{ block: "orders-api", mode: "once" }] }),
+      makeBlock({ id: "orders-app", role: "component" }),
     ]);
     await writeBlock(
       blockDir(dir, "orders-app/orders-api"),
-      makeBlock({
-        id: "orders-api",
-        role: "service",
-        kind: "composite",
-        exposes: { listOrders: operation as never },
-        children: [{ block: "load-orders", mode: "once" }],
-      }),
+      makeBlock({ id: "orders-api", role: "service", exposes: { listOrders: operation as never } }),
     );
     await writeBlock(blockDir(dir, "orders-app/orders-api/load-orders"), makeBlock({ id: "load-orders", ...handler }));
     return validateProject(await loadProject(dir)).map((d) => d.message);
@@ -695,7 +646,12 @@ describe("an operation and the block that answers it", () => {
 
   it("reports a request the block does not take", async () => {
     const found = await writeService({ ...owner, accepts: t.object({ customer: t.string }) }, handler);
-    expect(found).toContainEqual(expect.stringContaining("put a block in between that converts"));
+    expect(found).toContainEqual(expect.stringContaining("give the two the same shape"));
+  });
+
+  it("lets a block that needs nothing from the request answer it", async () => {
+    const found = await writeService(owner, { outputs: handler.outputs });
+    expect(found.filter((message) => message.includes("answers it") || message.includes("accepts"))).toEqual([]);
   });
 
   it("reports a response the block does not produce", async () => {

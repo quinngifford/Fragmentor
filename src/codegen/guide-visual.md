@@ -2,7 +2,7 @@
 
 # Working in this Fragmentor project
 
-The person you work with uses Fragmentor to see how this codebase works, as a diagram of **blocks**: the parts of the program, with the values that pass between them drawn as wires. Your job is to keep that diagram true to the code.
+The person you work with uses Fragmentor to see how this codebase is built, as a diagram of **blocks**: the parts of the program, each drawn inside the part it belongs to. Your job is to keep that diagram true to the code.
 
 **Never change the program's code for Fragmentor's sake.** The diagram describes the code; the code does not follow the diagram. Fragmentor never runs or changes the code either.
 
@@ -11,7 +11,7 @@ The person you work with uses Fragmentor to see how this codebase works, as a di
 ## How to work
 
 1. Read the code. Fill in `goal` and `systems` in `fragmentor.json`.
-2. Write a `block.json` for every block, top down: a system's top block is the whole program, its children are the program's main parts, and so on, as finely as "Granularity" says.
+2. Write a `block.json` for every block, top down: a system's top block is the whole program, the blocks inside it are the program's main parts, and so on, as finely as "Granularity" says.
 3. Run `fragmentor check` and fix everything it reports.
 4. Whenever you change the code later, update the blocks that describe it, and run `fragmentor check` again.
 
@@ -21,7 +21,7 @@ If the `fragmentor` command is not found, ask the person to run `npm link` once 
 
 ```text
 fragmentor.json           the project                    you fill in goal and systems
-blocks/<system>/          a system's top block           a child's folder sits inside its parent's
+blocks/<system>/          a system's top block           a block's parts are the folders inside it
   block.json              the block                      you write
 ```
 
@@ -37,36 +37,37 @@ Each system is a separate program, such as a server and its command-line tool, a
 
 ## Blocks
 
-A block with children, `price-orders`:
+**The diagram is the architecture: what the program is made of, and what owns what.** A block's parts are the block folders inside its folder. Put a block inside another only when it is part of that block — not because one calls the other, and not only because their files sit in the same folder. A part used by several others goes beside them, inside the lowest block that holds all of them; one used by a single block may go inside that block. Nothing on the diagram says what calls what, or in what order.
+
+A block that is a group of parts rather than something called, `price-orders`:
 
 ```json
-{{compositeBlock}}
+{{componentBlock}}
 ```
 
-A block without children, `price-order`:
+A function, `report-totals`:
 
 ```json
-{{leafBlock}}
+{{functionBlock}}
 ```
 
 - `responsibility` is required. Say specifically what this part of the code does.
 - `code` says where the block is: a file or folder relative to the project folder, optionally followed by `#` and the name of a function, class or method. `fragmentor check` makes sure it exists. Leave it out only for a block that stands for no one place in the code.
 - `name` labels the block on the diagram. It defaults to the id in words.
-- `inputs` and `outputs` map a name to its type as the code writes it, such as `Order[]` or `Promise<User>`, or to `{ "type": ..., "description": ... }`.
+- A block is a function unless it has a `role`, described below.
+- `inputs` and `outputs` map a name to its type as the code writes it, such as `Order[]` or `Promise<User>`, or to `{ "type": ..., "description": ... }`. Leave either out when the function takes or returns nothing.
 - `capabilities` names what the block reaches outside the program, such as `"Database"`, `"FileSystem"` or `"Http"`.
-- `children` lists the child ids in reading order. `{ "block": "price-order", "each": "order" }` shows a child that runs once for each item of a list.
-- `wires` connect `input.<port>` or `<child>.<output>` to `<child>.<input>` or `output.<port>`: a value one part of the code hands to another. Draw what really flows.
-- `planned: true` marks a part of the program that does not exist yet. It is drawn greyed out, has no `code`, and is wired as loosely as has been decided. `fragmentor check` asks nothing of it.
+- `planned: true` marks a part of the program that does not exist yet. It is drawn greyed out and has no `code`. `fragmentor check` asks nothing of it.
 
 ## The rest of the system
 
-Not every block is a piece of code. A database, a queue, another team's service and the browser that starts a request are parts of the system too, and a diagram without them shows values arriving from nowhere. Give a block a `role` and it stands for one of them:
+Not every block is a function. A database, a queue, another team's service, the browser that starts a request, and a group of parts are parts of the system too. Give a block a `role` and it stands for one of them:
 
 {{roles}}
 
 Say what it is exactly with `subtype`, in whatever words fit: `"subtype": "Dictionary"`, `"subtype": "REST API"`, `"subtype": "S3 bucket"`. It is only a label — the block is drawn the same as any other of its role — but a diagram reading `DATA STRUCTURE: Dictionary` says more than one reading `DATA STRUCTURE`.
 
-A block with a role has no `inputs` or `outputs`. It says what it offers with `exposes`, and other blocks say what they reach with `access`. It may still have `code`, pointing at the module that wraps it, and may be left without one when it lives outside this codebase.
+A block with a role has no `inputs` or `outputs`. It says what it offers with `exposes`, and blocks say what they reach with `access`. It may still have `code`, pointing at the module that wraps it, and may be left without one when it lives outside this codebase.
 
 ```json
 {{architectureBlock}}
@@ -78,7 +79,7 @@ A block with a role has no `inputs` or `outputs`. It says what it offers with `e
 
 - A store's entry is written once, as the shape it holds. An operation writes its two directions apart, `{{operationEntry}}`, and may leave either out.
 - A shape written as an object, `{ code: string; url: string }`, is drawn column by column, which is what makes a database block worth looking at. Anything else is kept as the words you write.
-- A service's operation says which block answers it with `"block"`. Without that, the blocks inside it show inputs arriving from nowhere. The two shapes need not match: an operation is what arrives at the edge of the service, and the framework between parses and fills in the rest.
+- A service's operation says which block inside it answers it with `"block"`. The two shapes need not match: an operation is what arrives at the edge of the service, and the framework between parses and fills in the rest.
 
 ```json
 {{serviceBlock}}
@@ -86,9 +87,7 @@ A block with a role has no `inputs` or `outputs`. It says what it offers with `e
 
 - Put the name of one of this block's own entries first, and the line joins those two rather than the two blocks: `"showOrders calls orders-api.listOrders"` runs from that button to that operation. A block with several buttons calling several operations needs this, or they would all leave it at the same point.
 - `reads` takes data out, `writes` puts data in, `calls` does both. Name the entry, as in `reads orders-db.orders`, or leave it off to mean the whole thing.
-- The block named is looked for beside the one reaching it, then above it, up to the top of the system, so a handler inside a service reaches a database the service keeps beside it. Put the access on the block whose code really touches the resource; the diagrams above gather it up.
-
-Blocks inside a service are reached from outside rather than from each other, so nothing is expected to be wired to them.
+- The block named is looked for among this block's own parts, then beside it, then above it, up to the top of the system, so a handler inside a service reaches a database the service keeps beside it. Name one inside a group by its path from there: `reads infrastructure/orders-db.orders`. Put the access on the block whose code really touches the resource; the diagrams above gather it up.
 
 ## Granularity: level {{level}}
 

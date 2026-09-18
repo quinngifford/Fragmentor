@@ -7,15 +7,14 @@ import { describeType, typesEqual } from "../model/types.js";
 import type { PortType } from "../model/types.js";
 import { CAPABILITIES, capabilitiesReaching, reachesResource } from "../model/capabilities.js";
 import { ROLES, isArchitecture } from "../model/roles.js";
-import { validateComposite } from "../model/validate.js";
-import type { Diagnostic } from "../model/validate.js";
 import { resolveInside } from "./safePath.js";
 
 /**
  * A Fragmentor project is a directory whose folder structure is the block
  * hierarchy. A block's identity is its path from the root, so nothing has to
  * be annotated or cross-referenced to know where a block sits: moving a
- * folder moves the block.
+ * folder moves the block. A block's parts are the block folders inside its
+ * own, and that is all being inside means: ownership, not order.
  *
  * A project holds one or more systems. A system is a block hierarchy with its
  * own target language, and systems are not connected to each other — they are
@@ -144,6 +143,12 @@ export interface Project {
   manifest: Manifest;
   systems: LoadedSystem[];
   byPath: Map<string, LoadedBlock>;
+}
+
+export interface Diagnostic {
+  severity: "error" | "warning";
+  /** Plain language. These are shown to the user in the canvas, not just logged. */
+  message: string;
 }
 
 export interface ProjectDiagnostic extends Diagnostic {
@@ -294,8 +299,8 @@ async function loadBlockTree(dir: string, blockPath: string, mode: Mode, planned
 }
 
 /**
- * Checks every composite against its children, and checks that the folders on
- * disk agree with what the diagram claims.
+ * Checks what the diagram says against itself: what each block reaches,
+ * what answers each operation, and what each capability port is a way into.
  */
 export function validateProject(project: Project): ProjectDiagnostic[] {
   const diagnostics: ProjectDiagnostic[] = [];
@@ -317,26 +322,16 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
   }
 
   for (const node of project.byPath.values()) {
-    const onDisk = new Map(node.children.map((child) => [child.block.id, child.block]));
-
-    for (const diagnostic of validateComposite(node.block, onDisk, mode, holdsArchitecture(node))) {
-      diagnostics.push({ ...diagnostic, blockPath: node.path });
+    if (node.block.pinnedAsLeaf && node.children.length > 0) {
+      diagnostics.push({
+        severity: "error",
+        blockPath: node.path,
+        message: `"${node.block.name}" is pinned as a leaf, but it has been given parts inside it. Make it a leaf again, or set "pinnedAsLeaf" to false if the person agrees.`,
+      });
     }
 
-    const declared = new Set(node.block.children.map((child) => child.block));
-    for (const child of node.children) {
-      if (!declared.has(child.block.id)) {
-        diagnostics.push({
-          severity: "error",
-          blockPath: node.path,
-          message: `There is a folder for "${child.block.id}" inside "${node.block.name}", but the diagram does not list it as a child.`,
-        });
-      }
-    }
-
-    // An operation that says which block answers it is checked here for the
-    // same reason: the block it names is a child, and only the project has
-    // the children in hand.
+    // An operation that says which block answers it is checked here: the
+    // block it names is one of its parts, which only the project has in hand.
     for (const [name, entry] of Object.entries(node.block.exposes)) {
       if (entry.block === undefined) continue;
       const answering = node.children.find((child) => child.block.id === entry.block);
@@ -361,9 +356,8 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
       }
     }
 
-    // Access is declared by the block that does the reaching, so it is
-    // checked here rather than in the composite: only the project knows what
-    // lies above a block.
+    // Access is declared by the block that does the reaching, and only the
+    // project knows what lies around a block, so it is checked here.
     const loose = mode === "visual" || node.block.planned;
     for (const access of node.block.access) {
       diagnostics.push(...accessDiagnostics(project, node, access, loose));
@@ -385,48 +379,38 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
 
 /**
  * The block an access names, found by looking outward from the one that
- * declared it: its parent's children first, then its parent's, up to the top
- * of the system.
+ * declared it: its own parts first, then its parent's, then its parent's
+ * parent's, up to the top of the system.
  *
  * That is what lets a handler buried inside a service reach a database the
  * service keeps beside it, without every level in between having to repeat
- * it. A block of the right id is returned whatever it turns out to be, so
+ * it, and a block reach something it owns. A path such as
+ * `infrastructure/db` is found the same way by its first part, then followed
+ * down. A block of the right id is returned whatever it turns out to be, so
  * that naming a function by mistake is reported as the mistake it is rather
  * than as a missing block.
  */
 export function resolveAccess(project: Project, blockPath: string, resource: string): LoadedBlock | undefined {
+  const [first, ...rest] = resource.split("/");
   const segments = blockPath.split("/");
-  for (let depth = segments.length - 1; depth > 0; depth -= 1) {
+  for (let depth = segments.length; depth > 0; depth -= 1) {
     const ancestor = project.byPath.get(segments.slice(0, depth).join("/"));
-    const found = ancestor?.children.find((child) => child.block.id === resource);
-    if (found) return found;
+    const found = ancestor?.children.find((child) => child.block.id === first);
+    if (found) return rest.length === 0 ? found : project.byPath.get([found.path, ...rest].join("/"));
   }
   return undefined;
 }
 
 /**
- * Whether this block is a piece of the architecture, or holds one anywhere
- * beneath it.
- *
- * A composite's code is nothing but a call to each of its children, and a
- * database is not something you call. So a block with architecture below it
- * has no code of its own to generate, exactly as one with a plan below it
- * does not — the real code that reaches into it is the framework's, and lives
- * outside `blocks/`. Its function children are ordinary blocks and are
- * generated, checked and run as usual.
- */
-export function holdsArchitecture(node: LoadedBlock): boolean {
-  return isArchitecture(node.block.role) || node.children.some(holdsArchitecture);
-}
-
-/**
  * Whether an operation and the block answering it are the same shape.
  *
- * They have to be, because nothing stands between them. The alternative was a
- * mapping written on the operation saying which field became which, and that
- * would put a piece of the dataflow somewhere the diagram does not show it:
- * the one place a reader cannot see. Where the outside world's shape really
- * does differ, the conversion is a block, drawn like any other.
+ * They have to be, because nothing stands between them: the block is handed
+ * what the operation accepts, and what it returns is the response. The
+ * alternative was a mapping written on the operation saying which field
+ * became which, which would put a piece of the program somewhere no reader
+ * looks. Where the outside world's shape really does differ, the answering
+ * block's code converts it. A block that needs nothing from the request may
+ * take no inputs at all.
  *
  * A shape written in words is not checked, at either end. In a visual project
  * every port is words, and so is every port of a planned block, because
@@ -450,6 +434,10 @@ function answeringShapeProblems(name: string, entryName: string, entry: Exposed,
     const expected = asPorts(ports);
     const empty = Object.keys(ports).length === 0;
 
+    // A block that takes nothing can answer a request that carries
+    // something: it simply does not need it, which is allowed of any code.
+    if (empty && direction === "accepts") return [];
+
     if (declared === null) {
       return empty ? [] : [`"${name}" says its "${entryName}" ${direction} nothing, but "${answering.id}" has ${noun}: ${describeType(expected)}.`];
     }
@@ -460,7 +448,7 @@ function answeringShapeProblems(name: string, entryName: string, entry: Exposed,
     if (typesEqual(declared, expected)) return [];
 
     return [
-      `"${name}" says its "${entryName}" ${direction} ${describeType(declared)}, but "${answering.id}", which answers it, has ${noun} ${describeType(expected)}. Nothing stands between an operation and the block that answers it, so give them the same shape, or put a block in between that converts one into the other.`,
+      `"${name}" says its "${entryName}" ${direction} ${describeType(declared)}, but "${answering.id}", which answers it, has ${noun} ${describeType(expected)}. The block is handed what the operation accepts, and what it returns is the response, so give the two the same shape.`,
     ];
   };
 
@@ -565,7 +553,7 @@ function accessDiagnostics(project: Project, node: LoadedBlock, access: Access, 
     return [
       at(
         "error",
-        `"${node.block.name}" ${written}, but there is no block called "${access.resource}" beside it or anywhere above it in this system.`,
+        `"${node.block.name}" ${written}, but there is no block called "${access.resource}" among its own parts, beside it, or anywhere above it in this system.`,
       ),
     ];
   }
@@ -585,7 +573,7 @@ function accessDiagnostics(project: Project, node: LoadedBlock, access: Access, 
     return [
       at(
         "error",
-        `"${node.block.name}" ${written}, but "${access.resource}" is an ordinary function block. Access joins a block to a database, queue, service or other piece of the architecture; wire a function to it instead.`,
+        `"${node.block.name}" ${written}, but "${access.resource}" is an ordinary function block. Access joins a block to a database, queue, service or other piece of the architecture; to use a function, import it and call it from code.`,
       ),
     ];
   }
@@ -644,17 +632,6 @@ function accessDiagnostics(project: Project, node: LoadedBlock, access: Access, 
   }
   return [];
 }
-/**
- * Whether this block is planned, or holds a planned block anywhere beneath it.
- *
- * A composite's code is nothing but a call to each of its children, so a
- * block with a planned block somewhere below it has no code to generate
- * either: the call would name a function nobody has written.
- */
-export function holdsPlan(node: LoadedBlock): boolean {
-  return node.block.planned || node.children.some(holdsPlan);
-}
-
 export async function writeBlock(dir: string, block: Block): Promise<void> {
   await mkdir(dir, { recursive: true });
   await writeFile(path.join(dir, BLOCK_FILE), `${JSON.stringify(blockToFileShape(block), null, 2)}\n`, "utf8");

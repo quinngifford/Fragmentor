@@ -1,0 +1,22 @@
+{
+  "name": "Box Office",
+  "role": "client",
+  "subtype": "web page",
+  "responsibility": "Where someone picks an event, books seats or cancels a booking, and reads what happened.",
+  "exposes": {
+    "bookSeats": {
+      "accepts": "{ eventId: string; seats: number; email: string }",
+      "returns": "{ booked: boolean; message: string; total: number }",
+      "description": "Pressed once, when someone confirms how many seats they want."
+    },
+    "cancelBooking": {
+      "accepts": "{ bookingId: string }",
+      "returns": "{ refunded: number; message: string }",
+      "description": "Pressed from the booking someone wants to give back."
+    }
+  },
+  "access": [
+    "bookSeats calls booking-api.bookSeats",
+    "cancelBooking calls booking-api.cancelBooking"
+  ]
+}

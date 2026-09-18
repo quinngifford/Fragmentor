@@ -9,17 +9,18 @@ import type { LoadedBlock, Project } from "../project/project.js";
 /**
  * Checking a TypeScript system's code against its diagram.
  *
- * The code is typechecked against the generated contracts, so a leaf that
+ * The code is typechecked against the generated contracts, so a function that
  * returns the wrong shape fails here before anything runs. Contracts import
  * zod, which a project may well not have installed, so the checker lends it
  * Fragmentor's copy.
  *
  * What each block imports is checked as well, because the test runner
- * compiles each implementation into a folder of its own and runs it from
- * there: types, which disappear when it is compiled, its own children's code,
- * and packages installed in the project itself, which is the one place the
- * runner looks. Not Node's built-in modules, though, which reach the files,
- * the network and the process directly — that is what capabilities are for.
+ * compiles every implementation in a system into a folder of its own and runs
+ * it from there: types, which disappear when it is compiled, the code of
+ * other blocks in the same system, which is compiled beside it, and packages
+ * installed in the project itself, which is the one place the runner looks.
+ * Not Node's built-in modules, though, which reach the files, the network and
+ * the process directly — that is what capabilities are for.
  */
 
 export interface CodeProblem {
@@ -84,16 +85,21 @@ function importsOnlyTypes(statement: ts.ImportDeclaration): boolean {
   );
 }
 
-function importProblems(node: LoadedBlock, file: string, source: ts.SourceFile, projectDir: string): CodeProblem[] {
-  const compiledName = getPack("typescript").implFile.replace(/\.ts$/, ".js");
-  const children = new Set(node.block.children.map((child) => `./${child.block}/${compiledName}`));
-
+function importProblems(
+  node: LoadedBlock,
+  file: string,
+  source: ts.SourceFile,
+  projectDir: string,
+  /** The compiled code of every block in the system that can be called, as absolute paths. */
+  callable: Set<string>,
+): CodeProblem[] {
   const problems: CodeProblem[] = [];
   for (const statement of source.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
 
     const specifier = statement.moduleSpecifier.text;
-    if (children.has(specifier) || importsOnlyTypes(statement)) continue;
+    if (importsOnlyTypes(statement)) continue;
+    if (!isPackage(specifier) && callable.has(path.resolve(node.dir, specifier))) continue;
     const where = at(file, source, statement.getStart(source));
 
     if (isBuiltin(specifier)) {
@@ -104,7 +110,7 @@ function importProblems(node: LoadedBlock, file: string, source: ts.SourceFile, 
     } else if (!isPackage(specifier)) {
       problems.push({
         ...where,
-        message: `"${node.block.name}" imports values from "${specifier}", which will not run: a block can import types, its own children's code, and packages installed in the project, and nothing else. Use \`import type\` for types, and a capability for anything outside the block.`,
+        message: `"${node.block.name}" imports values from "${specifier}", which will not run: a block can import types, the code of another function block in its system (its ${getPack("typescript").implFile.replace(/\.ts$/, ".js")}), and packages installed in the project, and nothing else. Use \`import type\` for types, and a capability for anything outside the system.`,
       });
     } else if (!existsSync(path.join(projectDir, "node_modules", packageName(specifier)))) {
       // Found anywhere else, it would typecheck and still fail to run.
@@ -119,13 +125,16 @@ function importProblems(node: LoadedBlock, file: string, source: ts.SourceFile, 
 
 export function checkSystemCode(project: Project, rootBlock: string): CodeProblem[] {
   const implFile = getPack("typescript").implFile;
+  const compiledName = implFile.replace(/\.ts$/, ".js");
   const files = new Map<string, LoadedBlock>();
+  const callable = new Set<string>();
   for (const node of project.byPath.values()) {
     if (node.path !== rootBlock && !node.path.startsWith(`${rootBlock}/`)) continue;
     // Nothing is generated, checked or run for a planned block, nor for a
     // piece of the architecture. Anything left in either's folder has already
     // been reported by the generator.
     if (node.block.planned || isArchitecture(node.block.role)) continue;
+    callable.add(path.join(node.dir, compiledName));
     const file = path.join(node.dir, implFile);
     if (existsSync(file)) files.set(file, node);
   }
@@ -143,7 +152,7 @@ export function checkSystemCode(project: Project, rootBlock: string): CodeProble
 
   for (const [file, node] of files) {
     const source = program.getSourceFile(file);
-    if (source) problems.push(...importProblems(node, relative(file), source, project.dir));
+    if (source) problems.push(...importProblems(node, relative(file), source, project.dir, callable));
   }
 
   return problems;

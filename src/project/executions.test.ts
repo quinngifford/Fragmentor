@@ -277,19 +277,19 @@ describe("checking an execution against the architecture", () => {
   });
 
   it("reads the architecture of a real project", async () => {
-    const architecture = architectureOf(await loadProject(path.join(examples, "lending-desk")));
-    expect(architecture.get("lending/catalogue")).toEqual(["books", "members"]);
-    expect(architecture.get("lending/lending-api/borrow-book")).toEqual([]);
+    const architecture = architectureOf(await loadProject(path.join(examples, "tickets")));
+    expect(architecture.get("tickets/tickets-db")).toEqual(["events", "bookings"]);
+    expect(architecture.get("tickets/booking-api/book-seats")).toEqual([]);
 
-    const borrow = parsed(
+    const book = parsed(
       {
-        trigger: { at: "lending/kiosk.borrowBook", kind: "action", payload: { memberId: "m-1", isbn: "978-1" } },
-        given: { "lending/catalogue.books": { "978-1": { isbn: "978-1", title: "Piranesi", copies: 1, onLoan: 0 } } },
-        expect: { effects: [{ at: "lending/notices.issued", kind: "message-published" }] },
+        trigger: { at: "tickets/box-office.bookSeats", kind: "action", payload: { eventId: "gig", seats: 2, email: "ada@example.com" } },
+        given: { "tickets/tickets-db.events": { gig: { id: "gig", name: "Night Gig", seatsLeft: 10, price: 25 } } },
+        expect: { effects: [{ at: "tickets/outbox.confirmations", kind: "message-published" }] },
       },
-      "borrow-a-book",
+      "book-seats",
     );
-    expect(checkExecution(borrow, architecture)).toEqual([]);
+    expect(checkExecution(book, architecture)).toEqual([]);
   });
 });
 

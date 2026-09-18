@@ -37,7 +37,7 @@ export interface Watch {
   heldId: number | null;
   /** Set when the run has ended. */
   outcome: RunOutcome | null;
-  /** Which call of a block to show inside its diagram when it ran more than once, by block path. */
+  /** Which of a block's calls the inspector shows, when it was called more than once, by block path. */
   frames: Map<string, number>;
 }
 
@@ -49,15 +49,11 @@ export interface UiState {
   waiting: boolean;
   /** Why the newest version of the project could not be read. The last good snapshot stays on screen. */
   loadError: string | null;
-  /** The composite whose diagram is on the canvas. */
+  /** The block whose parts are on the canvas. */
   view: string;
-  /** Node keys inside the current diagram: a child id, or `input` / `output`. */
+  /** Node keys inside the current diagram: a part's id, or the way into a service. */
   selection: Set<string>;
-  /**
-   * The connection picked out on the diagram: a bus carrying values between
-   * two blocks, or an access reaching a database or a queue. The two kinds
-   * cannot share an id, so one field holds whichever is selected.
-   */
+  /** The line picked out on the diagram: an access reaching a database, a queue or a service. */
   selectedLink: string | null;
   zoom: number;
   panX: number;
@@ -120,7 +116,7 @@ function readWidth(): number {
   }
 }
 
-/** Kept in this browser profile, like the bus colours: it is how someone likes to look at a project, not part of it. */
+/** Kept in this browser profile, like the colours: it is how someone likes to look at a project, not part of it. */
 export function rememberInspectorWidth(width: number): void {
   try {
     localStorage.setItem(WIDTH_KEY, String(Math.round(width)));
@@ -195,11 +191,10 @@ export function currentBlock() {
 /**
  * What a colour on the diagram means.
  *
- * `role` says what kind of thing something is: green for code inside the
- * program, and a hue apiece for the databases, queues, services and people
- * around it. `block` gives every block a colour of its own and paints what
- * leaves it to match, which is easier to follow along one wire and says
- * nothing about what anything is.
+ * `role` says what kind of thing something is: green for code of ours, and a
+ * hue apiece for the databases, queues, services and people around it.
+ * `block` gives every block a colour of its own, and the lines leaving it the
+ * same, which tells the blocks apart and says nothing about what they are.
  */
 export type ColourBy = "role" | "block";
 
@@ -231,20 +226,6 @@ export const viewSettings = {
   },
 };
 
-/** Colours a bus can be given. Restrained enough to stay an instrument panel. */
-/**
- * The colours a bus can take, which are all greens.
- *
- * Hue means one thing on this canvas: green is data moving inside the
- * program, and anything else belongs to the world outside it. So buses, which
- * are always the first of those, are told apart by shade rather than by
- * borrowing a hue that now says "database" or "someone else's service". A bus
- * can still be given any colour by hand.
- */
-export const BUS_PALETTE = ["#4fe38f", "#8fe34f", "#3fcf9e", "#b5e06a", "#5fd8c0", "#2fb87a"];
-
-const COLORS_KEY = "fragmentor.busColors";
-
 function writeStore(key: string, value: Record<string, string>): void {
   try {
     localStorage.setItem(key, JSON.stringify(value));
@@ -263,29 +244,6 @@ function readStore(key: string): Record<string, string> {
 }
 
 /**
- * Bus colours are a viewing preference rather than part of the design, so they
- * stay in this browser profile. Block positions are not: those live in the
- * project, because how a diagram is arranged is part of how it reads.
- */
-export const busColors = {
-  all: readStore(COLORS_KEY),
-  key(view: string, busId: string): string {
-    return `${ui.snapshot?.dir ?? ""}|${view}|${busId}`;
-  },
-  get(view: string, busId: string): string | undefined {
-    return this.all[this.key(view, busId)];
-  },
-  set(view: string, busId: string, colour: string | null): void {
-    const key = this.key(view, busId);
-    const next = { ...this.all };
-    if (colour === null) delete next[key];
-    else next[key] = colour;
-    this.all = next;
-    writeStore(COLORS_KEY, next);
-  },
-};
-
-/**
  * What each kind of block is drawn in.
  *
  * Ordered as a wheel from what is most yours to what is least — code, the
@@ -299,6 +257,7 @@ export const busColors = {
  */
 export const DEFAULT_ROLE_COLOURS: Record<Role, string> = {
   function: "#37dc89",   // bright mint green
+  component: "#A3E07A",  // soft lime: code of ours too, made of parts rather than called
   structure: "#67D8FF",  // bright cyan
   queue: "#FFD166",      // warm yellow
   storage: "#5EEAD4",    // aqua/teal

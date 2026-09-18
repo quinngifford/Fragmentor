@@ -1,0 +1,13 @@
+{
+  "responsibility": "Price one seat of a booking: the fifth seat onwards is ten percent off.",
+  "inputs": {
+    "fullPrice": "number",
+    "seat": {
+      "type": "number",
+      "description": "Which seat of the booking, from 1."
+    }
+  },
+  "outputs": {
+    "price": "number"
+  }
+}

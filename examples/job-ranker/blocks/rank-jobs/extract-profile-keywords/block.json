@@ -1,9 +1,0 @@
-{
-  "responsibility": "Reduce a candidate profile to the lowercase keywords worth matching against.",
-  "inputs": {
-    "profile": "{ skills: string[] }"
-  },
-  "outputs": {
-    "keywords": "string[]"
-  }
-}

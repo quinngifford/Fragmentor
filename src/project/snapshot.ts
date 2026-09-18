@@ -1,15 +1,14 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { AccessVerb, Mode } from "../model/block.js";
-import { formatAccess, formatWire } from "../model/block.js";
+import { formatAccess } from "../model/block.js";
 import { isArchitecture, roleLabel } from "../model/roles.js";
 import type { Role } from "../model/roles.js";
 import { describeType } from "../model/types.js";
 import type { PortType } from "../model/types.js";
-import { executionOrder, wireCarriedType } from "../model/validate.js";
 import { loadLayout } from "./layout.js";
 import type { Layout } from "./layout.js";
-import { holdsArchitecture, holdsPlan, loadProject, locateCode, resolveAccess, systemOf, validateProject } from "./project.js";
+import { loadProject, locateCode, resolveAccess, systemOf, validateProject } from "./project.js";
 import type { CodeLocation, Granularity, ProjectDiagnostic, Start } from "./project.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
 import { boundStores, describeBound } from "./stores.js";
@@ -103,24 +102,6 @@ export interface SnapshotStore {
   seedable: boolean;
 }
 
-export interface SnapshotChild {
-  block: string;
-  mode: "once" | "each";
-  eachOver: string | null;
-  path: string;
-  kind: "leaf" | "composite";
-  name: string;
-  functionName: string;
-}
-
-export interface SnapshotWire {
-  text: string;
-  source: { from: "input"; port: string } | { from: "block"; block: string; port: string };
-  target: { to: "output"; port: string } | { to: "block"; block: string; port: string };
-  type: string | null;
-  isArray: boolean;
-}
-
 export interface SnapshotSystem {
   rootBlock: string;
   /** Language pack id, e.g. `typescript`, or in a visual project whatever the code is written in. */
@@ -149,24 +130,19 @@ export interface SnapshotBlock {
   id: string;
   name: string;
   responsibility: string;
-  kind: "leaf" | "composite";
   /** What kind of thing the block stands for: a function, or a piece of the architecture. */
   role: Role;
   /** What it is exactly within that role: `Dictionary`, `REST API`. */
   subtype: string | null;
   /** Shown on the block: `DATABASE`, or `DATA STRUCTURE: Dictionary`. */
   roleLabel: string;
-  /** True for every role but `function`: something the system talks to rather than code. */
+  /** True for every role but `function`: something that is not called, so has no code of its own. */
   architecture: boolean;
-  /** Whether architecture sits at or beneath this block, so no code is generated here. */
-  holdsArchitecture: boolean;
   /**
-   * Part of the plan rather than of the program: drawn, explained, wired as
-   * loosely as the plan is, with nothing generated, checked or run for it.
+   * Part of the plan rather than of the program: drawn and explained, with
+   * nothing generated, checked or run for it.
    */
   planned: boolean;
-  /** Whether a planned block sits somewhere beneath this one, so its own code waits. */
-  holdsPlan: boolean;
   functionName: string;
   inputs: SnapshotPort[];
   outputs: SnapshotPort[];
@@ -177,9 +153,8 @@ export interface SnapshotBlock {
   capabilities: SnapshotCapability[];
   /** The capability ports of this block that are ways into something on the diagram. */
   stores: SnapshotStore[];
-  children: SnapshotChild[];
-  order: string[];
-  wires: SnapshotWire[];
+  /** The paths of the blocks it is made of, in the order their folders sort. */
+  children: string[];
   sources: { impl: string | null; contract: string | null };
   /** Which system this block belongs to, and therefore which language. */
   language: string;
@@ -255,7 +230,6 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
 
   for (const [blockPath, node] of project.byPath) {
     const block = node.block;
-    const childBlocks = new Map(node.children.map((c) => [c.block.id, c.block]));
     const language = systemOf(project, blockPath)?.language ?? "";
 
     // Naming and file names are language conventions, so they come from the
@@ -319,14 +293,11 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       id: block.id,
       name: block.name,
       responsibility: block.responsibility,
-      kind: block.kind,
       role: block.role,
       subtype: block.subtype ?? null,
       roleLabel: roleLabel(block.role, block.subtype),
       architecture: isArchitecture(block.role),
-      holdsArchitecture: holdsArchitecture(node),
       planned: block.planned,
-      holdsPlan: holdsPlan(node),
       functionName: pack?.functionName(block.id) ?? "",
       inputs: ports(block.inputs),
       outputs: ports(block.outputs),
@@ -349,26 +320,7 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
         shapeIr: store.shape,
         seedable: store.seedable,
       })),
-      children: block.children.map((child) => ({
-        block: child.block,
-        mode: child.mode,
-        eachOver: child.eachOver ?? null,
-        path: `${blockPath}/${child.block}`,
-        kind: childBlocks.get(child.block)?.kind ?? "leaf",
-        name: childBlocks.get(child.block)?.name ?? child.block,
-        functionName: pack?.functionName(child.block) ?? "",
-      })),
-      order: executionOrder(block.children, block.wires),
-      wires: block.wires.map((wire) => {
-        const carried = wireCarriedType(block, childBlocks, wire);
-        return {
-          text: formatWire(wire),
-          source: wire.source,
-          target: wire.target,
-          type: carried ? describeType(carried) : null,
-          isArray: carried?.kind === "array",
-        };
-      }),
+      children: node.children.map((child) => child.path),
       sources: {
         impl,
         contract: pack ? await readIfPresent(path.join(node.dir, pack.contractFile)) : null,

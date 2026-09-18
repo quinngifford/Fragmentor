@@ -1,0 +1,22 @@
+[
+  {
+    "name": "keeps a fee for each seat",
+    "input": {
+      "total": 50,
+      "seats": 2
+    },
+    "expected": {
+      "refund": 46
+    }
+  },
+  {
+    "name": "never refunds less than nothing",
+    "input": {
+      "total": 3,
+      "seats": 2
+    },
+    "expected": {
+      "refund": 0
+    }
+  }
+]

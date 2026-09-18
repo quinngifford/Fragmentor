@@ -2,10 +2,9 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Mode } from "../model/block.js";
 import { CAPABILITIES, isKnownCapability } from "../model/capabilities.js";
-import { validateComposite } from "../model/validate.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
 import { ROLES, isArchitecture } from "../model/roles.js";
-import { blocksRoot, holdsArchitecture, holdsPlan, manifestPath, systemOf, writeManifest } from "../project/project.js";
+import { blocksRoot, manifestPath, systemOf, writeManifest } from "../project/project.js";
 import { boundStores } from "../project/stores.js";
 import type { LoadedBlock, Manifest, Project, Start } from "../project/project.js";
 import type { PortType } from "../model/types.js";
@@ -14,10 +13,12 @@ import { AGENTS_FILE, AGENTS_SCAFFOLD, CLAUDE_FILE, CLAUDE_SCAFFOLD, GUIDE_FILE,
 /**
  * Writes the generated half of a project to disk, one language pack per system.
  *
- * Contracts, composites and the agent's guide are regenerated every time,
- * because they are derived from the diagram and must never drift from it. A
- * leaf's implementation is only ever created when missing: it holds work an
- * agent or a person wrote, and overwriting it would throw that away.
+ * That half is small: each function block's contract, the shared capability
+ * interfaces, and the agent's guide. They are regenerated every time, because
+ * they are derived from the diagram and must never drift from it. Every
+ * block's code is the agent's, whether or not the block has parts inside it,
+ * because the diagram says what a system is made of and not what calls what.
+ * A starting file is created where there is none, and is never overwritten.
  *
  * A file is only written when its contents change. The application watches
  * the project, and a check that rewrote identical files would redraw the
@@ -26,18 +27,11 @@ import { AGENTS_FILE, AGENTS_SCAFFOLD, CLAUDE_FILE, CLAUDE_SCAFFOLD, GUIDE_FILE,
  * A visual project has no generated code at all. Its code is the person's
  * own, and all Fragmentor keeps current there is the guide.
  *
- * Planned blocks have no code either. A planned block is a drawing of
- * something nobody has written, and a block holding one anywhere beneath it
- * has nothing to generate for the same reason: its code would be a call to a
- * function that does not exist. Whatever Fragmentor generated for such a
- * block before is taken away, so a contract cannot outlive what it described.
- *
- * Architecture blocks — a database, a queue, another team's service — are
- * treated the same way and for the same reason. They are things the system
- * talks to rather than functions it calls, and a block holding one has no
- * chain of calls to be written as. What reaches into them is the framework
- * code outside `blocks/`, which is the person's to write. Their function
- * children are ordinary blocks and are generated as usual.
+ * Planned blocks have no code either: a planned block is a drawing of
+ * something nobody has written. Neither has a block of any role but
+ * `function`, such as a database or a component, which is not called. Whatever
+ * Fragmentor generated for one before is taken away, so a contract cannot
+ * outlive what it described.
  */
 
 export interface EmitResult {
@@ -244,8 +238,6 @@ export async function emitProject(project: Project): Promise<EmitResult> {
       else await discard(implFile, ours);
     };
 
-    const handWritten = `"${node.block.name}" has children, so Fragmentor writes its code, but ${relative(implFile)} holds code someone wrote. Move that code into its children, then delete the file so it can be generated.`;
-
     if (node.block.planned) {
       // Its ports say what is meant to flow rather than what does, so there
       // is no contract to write and nothing to write code against.
@@ -261,7 +253,7 @@ export async function emitProject(project: Project): Promise<EmitResult> {
       // body to write. What it offers is described by "exposes" instead.
       await discard(path.join(node.dir, pack.contractFile));
       await clearImpl(
-        `"${node.block.name}" is ${ROLES[node.block.role].label.toLowerCase()} rather than a function, so Fragmentor writes no code for it, but ${relative(implFile)} holds code someone wrote. Take the "role" off the block if it really is a function, or move that code into a block inside it.`,
+        `"${node.block.name}" is ${ROLES[node.block.role].label.toLowerCase()} rather than a function, so it is not called and has no code of its own, but ${relative(implFile)} holds code someone wrote. Take the "role" off the block if it really is a function, or move that code into a block inside it.`,
       );
       continue;
     }
@@ -271,43 +263,15 @@ export async function emitProject(project: Project): Promise<EmitResult> {
       pack.contractSource({ block: node.block, blockPath: node.path, bound: boundShapes(project, node) }),
     );
 
-    if (node.block.kind === "composite") {
-      // Its code would call a block nobody has written yet, so it waits for
-      // the plan beneath it to be built; its own contract is real and stays.
-      // Code someone left here is still reported, because while it sits there
-      // it would be checked and run as though it were the block.
-      if (holdsPlan(node)) {
-        await clearImpl(handWritten);
-        continue;
-      }
-
-      // A composite holding a database or a service is architecture, not a
-      // chain of calls. Its contract stays, because the blocks inside it are
-      // real, but nothing here can be written as code.
-      if (holdsArchitecture(node)) {
-        await clearImpl(
-          `"${node.block.name}" holds a piece of the architecture, so it is a diagram rather than a function, but ${relative(implFile)} holds code someone wrote. Code that reaches into these blocks belongs outside blocks/, where it can make the real connections.`,
-        );
-        continue;
-      }
-
-      // A diagram with errors in it has no code to become. The errors are
-      // already reported with the rest of the diagram's.
-      const children = new Map(node.children.map((child) => [child.block.id, child.block]));
-      if (validateComposite(node.block, children).some((diagnostic) => diagnostic.severity === "error")) continue;
-
-      if (existing === null || ours(existing)) {
-        await write(implFile, pack.compositeSource(node.block));
-      } else {
-        problems.push(handWritten);
-      }
-    } else if (existing === null) {
+    if (existing === null) {
       await write(implFile, pack.implScaffold(node.block));
     } else if (isGeneratedSource(existing)) {
-      // It had children until now. The file may already hold the agent's new
-      // code beneath the old first line, so it is pointed out, not replaced.
+      // Code Fragmentor once generated from a block's wires. There are no
+      // wires to generate it from any more, and the file may already hold
+      // the agent's own code beneath the old first line, so it is pointed
+      // out rather than replaced.
       problems.push(
-        `"${node.block.name}" has no children now, so its code is the agent's to write, but ${relative(implFile)} still starts with Fragmentor's "Generated" line. Write the block's own code there, without that line.`,
+        `"${node.block.name}" has code Fragmentor generated from wires, which no longer exist, in ${relative(implFile)}. Write the block's own code there, calling the blocks it needs directly, without the "Generated" first line.`,
       );
     } else {
       skipped.push(relative(implFile));

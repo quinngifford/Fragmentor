@@ -1,0 +1,16 @@
+{
+  "name": "Tickets Database",
+  "role": "database",
+  "subtype": "PostgreSQL",
+  "responsibility": "Every event on sale, and every booking made for one.",
+  "exposes": {
+    "events": {
+      "type": "{ id: string; name: string; seatsLeft: number; price: number }",
+      "description": "One row per event, by id."
+    },
+    "bookings": {
+      "type": "{ id: string; eventId: string; email: string; seats: number; total: number }",
+      "description": "One row per booking, by id."
+    }
+  }
+}

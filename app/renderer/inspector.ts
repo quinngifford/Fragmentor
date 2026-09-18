@@ -1,12 +1,12 @@
 import type { SnapshotBlock, SnapshotCode } from "../../src/project/snapshot.js";
 import type { ProjectDiagnostic } from "../../src/project/project.js";
-import { BUS_PALETTE, blockColours, busColors, requireSnapshot, ui, viewSettings } from "./state.js";
-import { blockColour, busColour, connectionCode } from "./graph.js";
-import type { AccessLink, Bus, Graph } from "./graph.js";
+import { blockColours, requireSnapshot, ui, viewSettings } from "./state.js";
+import { blockColour } from "./graph.js";
+import type { AccessLink, Graph } from "./graph.js";
 import { ROLES } from "../../src/model/roles.js";
 import { graphInView, openDiagram, showBlock } from "./canvas.js";
 import { benchSections, entryBenchSection } from "./bench.js";
-import { busWatchSection, watchSection } from "./watch.js";
+import { watchSection } from "./watch.js";
 import { el, group, section } from "./dom.js";
 import { codeBlock, codeFragment, codeLines, languageOf } from "./highlight.js";
 
@@ -125,9 +125,8 @@ function codeSection(block: SnapshotBlock): HTMLElement {
   // A textarea hands back its text with \n line endings whatever the file
   // uses, so the file is compared in the same form or it would never match.
   const onDisk = block.sources[ui.codeTab]?.replace(/\r\n/g, "\n") ?? null;
-  // A contract is derived from the diagram, and so is the code of a block
-  // with children: neither is anyone's to edit.
-  const generated = ui.codeTab === "contract" || block.kind === "composite";
+  // A contract is derived from the diagram, so it is nobody's to edit.
+  const generated = ui.codeTab === "contract";
   const pending = ui.edits.get(block.path);
   const value = generated ? onDisk : (pending?.text ?? onDisk);
 
@@ -136,11 +135,7 @@ function codeSection(block: SnapshotBlock): HTMLElement {
       el(
         "p",
         "bench-note",
-        block.holdsPlan
-          ? "Its code would call a block that is only planned, so there is nothing to generate yet. Build the planned blocks inside it and this fills in."
-          : block.holdsArchitecture
-            ? "It holds a piece of the architecture, so it is a diagram rather than a function and there is no chain of calls to write. The code that opens the real connections lives outside blocks/."
-            : "This file has not been generated yet. Use Generate code.",
+        "This file has not been generated yet. Use Generate code.",
       ),
     );
     return node;
@@ -152,9 +147,7 @@ function codeSection(block: SnapshotBlock): HTMLElement {
       el(
         "p",
         "bench-note",
-        ui.codeTab === "contract"
-          ? "Generated from block.json, so it is read-only. Change the diagram and it is rewritten."
-          : "This block has children, so its code is generated from its wires and is read-only. Change the diagram and it is rewritten.",
+        "Generated from block.json, so it is read-only. Change the diagram and it is rewritten.",
       ),
     );
     return node;
@@ -374,7 +367,7 @@ function runnableEntries(block: SnapshotBlock): { entry: string; answering: Snap
     const route = whatHappens(block, entry.name);
     const last = route.at(-1);
     if (route.length < 2 || !last || last.block.architecture) return [];
-    if (!last.block.implemented || last.block.planned || last.block.holdsPlan || last.block.holdsArchitecture) return [];
+    if (!last.block.implemented || last.block.planned) return [];
 
     return [
       {
@@ -468,7 +461,7 @@ function accessSection(block: SnapshotBlock): HTMLElement | null {
 
     if (access.resourcePath === null) {
       const missing = el("div", "ptype bad");
-      missing.textContent = `${access.resource} — nothing of that name sits beside this block or above it`;
+      missing.textContent = `${access.resource} — nothing of that name is among its parts, beside it, or above it`;
       row.append(missing);
     } else {
       const where = access.entry === null ? access.resourceName : `${access.resourceName} · ${access.entry}`;
@@ -534,11 +527,7 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   const badges = el("div", "badges");
   // For a database or a queue, what it is matters more than whether it has
   // blocks inside it, so the role takes the first badge.
-  badges.append(
-    block.architecture
-      ? roleBadge(block)
-      : el("span", `badge${block.kind === "composite" ? " composite" : ""}`, block.kind),
-  );
+  badges.append(roleBadge(block));
   // What state a block is in only means something for one Fragmentor writes
   // or runs. A service is code — its blocks are right there inside it — so
   // saying "not code" of it was worse than saying nothing. In a visual
@@ -567,7 +556,7 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   const colour = blockColourControl(block);
   if (colour) head.append(colour);
 
-  if (block.kind === "composite" && block.path !== ui.view) {
+  if (block.children.length > 0 && block.path !== ui.view) {
     const open = el("button", "btn", "Open diagram");
     open.addEventListener("click", () => openDiagram(block.path));
     head.append(open);
@@ -601,12 +590,15 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
     );
 
     const offers = group("Offers");
-    offers.append(exposedSection(block));
+    // A group of parts offers what the parts inside it do, so an empty list
+    // of entries says nothing about it worth saying.
+    if (block.role !== "component" || block.exposes.length > 0) offers.append(exposedSection(block));
     const happens = whatHappensSection(block);
     if (happens) offers.append(happens);
     const reached = accessSection(block);
     if (reached) offers.append(reached);
-    panel.append(offers);
+    // Its heading alone would promise something the block does not have.
+    if (offers.childElementCount > 1) panel.append(offers);
 
     // Pressing the button, rather than only following where it leads. The
     // route ends at code, and the code is what runs.
@@ -654,10 +646,9 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
     code.append(visual ? linkedCodeSection(block) : codeSection(block));
   }
   panel.append(code);
-  // Nothing beneath this point applies to a block with no code: one nobody
-  // has written, or one whose code waits for the plan inside it. There is
-  // nothing to run, and nothing a test could be run against.
-  if (visual || block.planned || block.holdsPlan || block.holdsArchitecture) return;
+  // Nothing beneath this point applies to a block nobody has written: there
+  // is nothing to run, and nothing a test could be run against.
+  if (visual || block.planned) return;
 
   const testing = group("Testing");
   const [bench, cases] = benchSections(block);
@@ -668,91 +659,26 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   panel.append(testing);
 }
 
-function busPanel(panel: HTMLElement, graph: Graph, bus: Bus): void {
-  const sourceLabel = graph.nodes.get(bus.source)?.label ?? bus.source;
-  const targetLabel = graph.nodes.get(bus.target)?.label ?? bus.target;
-  const visual = requireSnapshot().mode === "visual";
-
-  const head = el("div", "insp-head");
-  head.append(
-    el("h2", undefined, `${sourceLabel} → ${targetLabel}`),
-    el("div", "insp-id", `${bus.signals.length} signal${bus.signals.length === 1 ? "" : "s"} on one bus`),
-  );
-  panel.append(head);
-
-  const carries = section("Carries");
-  const list = el("div", "ports");
-  for (const signal of bus.signals) {
-    const row = el("div", "port-row");
-    row.append(el("div", "pname", `${signal.sourcePort} → ${signal.targetPort}`));
-    row.append(el("div", "ptype", signal.type ?? "unknown"));
-    list.append(row);
-  }
-  carries.append(list);
-  panel.append(carries);
-
-  const run = busWatchSection(bus, graph);
-  if (run) panel.append(run);
-
-  // A visual diagram describes code written some other way, so there is no
-  // generated call to show for it.
-  if (!visual) {
-    const code = section("In code");
-    code.append(codeBlock(connectionCode(graph, bus), "typescript"));
-    code.append(el("p", "bench-note", "The call and binding this connection becomes in the generated code of the block that holds it."));
-    panel.append(code);
-  }
-
-  const colours = section("Colour");
-  const swatches = el("div", "swatches");
-  const current = busColour(graph, ui.view, bus);
-  for (const colour of BUS_PALETTE) {
-    const swatch = el("button", "swatch-btn");
-    swatch.style.background = colour;
-    swatch.title = colour;
-    swatch.setAttribute("aria-pressed", String(colour.toLowerCase() === current.toLowerCase()));
-    swatch.addEventListener("click", () => {
-      busColors.set(ui.view, bus.id, colour);
-      notify();
-    });
-    swatches.append(swatch);
-  }
-  colours.append(swatches);
-
-  const reset = el("button", "btn quiet", "Use the default colour");
-  reset.style.marginTop = "8px";
-  reset.addEventListener("click", () => {
-    busColors.set(ui.view, bus.id, null);
-    notify();
-  });
-  colours.append(reset);
-  panel.append(colours);
-}
-
 function multiPanel(panel: HTMLElement, graph: Graph): void {
   const keys = [...ui.selection];
   const head = el("div", "insp-head");
   head.append(el("h2", undefined, `${keys.length} blocks selected`), el("div", "insp-id", keys.join(", ")));
   panel.append(head);
 
-  const between = [...graph.buses.values()].filter((b) => ui.selection.has(b.source) && ui.selection.has(b.target));
-  const node = section("Buses between them");
-
-  if (between.length === 0) {
-    node.append(el("p", "bench-note", "These blocks are not directly connected."));
-  } else {
+  const between = [...graph.accesses.values()].filter((link) => ui.selection.has(link.source) && ui.selection.has(link.target));
+  if (between.length > 0) {
+    const node = section("What one reaches in another");
     const list = el("div", "ports");
-    for (const bus of between) {
+    for (const link of between) {
       const row = el("div", "port-row");
-      row.style.borderLeftColor = busColour(graph, ui.view, bus);
-      row.append(el("div", "pname", `${graph.nodes.get(bus.source)?.label} → ${graph.nodes.get(bus.target)?.label}`));
-      row.append(el("div", "ptype", bus.signals.map((s) => s.targetPort).join(", ")));
+      row.append(el("div", "pname", `${graph.nodes.get(link.source)?.label} → ${graph.nodes.get(link.target)?.label}`));
+      row.append(el("div", "ptype", link.entries.map((entry) => entry.text).join(", ")));
       list.append(row);
     }
     node.append(list);
+    panel.append(node);
   }
 
-  panel.append(node);
   panel.append(el("p", "bench-note", "Ctrl-click a block to add or remove it from the selection."));
 }
 
@@ -774,11 +700,6 @@ export function renderInspector(): void {
   const graph = graphInView();
 
   if (graph && ui.selectedLink) {
-    const bus = graph.buses.get(ui.selectedLink);
-    if (bus) {
-      busPanel(panel, graph, bus);
-      return;
-    }
     const access = graph.accesses.get(ui.selectedLink);
     if (access) {
       accessPanel(panel, graph, access);

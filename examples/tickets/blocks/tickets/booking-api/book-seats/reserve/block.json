@@ -1,0 +1,31 @@
+{
+  "responsibility": "Take the seats off the event, record the booking, and send the confirmation.",
+  "inputs": {
+    "event": "{ id: string; name: string; seatsLeft: number; price: number }",
+    "seats": "number",
+    "email": "string",
+    "total": "number"
+  },
+  "outputs": {
+    "bookingId": "string"
+  },
+  "capabilities": {
+    "events": {
+      "capability": "Store",
+      "description": "Every event, by id."
+    },
+    "bookings": {
+      "capability": "Store",
+      "description": "Every booking, by id."
+    },
+    "confirmations": {
+      "capability": "Queue",
+      "description": "Where the confirmation email is sent from."
+    }
+  },
+  "access": [
+    "events writes tickets-db.events",
+    "bookings writes tickets-db.bookings",
+    "confirmations writes outbox.confirmations"
+  ]
+}

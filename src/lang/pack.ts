@@ -47,16 +47,14 @@ export interface LanguagePack {
   /** How a port type is written natively. Used for display as well as code. */
   typeExpression(type: PortType): string;
 
-  /** The generated, never-hand-edited half of a block. */
-  contractSource(request: ContractRequest): string;
-  /** The frame a leaf's implementation is written inside, created once. */
-  implScaffold(block: Block): string;
   /**
-   * The whole of a composite's implementation, generated from its diagram. A
-   * composite does nothing but call its children, so there is nothing in it
-   * for anyone to write and nothing that can drift from the diagram.
+   * The generated, never-hand-edited half of a block. A block with no
+   * outputs returns nothing, and one with no inputs is handed an empty
+   * object, so every block is called the same way: with a value and `caps`.
    */
-  compositeSource(block: Block): string;
+  contractSource(request: ContractRequest): string;
+  /** The frame a block's implementation is written inside, created once. */
+  implScaffold(block: Block): string;
   /** The shared capability declarations for a project. */
   capabilitiesSource(): string;
 

@@ -14,11 +14,14 @@ import type { PortType } from "./types.js";
  * disagree with reality. They are derived instead.
  *
  * The file is as small as an agent can write it. The folder gives a block its
- * id, having children is what makes it a composite, a port can be written as
- * just its type, and anything empty can be left out.
+ * id, the folders inside it are its parts, a port can be written as just its
+ * type, and anything empty can be left out.
+ *
+ * What a block contains is what it is made of, and nothing more. A block's
+ * children are not steps it runs or functions it calls in some order; what
+ * runs when is an execution's business, recorded or written down as a trace
+ * (see `trace.ts`), never the tree's.
  */
-
-export type BlockKind = "leaf" | "composite";
 
 /**
  * How a project relates to its code. In `structured` mode the diagram is a
@@ -36,41 +39,13 @@ export interface Port {
 
 /**
  * An effect the block needs supplied from outside: a database, HTTP access,
- * the clock. Capabilities are matched by name down the hierarchy rather than
- * wired individually, so a parent must declare every capability its
- * descendants need. That keeps the diagram free of plumbing lines and makes
- * the generated glue a plain `caps` hand-off.
+ * the clock. A block that calls another hands it its own `caps`, so a caller
+ * has to hold every capability, under the same name, that the blocks it calls
+ * ask for. The typechecker holds it to that at the call.
  */
 export interface CapabilityPort {
   capability: string;
   description?: string;
-}
-
-/**
- * How a composite invokes one of its children.
- *
- * `once` calls it a single time. `each` calls it per element of the array
- * arriving at `eachOver`, collecting the results in order. These two are the
- * whole control vocabulary for now; conditional logic lives inside leaf
- * blocks until a real example proves a branch primitive is needed.
- */
-export interface ChildRef {
-  block: string;
-  mode: "once" | "each";
-  eachOver?: string;
-}
-
-export type WireSource =
-  | { from: "input"; port: string }
-  | { from: "block"; block: string; port: string };
-
-export type WireTarget =
-  | { to: "block"; block: string; port: string }
-  | { to: "output"; port: string };
-
-export interface Wire {
-  source: WireSource;
-  target: WireTarget;
 }
 
 /**
@@ -131,7 +106,11 @@ export interface Access {
    */
   from: string | null;
   verb: AccessVerb;
-  /** The id of the architecture block being touched. */
+  /**
+   * The architecture block being touched: its id, found by looking outward
+   * from the block that reaches it, or a path from a block found that way,
+   * such as `infrastructure/db` for a database kept inside a group of them.
+   */
   resource: string;
   /** Which of its exposed entries, or null for the resource as a whole. */
   entry: string | null;
@@ -160,8 +139,11 @@ export function parseAccessText(text: string): { ok: true; access: Access } | { 
   const resource = split === -1 ? target : target.slice(0, split);
   const entry = split === -1 ? null : target.slice(split + 1);
 
-  if (!blockIdPattern.test(resource)) {
-    return { ok: false, error: `"${resource}" is not a block id: it should be kebab-case, naming the block being reached.` };
+  if (!resource.split("/").every((segment) => blockIdPattern.test(segment))) {
+    return {
+      ok: false,
+      error: `"${resource}" is not a block id: it should be kebab-case, naming the block being reached, or a path to it such as "infrastructure/db".`,
+    };
   }
   if (entry !== null && !identifierPattern.test(entry)) {
     return { ok: false, error: `"${entry}" is not a valid name for one of "${resource}"'s entries.` };
@@ -179,7 +161,6 @@ export interface Block {
   id: string;
   name: string;
   responsibility: string;
-  kind: BlockKind;
   /**
    * What kind of thing this block stands for. `function` is code Fragmentor
    * owns; every other role is a piece of the architecture the system talks
@@ -200,10 +181,6 @@ export interface Block {
   /** What this block reaches: `reads app-db.users`. Empty for a block that touches nothing. */
   access: Access[];
   capabilities: Record<string, CapabilityPort>;
-  /** Composite only. Empty for leaves. */
-  children: ChildRef[];
-  /** Composite only. Empty for leaves. */
-  wires: Wire[];
   /** The user has declared this block will not be decomposed further. */
   pinnedAsLeaf: boolean;
   /**
@@ -342,96 +319,6 @@ const capabilityPortSchema = z.preprocess(
   z.object({ capability: z.string().min(1), description: z.string().optional() }).strict(),
 );
 
-const childRefSchema = z
-  .preprocess(orJust("block"), z.object({ block: blockId, each: portName.optional() }).strict())
-  .transform((child): ChildRef =>
-    child.each === undefined
-      ? { block: child.block, mode: "once" }
-      : { block: child.block, mode: "each", eachOver: child.each },
-  );
-
-/**
- * Wires are written as `source -> destination`, where an endpoint is either
- * `input.<port>` / `output.<port>` for the block's own ports, or
- * `<child-id>.<port>` for one of its children. The same syntax is what the
- * model reads and writes, so there is only one wire notation in the system.
- */
-interface Endpoint {
-  role: "input" | "output" | "block";
-  block?: string;
-  port: string;
-}
-
-function parseEndpoint(ref: string): Endpoint | undefined {
-  const split = ref.lastIndexOf(".");
-  if (split <= 0 || split === ref.length - 1) return undefined;
-
-  const head = ref.slice(0, split);
-  const port = ref.slice(split + 1);
-  if (!identifierPattern.test(port)) return undefined;
-
-  if (head === "input") return { role: "input", port };
-  if (head === "output") return { role: "output", port };
-  if (!blockIdPattern.test(head)) return undefined;
-  return { role: "block", block: head, port };
-}
-
-export function parseWireEndpoints(from: string, to: string): { ok: true; wire: Wire } | { ok: false; error: string } {
-  const source = parseEndpoint(from);
-  if (!source) {
-    return { ok: false, error: `The wire source "${from}" is not written as "input.port" or "child-id.port".` };
-  }
-  const target = parseEndpoint(to);
-  if (!target) {
-    return { ok: false, error: `The wire destination "${to}" is not written as "output.port" or "child-id.port".` };
-  }
-  if (source.role === "output") {
-    return { ok: false, error: `A wire cannot start at "${from}"; the parent's outputs are destinations, not sources.` };
-  }
-  if (target.role === "input") {
-    return { ok: false, error: `A wire cannot end at "${to}"; the parent's inputs are sources, not destinations.` };
-  }
-
-  return {
-    ok: true,
-    wire: {
-      source:
-        source.role === "input"
-          ? { from: "input", port: source.port }
-          : { from: "block", block: source.block!, port: source.port },
-      target:
-        target.role === "output"
-          ? { to: "output", port: target.port }
-          : { to: "block", block: target.block!, port: target.port },
-    },
-  };
-}
-
-export function parseWireText(text: string): { ok: true; wire: Wire } | { ok: false; error: string } {
-  const parts = text.split("->");
-  if (parts.length !== 2) {
-    return { ok: false, error: `A wire must be written as "source -> destination", but this reads "${text}".` };
-  }
-  return parseWireEndpoints(parts[0]!.trim(), parts[1]!.trim());
-}
-
-export function formatWire(wire: Wire): string {
-  const source =
-    wire.source.from === "input" ? `input.${wire.source.port}` : `${wire.source.block}.${wire.source.port}`;
-  const target =
-    wire.target.to === "output" ? `output.${wire.target.port}` : `${wire.target.block}.${wire.target.port}`;
-  return `${source} -> ${target}`;
-}
-
-const wireSchema = z.string().transform((value, ctx): Wire => {
-  const parsed = parseWireText(value);
-  if (!parsed.ok) {
-    ctx.addIssue({ code: "custom", message: parsed.error });
-    return z.NEVER;
-  }
-  return parsed.wire;
-});
-
 function blockFileSchema(mode: Mode, planned: boolean) {
   const freeText = mode === "visual" || planned;
   return z
@@ -451,15 +338,9 @@ function blockFileSchema(mode: Mode, planned: boolean) {
       exposes: z.record(portName, exposedSchema).default({}),
       access: z.array(accessSchema).default([]),
       capabilities: z.record(portName, capabilityPortSchema).default({}),
-      children: z.array(childRefSchema).default([]),
-      wires: z.array(wireSchema).default([]),
       pinnedAsLeaf: z.boolean().default(false),
     })
     .strict()
-    .refine((file) => file.children.length > 0 || file.wires.length === 0, {
-      message: "a block with no children cannot have wires",
-      path: ["wires"],
-    })
     .refine((file) => mode === "visual" || file.code === undefined, {
       message: `"code" is only for visual mode. In structured mode a block's code is the implementation file in its folder.`,
       path: ["code"],
@@ -488,7 +369,7 @@ function blockFileSchema(mode: Mode, planned: boolean) {
       path: ["subtype"],
     })
     .refine((file) => isArchitecture(file.role) || Object.keys(file.exposes).length === 0, {
-      message: `"exposes" describes the tables, channels or operations of an architecture block. A function block's interface is its inputs and outputs, so give it a "role" or use those.`,
+      message: `"exposes" describes the tables, channels or operations of an architecture block. A function block's interface is its inputs and outputs, where it has any, so give it a "role" or use those.`,
       path: ["exposes"],
     });
 }
@@ -517,6 +398,21 @@ export function parseBlockFile(
     return { ok: false, problems: [`the folder name "${id}" must be kebab-case (lowercase letters, digits, single hyphens)`] };
   }
 
+  // Both belonged to the model this one replaced, in which a block's
+  // children were steps wired output to input. Saying so is worth more than
+  // "unrecognised key", because the fix is to stop describing order at all.
+  if (typeof raw === "object" && raw !== null) {
+    const retired = [
+      "children" in raw
+        ? `children: a block's parts are the block folders inside its folder, so there is no list of them to keep. Remove "children".`
+        : null,
+      "wires" in raw
+        ? `wires: blocks are not wired together. Code calls the blocks it needs directly, and what happens when is an execution's trace, not the diagram. Remove "wires".`
+        : null,
+    ].filter((problem): problem is string => problem !== null);
+    if (retired.length > 0) return { ok: false, problems: retired };
+  }
+
   // Which schema the ports get depends on whether this block is planned, so
   // that is settled before the file is read. It cannot wait until afterwards:
   // a planned block's types are words, which the strict schema refuses.
@@ -535,15 +431,12 @@ export function parseBlockFile(
     id,
     name: file.name ?? nameFromId(id),
     responsibility: file.responsibility,
-    kind: file.children.length > 0 ? "composite" : "leaf",
     role: file.role,
     inputs: file.inputs,
     outputs: file.outputs,
     exposes: file.exposes,
     access: file.access,
     capabilities: file.capabilities,
-    children: file.children,
-    wires: file.wires,
     pinnedAsLeaf: file.pinnedAsLeaf,
     planned,
   };
@@ -613,12 +506,6 @@ export function blockToFileShape(block: Block): Record<string, unknown> {
   if (Object.keys(block.exposes).length > 0) file.exposes = exposes;
   if (block.access.length > 0) file.access = block.access.map(formatAccess);
   if (Object.keys(block.capabilities).length > 0) file.capabilities = capabilities;
-  if (block.children.length > 0) {
-    file.children = block.children.map((child) =>
-      child.mode === "each" ? { block: child.block, each: child.eachOver } : child.block,
-    );
-  }
-  if (block.wires.length > 0) file.wires = block.wires.map(formatWire);
   if (block.pinnedAsLeaf) file.pinnedAsLeaf = true;
   return file;
 }

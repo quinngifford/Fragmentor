@@ -1,0 +1,35 @@
+[
+  {
+    "name": "finds an event on sale",
+    "input": {
+      "eventId": "gig"
+    },
+    "stores": {
+      "tickets/tickets-db.events": {
+        "gig": {
+          "id": "gig",
+          "name": "Night Gig",
+          "seatsLeft": 10,
+          "price": 25
+        }
+      }
+    },
+    "expected": {
+      "event": {
+        "id": "gig",
+        "name": "Night Gig",
+        "seatsLeft": 10,
+        "price": 25
+      }
+    }
+  },
+  {
+    "name": "finds nothing for an event that is not",
+    "input": {
+      "eventId": "nope"
+    },
+    "expected": {
+      "event": null
+    }
+  }
+]

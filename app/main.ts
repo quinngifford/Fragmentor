@@ -19,6 +19,7 @@ import { projectSnapshot } from "../src/project/snapshot.js";
 import { saveViewLayout } from "../src/project/layout.js";
 import { blockDir, loadProject, manifestPath, systemOf } from "../src/project/project.js";
 import { getPack, isKnownLanguage } from "../src/lang/index.js";
+import { isArchitecture } from "../src/model/roles.js";
 import { emitProject, startProject } from "../src/codegen/emit.js";
 import type { EmitResult, NewProjectSettings } from "../src/codegen/emit.js";
 import { GUIDE_FILE } from "../src/codegen/guide.js";
@@ -52,33 +53,22 @@ function selfChecking(): boolean {
  */
 const selfCheck = selfChecking() ? prepareSelfCheck() : null;
 
-function prepareSelfCheck(): { root: string; projectDir: string; application: string; structured: string; lending: string } {
+function prepareSelfCheck(): { root: string; projectDir: string; application: string } {
   const root = mkdtempSync(path.join(tmpdir(), "fragmentor-self-check-"));
   const projectDir = path.join(root, "project");
   const userData = path.join(root, "user-data");
   mkdirSync(projectDir);
   mkdirSync(userData);
 
-  // Copies of the two examples that draw a whole system, so the check can
-  // look at a real architecture without touching the repository's own: one
-  // visual, and one structured with blocks that run.
-  const application = path.join(root, "link-shortener");
-  cpSync(path.join(repoRoot, "examples", "link-shortener"), application, { recursive: true });
-  const structured = path.join(root, "support-desk");
-  cpSync(path.join(repoRoot, "examples", "support-desk"), structured, { recursive: true });
-
-  // And the one that puts something on a queue, which is the other half of
-  // reaching a store and the only example that does it.
-  const lending = path.join(root, "lending-desk");
-  cpSync(path.join(repoRoot, "examples", "lending-desk"), lending, { recursive: true });
+  // A copy of the example, so the check can look at a whole architecture,
+  // and run it, without touching the repository's own.
+  const application = path.join(root, "tickets");
+  cpSync(path.join(repoRoot, "examples", "tickets"), application, { recursive: true });
 
   // Offered on the welcome screen as recent projects, which is how the check opens them.
-  writeFileSync(
-    path.join(userData, "recent-projects.json"),
-    JSON.stringify([projectDir, application, structured, lending]),
-  );
+  writeFileSync(path.join(userData, "recent-projects.json"), JSON.stringify([projectDir, application]));
   app.setPath("userData", userData);
-  return { root, projectDir, application, structured, lending };
+  return { root, projectDir, application };
 }
 
 function ok<T>(value: T): Result<T> {
@@ -379,13 +369,7 @@ function registerHandlers(): void {
 
   ipcMain.handle(CHANNELS.exampleProjects, async (): Promise<Result<{ dir: string; name: string }[]>> => {
     try {
-      const examples = [
-        { dir: path.join(repoRoot, "examples", "lending-desk"), name: "Lending Desk" },
-        { dir: path.join(repoRoot, "examples", "support-desk"), name: "Support Desk" },
-        { dir: path.join(repoRoot, "examples", "link-shortener"), name: "Link Shortener" },
-        { dir: path.join(repoRoot, "examples", "job-ranker"), name: "Job Relevance Ranker" },
-        { dir: path.join(repoRoot, "examples", "contract-generator"), name: "Contract Generator" },
-      ];
+      const examples = [{ dir: path.join(repoRoot, "examples", "tickets"), name: "Tickets" }];
       const present: { dir: string; name: string }[] = [];
       for (const example of examples) {
         try {
@@ -411,8 +395,9 @@ function registerHandlers(): void {
       // Generated code is rewritten from the diagram, so an edit to it would
       // be lost, and a visual project's code is not Fragmentor's to change.
       if (project.manifest.mode === "visual") throw new Error("A visual project's code is never changed from Fragmentor.");
-      if (project.byPath.get(request.blockPath)?.block.kind === "composite") {
-        throw new Error(`"${request.blockPath}" has children, so its code is generated from the diagram.`);
+      const node = project.byPath.get(request.blockPath);
+      if (node && isArchitecture(node.block.role)) {
+        throw new Error(`"${request.blockPath}" is not a function, so it has no code of its own.`);
       }
 
       const target = resolveInside(blockDir(request.dir, request.blockPath), getPack(system.language).implFile);
@@ -559,8 +544,6 @@ const INTERACTIONS = `
   const drawn = {
     projectOpen: document.body.dataset.project === "open",
     blocks: document.querySelectorAll(".block-box").length,
-    buses: document.querySelectorAll(".bus-group").length,
-    brackets: document.querySelectorAll(".group-bracket").length,
     treeItems: document.querySelectorAll(".tree .node").length,
     zoom: text("#zoom-level"),
     inspector: text("#inspector h2") || null,
@@ -573,7 +556,7 @@ const INTERACTIONS = `
   const statusText = () => text("#status");
 
   const leaf = [...document.querySelectorAll(".tree .node")]
-    .find((node) => node.textContent.includes("load-postings"));
+    .find((node) => node.textContent.includes("price-seat"));
   if (!leaf) return { stage: "no-leaf", drawn };
   leaf.click();
 
@@ -621,32 +604,23 @@ const INTERACTIONS = `
   const restoredCleanly = editor().value === original && /Saved .*impl\\.ts/.test(statusText());
 
   // Running a block is what makes this an application rather than a viewer.
-  const rankJobs = [...document.querySelectorAll(".tree .node")]
-    .find((node) => node.textContent.includes("rank-jobs"));
-
-  let ran = "no rank-jobs in the tree";
-  if (rankJobs) {
-    rankJobs.click();
-    await wait(400);
-
-    const skills = document.querySelector(".bench textarea");
-    if (skills) {
-      skills.value = JSON.stringify(["TypeScript", "testing"]);
-      skills.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-
-    const runButton = [...document.querySelectorAll(".bench .btn")]
-      .find((button) => button.textContent === "Run block");
-
-    if (!runButton) ran = "no run button";
-    else if (runButton.disabled) ran = "run button disabled";
-    else {
-      runButton.click();
-      await wait(8000);
-      const output = document.querySelector(".run-result pre.code");
-      const problems = document.querySelector(".run-problems li");
-      ran = output ? output.textContent.slice(0, 200) : problems ? "PROBLEM: " + problems.textContent : "no result";
-    }
+  let ran = "no run button";
+  const runButton = [...document.querySelectorAll(".bench .btn")].find((button) => button.textContent === "Run block");
+  if (runButton && runButton.disabled) ran = "run button disabled";
+  else if (runButton) {
+    const set = (label, value) => {
+      const field = [...document.querySelectorAll(".bench .field")].find((f) => (f.querySelector("label") || {}).textContent === label);
+      if (!field) return;
+      field.querySelector("input").value = value;
+      field.querySelector("input").dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    set("fullPrice", "25");
+    set("seat", "5");
+    runButton.click();
+    await wait(8000);
+    const output = document.querySelector(".run-result pre.code");
+    const problems = document.querySelector(".run-problems li");
+    ran = output ? output.textContent.slice(0, 200) : problems ? "PROBLEM: " + problems.textContent : "no result";
   }
 
   // Each of these is reported rather than allowed to abort the whole check.
@@ -672,7 +646,7 @@ const INTERACTIONS = `
   });
 
   const dragged = await attempt(async () => {
-    const target = nodeOf("load-postings");
+    const target = nodeOf("price-seat");
     if (!target) return "no block to drag";
     const before = target.getAttribute("transform");
     const at = (type, x, y) =>
@@ -692,12 +666,18 @@ const INTERACTIONS = `
     return moved ? (restored ? "moved" : "moved but not restored") : "DID NOT MOVE";
   });
 
-  // Opening a composite moves into it with a zoom, and ends on its diagram.
+  // Opening a block made of parts moves into it with a zoom, and ends on them.
   const openedByDoubleClick = await attempt(async () => {
-    const composite = nodeOf("score-posting");
-    if (!composite) return "no composite to open";
+    const api = [...document.querySelectorAll(".tree .node")]
+      .find((node) => (node.querySelector(".label") || {}).textContent === "booking-api");
+    if (!api) return "no booking-api in the tree";
+    api.click();
+    await until(() => nodeOf("pricing"), 3000);
+    await wait(900);
+    const withParts = nodeOf("pricing");
+    if (!withParts) return "no block with parts to open";
     const moving = () => document.getElementById("canvas-svg").classList.contains("moving");
-    composite.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    withParts.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     const zoomed = Boolean(await until(moving, 400));
     await until(() => !moving(), 3000);
     const crumb = text('.crumb[aria-current="true"]') || "no current crumb";
@@ -708,7 +688,7 @@ const INTERACTIONS = `
   // screenshot this check captures shows the part worth looking at.
   const shown = await attempt(async () => {
     const withTests = () => [...document.querySelectorAll(".tree .node")]
-      .find((node) => node.textContent.includes("extract-profile-keywords"));
+      .find((node) => node.textContent.includes("refund-for"));
     if (!withTests()) return "not found";
     withTests().click();
     await wait(400);
@@ -791,49 +771,40 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("application", "marks") === value("application", "blocks") &&
         Number(value("application", "marks")) === 5 &&
         value("application", "plannedBlock") === "true" &&
-        value("application", "plannedLine") === true,
+        value("application", "plannedLine") === true &&
+        value("application", "withinTheBlocks") === true,
     ],
     [
-      "an architecture over blocks that still have a bench and a run behind them",
+      "the functions inside a service still have a bench and a run behind them, and a button leads to one",
       value("structured", "opened") === true &&
         value("structured", "subtype") === "SERVICE: REST API" &&
         value("structured", "bench") === true &&
         value("structured", "runnable") === true &&
         value("structured", "wayIn") === true &&
-        value("structured", "answers") === "triageTicket" &&
-        // The service's diagram is the block it holds and the way into it.
-        value("structured", "drawn") === "input triage-ticket" &&
-        // One line from the button to the operation it triggers, and a route
-        // from that button to the code that answers it, with a bench there.
-        value("structured", "triggers") === "agent-console.raiseTicket=>triage:calls" &&
-        /Triage Service/.test(String(value("structured", "route"))) &&
-        /Triage Ticket/.test(String(value("structured", "route"))) &&
+        value("structured", "answers") === "bookSeats" &&
+        // The service's parts, and the way into it.
+        value("structured", "drawn") === "(way in) book-seats cancel-booking find-event pricing" &&
+        String(value("structured", "triggers")).includes("box-office.bookSeats=>booking-api:calls") &&
+        /Booking API/.test(String(value("structured", "route"))) &&
+        /Book Seats/.test(String(value("structured", "route"))) &&
         value("structured", "canGo") === true &&
-        value("structured", "wentTo") === "support-desk/triage/triage-ticket" &&
+        value("structured", "wentTo") === "tickets/booking-api/book-seats" &&
         value("structured", "benchThere") === true,
     ],
     [
-      "a book is borrowed from the kiosk: the shelf is written and the notice goes on a queue",
-      value("lending", "opened") === true &&
-        value("lending", "offered") === true &&
-        value("lending", "withinTheBlocks") === true &&
-        value("lending", "ran") === true &&
-        value("lending", "sent") === true &&
-        value("lending", "shelf") === true,
-    ],
-    [
-      "a client's action runs the system that answers it, without naming the block that does",
+      "seats are booked from the box office without naming the block that answers: the database is written and the confirmation goes on a queue",
       value("fromTheTop", "offered") === true &&
-        value("fromTheTop", "label") === "Run raiseTicket" &&
+        value("fromTheTop", "label") === "Run bookSeats" &&
         value("fromTheTop", "ran") === true &&
-        value("fromTheTop", "priority") === true,
+        value("fromTheTop", "sent") === true &&
+        value("fromTheTop", "written") === true,
     ],
     [
       "a store can be seeded from the bench, and the run reads what was put there",
       value("store", "offered") === true &&
         value("store", "ran") === true &&
         value("store", "reachedTheStore") === true &&
-        String(value("store", "shape") ?? "").includes("openTickets"),
+        String(value("store", "shape") ?? "").includes("seatsLeft"),
     ],
     [
       "colouring changes what is drawn, and the legend explains it and folds away",
@@ -855,18 +826,15 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("architecture", "label") === "DATABASE" &&
         Number(value("architecture", "columns")) === 3 &&
         value("architecture", "joined") === true &&
-        value("architecture", "joinLabel") === "reads postings" &&
+        value("architecture", "joinLabel") === "reads venues" &&
         // A line takes the colour of what it reaches, so the two agree.
         value("architecture", "lineMatchesStore") === true &&
         // Dashed means not built yet, and this one is built.
         ["none", ""].includes(String(value("architecture", "solid"))) &&
         value("architecture", "below") === true &&
-        // It says what kind of thing it is. It used to say "not code" of a
-        // service as well, which is plainly untrue of one: the blocks inside
-        // it are code, and right there.
         /database/.test(String(value("architecture", "badges"))) &&
         !/not code/.test(String(value("architecture", "badges"))) &&
-        /postings/.test(String(value("architecture", "offers"))) &&
+        /venues/.test(String(value("architecture", "offers"))) &&
         value("architecture", "noPorts") === true,
     ],
     [
@@ -875,7 +843,6 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("planned", "onScreen") === true &&
         value("planned", "label") === "PLANNED" &&
         value("planned", "noBreakpoint") === true &&
-        value("planned", "wireIsQuiet") === true &&
         value("planned", "explained") === true &&
         value("planned", "noTesting") === true,
     ],
@@ -904,7 +871,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
     ["a block renamed on disk is redrawn without a manual reload", value("renamed", "renamed") === true],
     [
       "reloading keeps the diagram and the selection that were on screen",
-      value("renamed", "keptView") === "rank-jobs" && value("renamed", "keptSelection") === "Extract Profile Keywords",
+      value("renamed", "keptView") === "pricing" && value("renamed", "keptSelection") === "Refund For",
     ],
     [
       "a half-written file is reported over the last good diagram",
@@ -920,18 +887,19 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       "a visual project hides what only generated code has, and shows the code a block points at",
       value("visual", "generateHidden") === true && value("visual", "linked") === true && value("visual", "noBench") === true,
     ],
-    ["opening a block zooms into it and ends on its diagram", value("interface", "openedByDoubleClick") === "score-posting"],
+    ["opening a block zooms into it and ends on the parts it is made of", value("interface", "openedByDoubleClick") === "pricing"],
     [
-      "a run stops at a breakpoint with what reached the block on its wires, then runs on to the end",
+      "a run stops at a breakpoint, then runs on to the end",
       value("paused", "breakpointSet") === true &&
         value("paused", "paused") === true &&
-        value("paused", "heldAt") === "score-posting" &&
-        /\[4\]/.test(String(value("paused", "wire"))) &&
+        value("paused", "heldAt") === "price-seat" &&
         value("watched", "finished") === true &&
-        Number(value("watched", "done")) >= 4 &&
-        Number(value("watched", "carried")) >= 5 &&
         value("cleared", "cleared") === true &&
         value("cleared", "breakpoints") === 0,
+    ],
+    [
+      "a block on screen shows what a run did anywhere inside it, whoever called it, and one it never touched stays dark",
+      value("watched", "done") === "book-seats find-event pricing" && value("watched", "untouched") === true,
     ],
     [
       "a held run can be stopped, and the diagram shows what it cut short",
@@ -947,7 +915,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         JSON.stringify(value("ring", "withCapability")) ===
           JSON.stringify({ onlyThePlate: true, groupIsBigger: true, blockNotFocusable: true }) &&
         value("ring", "focused") === true &&
-        value("ring", "selectedBySpace") === "Score Posting",
+        value("ring", "selectedBySpace") === "Book Seats",
     ],
     [
       "every call of a block held at once can be let go together",
@@ -964,14 +932,10 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       Number(value("widened", "to")) >= Number(value("widened", "from")) + 150,
     ],
     [
-      "wires holding a value keep flowing while a run is held",
-      Number(value("paused", "flowing")) >= 1,
-    ],
-    [
-      "stepping moves the canvas into the block once, and leaves it there",
+      "stepping moves the canvas at most once, and leaves it where the run is held",
       value("stepped", "stepped") === true &&
         Number(value("stepped", "moves")) <= 1 &&
-        /score-posting/.test(String(value("stepped", "ended"))),
+        /pricing/.test(String(value("stepped", "ended"))),
     ],
     [
       "a project can be closed, which shows the start screen again",
@@ -1019,7 +983,7 @@ async function capture(window: BrowserWindow, name: string): Promise<void> {
 // self-check exits explicitly, or a failed check would pass as a command.
 function attachSelfCheck(
   window: BrowserWindow,
-  check: { root: string; projectDir: string; application: string; structured: string; lending: string },
+  check: { root: string; projectDir: string; application: string },
 ): void {
   window.webContents.on("did-fail-load", (_event, code, description) => {
     console.error(`The window failed to load: ${description} (${code})`);
@@ -1138,7 +1102,7 @@ function attachSelfCheck(
         `);
 
         // The agent defines and builds the system — here, all at once.
-        await cp(path.join(repoRoot, "examples", "job-ranker"), check.projectDir, { recursive: true });
+        await cp(path.join(repoRoot, "examples", "tickets"), check.projectDir, { recursive: true });
         await run("appeared", `
           const blocks = await until(() => document.querySelectorAll(".block-box").length);
           // Everything in a project the agent has only just written is new, so it arrives.
@@ -1151,6 +1115,10 @@ function attachSelfCheck(
         // part of a block that can be focused has to be the box and not the
         // group holding the breakpoint and the capability dots as well.
         await run("ring", `
+          const api = [...document.querySelectorAll(".tree .node")].find((node) => (node.querySelector(".label") || {}).textContent === "booking-api");
+          if (api) api.click();
+          await until(() => document.querySelector('.block-box[data-key="find-event"]'), 3000);
+          await wait(900);
           const measure = (key) => {
             const block = document.querySelector('.block-box[data-key="' + key + '"]');
             if (!block) return null;
@@ -1166,7 +1134,7 @@ function attachSelfCheck(
           };
           // Moving what can be focused onto the plate must not take the
           // keyboard with it: the keys are still answered by the block.
-          const plate = document.querySelector('.block-box[data-key="score-posting"] .block-plate');
+          const plate = document.querySelector('.block-box[data-key="book-seats"] .block-plate');
           plate.focus();
           const focused = document.activeElement === plate;
           plate.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
@@ -1174,9 +1142,9 @@ function attachSelfCheck(
           const selectedBySpace = text("#inspector h2");
 
           return {
-            // One with a breakpoint beside it, and one with a capability below it.
-            withBreakpoint: measure("score-posting"),
-            withCapability: measure("load-postings"),
+            // Both have a breakpoint beside them and capabilities below.
+            withBreakpoint: measure("book-seats"),
+            withCapability: measure("find-event"),
             focused,
             selectedBySpace,
           };
@@ -1199,40 +1167,49 @@ function attachSelfCheck(
           return { from: Math.round(from), to: Math.round(pane.getBoundingClientRect().width) };
         `);
 
-        // The person sets a breakpoint and watches a run of the system stop there.
+        // The person sets a breakpoint on the block that prices a seat, and
+        // books five seats: each is priced at once, and the run stops there.
         await run("paused", `
-          const root = [...document.querySelectorAll(".tree .node")]
-            .find((node) => (node.querySelector(".label") || {}).textContent === "rank-jobs");
-          if (!root) return { paused: false, stage: "no rank-jobs in the tree" };
-          root.click();
-          await wait(300);
-
-          const toggle = await until(() => document.querySelector('.block-box[data-key="score-posting"] .breakpoint-hit'));
+          const node = (label) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === label);
+          node("price-seat").click();
+          const toggle = await until(() => document.querySelector('.block-box[data-key="price-seat"] .breakpoint-hit'));
           if (!toggle) return { paused: false, stage: "no breakpoint to set" };
-          toggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-          const breakpointSet = document.querySelector('.block-box[data-key="score-posting"]').dataset.breakpoint === "true";
+          await wait(700);
+          document.querySelector('.block-box[data-key="price-seat"] .breakpoint-hit').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          const breakpointSet = document.querySelector('.block-box[data-key="price-seat"]').dataset.breakpoint === "true";
 
-          const runButton = await until(() => [...document.querySelectorAll(".bench .btn")]
-            .find((button) => button.textContent === "Run block" && !button.disabled));
+          node("book-seats").click();
+          const bench = await until(() => text(".insp-id") === "tickets/booking-api/book-seats" && document.querySelector(".bench"), 5000);
+          if (!bench) return { breakpointSet, paused: false, stage: "no bench for book-seats" };
+          const set = (label, value) => {
+            const field = [...bench.querySelectorAll(".field")].find((f) => (f.querySelector("label") || {}).textContent === label);
+            const control = field.querySelector("input, textarea");
+            control.value = value;
+            control.dispatchEvent(new Event("input", { bubbles: true }));
+          };
+          set("eventId", "gig");
+          set("seats", "5");
+          set("email", "ada@example.com");
+          set("Tickets Database · events", JSON.stringify({ gig: { id: "gig", name: "Night Gig", seatsLeft: 10, price: 25 } }));
+
+          const runButton = [...bench.querySelectorAll(".btn")].find((button) => button.textContent === "Run block" && !button.disabled);
           if (!runButton) return { breakpointSet, paused: false, stage: "no run button" };
           runButton.click();
 
-          const paused = Boolean(await until(() => /Paused before Score Posting/.test(text("#run-bar")), 20000));
+          const paused = Boolean(await until(() => /Paused before Price Seat/.test(text("#run-bar")), 20000));
+          await wait(900);
           const held = document.querySelector('.block-box[data-run="paused"]');
           return {
             breakpointSet,
             paused,
             heldAt: held ? held.dataset.key : null,
-            wire: text('.bus-group[data-bus="load-postings->score-posting"] .bus-count'),
             inspector: text("#inspector h2"),
             runBar: text("#run-bar"),
-            // A paused diagram still shows where the data is.
-            flowing: document.querySelectorAll(".bus-pulse.held").length,
           };
         `);
         await capture(window, "self-check-paused");
 
-        // Stepping goes into the block that was held, once, and stays there.
+        // Stepping lets the held call go and stops at whatever starts next.
         // Letting one held call go hands the breakpoint to the next in the
         // queue for a moment, which used to drag the canvas in and back out.
         await run("stepped", `
@@ -1248,13 +1225,12 @@ function attachSelfCheck(
           return { stepped: true, moves: seen.length - 1, ended: seen[seen.length - 1] };
         `);
 
-        // A block run once per item holds every call at once. "Continue all"
-        // lets the whole block through instead of one call at a time.
+        // A block called for several things at once holds every call.
+        // "Continue all" lets the whole block through instead of one at a time.
         await run("continueAll", `
           const button = (label) => [...document.querySelectorAll("#run-bar button")].find((b) => b.textContent === label);
-          // Back out of the block the step went into, to where its calls wait.
           for (let i = 0; i < 6; i += 1) {
-            if (/Paused before Score Posting/.test(text("#run-bar"))) break;
+            if (/Paused before Price Seat/.test(text("#run-bar"))) break;
             const on = button("Continue");
             if (!on) break;
             on.click();
@@ -1277,6 +1253,10 @@ function attachSelfCheck(
           };
         `);
 
+        // Seen from the API, a block shows what happened anywhere inside it,
+        // whoever called it: the handler, the event it looked up, and the
+        // pricing it asked for ran, and the cancelling handler was never
+        // touched.
         await run("watched", `
           const next = () => [...document.querySelectorAll("#run-bar button")].find((button) => button.textContent === "Continue");
           for (let i = 0; i < 24; i += 1) {
@@ -1290,28 +1270,30 @@ function attachSelfCheck(
             await wait(300);
           }
           const finished = Boolean(await until(() => /finished/.test(text("#run-bar")), 20000));
+          const api = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "booking-api");
+          if (api) api.click();
+          await until(() => document.querySelector('.block-box[data-key="cancel-booking"]'), 3000);
+          await wait(900);
           return {
             finished,
             runBar: text("#run-bar"),
-            done: document.querySelectorAll('.block-box[data-run="done"]').length,
-            carried: document.querySelectorAll('.bus-group[data-carried="true"]').length,
+            done: [...document.querySelectorAll('.block-box[data-run="done"]')].map((box) => box.dataset.key).sort().join(" "),
+            untouched: !document.querySelector('.block-box[data-key="cancel-booking"]').dataset.run,
           };
         `);
         await capture(window, "self-check-watched");
 
         // The person runs it again, and stops it while it is held.
         await run("stopped", `
-          const root = [...document.querySelectorAll(".tree .node")]
-            .find((node) => (node.querySelector(".label") || {}).textContent === "rank-jobs");
-          if (!root) return { paused: false, stage: "no rank-jobs in the tree" };
-          root.click();
+          const node = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "book-seats");
+          if (!node) return { paused: false, stage: "no book-seats in the tree" };
+          node.click();
 
           // Watching a run leaves the panel on whichever block it was last
-          // showing, which is somewhere inside. Wait for the panel to be the
-          // one this step means to run, or the bench found below would be
-          // another block's.
-          const onRoot = Boolean(await until(() => text(".insp-id") === "rank-jobs", 10000));
-          if (!onRoot) return { paused: false, stage: "panel stayed on " + text(".insp-id") };
+          // showing. Wait for the panel to be the one this step means to run,
+          // or the bench found below would be another block's.
+          const onBlock = Boolean(await until(() => text(".insp-id") === "tickets/booking-api/book-seats", 10000));
+          if (!onBlock) return { paused: false, stage: "panel stayed on " + text(".insp-id") };
 
           const runButton = await until(() => [...document.querySelectorAll(".bench .btn")]
             .find((button) => button.textContent === "Run block" && !button.disabled));
@@ -1319,6 +1301,7 @@ function attachSelfCheck(
           runButton.click();
 
           const paused = Boolean(await until(() => /Paused before/.test(text("#run-bar")), 20000));
+          await wait(900);
           const stop = [...document.querySelectorAll("#run-bar button")].find((button) => button.textContent === "Stop");
           if (stop) stop.click();
           const ended = Boolean(await until(() => /was stopped/.test(text("#run-bar")), 10000));
@@ -1331,16 +1314,19 @@ function attachSelfCheck(
           };
         `);
 
-        // Take the run and the breakpoint off again, and go back to the block
-        // the later steps expect, so nothing after this depends on them.
+        // Take the run and the breakpoint off again, and go to the block the
+        // later steps expect, so nothing after this depends on them.
         await run("cleared", `
+          const node = (label) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === label);
           const clear = [...document.querySelectorAll("#run-bar button")].find((button) => button.textContent === "Clear");
           if (clear) clear.click();
-          const toggle = document.querySelector('.block-box[data-key="score-posting"] .breakpoint-hit');
+          node("price-seat").click();
+          await until(() => document.querySelector('.block-box[data-key="price-seat"] .breakpoint-hit'), 3000);
+          await wait(700);
+          const toggle = document.querySelector('.block-box[data-key="price-seat"] .breakpoint-hit');
           if (toggle) toggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-          const keywords = [...document.querySelectorAll(".tree .node")].find((node) => node.textContent.includes("extract-profile-keywords"));
-          if (keywords) keywords.click();
-          await wait(300);
+          node("refund-for").click();
+          await wait(500);
           return {
             cleared: document.getElementById("run-bar").hidden,
             breakpoints: document.querySelectorAll('.block-box[data-breakpoint="true"]').length,
@@ -1348,11 +1334,11 @@ function attachSelfCheck(
         `);
 
         // The agent renames a block.
-        const loadPostings = inProject("blocks", "rank-jobs", "load-postings", "block.json");
-        const renamed = { ...JSON.parse(await readFile(loadPostings, "utf8")), name: "Load Postings (renamed on disk)" };
-        await writeFile(loadPostings, JSON.stringify(renamed, null, 2), "utf8");
+        const priceSeatFile = inProject("blocks", "tickets", "booking-api", "pricing", "price-seat", "block.json");
+        const renamed = { ...JSON.parse(await readFile(priceSeatFile, "utf8")), name: "Price Seat (renamed on disk)" };
+        await writeFile(priceSeatFile, JSON.stringify(renamed, null, 2), "utf8");
         await run("renamed", `
-          const renamed = await until(() => text('.block-box[data-key="load-postings"] .block-name') === "Load Postings (renamed on disk)");
+          const renamed = await until(() => text('.block-box[data-key="price-seat"] .block-name') === "Price Seat (renamed on disk)");
           return {
             renamed,
             keptView: text('.crumb[aria-current="true"]'),
@@ -1362,15 +1348,11 @@ function attachSelfCheck(
           };
         `);
 
-        // The agent adds a block to the diagram on screen. It has no ports, so
-        // the diagram stays free of errors for the steps that count them.
-        const auditLog = inProject("blocks", "rank-jobs", "audit-log");
+        // The agent adds a block to the diagram on screen. It takes nothing
+        // and returns nothing, which a block may do.
+        const auditLog = inProject("blocks", "tickets", "booking-api", "pricing", "audit-log");
         await mkdir(auditLog, { recursive: true });
-        await writeFile(path.join(auditLog, "block.json"), JSON.stringify({ responsibility: "Record what was ranked." }), "utf8");
-        const rankJobsFile = inProject("blocks", "rank-jobs", "block.json");
-        const withAudit = JSON.parse(await readFile(rankJobsFile, "utf8")) as { children: unknown[] };
-        withAudit.children.push("audit-log");
-        await writeFile(rankJobsFile, JSON.stringify(withAudit, null, 2), "utf8");
+        await writeFile(path.join(auditLog, "block.json"), JSON.stringify({ responsibility: "Record what was priced." }), "utf8");
         await run("added", `
           const added = Boolean(await until(() => document.querySelector('.block-box[data-key="audit-log"]')));
           return {
@@ -1381,36 +1363,28 @@ function attachSelfCheck(
         `);
         await capture(window, "self-check-added");
 
-        // The agent turns that block into a plan: drawn and explained, loosely
-        // wired to what it will eventually read, and built into nothing. One
-        // of its inputs is left with nothing on it, and the wire that does
-        // reach it comes from a real typed output, so the diagram stays free
-        // of errors only if nothing is asked of a planned block.
+        // The agent turns that block into a plan: drawn and explained, with
+        // its types still words, and built into nothing.
         await writeFile(
           path.join(auditLog, "block.json"),
           JSON.stringify(
             {
-              responsibility: "Record what was ranked, so a later run can be compared against it.",
+              responsibility: "Record what was priced, so a later day can be compared against it.",
               planned: true,
-              inputs: { entries: "the ranked postings", runId: "some identifier, not decided yet" },
-              outputs: { written: "whether it was recorded" },
+              inputs: { prices: "the prices worked out", runId: "some identifier, not decided yet" },
             },
             null,
             2,
           ),
           "utf8",
         );
-        const withPlan = JSON.parse(await readFile(rankJobsFile, "utf8")) as { wires: string[] };
-        withPlan.wires.push("rank-results.ranked -> audit-log.entries");
-        await writeFile(rankJobsFile, JSON.stringify(withPlan, null, 2), "utf8");
         await run("planned", `
           if (!(await until(() => document.querySelector('.block-box[data-key="audit-log"][data-planned="true"]')))) {
             return { drawn: false };
           }
           // A block nobody has laid out lands wherever the automatic layout
-          // puts it, which is nowhere near blocks that were placed by hand.
-          // Lay the diagram out afresh and fit it, so the screenshot this
-          // check leaves behind shows the plan beside what is built.
+          // puts it. Lay the diagram out afresh and fit it, so the screenshot
+          // this check leaves behind shows the plan beside what is built.
           document.getElementById("layout-reset").click();
           await wait(500);
           document.getElementById("zoom-fit").click();
@@ -1425,7 +1399,6 @@ function attachSelfCheck(
             onScreen: Boolean(box) && box.getBoundingClientRect().right < pane.getBoundingClientRect().left,
             label: text('.block-box[data-key="audit-log"] .block-kind'),
             noBreakpoint: Boolean(box) && !box.querySelector(".breakpoint"),
-            wireIsQuiet: Boolean(document.querySelector('.bus-group[data-planned="true"]')),
             explained: /generates, checks and runs nothing/.test(text(".planned-note")),
             noTesting: ![...document.querySelectorAll(".group-title")].some((h) => h.textContent === "Testing"),
           };
@@ -1435,27 +1408,26 @@ function attachSelfCheck(
         // Put the selection back on a block whose code can be typed in, which
         // is where the steps after this one carry on from.
         await run("reselected", `
-          const node = [...document.querySelectorAll(".tree .node")]
-            .find((n) => n.textContent.includes("extract-profile-keywords"));
+          const node = [...document.querySelectorAll(".tree .node")].find((n) => n.textContent.includes("refund-for"));
           if (node) node.click();
           await wait(400);
           return { editable: Boolean(document.querySelector(".code-edit-input")) };
         `);
 
         // The agent is caught halfway through writing a file, then finishes it.
-        const rankResults = inProject("blocks", "rank-jobs", "rank-results", "block.json");
-        const whole = await readFile(rankResults, "utf8");
-        await writeFile(rankResults, "{ half written", "utf8");
+        const refundFor = inProject("blocks", "tickets", "booking-api", "pricing", "refund-for", "block.json");
+        const whole = await readFile(refundFor, "utf8");
+        await writeFile(refundFor, "{ half written", "utf8");
         await run("broken", `
           const banner = await until(() => {
             const note = document.getElementById("load-error");
             return note && !note.hidden ? note.textContent : null;
           });
-          return { reported: Boolean(banner && /rank-results/.test(banner)), stillDrawn: document.querySelectorAll(".block-box").length };
+          return { reported: Boolean(banner && /refund-for/.test(banner)), stillDrawn: document.querySelectorAll(".block-box").length };
         `);
         await capture(window, "self-check-broken");
 
-        await writeFile(rankResults, whole, "utf8");
+        await writeFile(refundFor, whole, "utf8");
         await run("restored", `
           return { recovered: Boolean(await until(() => document.getElementById("load-error").hidden)) };
         `);
@@ -1468,26 +1440,26 @@ function attachSelfCheck(
           box.dispatchEvent(new Event("input", { bubbles: true }));
           return { typed: true };
         `);
-        const impl = inProject("blocks", "rank-jobs", "extract-profile-keywords", "impl.ts");
+        const impl = inProject("blocks", "tickets", "booking-api", "pricing", "refund-for", "impl.ts");
         await writeFile(impl, `${await readFile(impl, "utf8")}\n// changed by the agent\n`, "utf8");
         await run("conflict", `
           const warned = await until(() => /changed on disk/.test(text(".code-foot .bench-note")));
           return { warned: Boolean(warned), note: text(".code-foot .bench-note") };
         `);
 
-        // The agent leaves a wire out, so the diagram has a real problem to show.
-        const rankJobs = inProject("blocks", "rank-jobs", "block.json");
-        const unwired = JSON.parse(await readFile(rankJobs, "utf8")) as { wires: string[] };
-        unwired.wires = unwired.wires.filter((wire) => wire !== "extract-profile-keywords.keywords -> score-posting.keywords");
-        await writeFile(rankJobs, JSON.stringify(unwired, null, 2), "utf8");
+        // The agent points a store port at a table that is not there, so the
+        // diagram has a real problem to show.
+        const findEvent = inProject("blocks", "tickets", "booking-api", "find-event", "block.json");
+        const misread = JSON.parse(await readFile(findEvent, "utf8")) as { access: string[] };
+        misread.access = ["events reads tickets-db.venues"];
+        await writeFile(findEvent, JSON.stringify(misread, null, 2), "utf8");
         await run("problems", `
-          const root = [...document.querySelectorAll(".tree .node")]
-            .find((node) => (node.querySelector(".label") || {}).textContent === "rank-jobs");
-          if (!root) return { listed: false };
-          root.click();
+          const node = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "find-event");
+          if (!node) return { listed: false };
+          node.click();
           const problem = await until(() => {
             const found = [...document.querySelectorAll(".problem.error .problem-text")]
-              .find((entry) => /Nothing is connected/.test(entry.textContent));
+              .find((entry) => /exposes no table called "venues"/.test(entry.textContent));
             return found ? found.textContent : null;
           });
           document.getElementById("inspector-pane").scrollTop = 0;
@@ -1498,58 +1470,58 @@ function attachSelfCheck(
         // The project becomes a visual one, and a block is pointed at a file.
         const manifestFile = inProject("fragmentor.json");
         await writeFile(manifestFile, JSON.stringify({ ...JSON.parse(await readFile(manifestFile, "utf8")), mode: "visual" }, null, 2), "utf8");
-        const pointed = inProject("blocks", "rank-jobs", "load-postings", "block.json");
-        await writeFile(pointed, JSON.stringify({ ...JSON.parse(await readFile(pointed, "utf8")), code: "postings.json" }, null, 2), "utf8");
+        await writeFile(
+          findEvent,
+          JSON.stringify({ ...JSON.parse(await readFile(findEvent, "utf8")), code: "blocks/tickets/booking-api/find-event/impl.ts" }, null, 2),
+          "utf8",
+        );
         await run("visual", `
           const generateHidden = Boolean(await until(() => document.getElementById("generate-code").hidden));
-          const block = await until(() => document.querySelector('.block-box[data-key="load-postings"]'));
+          const block = await until(() => document.querySelector('.block-box[data-key="find-event"]'));
           if (!block) return { generateHidden, linked: false };
           block.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 9, clientX: 5, clientY: 5, isPrimary: true }));
           window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 9, clientX: 5, clientY: 5 }));
           const where = await until(() => text(".code-where"));
           return {
             generateHidden,
-            linked: /postings\\.json/.test(where),
+            linked: /find-event\\/impl\\.ts/.test(where),
             noBench: !document.querySelector(".bench"),
             mode: text(".status .mode-tag"),
           };
         `);
         await capture(window, "self-check-visual");
 
-        // The agent draws the rest of the system: the file the postings come
-        // out of becomes a store of its own, with its shape on show, and the
-        // block that reads it is joined straight to it instead of showing an
-        // input that arrives from nowhere.
-        const postingsDb = inProject("blocks", "rank-jobs", "postings-db");
-        await mkdir(postingsDb, { recursive: true });
+        // The agent draws more of the system: the venues the events are held
+        // at become a store of their own, kept beside the block that reads
+        // them, with its shape on show and the block joined straight to it.
+        const venuesDb = inProject("blocks", "tickets", "booking-api", "venues-db");
+        await mkdir(venuesDb, { recursive: true });
         await writeFile(
-          path.join(postingsDb, "block.json"),
+          path.join(venuesDb, "block.json"),
           JSON.stringify(
             {
-              name: "Postings Store",
+              name: "Venues",
               role: "database",
-              responsibility: "Holds every job posting that can be ranked.",
-              exposes: {
-                postings: {
-                  type: "{ title: string; company: string; description: string }",
-                  description: "One row per posting.",
-                },
-              },
+              responsibility: "Every venue an event can be held at.",
+              exposes: { venues: { type: "{ id: string; name: string; capacity: number }", description: "One row per venue." } },
             },
             null,
             2,
           ),
           "utf8",
         );
-        const withStore = JSON.parse(await readFile(rankJobs, "utf8")) as { children: unknown[] };
-        withStore.children = [...withStore.children, "postings-db"];
-        await writeFile(rankJobs, JSON.stringify(withStore, null, 2), "utf8");
-        const reader = JSON.parse(await readFile(pointed, "utf8")) as Record<string, unknown>;
-        reader.access = ["reads postings-db.postings"];
-        await writeFile(pointed, JSON.stringify(reader, null, 2), "utf8");
+        await writeFile(
+          findEvent,
+          JSON.stringify(
+            { ...JSON.parse(await readFile(findEvent, "utf8")), access: ["events reads tickets-db.events", "reads venues-db.venues"] },
+            null,
+            2,
+          ),
+          "utf8",
+        );
 
         await run("architecture", `
-          if (!(await until(() => document.querySelector('.block-box[data-key="postings-db"][data-architecture="true"]')))) {
+          if (!(await until(() => document.querySelector('.block-box[data-key="venues-db"][data-architecture="true"]')))) {
             return { drawn: false };
           }
           document.getElementById("layout-reset").click();
@@ -1558,22 +1530,22 @@ function attachSelfCheck(
           await wait(500);
           // Laying the diagram out afresh replaces every element, so the
           // blocks have to be found again before anything is measured.
-          const box = document.querySelector('.block-box[data-key="postings-db"]');
+          const box = document.querySelector('.block-box[data-key="venues-db"]');
           box.querySelector(".block-plate").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 11, clientX: 5, clientY: 5, isPrimary: true }));
           window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 11, clientX: 5, clientY: 5 }));
           await wait(400);
+          const join = document.querySelector('.access-group[data-access="find-event=>venues-db:reads"]');
           return {
             drawn: true,
-            label: text('.block-box[data-key="postings-db"] .block-kind'),
+            label: text('.block-box[data-key="venues-db"] .block-kind'),
             columns: box.querySelectorAll(".exposed-field").length,
-            joined: Boolean(document.querySelector('.access-group[data-access="load-postings=>postings-db:reads"]')),
-            joinLabel: text(".access-label"),
-            lineMatchesStore:
-              getComputedStyle(document.querySelector(".access")).stroke ===
-              getComputedStyle(box.querySelector(".block-kind")).fill,
-            solid: getComputedStyle(document.querySelector(".access")).strokeDasharray,
+            joined: Boolean(join),
+            joinLabel: join ? join.querySelector(".access-label").textContent : "",
+            lineMatchesStore: Boolean(join) &&
+              getComputedStyle(join.querySelector(".access")).stroke === getComputedStyle(box.querySelector(".block-kind")).fill,
+            solid: join ? getComputedStyle(join.querySelector(".access")).strokeDasharray : "",
             below: (() => {
-              const reader = document.querySelector('.block-box[data-key="load-postings"]').getBoundingClientRect();
+              const reader = document.querySelector('.block-box[data-key="find-event"]').getBoundingClientRect();
               return box.getBoundingClientRect().top >= reader.bottom;
             })(),
             badges: [...document.querySelectorAll(".badge")].map((b) => b.textContent).join(" "),
@@ -1596,14 +1568,13 @@ function attachSelfCheck(
           };
         `);
 
-
         // A whole application, which is the only diagram that puts every kind
-        // of block and every kind of connection on screen at once.
+        // of block on screen at once.
         await run("application", `
           const link = [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.application)});
           if (!link) return { opened: false };
           link.click();
-          if (!(await until(() => document.querySelector('.block-box[data-key="links-db"]')))) return { opened: false };
+          if (!(await until(() => document.querySelector('.block-box[data-key="tickets-db"]')))) return { opened: false };
           document.getElementById("zoom-fit").click();
           await wait(600);
 
@@ -1611,25 +1582,32 @@ function attachSelfCheck(
           const colour = (key) => getComputedStyle(document.querySelector('.block-box[data-key="' + key + '"] .block-kind')).fill;
           const line = (id) => document.querySelector('.access-group[data-access="' + id + '"] .access');
 
+          // No field may be drawn wider than the block holding it, or it
+          // would run across whatever sits to the right.
+          const overflowed = [...document.querySelectorAll(".block-box")].some((each) => {
+            const edge = each.getBoundingClientRect().right;
+            return [...each.querySelectorAll(".exposed-field, .exposed-name")].some((f) => f.getBoundingClientRect().right > edge);
+          });
+
           return {
             opened: true,
             // Whoever starts the system on the left, what it calls to the right.
-            clientLeft: box("browser").left < box("api").left,
-            callsRight: box("api").left < box("geo-lookup").left,
+            clientLeft: box("box-office").left < box("booking-api").left,
+            callsRight: box("booking-api").left > box("box-office").right,
             // What it keeps, underneath rather than further along.
-            storeBelow: box("links-db").top >= box("api").bottom,
-            queueBelow: box("click-events").top >= box("api").bottom,
+            storeBelow: box("tickets-db").top >= box("booking-api").bottom,
+            queueBelow: box("outbox").top >= box("booking-api").bottom,
             // One line each way to the database, not one line saying "connected".
-            readAndWrite: Boolean(line("api=>links-db:reads")) && Boolean(line("api=>links-db:writes")),
-            distinctColours: new Set([colour("api"), colour("links-db"), colour("click-events"), colour("browser")]).size === 4,
-            // A mark in the corner of every block, and none on a boundary,
-            // which stands for the way in rather than for a block.
+            readAndWrite: Boolean(line("booking-api=>tickets-db:reads")) && Boolean(line("booking-api=>tickets-db:writes")),
+            distinctColours: new Set([colour("booking-api"), colour("tickets-db"), colour("outbox"), colour("box-office")]).size === 4,
+            // A mark in the corner of every block.
             marks: document.querySelectorAll(".block-box .role-icon").length,
             blocks: document.querySelectorAll(".block-box[data-key]").length,
-            // Nothing calls a geolocation provider yet, so both the block and
-            // the line to it are drawn as the plan they are.
-            plannedLine: getComputedStyle(line("api=>geo-lookup:calls")).strokeDasharray !== "none",
-            plannedBlock: document.querySelector('.block-box[data-key="geo-lookup"]').dataset.planned,
+            // Nothing sends reminders yet, so both the job and its line to the
+            // database are drawn as the plan they are.
+            plannedLine: getComputedStyle(line("reminders=>tickets-db:reads")).strokeDasharray !== "none",
+            plannedBlock: document.querySelector('.block-box[data-key="reminders"]').dataset.planned,
+            withinTheBlocks: !overflowed,
           };
         `);
         await capture(window, "self-check-application");
@@ -1650,10 +1628,6 @@ function attachSelfCheck(
           const byBlockFirst = document.getElementById("colour-by").textContent;
           const legend = document.getElementById("legend");
           const legendGone = legend.hidden && getComputedStyle(legend).display === "none";
-          // Compared as the variable, because a stroke written as a
-          // color-mix of it can come back unresolved and make two different
-          // colours read alike. Taken across the whole diagram, because one
-          // block can land on the same colour either way by chance.
           const everyRole = () =>
             [...document.querySelectorAll(".block-box[data-key]")]
               .map((box) => getComputedStyle(box).getPropertyValue("--role").trim())
@@ -1668,7 +1642,7 @@ function attachSelfCheck(
           // legend is also where a colour is chosen, and each swatch shows the
           // colour that kind is actually drawn in.
           const swatch = roleOf('#legend .legend-row[data-role="database"]');
-          const named = legendRows() === 9 && swatch !== "" && swatch === roleOf('.block-box[data-key="links-db"]');
+          const named = legendRows() === 10 && swatch !== "" && swatch === roleOf('.block-box[data-key="tickets-db"]');
 
           // The arrow that folds it away sits at its top right.
           const head = document.querySelector("#legend .legend-head").getBoundingClientRect();
@@ -1689,7 +1663,7 @@ function attachSelfCheck(
             tinted: byBlockRoles.trim() !== "" && byBlockRoles !== everyRole(),
             arrowAtRight,
             folded,
-            unfolded: legendRows() === 9,
+            unfolded: legendRows() === 10,
           };
         `);
         await capture(window, "self-check-by-kind");
@@ -1705,32 +1679,24 @@ function attachSelfCheck(
         // unless the person asks for the other way.
         await run("byBlock", `
           const role = (key) => getComputedStyle(document.querySelector('.block-box[data-key="' + key + '"]')).getPropertyValue("--role").trim();
-          return { apart: new Set([role("browser"), role("api"), role("links-db")]).size === 3 };
+          return { apart: new Set([role("box-office"), role("booking-api"), role("tickets-db")]).size === 3 };
         `);
         await capture(window, "self-check-by-block");
 
-        // The structured example, where the blocks inside the service are
-        // ordinary blocks with a bench and a run behind them.
+        // The functions inside the service are ordinary blocks with a bench
+        // and a run behind them, and the box office's button leads to one.
         await run("structured", `
-          document.getElementById("close-project").click();
-          await until(() => document.body.dataset.project !== "open");
-          await wait(300);
-          const link = [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.structured)});
-          if (!link) return { opened: false };
-          link.click();
-          if (!(await until(() => document.querySelector('.block-box[data-key="triage"]')))) return { opened: false };
-          document.getElementById("zoom-fit").click();
-          await wait(500);
-          const top = { subtype: text('.block-box[data-key="triage"] .block-kind') };
+          const node = (label) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === label);
+          const top = { subtype: text('.block-box[data-key="booking-api"] .block-kind') };
 
-          // The console's button, and where pressing it leads. One line from
-          // that action to that operation, and a route from it to the code.
+          // The box office's buttons, and where pressing one leads. One line
+          // from each action to the operation it triggers, and a route from
+          // it to the code.
           top.triggers = [...document.querySelectorAll(".access-group")]
             .map((group) => group.dataset.access)
-            .filter((id) => id.startsWith("agent-console"))
+            .filter((id) => id.startsWith("box-office"))
             .join(" ");
-          const console_ = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "agent-console");
-          console_.click();
+          node("box-office").click();
           await wait(500);
           const happens = [...document.querySelectorAll(".section")].find((each) => /When this happens/.test(each.textContent));
           // Read from inside that section, or the first shape on the panel
@@ -1739,35 +1705,28 @@ function attachSelfCheck(
           top.canGo = Boolean(happens && [...happens.querySelectorAll(".btn")].find((b) => b.textContent === "Go there"));
           if (top.canGo) {
             [...happens.querySelectorAll(".btn")].find((b) => b.textContent === "Go there").click();
-            await wait(600);
+            await wait(900);
             top.wentTo = text(".insp-id");
             top.benchThere = Boolean(document.querySelector(".bench"));
           }
 
-          // Into the service first, where its boundary should be drawn.
-          const service = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "triage");
-          service.click();
-          await wait(600);
-          top.wayIn = Boolean(document.querySelector('.block-box[data-key="input"]'));
-          top.answers = text('.access-group[data-access="input=>triage-ticket:triageTicket"] .access-label');
+          // Into the service, where its way in is drawn.
+          node("booking-api").click();
+          await until(() => document.querySelector('.block-box[data-key="find-event"]'), 3000);
+          await wait(900);
+          top.wayIn = Boolean(document.querySelector('.block-box[data-key="(way in)"]'));
+          top.answers = text('.access-group[data-access="(way in)=>book-seats:bookSeats"] .access-label');
           top.drawn = [...document.querySelectorAll(".block-box[data-key]")].map((box) => box.dataset.key).sort().join(" ");
 
-          // And on into the request path, which is an ordinary composite
-          // with a bench behind it.
-          for (const id of ["triage-ticket"]) {
-            const node = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === id);
-            node.click();
-            await wait(500);
-          }
+          // And on into the handler, which is a function with a part of its own.
+          node("book-seats").click();
+          await wait(900);
           const bench = Boolean(await until(() => document.querySelector(".bench")));
           return {
             opened: true,
             subtype: top.subtype,
             bench,
-            runnable: Boolean(document.querySelector('.block-box[data-key="load-account"] .breakpoint')),
-            // The way into the service: the operation it answers, and the
-            // block that answers it, so the blocks one level down no longer
-            // show inputs arriving from nowhere.
+            runnable: Boolean(document.querySelector('.block-box[data-key="reserve"] .breakpoint')),
             wayIn: top.wayIn,
             answers: top.answers,
             drawn: top.drawn,
@@ -1780,59 +1739,52 @@ function attachSelfCheck(
         `);
         await capture(window, "self-check-structured");
 
-        // Seeding a store and running through it. The bench is on
-        // triage-ticket from the step above, whose load-account reads the
-        // accounts file through a Store port.
+        // Seeding a store and running through it. The bench is on book-seats
+        // from the step above, which reads the events through a Store port.
         await run("store", `
           const bench = document.querySelector(".bench");
           const boxes = [...bench.querySelectorAll("textarea")];
-          const rows = boxes.find((area) => (area.closest(".field").querySelector("label") || {}).textContent === "Accounts · accounts");
+          const rows = boxes.find((area) => (area.closest(".field").querySelector("label") || {}).textContent === "Tickets Database · events");
           if (!rows) return { offered: false };
 
           const shape = (rows.closest(".field").querySelector(".pdesc") || {}).textContent;
-          rows.value = JSON.stringify({ "acc-1": { id: "acc-1", name: "Northwind Labs", plan: "enterprise", openTickets: 2 } });
+          rows.value = JSON.stringify({ gig: { id: "gig", name: "Night Gig", seatsLeft: 10, price: 25 } });
           rows.dispatchEvent(new Event("input", { bubbles: true }));
 
-          // The ticket the run is about.
           const set = (label, value) => {
             const field = [...bench.querySelectorAll(".field")].find((f) => (f.querySelector("label") || {}).textContent === label);
             const control = field.querySelector("input");
             control.value = value;
             control.dispatchEvent(new Event("input", { bubbles: true }));
           };
-          set("accountId", "acc-1");
-          set("subject", "Site is down");
-          set("body", "Nobody can log in.");
+          set("eventId", "gig");
+          set("seats", "2");
+          set("email", "ada@example.com");
 
           [...bench.querySelectorAll(".btn")].find((b) => b.textContent === "Run block").click();
-          const done = await until(() => {
-            const panel = document.querySelector(".run-result, .bench .subsection");
-            return document.body.textContent.includes("What the stores hold now");
-          }, 20000);
-
-          const output = text(".bench pre");
+          const done = await until(() => document.body.textContent.includes("What the stores hold now"), 20000);
           return {
             offered: true,
             shape,
             ran: Boolean(done),
             // The run reached a row nothing but the store could have supplied.
-            reachedTheStore: document.body.textContent.includes("Northwind Labs"),
+            reachedTheStore: document.body.textContent.includes("Booked 2 for Night Gig"),
           };
         `);
         await capture(window, "self-check-store");
 
-        // The whole point: press the button on the client, and the system
+        // The whole point: press the button on the box office, and the system
         // runs. Nothing here says which block answers it.
         await run("fromTheTop", `
-          const console_ = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "agent-console");
-          console_.click();
+          const office = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "box-office");
+          office.click();
           await wait(500);
 
-          const trying = [...document.querySelectorAll(".section")].find((each) => /Try raiseTicket/.test(each.textContent));
+          const trying = [...document.querySelectorAll(".section")].find((each) => /Try bookSeats/.test(each.textContent));
           if (!trying) return { offered: false };
 
-          const rows = [...trying.querySelectorAll("textarea")].find((area) => /Accounts/.test((area.closest(".field").querySelector("label") || {}).textContent || ""));
-          rows.value = JSON.stringify({ "acc-3": { id: "acc-3", name: "Harbour Freight", plan: "free", openTickets: 7 } });
+          const rows = [...trying.querySelectorAll("textarea")].find((area) => /events/.test((area.closest(".field").querySelector("label") || {}).textContent || ""));
+          rows.value = JSON.stringify({ gig: { id: "gig", name: "Night Gig", seatsLeft: 10, price: 25 } });
           rows.dispatchEvent(new Event("input", { bubbles: true }));
 
           const set = (label, value) => {
@@ -1841,92 +1793,27 @@ function attachSelfCheck(
             control.value = value;
             control.dispatchEvent(new Event("input", { bubbles: true }));
           };
-          set("accountId", "acc-3");
-          set("subject", "Exporting reports");
-          set("body", "Where do I find the export button?");
+          set("eventId", "gig");
+          set("seats", "2");
+          set("email", "bo@example.com");
 
-          const button = [...trying.querySelectorAll(".btn")].find((b) => b.textContent === "Run raiseTicket");
+          const button = [...trying.querySelectorAll(".btn")].find((b) => b.textContent === "Run bookSeats");
           const label = button ? button.textContent : "";
           button.click();
 
-          // The headline this ticket produces, and no other: it names the
-          // account that only the seeded row could have supplied, and the
-          // subject that only this request carried. Waiting for it is both
-          // "the run finished" and "it went the whole way".
-          const headline = "Harbour Freight: Exporting reports";
-          const arrived = await until(() => document.body.textContent.includes(headline), 20000);
-
+          const arrived = await until(() => document.body.textContent.includes("Booked 2 for Night Gig"), 20000);
           return {
             offered: true,
             label,
             ran: Boolean(arrived),
-            priority: document.body.textContent.includes('"priority": 25'),
+            // Nothing comes back along the queue, so the only evidence it was
+            // written to is what the run left on it.
+            sent: document.body.textContent.includes("1 message sent"),
+            // And the seats came off the event, which is a write rather than a read.
+            written: document.body.textContent.includes('"seatsLeft": 8'),
           };
         `);
         await capture(window, "self-check-from-the-top");
-
-        // The lending desk, opened from nothing: a member borrows a book, and
-        // the notice about it goes on a queue.
-        await run("lending", `
-          document.getElementById("close-project").click();
-          await until(() => document.body.dataset.project !== "open");
-          await wait(300);
-          const link = [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.lending)});
-          if (!link) return { opened: false };
-          link.click();
-          if (!(await until(() => document.querySelector('.block-box[data-key="kiosk"]')))) return { opened: false };
-          document.getElementById("zoom-fit").click();
-          await wait(500);
-
-          const drawn = [...document.querySelectorAll(".block-box[data-key]")].map((box) => box.dataset.key).sort().join(" ");
-
-          // No field may be drawn wider than the block holding it, or it
-          // would run across whatever sits to the right.
-          const overflowed = [...document.querySelectorAll(".block-box")].some((box) => {
-            const edge = box.getBoundingClientRect().right;
-            return [...box.querySelectorAll(".exposed-field, .exposed-name")].some((f) => f.getBoundingClientRect().right > edge);
-          });
-
-          const kiosk = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "kiosk");
-          kiosk.click();
-          await wait(500);
-
-          const trying = [...document.querySelectorAll(".section")].find((each) => /Try borrowBook/.test(each.textContent));
-          if (!trying) return { opened: true, drawn, offered: false };
-
-          const seed = (label, rows) => {
-            const area = [...trying.querySelectorAll("textarea")].find((a) => new RegExp(label).test((a.closest(".field").querySelector("label") || {}).textContent || ""));
-            area.value = JSON.stringify(rows);
-            area.dispatchEvent(new Event("input", { bubbles: true }));
-          };
-          seed("books", { "978-1": { isbn: "978-1", title: "Piranesi", copies: 1, onLoan: 0 } });
-          seed("members", { "m-1": { id: "m-1", name: "Ada", onLoan: 0, suspended: false } });
-
-          const set = (label, value) => {
-            const field = [...trying.querySelectorAll(".field")].find((f) => (f.querySelector("label") || {}).textContent === label);
-            field.querySelector("input").value = value;
-            field.querySelector("input").dispatchEvent(new Event("input", { bubbles: true }));
-          };
-          set("memberId", "m-1");
-          set("isbn", "978-1");
-
-          [...trying.querySelectorAll(".btn")].find((b) => b.textContent === "Run borrowBook").click();
-          const arrived = await until(() => document.body.textContent.includes("Back in 7 days"), 20000);
-
-          return {
-            opened: true,
-            drawn,
-            offered: true,
-            withinTheBlocks: !overflowed,
-            ran: Boolean(arrived),
-            // The queue is the other half: nothing is returned along it, so
-            // the only evidence is what the run left on it.
-            sent: document.body.textContent.includes("1 message sent"),
-            // And the book left the shelf, which is a write rather than a read.
-            shelf: document.body.textContent.includes('"onLoan": 1'),
-          };
-        `);
-        await capture(window, "self-check-lending");
 
         await run("backToKind", `
           document.getElementById("colour-by").click();

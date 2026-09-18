@@ -8,7 +8,6 @@ import { writeAgentFiles } from "./emit.js";
 import { blockFromFile } from "../model/block.js";
 import { CAPABILITIES } from "../model/capabilities.js";
 import { ARCHITECTURE_ROLES } from "../model/roles.js";
-import { validateComposite } from "../model/validate.js";
 import { blockDir, manifestPath, manifestSchema } from "../project/project.js";
 import type { Manifest } from "../project/project.js";
 import { casesSchema } from "../run/cases.js";
@@ -178,30 +177,21 @@ describe("the guide", () => {
 
 describe("compactJson", () => {
   it("keeps what fits on one line there, and is still exactly the same JSON", () => {
-    const value = workedExample.blocks["price-orders"];
+    const value = workedExample.blocks["price-orders/report-totals"];
     const text = compactJson(value);
 
     expect(JSON.parse(text)).toEqual(value);
     expect(text).toContain('"outputs": { "totals": "number[]", "grandTotal": "number" }');
-    expect(text).toContain('"children": ["load-orders", { "block": "price-order", "each": "order" }, "sum-totals"]');
+    expect(text).toContain('"capabilities": { "files": "FileSystem" }');
   });
 });
 
 describe("the structured worked example", () => {
   it("is a valid project by the same rules the checker applies", () => {
     expect(manifestSchema.safeParse(workedExample.manifest).success).toBe(true);
-
-    const root = blockFromFile(workedExample.blocks["price-orders"], "price-orders");
-    const children = new Map(
-      Object.entries(workedExample.blocks)
-        .filter(([blockPath]) => blockPath !== "price-orders")
-        .map(([blockPath, file]) => {
-          const id = blockPath.split("/").at(-1)!;
-          return [id, blockFromFile(file, id)] as const;
-        }),
-    );
-    expect(validateComposite(root, children)).toEqual([]);
-
+    for (const [blockPath, file] of Object.entries(workedExample.blocks)) {
+      expect(() => blockFromFile(file, blockPath.split("/").at(-1)!), blockPath).not.toThrow();
+    }
     for (const cases of Object.values(workedExample.cases)) expect(casesSchema.safeParse(cases).success).toBe(true);
   });
 
@@ -212,26 +202,26 @@ describe("the structured worked example", () => {
 
     const specified = await checkProject(dir);
     expect(specified.errorCount).toBe(0);
-    // The composite's code is generated; the three blocks without children are the agent's.
+    // Every function is the agent's to write, the one calling the others included.
     expect(specified.unimplemented).toEqual([
       "price-orders/load-orders",
       "price-orders/price-order",
-      "price-orders/sum-totals",
+      "price-orders/report-totals",
     ]);
 
-    // The code the guide shows, plus the two leaves it leaves to the reader.
+    // The code the guide shows, plus the two blocks it leaves to the reader.
     const code: Record<string, string> = {
-      "price-orders/price-order": workedExample.leafCode.typescript!,
+      [workedExample.codeBlock.typescript!]: workedExample.code.typescript!,
+      "price-orders/price-order": `import type { PriceOrderInput, PriceOrderOutput, PriceOrderCaps } from "./contract.js";
+
+export async function priceOrder(input: PriceOrderInput, caps: PriceOrderCaps): Promise<PriceOrderOutput> {
+  return { total: input.order.lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0) };
+}
+`,
       "price-orders/load-orders": `import type { LoadOrdersInput, LoadOrdersOutput, LoadOrdersCaps } from "./contract.js";
 
 export async function loadOrders(input: LoadOrdersInput, caps: LoadOrdersCaps): Promise<LoadOrdersOutput> {
   return { orders: JSON.parse(await caps.files.readFile(input.path)) };
-}
-`,
-      "price-orders/sum-totals": `import type { SumTotalsInput, SumTotalsOutput, SumTotalsCaps } from "./contract.js";
-
-export async function sumTotals(input: SumTotalsInput, caps: SumTotalsCaps): Promise<SumTotalsOutput> {
-  return { sum: input.totals.reduce((total, value) => total + value, 0) };
 }
 `,
     };
@@ -251,7 +241,7 @@ export async function sumTotals(input: SumTotalsInput, caps: SumTotalsCaps): Pro
       "utf8",
     );
     await writeFile(
-      path.join(blockDir(dir, "price-orders"), "cases.json"),
+      path.join(blockDir(dir, "price-orders/report-totals"), "cases.json"),
       JSON.stringify([{ name: "prices a file of orders", input: { path: "orders.json" }, expected: { totals: [17, 0], grandTotal: 17 } }]),
       "utf8",
     );
@@ -265,12 +255,12 @@ export async function sumTotals(input: SumTotalsInput, caps: SumTotalsCaps): Pro
       ["passed", []],
       ["passed", []],
     ]);
-    expect((await runCases(dir, "price-orders")).map((r) => [r.status, r.differences])).toEqual([["passed", []]]);
+    expect((await runCases(dir, "price-orders/report-totals")).map((r) => [r.status, r.differences])).toEqual([["passed", []]]);
   }, 30_000);
 
   it.skipIf(!python)("shows Python that parses", () => {
     const parsed = spawnSync(python!, ["-c", "import ast,sys; ast.parse(sys.stdin.read())"], {
-      input: workedExample.leafCode.python,
+      input: workedExample.code.python,
       encoding: "utf8",
     });
     expect(parsed.stderr).toBe("");
@@ -294,11 +284,11 @@ describe("the visual worked example", () => {
         outputs: { orders: "Order[]" },
         capabilities: { files: "FileSystem" },
       },
-      "price-orders/sum-totals": {
-        responsibility: "Add the totals together.",
-        code: "src/pricing.ts#sumTotals",
-        inputs: { totals: "number[]" },
-        outputs: { sum: "number" },
+      "price-orders/price-order": {
+        responsibility: "Add up one order.",
+        code: "src/pricing.ts#priceOrder",
+        inputs: { order: "Order" },
+        outputs: { total: "number" },
       },
     });
 
@@ -308,8 +298,7 @@ describe("the visual worked example", () => {
       [
         "export async function loadOrders(path: string, files: FileSystem): Promise<Order[]> { return []; }",
         "export function priceOrder(order: Order): number { return 0; }",
-        "export function sumTotals(totals: number[]): number { return 0; }",
-        "export async function priceOrders(path: string, files: FileSystem) { return {}; }",
+        "export async function reportTotals(path: string, files: FileSystem) { return {}; }",
       ].join("\n"),
       "utf8",
     );
@@ -389,15 +378,9 @@ describe("the architecture the guide shows", () => {
     await writeBlocks({
       // The client sits beside the service it calls, not inside it, which is
       // the shape every one of these examples is written for.
-      "orders-app": {
-        responsibility: "The orders application.",
-        children: ["orders-page", "orders-api"],
-      },
+      "orders-app": { role: "component", responsibility: "The orders application." },
       "orders-app/orders-page": architectureExample["orders-page"]!,
-      "orders-app/orders-api": {
-        ...architectureExample["orders-api"]!,
-        children: ["orders-db", "billing", "load-orders"],
-      },
+      "orders-app/orders-api": architectureExample["orders-api"]!,
       "orders-app/orders-api/orders-db": architectureExample["orders-db"]!,
       "orders-app/orders-api/billing": architectureExample.billing!,
       "orders-app/orders-api/load-orders": architectureExample["load-orders"]!,
@@ -408,6 +391,7 @@ describe("the architecture the guide shows", () => {
     expect(report.errorCount).toBe(0);
     // Neither a database nor someone else's payment service is unfinished work.
     expect([...report.architecture].sort()).toEqual([
+      "orders-app",
       "orders-app/orders-api",
       "orders-app/orders-api/billing",
       "orders-app/orders-api/orders-db",

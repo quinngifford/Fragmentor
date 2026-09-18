@@ -12,11 +12,10 @@
 // "result" — and, when the run is traced, with an event for every block call
 // along the way.
 //
-// Tracing wraps every block beneath the one being run before anything runs. A
-// composite reaches a child through the child module's exports at the moment
-// it calls it, so replacing the export is enough to see every call, which is
-// how the diagram shows what flowed along each wire, and to hold a call back
-// at a breakpoint.
+// Tracing wraps every function in the system before anything runs. Code
+// reaches another block through that block module's exports at the moment it
+// calls it, so replacing the export is enough to see every call, whoever makes
+// it, and to hold a call back at a breakpoint.
 
 const fs = require("node:fs/promises");
 const path = require("node:path");

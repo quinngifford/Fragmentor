@@ -8,10 +8,12 @@
  * kind of thing a block is, so a database, a queue or another team's service
  * can be drawn as itself and the functions that touch it can be joined to it.
  *
- * Exactly one role is code: `function`. Every other role is architecture —
- * something the system talks to, rather than something Fragmentor writes,
- * checks or runs. That single distinction is what the rest of the system
- * branches on, so adding a role is adding a description, not a code path.
+ * Exactly one role is code that is called: `function`. Every other role is
+ * architecture in the narrower sense the rest of the system branches on —
+ * something with no function of its own for Fragmentor to write, check or
+ * run. A `component` is ours, but it is made of the parts inside it rather
+ * than called itself, so it falls on the same side. Adding a role is adding a
+ * description, not a code path.
  *
  * A role is the general kind. What something is exactly — a dictionary, a
  * REST API, PostgreSQL — is the block's own `subtype`, written as free text
@@ -21,6 +23,7 @@
 
 export type Role =
   | "function"
+  | "component"
   | "service"
   | "external"
   | "database"
@@ -45,10 +48,19 @@ export interface RoleDefinition {
 export const ROLES: Record<Role, RoleDefinition> = {
   function: {
     label: "FUNCTION",
-    description: "Code that runs: a function with typed inputs and outputs. This is what a block is unless it says otherwise.",
+    description:
+      "Code that runs: one function, which other code calls. It may take inputs and return outputs, or neither. This is what a block is unless it says otherwise.",
     entryNoun: "port",
     subtypes: [],
     isCode: true,
+  },
+  component: {
+    label: "COMPONENT",
+    description:
+      "A part of the system made of smaller parts, when it is not one of the other kinds itself: a module, a package, a group of related pieces. It is never called; the parts inside it are.",
+    entryNoun: "part",
+    subtypes: ["module", "package", "UI", "infrastructure"],
+    isCode: false,
   },
   service: {
     label: "SERVICE",
@@ -107,16 +119,16 @@ export const ROLES: Record<Role, RoleDefinition> = {
 
 export const ROLE_IDS = Object.keys(ROLES) as Role[];
 
-/** Every role but `function`: something the system talks to rather than code Fragmentor owns. */
+/** Every role but `function`: a block that is not called, so has no code of its own. */
 export const ARCHITECTURE_ROLES = ROLE_IDS.filter((role) => !ROLES[role].isCode);
 
 /**
- * Whether a block stands for something the system talks to rather than code.
+ * Whether a block is anything but a function: something with no code of its
+ * own, because it is never called.
  *
- * Everything that treats architecture differently asks this rather than
+ * Everything that treats these blocks differently asks this rather than
  * comparing roles, so a new role needs no change anywhere else: nothing is
- * generated for it, nothing is checked in it, nothing runs, and its wiring is
- * read as a description rather than as a specification.
+ * generated for it, nothing is checked in it, and nothing runs.
  */
 export function isArchitecture(role: Role): boolean {
   return !ROLES[role].isCode;

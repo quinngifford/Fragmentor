@@ -1,0 +1,22 @@
+[
+  {
+    "name": "the first four seats are full price",
+    "input": {
+      "fullPrice": 25,
+      "seat": 4
+    },
+    "expected": {
+      "price": 25
+    }
+  },
+  {
+    "name": "the fifth is ten percent off",
+    "input": {
+      "fullPrice": 25,
+      "seat": 5
+    },
+    "expected": {
+      "price": 22.5
+    }
+  }
+]

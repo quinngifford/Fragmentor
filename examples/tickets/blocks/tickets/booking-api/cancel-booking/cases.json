@@ -1,0 +1,41 @@
+[
+  {
+    "name": "refunds all but the fee, and puts the seats back on sale",
+    "input": {
+      "bookingId": "gig-10"
+    },
+    "stores": {
+      "tickets/tickets-db.events": {
+        "gig": {
+          "id": "gig",
+          "name": "Night Gig",
+          "seatsLeft": 8,
+          "price": 25
+        }
+      },
+      "tickets/tickets-db.bookings": {
+        "gig-10": {
+          "id": "gig-10",
+          "eventId": "gig",
+          "email": "ada@example.com",
+          "seats": 2,
+          "total": 50
+        }
+      }
+    },
+    "expected": {
+      "refunded": 46,
+      "message": "Cancelled booking gig-10: 46 is on its way back."
+    }
+  },
+  {
+    "name": "says so when there is no such booking",
+    "input": {
+      "bookingId": "gig-99"
+    },
+    "expected": {
+      "refunded": 0,
+      "message": "There is no such booking."
+    }
+  }
+]

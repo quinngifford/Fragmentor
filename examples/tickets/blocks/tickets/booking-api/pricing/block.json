@@ -1,0 +1,5 @@
+{
+  "role": "component",
+  "subtype": "module",
+  "responsibility": "What seats cost, and what comes back when a booking is cancelled."
+}

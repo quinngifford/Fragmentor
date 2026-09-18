@@ -11,10 +11,9 @@ import type { CodeProblem } from "./typescript.js";
 /**
  * Everything Fragmentor can say about whether a project is sound, in one pass.
  *
- * This is what the coding agent runs after each change. Contracts and
- * composites are regenerated first, so the code is checked against the
- * diagram as it is now rather than as it was when someone last remembered to
- * generate them. A visual project has no code of Fragmentor's to check: what
+ * This is what the coding agent runs after each change. Contracts are
+ * regenerated first, so the code is checked against the diagram as it is now
+ * rather than as it was when someone last remembered to generate them. A visual project has no code of Fragmentor's to check: what
  * is checked there is the diagram, and that it points at code that exists.
  */
 
@@ -44,16 +43,10 @@ export interface CheckReport {
    */
   architecture: string[];
   /**
-   * Real blocks whose own code is not Fragmentor's to write, because a
-   * planned block or a piece of the architecture sits beneath them. Nobody is
-   * meant to write these, so they are not unfinished work either.
-   */
-  waiting: string[];
-  /**
-   * Blocks whose implementation is still the untouched starting point, or in
-   * a visual project, blocks not yet linked to the code they stand for.
-   * Neither planned blocks nor the blocks waiting on them are among these:
-   * nothing about a plan is unfinished, it is simply not started.
+   * Function blocks whose implementation is still the untouched starting
+   * point, or in a visual project, blocks not yet linked to the code they
+   * stand for. Planned blocks are not among these: nothing about a plan is
+   * unfinished, it is simply not started.
    */
   unimplemented: string[];
   /** Blocks with no saved tests. Always empty in a visual project, which has none. */
@@ -83,11 +76,8 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
   });
 
   const blocks = Object.values(snapshot.blocks);
-  // Work that is somebody's to finish: not a plan, not a piece of the
-  // architecture, and not a block whose code waits on either.
-  const real = blocks.filter(
-    (block) => !block.planned && !block.holdsPlan && !block.architecture && !block.holdsArchitecture,
-  );
+  // Work that is somebody's to finish: code that is not only a plan.
+  const real = blocks.filter((block) => !block.planned && !block.architecture);
   const errorCount =
     snapshot.diagnostics.filter((d) => d.severity === "error").length +
     generated.problems.length +
@@ -103,9 +93,6 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
     systems,
     planned: blocks.filter((block) => block.planned).map((block) => block.path),
     architecture: blocks.filter((block) => !block.planned && block.architecture).map((block) => block.path),
-    waiting: blocks
-      .filter((block) => !block.planned && !block.architecture && (block.holdsPlan || block.holdsArchitecture))
-      .map((block) => block.path),
     unimplemented: real.filter((block) => !block.implemented).map((block) => block.path),
     untested: visual ? [] : real.filter((block) => block.cases.length === 0).map((block) => block.path),
     errorCount,

@@ -1,6 +1,7 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runBlock, startRun } from "./run.js";
 import type { RunEvent } from "./run.js";
 
@@ -9,59 +10,127 @@ const callsIn = (events: RunEvent[]) => events.filter((event): event is Call => 
 const blockOf = (events: RunEvent[], id: number) => callsIn(events).find((call) => call.id === id)?.block ?? null;
 
 /**
- * These run the example project's real code in a real subprocess. They are the
- * only tests that prove a block can actually be executed rather than only
- * generated.
+ * These run real code in a real subprocess. They are the only tests that
+ * prove a block can actually be executed rather than only generated.
+ *
+ * The project is written here rather than taken from an example, so it can
+ * hold exactly what the harness has to be tested against: a block reading
+ * files, one calling another for several items at once, one calling a block
+ * beside it, one returning nothing, and a system in a language that cannot
+ * run yet.
  */
 
-const projectDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "examples", "job-ranker");
+let projectDir: string;
 
-const profile = { skills: ["TypeScript", "Node.js", "testing"] };
+const files: Record<string, unknown> = {
+  "fragmentor.json": {
+    name: "Files",
+    goal: "",
+    mode: "structured",
+    existingCode: false,
+    start: "build",
+    granularity: { level: 3, maxDepth: 4 },
+    systems: [
+      { rootBlock: "files", language: "typescript" },
+      { rootBlock: "py", language: "python" },
+    ],
+  },
+  "blocks/files/block.json": { role: "component", responsibility: "Reads and counts the lines of files." },
+  "blocks/files/count-lines/block.json": {
+    responsibility: "Count the lines of several files at once.",
+    inputs: { paths: "string[]" },
+    outputs: { counts: "number[]" },
+    capabilities: { files: "FileSystem" },
+  },
+  "blocks/files/count-lines/impl.ts": `import { readLines } from "../read-lines/impl.js";
 
-describe("running a leaf", () => {
-  it("returns what the block computed", async () => {
-    const result = await runBlock({
-      projectDir,
-      blockPath: "rank-jobs/extract-profile-keywords",
-      input: { profile },
-    });
+export async function countLines(input: { paths: string[] }, caps: any) {
+  const read = await Promise.all(input.paths.map((path) => readLines({ path }, caps)));
+  return { counts: read.map((each) => each.lines.length) };
+}
+`,
+  "blocks/files/read-lines/block.json": {
+    responsibility: "Read a file's lines, leaving out the blank ones.",
+    inputs: { path: "string" },
+    outputs: { lines: "string[]" },
+    capabilities: { files: "FileSystem" },
+  },
+  "blocks/files/read-lines/impl.ts": `import { withoutBlanks } from "../without-blanks/impl.js";
+
+export async function readLines(input: { path: string }, caps: any) {
+  const text = await caps.files.readFile(input.path);
+  return withoutBlanks({ lines: text.split("\\n") }, caps);
+}
+`,
+  "blocks/files/without-blanks/block.json": {
+    responsibility: "Leave out lines with nothing on them.",
+    inputs: { lines: "string[]" },
+    outputs: { lines: "string[]" },
+  },
+  "blocks/files/without-blanks/impl.ts": `export async function withoutBlanks(input: { lines: string[] }, caps: unknown) {
+  return { lines: input.lines.filter((line) => line.trim() !== "") };
+}
+`,
+  "blocks/files/write-note/block.json": {
+    responsibility: "Write a note to a file. It returns nothing.",
+    inputs: { path: "string", text: "string" },
+    capabilities: { files: "FileSystem" },
+  },
+  "blocks/files/write-note/impl.ts": `export async function writeNote(input: { path: string; text: string }, caps: any) {
+  await caps.files.writeFile(input.path, input.text);
+}
+`,
+  "blocks/py/block.json": { role: "component", responsibility: "Python, which cannot run yet." },
+  "blocks/py/shout/block.json": { responsibility: "Shout.", inputs: { text: "string" }, outputs: { text: "string" } },
+  "a.txt": "one\ntwo\n\nthree\n",
+  "b.txt": "x\n",
+  "c.txt": "",
+};
+
+beforeAll(async () => {
+  projectDir = await mkdtemp(path.join(tmpdir(), "fragmentor-run-"));
+  for (const [file, contents] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(projectDir, file)), { recursive: true });
+    await writeFile(
+      path.join(projectDir, file),
+      typeof contents === "string" ? contents : JSON.stringify(contents, null, 2),
+      "utf8",
+    );
+  }
+});
+
+afterAll(async () => {
+  await rm(projectDir, { recursive: true, force: true });
+});
+
+describe("running a block", () => {
+  it("returns what the block computed, reading through its capability", async () => {
+    const result = await runBlock({ projectDir, blockPath: "files/read-lines", input: { path: "a.txt" } });
 
     expect(result.error).toBeUndefined();
     expect(result.ok).toBe(true);
-    expect(result.output).toEqual({ keywords: ["node.js", "testing", "typescript"] });
+    expect(result.output).toEqual({ lines: ["one", "two", "three"] });
     expect(result.outputProblems).toEqual([]);
   });
 
-  it("gives a capability that reads from the project", async () => {
-    const result = await runBlock({
-      projectDir,
-      blockPath: "rank-jobs/load-postings",
-      input: { path: "postings.json" },
-    });
+  it("runs a block that returns nothing, and holds it to no result", async () => {
+    const result = await runBlock({ projectDir, blockPath: "files/write-note", input: { path: "note.txt", text: "hello" } });
 
     expect(result.ok).toBe(true);
-    const output = result.output as { postings: { title: string }[] };
-    expect(output.postings).toHaveLength(4);
-    expect(output.postings[0]!.title).toBe("Senior TypeScript Engineer");
+    expect(result.output).toBeUndefined();
+    expect(result.outputProblems).toEqual([]);
+    expect(await readFile(path.join(projectDir, "note.txt"), "utf8")).toBe("hello");
   });
 
   it("refuses to read outside the project", async () => {
-    const result = await runBlock({
-      projectDir,
-      blockPath: "rank-jobs/load-postings",
-      input: { path: "../../package.json" },
-    });
+    const result = await runBlock({ projectDir, blockPath: "files/read-lines", input: { path: "../../package.json" } });
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain("outside the project");
   });
 
   it("reports what a block threw, rather than swallowing it", async () => {
-    const result = await runBlock({
-      projectDir,
-      blockPath: "rank-jobs/load-postings",
-      input: { path: "does-not-exist.json" },
-    });
+    const result = await runBlock({ projectDir, blockPath: "files/read-lines", input: { path: "does-not-exist.txt" } });
 
     expect(result.ok).toBe(false);
     expect(result.error).toBeTruthy();
@@ -70,57 +139,22 @@ describe("running a leaf", () => {
 
 describe("checking the contract on both sides", () => {
   it("refuses input that does not match, without running anything", async () => {
-    const result = await runBlock({
-      projectDir,
-      blockPath: "rank-jobs/extract-profile-keywords",
-      input: { profile: { skills: "TypeScript" } },
-    });
+    const result = await runBlock({ projectDir, blockPath: "files/read-lines", input: { path: 3 } });
 
     expect(result.ok).toBe(false);
-    expect(result.inputProblems).toEqual([expect.stringContaining("input.profile.skills should be a list")]);
+    expect(result.inputProblems).toEqual([expect.stringContaining("input.path should be")]);
     expect(result.durationMs).toBe(0);
   });
 
   it("names a missing input", async () => {
-    const result = await runBlock({ projectDir, blockPath: "rank-jobs/extract-profile-keywords", input: {} });
-    expect(result.inputProblems).toEqual(["input.profile is missing."]);
+    const result = await runBlock({ projectDir, blockPath: "files/read-lines", input: {} });
+    expect(result.inputProblems).toEqual(["input.path is missing."]);
   });
-});
-
-describe("running a composite", () => {
-  it("runs the whole system, calling every block underneath", async () => {
-    const result = await runBlock({
-      projectDir,
-      blockPath: "rank-jobs",
-      input: { sourcePath: "postings.json", profile },
-    });
-
-    expect(result.error).toBeUndefined();
-    expect(result.ok).toBe(true);
-    expect(result.outputProblems).toEqual([]);
-
-    const output = result.output as { ranked: { title: string; score: number; reasons: string[] }[] };
-    expect(output.ranked).toHaveLength(4);
-
-    // The TypeScript roles should beat the warehouse job on this profile.
-    expect(output.ranked[0]!.title).toBe("Senior TypeScript Engineer");
-    expect(output.ranked.at(-1)!.title).toBe("Warehouse Supervisor");
-    expect(output.ranked.at(-1)!.score).toBe(0);
-    expect(output.ranked[0]!.reasons.join(" ")).toContain("typescript");
-
-    // Ordering is by score, best first.
-    const scores = output.ranked.map((entry) => entry.score);
-    expect([...scores].sort((a, b) => b - a)).toEqual(scores);
-  }, 30_000);
 });
 
 describe("a language that cannot run yet", () => {
   it("says so plainly instead of failing oddly", async () => {
-    const result = await runBlock({
-      projectDir,
-      blockPath: "embed-postings/clean-text",
-      input: { posting: { title: "x", description: "y" } },
-    });
+    const result = await runBlock({ projectDir, blockPath: "py/shout", input: { text: "x" } });
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain("cannot run Python blocks yet");
@@ -128,33 +162,27 @@ describe("a language that cannot run yet", () => {
 });
 
 describe("watching a run", () => {
-  const input = { sourcePath: "postings.json", profile };
+  const input = { paths: ["a.txt", "b.txt", "c.txt"] };
 
-  it("reports every block call beneath a composite, each with the call it came from", async () => {
+  it("reports every call the run makes, each with the call it came from, wherever the block sits", async () => {
     const events: RunEvent[] = [];
-    const result = await runBlock({ projectDir, blockPath: "rank-jobs", input, onEvent: (event) => events.push(event) });
-    expect(result.ok).toBe(true);
+    const result = await runBlock({ projectDir, blockPath: "files/count-lines", input, onEvent: (event) => events.push(event) });
+    expect(result.output).toEqual({ counts: [3, 1, 0] });
 
     const of = (block: string) => callsIn(events).filter((call) => call.block === block);
-    const root = of("rank-jobs")[0]!;
+    const root = of("files/count-lines")[0]!;
     expect(root).toMatchObject({ parent: null, input });
-    expect(of("rank-jobs/load-postings")).toHaveLength(1);
-    expect(of("rank-jobs/score-posting")).toHaveLength(4);
-    expect(of("rank-jobs/score-posting").every((call) => call.parent === root.id)).toBe(true);
 
-    // Each posting's scorer is the parent of the normaliser that ran for it.
-    const scorers = new Set(of("rank-jobs/score-posting").map((call) => call.id));
-    expect(of("rank-jobs/score-posting/normalize-text").map((call) => scorers.has(call.parent!))).toEqual([true, true, true, true]);
-
-    // What load-postings returned is exactly what went down the wire to the scorers, one posting each.
-    const loaded = of("rank-jobs/load-postings")[0]!;
-    const returned = events.find((event) => event.type === "return" && event.id === loaded.id) as Extract<RunEvent, { type: "return" }>;
-    const postings = (returned.output as { postings: unknown[] }).postings;
-    expect(of("rank-jobs/score-posting").map((call) => (call.input as { posting: unknown }).posting)).toEqual(postings);
+    // Neither block is inside the one that calls it: each sits beside it.
+    const readers = of("files/read-lines");
+    expect(readers.map((call) => call.input)).toEqual([{ path: "a.txt" }, { path: "b.txt" }, { path: "c.txt" }]);
+    expect(readers.every((call) => call.parent === root.id)).toBe(true);
+    const readerIds = new Set(readers.map((call) => call.id));
+    expect(of("files/without-blanks").map((call) => readerIds.has(call.parent!))).toEqual([true, true, true]);
   }, 30_000);
 
   it("records nothing, and pauses nowhere, when nobody is watching", async () => {
-    const result = await runBlock({ projectDir, blockPath: "rank-jobs", input, breakpoints: ["rank-jobs/load-postings"] });
+    const result = await runBlock({ projectDir, blockPath: "files/count-lines", input, breakpoints: ["files/read-lines"] });
     expect(result.ok).toBe(true);
   }, 30_000);
 
@@ -163,9 +191,9 @@ describe("watching a run", () => {
     let returnedWhileHeld: boolean | null = null;
     const { control, outcome } = startRun({
       projectDir,
-      blockPath: "rank-jobs",
-      input,
-      breakpoints: ["rank-jobs/rank-results"],
+      blockPath: "files/count-lines",
+      input: { paths: ["a.txt"] },
+      breakpoints: ["files/without-blanks"],
       onEvent: (event) => {
         events.push(event);
         if (event.type !== "paused") return;
@@ -176,7 +204,7 @@ describe("watching a run", () => {
 
     expect((await outcome).ok).toBe(true);
     const held = events.filter((event) => event.type === "paused").map((event) => blockOf(events, event.id));
-    expect(held).toEqual(["rank-jobs/rank-results"]);
+    expect(held).toEqual(["files/without-blanks"]);
     expect(returnedWhileHeld).toBe(false);
   }, 30_000);
 
@@ -185,9 +213,9 @@ describe("watching a run", () => {
     const heldAt: (string | null)[] = [];
     const { control, outcome } = startRun({
       projectDir,
-      blockPath: "rank-jobs",
-      input,
-      breakpoints: ["rank-jobs"],
+      blockPath: "files/count-lines",
+      input: { paths: ["a.txt"] },
+      breakpoints: ["files/count-lines"],
       onEvent: (event) => {
         events.push(event);
         if (event.type !== "paused") return;
@@ -197,16 +225,16 @@ describe("watching a run", () => {
     });
 
     expect((await outcome).ok).toBe(true);
-    expect(heldAt).toEqual(["rank-jobs", "rank-jobs/load-postings"]);
+    expect(heldAt).toEqual(["files/count-lines", "files/read-lines"]);
   }, 30_000);
 
-  it("holds every call of a block run once per item, one at a time", async () => {
+  it("holds every call of a block called for several things at once, one at a time", async () => {
     const events: RunEvent[] = [];
     const { control, outcome } = startRun({
       projectDir,
-      blockPath: "rank-jobs",
+      blockPath: "files/count-lines",
       input,
-      breakpoints: ["rank-jobs/score-posting"],
+      breakpoints: ["files/read-lines"],
       onEvent: (event) => {
         events.push(event);
         if (event.type === "paused") setTimeout(() => control.resume("continue"), 10);
@@ -215,16 +243,16 @@ describe("watching a run", () => {
 
     expect((await outcome).ok).toBe(true);
     const held = events.filter((event) => event.type === "paused").map((event) => event.id);
-    expect(held).toHaveLength(4);
-    expect(new Set(held).size).toBe(4);
+    expect(held).toHaveLength(3);
+    expect(new Set(held).size).toBe(3);
   }, 30_000);
 
   it("stops a held run, and says it was stopped", async () => {
     const { control, outcome } = startRun({
       projectDir,
-      blockPath: "rank-jobs",
+      blockPath: "files/count-lines",
       input,
-      breakpoints: ["rank-jobs/load-postings"],
+      breakpoints: ["files/read-lines"],
       onEvent: (event) => {
         if (event.type === "paused") control.stop();
       },
@@ -236,10 +264,10 @@ describe("watching a run", () => {
   it("does not count time held at a breakpoint against the time limit", async () => {
     const { control, outcome } = startRun({
       projectDir,
-      blockPath: "rank-jobs/extract-profile-keywords",
-      input: { profile },
+      blockPath: "files/read-lines",
+      input: { path: "a.txt" },
       timeoutMs: 3000,
-      breakpoints: ["rank-jobs/extract-profile-keywords"],
+      breakpoints: ["files/read-lines"],
       onEvent: (event) => {
         if (event.type === "paused") setTimeout(() => control.resume("continue"), 3500);
       },
@@ -255,13 +283,13 @@ describe("watching a run", () => {
     const events: RunEvent[] = [];
     const { control, outcome } = startRun({
       projectDir,
-      blockPath: "rank-jobs",
+      blockPath: "files/count-lines",
       input,
-      breakpoints: ["rank-jobs/score-posting"],
+      breakpoints: ["files/read-lines"],
       onEvent: (event) => {
         events.push(event);
         if (event.type !== "paused") return;
-        // All four postings are waiting at the breakpoint by now.
+        // All three files are waiting at the breakpoint by now.
         control.setBreakpoints([]);
         control.resume("continue");
       },
@@ -277,9 +305,9 @@ describe("watching a run", () => {
     let stepped = false;
     const { control, outcome } = startRun({
       projectDir,
-      blockPath: "rank-jobs",
+      blockPath: "files/count-lines",
       input,
-      breakpoints: ["rank-jobs/score-posting"],
+      breakpoints: ["files/read-lines"],
       onEvent: (event) => {
         events.push(event);
         if (event.type !== "paused") return;
@@ -288,7 +316,7 @@ describe("watching a run", () => {
         if (!stepped) {
           stepped = true;
           control.resume("step");
-        } else if (block === "rank-jobs/score-posting/normalize-text") {
+        } else if (block === "files/without-blanks") {
           control.setBreakpoints([]);
           control.resume("continue");
         }
@@ -296,11 +324,11 @@ describe("watching a run", () => {
     });
 
     expect((await outcome).ok).toBe(true);
-    expect(heldAt.at(-1)).toBe("rank-jobs/score-posting/normalize-text");
+    expect(heldAt.at(-1)).toBe("files/without-blanks");
 
-    // It went into the posting that was let go, not another one still waiting.
-    const firstScorer = callsIn(events).find((call) => call.block === "rank-jobs/score-posting")!;
-    const heldNormaliser = callsIn(events).find((call) => call.block === "rank-jobs/score-posting/normalize-text")!;
-    expect(heldNormaliser.parent).toBe(firstScorer.id);
+    // It went into the file that was let go, not another one still waiting.
+    const firstReader = callsIn(events).find((call) => call.block === "files/read-lines")!;
+    const heldTidier = callsIn(events).find((call) => call.block === "files/without-blanks")!;
+    expect(heldTidier.parent).toBe(firstReader.id);
   }, 30_000);
 });

@@ -27,14 +27,8 @@ beforeEach(async () => {
   const root = makeBlock({
     id: "double-it",
     name: "Double It",
-    kind: "composite",
     inputs: { value: { type: t.number, description: "The number to double." } },
     outputs: { doubled: { type: t.number } },
-    children: [{ block: "add-to-self", mode: "once" }],
-    wires: [
-      { source: { from: "input", port: "value" }, target: { to: "block", block: "add-to-self", port: "value" } },
-      { source: { from: "block", block: "add-to-self", port: "sum" }, target: { to: "output", port: "doubled" } },
-    ],
   });
 
   const child = makeBlock({
@@ -99,14 +93,11 @@ describe("projectSnapshot", () => {
     expect(root.code).toBeNull();
   });
 
-  it("reports what each wire carries, and its execution order", async () => {
-    const root = (await projectSnapshot(dir)).blocks["double-it"]!;
+  it("lists the blocks each block is made of, and nothing about what calls what", async () => {
+    const snapshot = await projectSnapshot(dir);
 
-    expect(root.wires.map((w) => `${w.text} :: ${w.type}`)).toEqual([
-      "input.value -> add-to-self.value :: number",
-      "add-to-self.sum -> output.doubled :: number",
-    ]);
-    expect(root.order).toEqual(["add-to-self"]);
+    expect(snapshot.blocks["double-it"]!.children).toEqual(["double-it/add-to-self"]);
+    expect(snapshot.blocks["double-it/add-to-self"]!.children).toEqual([]);
   });
 
   it("has no sources before anything is generated, and carries them afterwards", async () => {
@@ -117,8 +108,9 @@ describe("projectSnapshot", () => {
     const after = (await projectSnapshot(dir)).blocks["double-it"]!;
     expect(after.sources.contract).toContain("export const doubleItInput");
     expect(after.sources.impl).toContain("export async function doubleIt");
-    // The composite's code is generated, so it exists as soon as its diagram does.
-    expect(after.implemented).toBe(true);
+    // Its code is the agent's to write, whatever is inside it, and the
+    // starting point is not code anyone wrote.
+    expect(after.implemented).toBe(false);
   });
 
   it("carries the saved layout so the canvas opens where it was left", async () => {
@@ -133,13 +125,12 @@ describe("projectSnapshot", () => {
       makeBlock({
         id: "add-to-self",
         name: "Add To Self",
-        inputs: { value: { type: t.string } },
-        outputs: { sum: { type: t.number } },
+        access: [{ from: null, verb: "reads", resource: "nowhere", entry: null }],
       }),
     );
 
     const snapshot = await projectSnapshot(dir);
-    expect(snapshot.diagnostics.map((d) => d.message)).toContainEqual(expect.stringContaining("Type mismatch"));
+    expect(snapshot.diagnostics.map((d) => d.message)).toContainEqual(expect.stringContaining('no block called "nowhere"'));
     expect(Object.keys(snapshot.blocks)).toHaveLength(2);
   });
 });
@@ -156,7 +147,7 @@ describe("a visual project's snapshot", () => {
       await mkdir(path.join(other, "blocks", "serve", "handle"), { recursive: true });
       await writeFile(
         path.join(other, "blocks", "serve", "block.json"),
-        JSON.stringify({ responsibility: "Serves requests.", code: "main.go#main", children: ["handle"] }),
+        JSON.stringify({ responsibility: "Serves requests.", code: "main.go#main" }),
         "utf8",
       );
       await writeFile(

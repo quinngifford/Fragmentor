@@ -24,25 +24,10 @@ const scorePosting: Block = blockFromFile(
   "score-posting",
 );
 
-/**
- * A composite written to trip up naming: its own input and both children's
- * outputs are all called `score`, and one child runs once per item.
- */
-const rankJobs: Block = blockFromFile(
-  {
-    responsibility: "Rank postings.",
-    inputs: { postings: "{ title: string }[]", score: "number" },
-    outputs: { best: "number", summary: "string" },
-    children: [{ block: "score-posting", each: "posting" }, "summarise"],
-    wires: [
-      "input.postings -> score-posting.posting",
-      "input.score -> score-posting.weight",
-      "score-posting.score -> summarise.scores",
-      "summarise.score -> output.best",
-      "summarise.text -> output.summary",
-    ],
-  },
-  "rank-jobs",
+/** A block that takes nothing and returns nothing, which is a block like any other. */
+const clearCache: Block = blockFromFile(
+  { responsibility: "Empty the cache.", capabilities: { log: "Logger" } },
+  "clear-cache",
 );
 
 function typeScriptErrors(source: string): string[] {
@@ -132,15 +117,13 @@ describe("the TypeScript pack", () => {
     expect(pack.isUnimplemented("export async function scorePosting() { return { score: 1 }; }")).toBe(false);
   });
 
-  it("writes a composite as its diagram, keeping every variable apart", () => {
-    const source = pack.compositeSource(rankJobs);
+  it("gives a block that returns nothing a result of void, not an empty object", () => {
+    const source = pack.contractSource({ block: clearCache, blockPath: "app/clear-cache" });
 
     expect(typeScriptErrors(source)).toEqual([]);
-    expect(source).toContain("const { postings, score } = input;");
-    expect(source).toContain("postings.map((posting) => scorePosting({ posting, weight: score }, caps))");
-    expect(source).toContain("const scorePostingScore = scorePostingResults.map((result) => result.score);");
-    expect(source).toContain("const { score: summariseScore, text } = await summarise({ scores: scorePostingScore }, caps);");
-    expect(source).toContain("return { best: summariseScore, summary: text };");
+    expect(source).toContain("export const clearCacheInput = z.object({});");
+    expect(source).toContain("export const clearCacheOutput = z.void();");
+    expect(pack.implScaffold(clearCache)).toContain("Promise<ClearCacheOutput>");
   });
 });
 
@@ -179,53 +162,20 @@ describe("the Python pack", () => {
     expect(source).toContain("    async def write_file(self, path: str, contents: str) -> None: ...");
   });
 
-  it("writes the same composite in Python", () => {
-    const source = pack.compositeSource(rankJobs);
-    expect(source).toContain("score_posting(ScorePostingInput(posting=posting, weight=score), caps) for posting in postings");
-    expect(source).toContain("score_posting_score = [result.score for result in score_posting_results]");
-    expect(source).toContain("summarise_score = summarise_result.score");
-    expect(source).toContain("return RankJobsOutput(best=summarise_score, summary=text)");
+  it("gives a block that returns nothing a result of None", () => {
+    expect(pack.contractSource({ block: clearCache, blockPath: "app/clear-cache" })).toContain("ClearCacheOutput = None");
   });
 
   it.skipIf(!python)("writes Python that actually parses", () => {
     expect(pythonErrors(pack.contractSource({ block: scorePosting, blockPath: "rank-jobs/score-posting" }))).toBe("");
     expect(pythonErrors(pack.implScaffold(scorePosting))).toBe("");
     expect(pythonErrors(pack.capabilitiesSource())).toBe("");
-    expect(pythonErrors(pack.compositeSource(rankJobs))).toBe("");
+    expect(pythonErrors(pack.contractSource({ block: clearCache, blockPath: "app/clear-cache" }))).toBe("");
   });
 
   it("recognises its own untouched scaffold", () => {
     expect(pack.isUnimplemented(pack.implScaffold(scorePosting))).toBe(true);
     expect(pack.isUnimplemented("async def score_posting(value, caps):\n    return {}")).toBe(false);
-  });
-});
-
-describe("a composite whose child's name is already taken", () => {
-  // Every block's capabilities arrive as `caps`, so a child called that
-  // cannot be called by its own name.
-  const wrap = blockFromFile(
-    {
-      responsibility: "Wraps a block whose name the generated code already uses.",
-      inputs: { value: "number" },
-      outputs: { doubled: "number" },
-      children: ["caps"],
-      wires: ["input.value -> caps.value", "caps.doubled -> output.doubled"],
-    },
-    "wrap",
-  );
-
-  it("calls it by another name in TypeScript", () => {
-    const source = getPack("typescript").compositeSource(wrap);
-    expect(typeScriptErrors(source)).toEqual([]);
-    expect(source).toContain('import { caps as capsBlock } from "./caps/impl.js";');
-    expect(source).toContain("const { doubled } = await capsBlock({ value }, caps);");
-  });
-
-  it("calls it by another name in Python", () => {
-    const source = getPack("python").compositeSource(wrap);
-    expect(source).toContain("from caps.impl import caps as caps_block");
-    expect(source).toContain("await caps_block(CapsInput(value=input_value), caps)");
-    expect(pythonErrors(source)).toBe("");
   });
 });
 
