@@ -1,0 +1,166 @@
+{
+  "name": "Send a message",
+  "description": "Ada, signed in, sends Bo a message.",
+  "trigger": {
+    "at": "app/client/ui/send-button",
+    "kind": "action",
+    "payload": {
+      "to": "bo",
+      "text": "hi"
+    }
+  },
+  "trace": [
+    {
+      "from": "app/client/ui/send-button",
+      "to": "app/client/state",
+      "kind": "call",
+      "payload": {
+        "type": "send",
+        "to": "bo",
+        "text": "hi"
+      }
+    },
+    {
+      "from": "app/client/state",
+      "to": "app/api.sendMessage",
+      "kind": "call",
+      "payload": {
+        "to": "bo",
+        "text": "hi",
+        "sessionId": "s-1"
+      },
+      "response": {
+        "id": "m-1"
+      }
+    },
+    {
+      "from": "app/api.sendMessage",
+      "to": "app/api/router",
+      "kind": "call",
+      "payload": {
+        "path": "/messages",
+        "to": "bo",
+        "text": "hi"
+      }
+    },
+    {
+      "from": "app/api/router",
+      "to": "app/api/auth/check-session",
+      "kind": "call",
+      "payload": {
+        "sessionId": "s-1"
+      },
+      "response": {
+        "userId": "ada"
+      }
+    },
+    {
+      "from": "app/api/auth/check-session",
+      "to": "app/infrastructure/database.sessions",
+      "kind": "read",
+      "payload": {
+        "id": "s-1"
+      },
+      "response": {
+        "userId": "ada"
+      }
+    },
+    {
+      "from": "app/api/router",
+      "to": "app/api/messaging/save-message",
+      "kind": "call",
+      "payload": {
+        "from": "ada",
+        "to": "bo",
+        "text": "hi"
+      },
+      "response": {
+        "id": "m-1"
+      }
+    },
+    {
+      "from": "app/api/messaging/save-message",
+      "to": "app/infrastructure/database.messages",
+      "kind": "write",
+      "payload": {
+        "id": "m-1",
+        "from": "ada",
+        "to": "bo",
+        "text": "hi"
+      }
+    },
+    {
+      "effect": "row-changed",
+      "at": "app/infrastructure/database.messages",
+      "detail": {
+        "id": "m-1"
+      }
+    },
+    {
+      "from": "app/api/router",
+      "to": "app/api/messaging/notify-recipient",
+      "kind": "call",
+      "payload": {
+        "to": "bo",
+        "messageId": "m-1"
+      }
+    },
+    {
+      "from": "app/api/messaging/notify-recipient",
+      "to": "app/infrastructure/queue.notifications",
+      "kind": "send",
+      "payload": {
+        "to": "bo",
+        "messageId": "m-1"
+      }
+    },
+    {
+      "effect": "message-published",
+      "at": "app/infrastructure/queue.notifications"
+    },
+    {
+      "effect": "response",
+      "at": "app/api.sendMessage",
+      "detail": {
+        "status": 201,
+        "id": "m-1"
+      }
+    },
+    {
+      "from": "app/client/state",
+      "to": "app/client/ui/chat-view",
+      "kind": "call",
+      "payload": {
+        "from": "you",
+        "text": "hi"
+      }
+    },
+    {
+      "effect": "ui-changed",
+      "at": "app/client/ui/chat-view",
+      "detail": {
+        "shows": "you: hi"
+      }
+    }
+  ],
+  "expect": {
+    "entered": [
+      "app/api/messaging"
+    ],
+    "interactions": [
+      {
+        "to": "app/infrastructure/queue.notifications",
+        "kind": "send"
+      }
+    ],
+    "effects": [
+      {
+        "at": "app/infrastructure/database",
+        "kind": "row-changed"
+      }
+    ],
+    "never": [
+      "app/workers"
+    ]
+  }
+}

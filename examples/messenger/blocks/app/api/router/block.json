@@ -1,0 +1,11 @@
+{
+  "name": "Router",
+  "responsibility": "Sends each request to the part of the API that handles it, checking who is asking where that matters.",
+  "code": "src/api/router.ts#route",
+  "inputs": {
+    "request": "Request"
+  },
+  "outputs": {
+    "response": "Response"
+  }
+}

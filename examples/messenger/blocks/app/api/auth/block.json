@@ -1,0 +1,7 @@
+{
+  "name": "Auth",
+  "role": "component",
+  "subtype": "module",
+  "responsibility": "Who someone is: signing in, signing out, and checking a session is still good.",
+  "code": "src/api/auth.ts"
+}

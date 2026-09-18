@@ -2,7 +2,21 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { projectSnapshot } from "../../src/project/snapshot.js";
-import { WAY_IN, accessEnds, autoLayout, buildGraph, entryLines, exposedRow, fitLine, measure } from "./graph.js";
+import { place } from "../../src/model/trace.js";
+import {
+  TILE_W,
+  WAY_IN,
+  accessEnds,
+  autoLayout,
+  buildGraph,
+  drawnAt,
+  entryLines,
+  exposedRow,
+  fitLine,
+  layoutFor,
+  measure,
+  widthOf,
+} from "./graph.js";
 import type { Graph } from "./graph.js";
 import { ui } from "./state.js";
 
@@ -16,7 +30,9 @@ import { ui } from "./state.js";
  * for that.
  */
 
-const tickets = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "examples", "tickets");
+const examples = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "examples");
+const tickets = path.join(examples, "tickets");
+const messenger = path.join(examples, "messenger");
 
 /** Everything one block reaches, named once however many lines run to it. */
 function reachedBy(graph: Graph, source: string): string[] {
@@ -196,6 +212,8 @@ describe("inside the service", () => {
       "cancelBooking -> cancel-booking",
     ]);
 
+    expect(wayIn.every((link) => link.answers)).toBe(true);
+
     const boundary = graph.nodes.get(WAY_IN)!;
     expect(boundary.boundary).toBe(true);
     expect(boundary.exposes.map((entry) => entry.name).sort()).toEqual(["bookSeats", "cancelBooking"]);
@@ -242,10 +260,120 @@ describe("inside the service", () => {
 });
 
 describe("inside a function made of parts", () => {
-  it("shows its part, and leaves a store kept further out to the diagram it belongs to", async () => {
+  it("draws its own code as the frame its part sits in", async () => {
     const graph = await open("tickets/booking-api/book-seats");
-    expect([...graph.nodes.keys()]).toEqual(["reserve"]);
+    expect([...graph.nodes.keys()]).toEqual(["reserve", WAY_IN]);
+
+    // The code that calls the part is the function's own, so the frame is
+    // drawn with its contract: a run into it has somewhere to arrive.
+    const frame = graph.nodes.get(WAY_IN)!;
+    expect(frame.boundary).toBe(true);
+    expect(frame.sublabel).toBe("ITS OWN CODE");
+    expect(frame.inputs.map((port) => port.name)).toEqual(["eventId", "seats", "email"]);
+
+    // Alone, a store kept further out has nothing here to land on.
     expect([...graph.accesses.values()]).toEqual([]);
+  });
+
+  it("lands what its own code reaches on the tiles holding it", async () => {
+    await open("tickets/booking-api/book-seats");
+    const graph = buildGraph("tickets/booking-api/book-seats", { opened: new Set(), reached: new Set() })!;
+    expect(reachedBy(graph, WAY_IN)).toEqual(["ctx:tickets/outbox", "ctx:tickets/tickets-db"]);
+    // These are what the function reaches, not a way into it, and are labelled as such.
+    expect([...graph.accesses.values()].some((link) => link.answers)).toBe(false);
+  });
+});
+
+describe("the rest of the architecture, around the block in focus", () => {
+  const around = (view: string, opened: string[] = [], reached: string[] = []) => {
+    ui.view = view;
+    return buildGraph(view, { opened: new Set(opened), reached: new Set(reached) })!;
+  };
+  beforeAll(async () => {
+    ui.snapshot = await projectSnapshot(messenger);
+  });
+
+  it("draws every other part of the system as a tile, on the side it stands beside the focus", () => {
+    const graph = around("app/api");
+    const tiles = [...graph.nodes.values()].filter((node) => node.context);
+
+    // On the diagram above, the client and the workers stand left of the API
+    // and the infrastructure right of it. The API itself, and the application
+    // it is part of, are not tiles: they are where this diagram came from.
+    expect(tiles.map((tile) => [tile.block!.path, tile.context!.side])).toEqual([
+      ["app/client", "left"],
+      ["app/workers", "left"],
+      ["app/infrastructure", "right"],
+    ]);
+    expect(tiles.map((tile) => tile.context!.caption)).toEqual(["in Messenger", null, "in Messenger"]);
+  });
+
+  it("stands the tiles clear of the diagram and of each other", () => {
+    const graph = around("app/api", ["app/client", "app/infrastructure"]);
+    const placed = layoutFor(graph, "app/api");
+    const boxes = [...graph.nodes.values()].map((node) => ({
+      key: node.key,
+      ...placed.get(node.key)!,
+      width: widthOf(node),
+      height: measure(node).height,
+    }));
+
+    for (const a of boxes) {
+      for (const b of boxes) {
+        if (a.key >= b.key) continue;
+        const apart = a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y;
+        expect(apart, `${a.key} and ${b.key} overlap`).toBe(true);
+      }
+    }
+    expect(widthOf(graph.nodes.get("ctx:app/client")!)).toBe(TILE_W);
+  });
+
+  it("opens a tile in place, independently of the focus, and draws a run into its parts", () => {
+    const closed = around("app/api");
+    const opened = around("app/api", ["app/infrastructure", "app/api/messaging"]);
+
+    // The infrastructure's parts come in under it, indented.
+    const parts = [...opened.nodes.values()].filter((node) => node.context?.indent === 1).map((node) => node.key);
+    expect(parts).toEqual(["ctx:app/infrastructure/database", "ctx:app/infrastructure/queue"]);
+
+    // So a run reaching the database is drawn at the database. Messaging is a
+    // part of the focus, so opening it is left to its own diagram.
+    const database = { path: "app/infrastructure/database", entry: "messages" };
+    expect(drawnAt(closed, place(database, closed.view))).toEqual({ key: "ctx:app/infrastructure", entry: null });
+    expect(drawnAt(opened, place(database, opened.view))).toEqual({ key: "ctx:app/infrastructure/database", entry: null });
+    expect(opened.view.expanded.has("app/api/messaging")).toBe(false);
+    const saving = { path: "app/api/messaging/save-message", entry: null };
+    expect(drawnAt(opened, place(saving, opened.view))).toEqual({ key: "messaging", entry: null });
+  });
+
+  it("lands what the parts reach on the tile holding it, the deepest one open", () => {
+    expect(reachedBy(around("app/api"), "messaging")).toEqual(["ctx:app/infrastructure"]);
+    expect(reachedBy(around("app/api", ["app/infrastructure"]), "messaging")).toEqual([
+      "ctx:app/infrastructure/database",
+      "ctx:app/infrastructure/queue",
+    ]);
+  });
+
+  it("meets a run at the frame's own row for an operation of the block in focus", () => {
+    const graph = around("app/api");
+    expect(drawnAt(graph, { path: "app/api", entry: "sendMessage" })).toEqual({ key: WAY_IN, entry: "sendMessage" });
+    // A block the focus is inside has nothing drawn for it until a run reaches it.
+    expect(drawnAt(around("app/api/messaging"), { path: "app/api", entry: "sendMessage" })).toBeNull();
+  });
+
+  it("draws a block the focus is inside as a frame once a run reaches it", () => {
+    const graph = around("app/api/messaging", [], ["app/api"]);
+    const frame = graph.nodes.get("ctx:app/api")!;
+    expect(frame.boundary).toBe(true);
+    expect(frame.context!.side).toBe("left");
+    expect(drawnAt(graph, { path: "app/api", entry: "sendMessage" })).toEqual({ key: "ctx:app/api", entry: null });
+    // It is what everything here is part of, so no dependency is drawn to it.
+    expect([...graph.accesses.values()].map((link) => link.target)).not.toContain("ctx:app/api");
+  });
+
+  it("gives a group of parts a frame only when a run reaches it", () => {
+    expect(around("app/api/messaging").nodes.has(WAY_IN)).toBe(false);
+    expect(around("app/api/messaging", [], ["app/api/messaging"]).nodes.get(WAY_IN)?.sublabel).toBe("ITSELF");
   });
 });
 

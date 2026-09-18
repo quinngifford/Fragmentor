@@ -1,0 +1,16 @@
+{
+  "name": "Log In",
+  "responsibility": "Checks an email and password and starts a session.",
+  "code": "src/api/auth.ts#logIn",
+  "inputs": {
+    "email": "string",
+    "password": "string"
+  },
+  "outputs": {
+    "sessionId": "string"
+  },
+  "access": [
+    "reads infrastructure/database.users",
+    "writes infrastructure/database.sessions"
+  ]
+}

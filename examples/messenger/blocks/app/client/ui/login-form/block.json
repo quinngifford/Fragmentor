@@ -1,0 +1,9 @@
+{
+  "name": "Login Form",
+  "responsibility": "Asks for an email and password, and hands them to the page's state.",
+  "code": "src/client/ui/loginForm.ts#onLogInSubmitted",
+  "inputs": {
+    "email": "string",
+    "password": "string"
+  }
+}

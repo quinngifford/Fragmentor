@@ -135,6 +135,47 @@ describe("projectSnapshot", () => {
   });
 });
 
+describe("executions in a snapshot", () => {
+  it("carries each execution with its trace, and reports one that names nothing", async () => {
+    await mkdir(path.join(dir, "executions"));
+    await writeFile(
+      path.join(dir, "executions", "double.json"),
+      JSON.stringify({
+        trigger: { at: "double-it", kind: "request", payload: { value: 2 } },
+        trace: [{ from: "double-it", to: "double-it/add-to-self", kind: "call", payload: { value: 2 }, response: { sum: 4 } }],
+        expect: { entered: ["double-it/add-to-self"] },
+      }),
+      "utf8",
+    );
+    await writeFile(
+      path.join(dir, "executions", "lost.json"),
+      JSON.stringify({ trigger: { at: "double-it/halve", kind: "action" } }),
+      "utf8",
+    );
+
+    const snapshot = await projectSnapshot(dir);
+    expect(snapshot.executions.map((each) => [each.id, each.trigger.at, each.declared?.source ?? null, each.expects])).toEqual([
+      ["double", "double-it", "declared", true],
+      ["lost", "double-it/halve", null, false],
+    ]);
+    expect(snapshot.executions[0]!.declared!.events.map((event) => event.type)).toEqual(["interaction", "interaction", "return"]);
+    expect(snapshot.diagnostics).toContainEqual({
+      severity: "error",
+      blockPath: "executions/lost.json",
+      message: 'trigger.at: there is no block at "double-it/halve".',
+    });
+  });
+
+  it("still opens a project whose executions cannot be read, and says why", async () => {
+    // A file where the folder should be, which reading the folder refuses.
+    await writeFile(path.join(dir, "executions"), "not a folder", "utf8");
+
+    const snapshot = await projectSnapshot(dir);
+    expect(snapshot.executions).toEqual([]);
+    expect(snapshot.diagnostics.filter((each) => each.blockPath === "executions")).toHaveLength(1);
+  });
+});
+
 describe("a visual project's snapshot", () => {
   it("carries the code each block points at, and reports a pointer that leads nowhere", async () => {
     const other = await mkdtemp(path.join(tmpdir(), "fragmentor-snap-"));

@@ -3,6 +3,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { loadProject, validateProject } from "./project.js";
 import { boundStores } from "./stores.js";
+import { loadExecutions } from "./executions.js";
+import { projectSnapshot } from "./snapshot.js";
+import { project } from "../model/trace.js";
+import type { Trace } from "../model/trace.js";
+import { evaluate } from "../run/expect.js";
 import { runBlock } from "../run/run.js";
 import type { RunEvent } from "../run/run.js";
 
@@ -111,5 +116,57 @@ describe("the tickets example", () => {
       ["tickets/booking-api/pricing/price-seat", "tickets/booking-api/book-seats"],
       ["tickets/booking-api/book-seats/reserve", "tickets/booking-api/book-seats"],
     ]);
+  });
+});
+
+describe("the messenger example", () => {
+  const messenger = path.join(examples, "messenger");
+
+  it("points every block at code that exists, and every execution at blocks that do", async () => {
+    const snapshot = await projectSnapshot(messenger);
+    expect(snapshot.diagnostics).toEqual([]);
+    expect(snapshot.executions.map((execution) => execution.id)).toEqual([
+      "clean-up-sessions",
+      "deliver-a-notification",
+      "log-in",
+      "log-out",
+      "send-a-message",
+    ]);
+  });
+
+  it("writes down traces that agree with their own expectations, and says they were written, not seen", async () => {
+    const { executions, problems } = await loadExecutions(messenger);
+    expect(problems).toEqual([]);
+    for (const execution of executions) {
+      expect(execution.declared?.source, execution.id).toBe("declared");
+      const result = evaluate(execution.declared!, execution.expect!);
+      expect(result.failures, execution.id).toEqual([]);
+    }
+  });
+
+  it("draws sending a message at every level of detail from one trace", async () => {
+    const { executions } = await loadExecutions(messenger);
+    const trace = executions.find((execution) => execution.id === "send-a-message")!.declared as Trace;
+    const edges = (...expanded: string[]) =>
+      Object.fromEntries([...project(trace, { expanded: new Set(expanded) }).edges.values()].map((edge) => [edge.key, edge.interactions.length]));
+
+    // Zoomed out: the client asks the API, and the API reaches the infrastructure.
+    expect(edges("app")).toEqual({
+      "(outside)->app/client": 1,
+      "app/client->app/api": 1,
+      "app/api->app/infrastructure": 3,
+    });
+
+    // Inside the API: the router hands the message to messaging twice, and
+    // both reach the infrastructure, which stays closed.
+    const inside = edges("app", "app/api");
+    expect(inside["app/api/router->app/api/messaging"]).toBe(2);
+    expect(inside["app/api/messaging->app/infrastructure"]).toBe(2);
+    expect(inside["app/api/router->app/api/auth"]).toBe(1);
+
+    // Inside messaging, with the infrastructure open as well.
+    const finer = edges("app", "app/api", "app/api/messaging", "app/infrastructure");
+    expect(finer["app/api/messaging/save-message->app/infrastructure/database"]).toBe(1);
+    expect(finer["app/api/messaging/notify-recipient->app/infrastructure/queue"]).toBe(1);
   });
 });

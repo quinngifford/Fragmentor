@@ -21,13 +21,13 @@ Fragmentor keeps apart two things that are easily confused: what a system is, an
 - **An effect** is an observable consequence — a row changed, a message published, a response sent — shown at the part responsible. It is never a part of the architecture.
 - **Contracts** exist only where they mean something. A part may take nothing, return nothing, or only be triggered.
 
-A trace never depends on what is on screen. Zooming into a block shows the architecture in more detail, never a different diagram, and the selected execution stays selected however far in or out the person goes. Each end of an interaction is drawn at the deepest visible part that contains its real end, so interactions inside a collapsed part become activity within it, and many interactions between two collapsed parts become one line with a count. Nothing is lost by collapsing: the trace keeps every event, and stepping can go into what a collapsed part hides.
+A trace never depends on what is on screen. Zooming into a block shows the architecture in more detail, never a different diagram, and the selected execution stays selected however far in or out the person goes. Each end of an interaction is drawn at the deepest visible part that contains its real end, so interactions inside a collapsed part become activity within it, and many interactions between two collapsed parts become one line with a count. Nothing is lost by collapsing: the trace keeps every event, and stepping can go into what a collapsed part hides. The rest of the architecture stays on screen around the part in focus, so an interaction leaving it has somewhere to go, and any region of it can be opened on its own without moving the focus.
 
 A trace is either **recorded**, meaning Fragmentor saw it happen by running the code, or **declared**, meaning an agent wrote it down after reading the code. A declared trace is documentation and is never presented as something observed.
 
 Tests are assertions over a trace: that the run crossed into a part, that an interaction happened and carried what it should, that an effect happened, that the stores hold what they should at the end, and that a part was never touched. Breakpoints pause on entering a part, an interaction, an effect or a change of state. Both work for parts with no parameters and no result.
 
-This replaces an earlier model borrowed from Simulink, in which every block was a function whose children were steps wired output to input, and whose code Fragmentor generated from the wires. That model is gone. Drawing executions over the architecture, recording them by running the code, and tests and breakpoints over them are being built now; `STATUS.md` says how far that has got.
+This replaces an earlier model borrowed from Simulink, in which every block was a function whose children were steps wired output to input, and whose code Fragmentor generated from the wires. That model is gone. Executions an agent writes down are drawn over the architecture; recording them by running the code, and tests and breakpoints over them, are being built now. `STATUS.md` says how far that has got.
 
 ## Two modes
 

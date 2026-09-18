@@ -1,0 +1,8 @@
+{
+  "name": "Chat View",
+  "responsibility": "Draws the conversation, with the newest message at the bottom.",
+  "code": "src/client/ui/chatView.ts#showMessage",
+  "inputs": {
+    "message": "{ from: string; text: string }"
+  }
+}

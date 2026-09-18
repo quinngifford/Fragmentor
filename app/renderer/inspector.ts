@@ -34,10 +34,12 @@ function problemsSection(diagnostics: ProjectDiagnostic[], linked: boolean): HTM
   ];
 
   for (const diagnostic of ordered) {
-    const row = el(linked ? "button" : "div", `problem ${diagnostic.severity}`);
+    // A problem with a file beside the blocks, such as an execution, has no block to go to.
+    const goes = linked && Boolean(ui.snapshot?.blocks[diagnostic.blockPath]);
+    const row = el(goes ? "button" : "div", `problem ${diagnostic.severity}`);
     row.append(el("span", "problem-level", diagnostic.severity));
-    if (linked) {
-      row.append(el("span", "problem-where", diagnostic.blockPath));
+    if (linked) row.append(el("span", "problem-where", diagnostic.blockPath));
+    if (goes) {
       row.title = "Show this block";
       row.addEventListener("click", () => showBlock(diagnostic.blockPath));
     }

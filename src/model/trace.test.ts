@@ -4,13 +4,12 @@ import {
   enters,
   isInside,
   nextStep,
-  parseAddress,
   place,
   placeEvent,
   project,
-  reveal,
 } from "./trace.js";
-import type { Address, Effect, Interaction, InteractionKind, Return, Trace, TraceEvent, View } from "./trace.js";
+import { parseAddress } from "../project/executions.js";
+import type { Address, Effect, Interaction, InteractionKind, Return, Trace, View } from "./trace.js";
 
 const a = (text: string): Address => {
   const parsed = parseAddress(text);
@@ -126,6 +125,15 @@ describe("placing an address", () => {
     expect(place(a("app/infrastructure/queue.publish"), view("app", "app/infrastructure", "app/infrastructure/queue"))).toEqual(
       a("app/infrastructure/queue.publish"),
     );
+  });
+
+  it("keeps the entries of a component that shows them without opening it", () => {
+    const withTables = { expanded: new Set(["app", "app/api"]), entries: new Set(["app/api", "app/infrastructure"]) };
+    // The service shows its operations, and is still closed to what is inside it.
+    expect(place(a("app/api.sendMessage"), { expanded: new Set(["app"]), entries: new Set(["app/api"]) })).toEqual(a("app/api.sendMessage"));
+    expect(place(a("app/api/router"), { expanded: new Set(["app"]), entries: new Set(["app/api"]) })).toEqual(a("app/api"));
+    // Entries of something not drawn are not drawn either.
+    expect(place(a("app/infrastructure/queue.publish"), withTables)).toEqual(a("app/infrastructure"));
   });
 
   it("does not open a component because something deeper inside it is marked expanded", () => {
@@ -292,6 +300,13 @@ describe("a service's own entry", () => {
     expect(project(trace, view("app")).inside.get("app/api")?.map((each) => each.id)).toEqual(["handle"]);
   });
 
+  it("stays one place while the service shows its operations, so what it does with a call is inside it", () => {
+    const showing: View = { expanded: new Set(["", "app"]), entries: new Set(["app/api"]) };
+    expect(edgesOf(trace, showing)).toEqual({ "(outside)->app/client": 1, "app/client->app/api.sendMessage": 1 });
+    expect(project(trace, showing).inside.get("app/api")?.map((each) => each.id)).toEqual(["handle"]);
+    expect(nextStep(trace, showing, 1)).toBeNull();
+  });
+
   it("is the edge of its frame once it is expanded, and the call carries on to what answers it", () => {
     expect(edgesOf(trace, view("app", "app/api"))).toEqual({
       "(outside)->app/client": 1,
@@ -350,27 +365,5 @@ describe("stepping", () => {
 
   it("steps more finely the more is open", () => {
     expect(nextStep(chat, view("app", "app/client", "app/api", "app/api/messaging"), 0)).toBe(1);
-  });
-
-  it("opens just enough to show a hidden event where it really happened", () => {
-    const opened = reveal(zoomedOut, save);
-    expect(placeEvent(save, zoomedOut)).toMatchObject({ on: "inside" });
-    expect(placeEvent(save, opened)).toMatchObject({
-      on: "edge",
-      key: "app/api/router->app/api/messaging/save-message",
-    });
-    expect(opened.expanded.has("app/client")).toBe(false);
-  });
-
-  it("opens a component to its entries when the event names one", () => {
-    const opened = reveal(view(), publish);
-    expect(placeEvent(publish, opened)).toMatchObject({
-      key: "app/api/messaging/notify-recipient->app/infrastructure/queue.publish",
-    });
-  });
-
-  it("reveals where an effect landed", () => {
-    const opened = reveal(view(), published as TraceEvent);
-    expect(placeEvent(published, opened)).toMatchObject({ on: "effect", key: "app/infrastructure/queue.publish" });
   });
 });

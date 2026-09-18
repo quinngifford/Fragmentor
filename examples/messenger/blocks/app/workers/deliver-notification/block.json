@@ -1,0 +1,12 @@
+{
+  "responsibility": "Takes a notification off the queue and pushes the message to the recipient's page, if they have one open.",
+  "code": "src/workers/delivery.ts#deliverNotification",
+  "inputs": {
+    "notification": "Notification"
+  },
+  "access": [
+    "reads infrastructure/queue.notifications",
+    "reads infrastructure/database.messages",
+    "reads infrastructure/database.sessions"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "name": "API",
+  "role": "service",
+  "subtype": "REST API",
+  "responsibility": "Answers the page's requests. The HTTP server itself lives in src/server.ts.",
+  "code": "src/api",
+  "exposes": {
+    "sendMessage": {
+      "accepts": "{ to: string; text: string; sessionId: string }",
+      "returns": "{ id: string }",
+      "block": "router"
+    },
+    "logIn": {
+      "accepts": "{ email: string; password: string }",
+      "returns": "{ sessionId: string }",
+      "block": "router"
+    },
+    "logOut": {
+      "accepts": "{ sessionId: string }",
+      "returns": "{ redirect: string }",
+      "block": "router"
+    }
+  }
+}

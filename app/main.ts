@@ -53,7 +53,7 @@ function selfChecking(): boolean {
  */
 const selfCheck = selfChecking() ? prepareSelfCheck() : null;
 
-function prepareSelfCheck(): { root: string; projectDir: string; application: string } {
+function prepareSelfCheck(): { root: string; projectDir: string; application: string; messenger: string } {
   const root = mkdtempSync(path.join(tmpdir(), "fragmentor-self-check-"));
   const projectDir = path.join(root, "project");
   const userData = path.join(root, "user-data");
@@ -64,11 +64,14 @@ function prepareSelfCheck(): { root: string; projectDir: string; application: st
   // and run it, without touching the repository's own.
   const application = path.join(root, "tickets");
   cpSync(path.join(repoRoot, "examples", "tickets"), application, { recursive: true });
+  // And one described from reading its code, with executions written down.
+  const messenger = path.join(root, "messenger");
+  cpSync(path.join(repoRoot, "examples", "messenger"), messenger, { recursive: true });
 
   // Offered on the welcome screen as recent projects, which is how the check opens them.
-  writeFileSync(path.join(userData, "recent-projects.json"), JSON.stringify([projectDir, application]));
+  writeFileSync(path.join(userData, "recent-projects.json"), JSON.stringify([projectDir, application, messenger]));
   app.setPath("userData", userData);
-  return { root, projectDir, application };
+  return { root, projectDir, application, messenger };
 }
 
 function ok<T>(value: T): Result<T> {
@@ -369,7 +372,10 @@ function registerHandlers(): void {
 
   ipcMain.handle(CHANNELS.exampleProjects, async (): Promise<Result<{ dir: string; name: string }[]>> => {
     try {
-      const examples = [{ dir: path.join(repoRoot, "examples", "tickets"), name: "Tickets" }];
+      const examples = [
+        { dir: path.join(repoRoot, "examples", "tickets"), name: "Tickets" },
+        { dir: path.join(repoRoot, "examples", "messenger"), name: "Messenger" },
+      ];
       const present: { dir: string; name: string }[] = [];
       for (const example of examples) {
         try {
@@ -784,6 +790,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("structured", "answers") === "bookSeats" &&
         // The service's parts, and the way into it.
         value("structured", "drawn") === "(way in) book-seats cancel-booking find-event pricing" &&
+        value("structured", "tiles") === "ctx:tickets/box-office ctx:tickets/outbox ctx:tickets/reminders ctx:tickets/tickets-db" &&
         String(value("structured", "triggers")).includes("box-office.bookSeats=>booking-api:calls") &&
         /Booking API/.test(String(value("structured", "route"))) &&
         /Book Seats/.test(String(value("structured", "route"))) &&
@@ -819,6 +826,42 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         // Every block a colour of its own, and the button back where it was.
         value("byBlock", "apart") === true &&
         value("backToBlock", "label") === "Colour: by block",
+    ],
+    [
+      "an execution is drawn over the architecture at any depth, stepped through, and followed inside",
+      value("execution", "opened") === true &&
+        value("execution", "offered") === "clean-up-sessions deliver-a-notification log-in log-out send-a-message" &&
+        value("execution", "source") === "declared" &&
+        value("execution", "labels") === " call ×3" &&
+        value("execution", "flowing") === true &&
+        value("execution", "effects") === "message published, response, row changed, ui changed" &&
+        value("execution", "inside") === "2 inside, 4 inside" &&
+        value("execution", "api") === "true" &&
+        value("execution", "workers") === "false" &&
+        Number(value("execution", "fadedWorkers")) < 0.5 &&
+        Number(value("execution", "faintDependencies")) < 0.5 &&
+        value("execution", "count") === "19 steps" &&
+        JSON.stringify(value("stepping", "restarted")) === JSON.stringify({ count: "1 of 19", lines: 1 }) &&
+        JSON.stringify(value("stepping", "stepped")) ===
+          JSON.stringify({
+            count: "3 of 19",
+            caption: 'State calls API · sendMessage: {"to":"bo","text":"hi","sessionId":"s-1"}',
+            current: "call",
+            lit: "api client",
+          }) &&
+        value("stepping", "intoCount") === "4 of 19" &&
+        value("stepping", "intoCrumb") === "api" &&
+        /API · sendMessage calls Router/.test(String(value("stepping", "intoCaption"))) &&
+        value("stepping", "intoCurrent") === "call" &&
+        value("stepping", "frame") === true &&
+        value("stepping", "router") === true &&
+        value("stepping", "tiles") === "ctx:app/client ctx:app/infrastructure ctx:app/workers" &&
+        value("opened", "toggle") === true &&
+        Number(value("opened", "after")) > Number(value("opened", "before")) &&
+        value("opened", "queueLine") === "send" &&
+        value("opened", "shownLabel") === "Dependencies: shown" &&
+        value("opened", "hidden") === "none" &&
+        value("opened", "back") !== "none",
     ],
     [
       "a database is drawn as itself, with its shape on show and the block that reads it joined to it",
@@ -983,7 +1026,7 @@ async function capture(window: BrowserWindow, name: string): Promise<void> {
 // self-check exits explicitly, or a failed check would pass as a command.
 function attachSelfCheck(
   window: BrowserWindow,
-  check: { root: string; projectDir: string; application: string },
+  check: { root: string; projectDir: string; application: string; messenger: string },
 ): void {
   window.webContents.on("did-fail-load", (_event, code, description) => {
     console.error(`The window failed to load: ${description} (${code})`);
@@ -1716,7 +1759,9 @@ function attachSelfCheck(
           await wait(900);
           top.wayIn = Boolean(document.querySelector('.block-box[data-key="(way in)"]'));
           top.answers = text('.access-group[data-access="(way in)=>book-seats:bookSeats"] .access-label');
-          top.drawn = [...document.querySelectorAll(".block-box[data-key]")].map((box) => box.dataset.key).sort().join(" ");
+          top.drawn = [...document.querySelectorAll(".block-box[data-key]:not([data-context])")].map((box) => box.dataset.key).sort().join(" ");
+          // The rest of the application stands around it.
+          top.tiles = [...document.querySelectorAll('.block-box[data-context="true"]')].map((box) => box.dataset.key).sort().join(" ");
 
           // And on into the handler, which is a function with a part of its own.
           node("book-seats").click();
@@ -1730,6 +1775,7 @@ function attachSelfCheck(
             wayIn: top.wayIn,
             answers: top.answers,
             drawn: top.drawn,
+            tiles: top.tiles,
             triggers: top.triggers,
             route: top.route,
             canGo: top.canGo,
@@ -1820,6 +1866,124 @@ function attachSelfCheck(
           await wait(400);
           return { label: document.getElementById("colour-by").textContent };
         `);
+
+        // An execution written down in the messenger: picked, drawn over the
+        // whole application, stepped through, and followed inside.
+        await run("execution", `
+          document.getElementById("close-project").click();
+          await until(() => document.body.dataset.project !== "open");
+          const link = await until(() => [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.messenger)}));
+          if (!link) return { opened: false };
+          link.click();
+          if (!(await until(() => document.querySelector('.block-box[data-key="api"]')))) return { opened: false };
+          document.getElementById("zoom-fit").click();
+          await wait(600);
+
+          const bar = document.getElementById("exec-bar");
+          const select = bar.querySelector(".exec-select");
+          const offered = select ? [...select.options].map((option) => option.value).filter(Boolean).join(" ") : "";
+          select.value = "send-a-message";
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+          await until(() => document.querySelector("#exec-layer .exec-line-group"));
+          await wait(300);
+
+          const lines = () => [...document.querySelectorAll("#exec-layer .exec-line-group")];
+          const involved = (key) => (document.querySelector('.block-box[data-key="' + key + '"]') || { dataset: {} }).dataset.involved;
+          return {
+            opened: true,
+            offered,
+            source: text(".exec-source"),
+            labels: lines().map((group) => group.querySelector(".exec-label").textContent).sort().join(" "),
+            flowing: lines().every((group) => group.dataset.data === "true") &&
+              getComputedStyle(lines()[0].querySelector(".exec-line")).animationName === "exec-flow",
+            effects: [...document.querySelectorAll(".exec-effect-text")].map((chip) => chip.textContent).sort().join(", "),
+            inside: [...document.querySelectorAll(".exec-inside text")].map((mark) => mark.textContent).sort().join(", "),
+            api: involved("api"),
+            workers: involved("workers"),
+            fadedWorkers: getComputedStyle(document.querySelector('.block-box[data-key="workers"]')).opacity,
+            faintDependencies: getComputedStyle(document.getElementById("access-layer")).opacity,
+            count: text(".exec-count"),
+          };
+        `);
+        await capture(window, "self-check-execution");
+
+        await run("stepping", `
+          const button = (label) => [...document.querySelectorAll("#exec-bar .run-btn")].find((b) => b.textContent === label);
+          button("Restart").click();
+          await wait(200);
+          const restarted = { count: text(".exec-count"), lines: document.querySelectorAll("#exec-layer .exec-line-group").length };
+
+          // Stepping passes over the button calling the page's state, which
+          // happens inside the client, to the page calling the API.
+          button("Step").click();
+          await wait(200);
+          const current = document.querySelector('#exec-layer .exec-line-group[data-current="out"]');
+          const stepped = {
+            count: text(".exec-count"),
+            caption: text(".exec-caption-text"),
+            current: current ? current.querySelector(".exec-label").textContent : "",
+            lit: [...document.querySelectorAll('.block-box[data-current="true"]')].map((box) => box.dataset.key).sort().join(" "),
+          };
+
+          // Stepping in goes to the API passing the message to its router,
+          // which is out of sight inside the API, so the canvas goes in.
+          const moving = () => document.getElementById("canvas-svg").classList.contains("moving");
+          button("Step into").click();
+          await until(moving, 600);
+          await until(() => !moving(), 3000);
+          await wait(400);
+          const inside = document.querySelector('#exec-layer .exec-line-group[data-current="out"]');
+          return {
+            restarted,
+            stepped,
+            intoCount: text(".exec-count"),
+            intoCrumb: text('.crumb[aria-current="true"]'),
+            intoCaption: text(".exec-caption-text"),
+            intoCurrent: inside ? inside.querySelector(".exec-label").textContent : "",
+            frame: Boolean(document.querySelector('.block-box[data-key="(way in)"][data-current="true"]')),
+            router: Boolean(document.querySelector('.block-box[data-key="router"][data-current="true"]')),
+            // The rest of the application is around the API, and still drawn.
+            tiles: [...document.querySelectorAll('.block-box[data-context="true"]')].map((box) => box.dataset.key).sort().join(" "),
+          };
+        `);
+        await capture(window, "self-check-execution-inside");
+
+        await run("opened", `
+          const button = (label) => [...document.querySelectorAll("#exec-bar .run-btn")].find((b) => b.textContent === label);
+          button("Show all").click();
+          await wait(200);
+          const before = document.querySelectorAll("#exec-layer .exec-line-group").length;
+
+          // Open the infrastructure where it stands, beside the API.
+          const toggle = document.querySelector('.block-box[data-key="ctx:app/infrastructure"] .tile-toggle');
+          if (!toggle) return { toggle: false };
+          toggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          await until(() => document.querySelector('.block-box[data-key="ctx:app/infrastructure/queue"]'));
+          await wait(300);
+          const toQueue = [...document.querySelectorAll("#exec-layer .exec-line-group")]
+            .find((group) => /Notify Recipient sends to Queue/.test((group.querySelector("title") || {}).textContent || ""));
+
+          // Dependencies can be put away altogether.
+          const dependencies = document.getElementById("show-dependencies");
+          const shownLabel = dependencies.textContent;
+          dependencies.click();
+          await wait(200);
+          const hidden = getComputedStyle(document.getElementById("access-layer")).display;
+          dependencies.click();
+          await wait(200);
+
+          return {
+            toggle: true,
+            before,
+            after: document.querySelectorAll("#exec-layer .exec-line-group").length,
+            queueLine: toQueue ? toQueue.querySelector(".exec-label").textContent : "",
+            queueChip: text('.exec-effect-text'),
+            shownLabel,
+            hidden,
+            back: getComputedStyle(document.getElementById("access-layer")).display,
+          };
+        `);
+        await capture(window, "self-check-execution-opened");
 
         console.log(JSON.stringify(report, null, 2));
 

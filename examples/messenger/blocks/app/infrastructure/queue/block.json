@@ -1,0 +1,13 @@
+{
+  "name": "Queue",
+  "role": "queue",
+  "subtype": "message queue",
+  "responsibility": "Carries notifications from the API to the workers.",
+  "code": "src/infrastructure/queue.ts",
+  "exposes": {
+    "notifications": {
+      "type": "{ to: string; messageId: string }",
+      "description": "One per message sent, handed to whoever consumes the channel."
+    }
+  }
+}

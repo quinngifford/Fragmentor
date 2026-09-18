@@ -173,6 +173,21 @@ export const visualExample: Record<string, Record<string, unknown>> = {
 };
 
 /**
+ * What happens when something sets the visual example going, written down the
+ * way the guide asks an agent to. Held by test to read and check cleanly
+ * against the visual example's blocks.
+ */
+export const executionExample = {
+  description: "Someone asks for the totals of a file of orders.",
+  trigger: { at: "price-orders/report-totals", kind: "action", payload: { path: "orders.json" } },
+  trace: [
+    { from: "price-orders/report-totals", to: "price-orders/load-orders", kind: "call", payload: { path: "orders.json" } },
+    { from: "price-orders/report-totals", to: "price-orders/price-order", kind: "call", payload: { order: "A-1" }, response: { total: 17 } },
+    { effect: "response", at: "price-orders/report-totals", detail: { grandTotal: 17 } },
+  ],
+};
+
+/**
  * The size of block to reach for, at each level.
  *
  * Every one of these is written as something to aim at rather than something
@@ -384,6 +399,7 @@ export function agentGuide(manifest: Manifest): string {
       startingPoint: startingPoint(manifest),
       componentBlock: compactJson(visualExample["price-orders"]),
       functionBlock: compactJson(visualExample["price-orders/report-totals"]),
+      execution: compactJson(executionExample),
     });
   }
 

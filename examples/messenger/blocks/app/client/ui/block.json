@@ -1,0 +1,7 @@
+{
+  "name": "UI",
+  "role": "component",
+  "subtype": "UI",
+  "responsibility": "What is drawn on the page, and what happens when someone presses something.",
+  "code": "src/client/ui"
+}

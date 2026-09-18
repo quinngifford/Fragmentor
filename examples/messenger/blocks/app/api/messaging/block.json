@@ -1,0 +1,7 @@
+{
+  "name": "Messaging",
+  "role": "component",
+  "subtype": "module",
+  "responsibility": "Keeping messages, and letting their recipients know.",
+  "code": "src/api/messaging"
+}

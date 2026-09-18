@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAddress } from "../model/trace.js";
+import { parseAddress } from "../project/executions.js";
 import type { Address, Effect, Interaction, Trace } from "../model/trace.js";
 import { compareValues } from "./compare.js";
 import { evaluate } from "./expect.js";

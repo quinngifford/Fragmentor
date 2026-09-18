@@ -1,0 +1,21 @@
+{
+  "name": "Database",
+  "role": "database",
+  "subtype": "PostgreSQL",
+  "responsibility": "Everyone who can sign in, their sessions, and every message.",
+  "code": "src/infrastructure/db.ts",
+  "exposes": {
+    "users": {
+      "type": "{ id: string; email: string; passwordHash: string }",
+      "description": "One row per person."
+    },
+    "sessions": {
+      "type": "{ id: string; userId: string; expiresAt: number }",
+      "description": "One row per signed-in page."
+    },
+    "messages": {
+      "type": "{ id: string; from: string; to: string; text: string; sentAt: number }",
+      "description": "One row per message."
+    }
+  }
+}

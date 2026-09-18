@@ -1,6 +1,3 @@
-import { blockIdPattern } from "./block.js";
-import { identifierPattern } from "./types.js";
-
 /**
  * What happened, kept apart from what exists.
  *
@@ -30,23 +27,6 @@ import { identifierPattern } from "./types.js";
 export interface Address {
   path: string;
   entry: string | null;
-}
-
-export function parseAddress(text: string): { ok: true; address: Address } | { ok: false; error: string } {
-  const dot = text.indexOf(".");
-  const path = dot === -1 ? text : text.slice(0, dot);
-  const entry = dot === -1 ? null : text.slice(dot + 1);
-
-  if (path === "" || !path.split("/").every((segment) => blockIdPattern.test(segment))) {
-    return {
-      ok: false,
-      error: `"${text}" is not an address: it should be block ids joined by "/", such as "app/api/messaging", optionally followed by "." and an entry.`,
-    };
-  }
-  if (entry !== null && !identifierPattern.test(entry)) {
-    return { ok: false, error: `"${entry}" in "${text}" is not a valid entry name.` };
-  }
-  return { ok: true, address: { path, entry } };
 }
 
 export function formatAddress(address: Address): string {
@@ -205,12 +185,20 @@ export function enters(event: TraceEvent, within: Address): boolean {
  */
 export interface View {
   expanded: ReadonlySet<string>;
+  /**
+   * Components drawn with their entries showing although their parts are not:
+   * a database with its tables down its middle, a service with its
+   * operations. Kept apart from `expanded`, because a service drawn with its
+   * operations is still closed, and what happens inside it belongs to it.
+   */
+  entries?: ReadonlySet<string>;
 }
 
 /**
  * Where an address is drawn: at the deepest visible component that contains
- * it. An entry is kept only when its own component is expanded to show it;
- * otherwise the component stands for it, as it stands for everything inside.
+ * it. An entry is kept only when its own component shows its entries, open or
+ * not; otherwise the component stands for it, as it stands for everything
+ * inside.
  */
 export function place(address: Address, view: View): Address {
   const segments = address.path.split("/");
@@ -220,8 +208,8 @@ export function place(address: Address, view: View): Address {
   for (let depth = 1; depth < segments.length && view.expanded.has(placed); depth += 1) {
     placed = `${placed}/${segments[depth]}`;
   }
-  if (placed !== address.path || !view.expanded.has(placed)) return { path: placed, entry: null };
-  return address;
+  if (placed !== address.path) return { path: placed, entry: null };
+  return view.expanded.has(placed) || view.entries?.has(placed) ? address : { path: placed, entry: null };
 }
 
 /** Where one event shows at this resolution. */
@@ -243,10 +231,15 @@ export function placeEvent(event: TraceEvent, view: View): Placement {
   }
   const from = event.from === null ? null : place(event.from, view);
   const to = place(event.to, view);
+  // Both ends drawn at one component is activity within it, whichever of its
+  // entries either names: a service showing its operations is still one place,
+  // and its way in handing a call to its router happens inside it.
+  if (from !== null && from.path === to.path) {
+    const at = { path: to.path, entry: null };
+    return { on: "inside", key: formatAddress(at), at };
+  }
   const fromKey = from === null ? OUTSIDE : formatAddress(from);
-  const toKey = formatAddress(to);
-  if (from !== null && fromKey === toKey) return { on: "inside", key: toKey, at: to };
-  return { on: "edge", key: `${fromKey}->${toKey}`, from, to };
+  return { on: "edge", key: `${fromKey}->${formatAddress(to)}`, from, to };
 }
 
 /** Lower-level interactions drawn as one line, because at this resolution they join the same two places. */
@@ -329,23 +322,12 @@ export function project(trace: Trace, view: View, through = trace.events.length 
  * this resolution — a line or an effect — and passes over activity hidden
  * inside a collapsed component, the way stepping over a call passes over
  * what happens inside it. `into` goes to the very next event instead,
- * whatever it is; `reveal` then opens the architecture far enough to see it.
- * Either way the events stepped past are still in the trace.
+ * whatever it is, and whoever is showing the trace decides how to bring it
+ * into view. Either way the events stepped past are still in the trace.
  */
 export function nextStep(trace: Trace, view: View, after: number, into = false): number | null {
   for (let at = Math.max(0, after + 1); at < trace.events.length; at += 1) {
     if (into || placeEvent(trace.events[at]!, view).on !== "inside") return at;
   }
   return null;
-}
-
-/** The view with just enough more expanded to show an event at the components it really happened at. */
-export function reveal(view: View, event: TraceEvent): View {
-  const opened = new Set(view.expanded);
-  for (const address of addressesOf(event)) {
-    const segments = address.path.split("/");
-    for (let depth = 1; depth < segments.length; depth += 1) opened.add(segments.slice(0, depth).join("/"));
-    if (address.entry !== null) opened.add(address.path);
-  }
-  return { expanded: opened };
 }

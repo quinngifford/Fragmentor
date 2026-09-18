@@ -1,0 +1,11 @@
+{
+  "responsibility": "Puts a notification on the queue, so the recipient hears about it without the sender waiting.",
+  "code": "src/api/messaging/notifyRecipient.ts#notifyRecipient",
+  "inputs": {
+    "to": "string",
+    "messageId": "string"
+  },
+  "access": [
+    "writes infrastructure/queue.notifications"
+  ]
+}

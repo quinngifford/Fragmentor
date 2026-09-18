@@ -1,0 +1,26 @@
+{
+  "name": "Client",
+  "role": "client",
+  "subtype": "web app",
+  "responsibility": "The page people use to sign in, write messages and read them.",
+  "code": "src/client",
+  "exposes": {
+    "sendMessage": {
+      "accepts": "{ to: string; text: string }",
+      "returns": "{ id: string }"
+    },
+    "logIn": {
+      "accepts": "{ email: string; password: string }",
+      "returns": "{ sessionId: string }"
+    },
+    "logOut": {
+      "accepts": "{ sessionId: string }",
+      "returns": "{ redirect: string }"
+    }
+  },
+  "access": [
+    "sendMessage calls api.sendMessage",
+    "logIn calls api.logIn",
+    "logOut calls api.logOut"
+  ]
+}

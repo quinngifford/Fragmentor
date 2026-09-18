@@ -1,0 +1,15 @@
+{
+  "responsibility": "Keeps a message someone sent.",
+  "code": "src/api/messaging/saveMessage.ts#saveMessage",
+  "inputs": {
+    "from": "string",
+    "to": "string",
+    "text": "string"
+  },
+  "outputs": {
+    "id": "string"
+  },
+  "access": [
+    "writes infrastructure/database.messages"
+  ]
+}

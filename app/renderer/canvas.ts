@@ -9,17 +9,22 @@ import {
   NODE_W,
   PROJECT_VIEW,
   ROW_H,
-  WAY_IN,
+  TILE_W,
   buildGraph,
   accessEnds,
   blockColour,
   entryLines,
+  exposedRow,
   fitLine,
+  isContextKey,
   layoutFor,
   measure,
+  placeContext,
+  widthOf,
 } from "./graph.js";
 import type { AccessLink, Graph, GraphNode } from "./graph.js";
-import { requireSnapshot, roleColours, ui, viewSettings } from "./state.js";
+import { requireSnapshot, roleColours, selectedExecution, ui, viewSettings } from "./state.js";
+import { addressesOf } from "../../src/model/trace.js";
 import { el } from "./dom.js";
 import { ROLES, ROLE_IDS } from "../../src/model/roles.js";
 import type { Role } from "../../src/model/roles.js";
@@ -40,7 +45,9 @@ import type { Role } from "../../src/model/roles.js";
  * on what is already drawn.
  *
  * A diagram is one block's parts. Nothing on it is a wire: what calls what is
- * what a run shows, not what the diagram is.
+ * what a run shows, not what the diagram is. An execution is laid over it on
+ * a layer of its own, beneath the blocks, with its marks — what it left
+ * behind, what happened out of sight inside a block — on another above them.
  */
 
 let notify: (options: { redraw: boolean }) => void = () => {};
@@ -48,10 +55,10 @@ export function onCanvasChange(callback: (options: { redraw: boolean }) => void)
   notify = callback;
 }
 
-let drawn: () => void = () => {};
+const drawnListeners: Array<() => void> = [];
 /** Called whenever a diagram has been drawn afresh, so anything laid over it can be put back. */
 export function onCanvasDrawn(callback: () => void): void {
-  drawn = callback;
+  drawnListeners.push(callback);
 }
 
 let breakpointToggled: (blockPath: string) => void = () => {};
@@ -109,6 +116,7 @@ export function applySelection(): void {
 /** Moves the drawn blocks and re-routes the lines between them, without rebuilding them. */
 export function applyPositions(): void {
   if (!currentGraph || !currentLayout) return;
+  placeContext(currentGraph, currentLayout);
 
   for (const [key, group] of nodeElements) {
     const point = currentLayout.get(key);
@@ -125,6 +133,8 @@ export function applyPositions(): void {
     drawn.label.setAttribute("x", String(geometry.middle.x));
     drawn.label.setAttribute("y", String(geometry.middle.y));
   }
+
+  drawExecution();
 }
 
 export function applyBreakpoints(): void {
@@ -147,6 +157,217 @@ export function applyRunOverlay(overlay: RunOverlay | null): void {
     else delete group.dataset.run;
     const note = group.querySelector(".run-note");
     if (note) note.textContent = run?.note ?? "";
+  }
+}
+
+/** Whether the lines saying what each block reaches are drawn. */
+export function applyDependencies(): void {
+  element<SVGSVGElement>("canvas-svg").dataset.dependencies = ui.showDependencies ? "shown" : "hidden";
+}
+
+/* -------------------------------------------------------------------------- */
+/* An execution, laid over the diagram                                         */
+/* -------------------------------------------------------------------------- */
+
+/** A place on the diagram an execution reaches: a node, and one of its rows where it draws that entry. */
+export interface ExecutionEnd {
+  key: string;
+  entry: string | null;
+}
+
+/** Everything an execution did between two places on screen, drawn as one line. */
+export interface ExecutionLine {
+  id: string;
+  /** Null when it came from outside the system. */
+  from: ExecutionEnd | null;
+  to: ExecutionEnd;
+  /** Whether anything travelled along it, which is drawn as flow rather than as a line lighting up. */
+  data: boolean;
+  label: string;
+  detail: string;
+  /** Set on the line the current step is on, with which way it is going. */
+  current: "out" | "back" | null;
+}
+
+/** An execution as it looks on the diagram on screen, as far as it has been stepped through. */
+export interface ExecutionOverlay {
+  lines: ExecutionLine[];
+  /** What the run left behind, by node. */
+  effects: Map<string, { labels: string[]; detail: string; current: boolean }>;
+  /** Interactions that start and end inside one node, too fine to draw at this resolution, by node. */
+  inside: Map<string, { count: number; detail: string; current: boolean }>;
+  /** Nodes where anything happened. Everything else is dimmed. */
+  involved: Set<string>;
+  /** Nodes the current step is at. */
+  current: Set<string>;
+  /** What set it going, written where it comes in from outside. */
+  trigger: string;
+}
+
+let currentExecution: ExecutionOverlay | null = null;
+
+/** The blocks the execution on the diagram reaches themselves, which then need drawing even with nothing else to show. */
+function executionReaches(): Set<string> {
+  const trace = selectedExecution()?.declared;
+  return new Set(trace?.events.flatMap((event) => addressesOf(event).map((address) => address.path)) ?? []);
+}
+
+/** Shows an execution over what is already drawn, or takes it off. */
+export function applyExecutionOverlay(overlay: ExecutionOverlay | null): void {
+  currentExecution = overlay;
+  element("canvas-svg").classList.toggle("tracing", overlay !== null);
+  for (const [key, group] of nodeElements) {
+    if (overlay) {
+      group.dataset.involved = String(overlay.involved.has(key));
+      group.dataset.current = String(overlay.current.has(key));
+    } else {
+      delete group.dataset.involved;
+      delete group.dataset.current;
+    }
+  }
+  drawExecution();
+}
+
+interface EndBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** How far down it the line meets it: the row it names, or the middle of its head. */
+  row: number;
+  /** A tile's side of the diagram; null for anything else. */
+  side: "left" | "right" | null;
+}
+
+function endBox(end: ExecutionEnd): EndBox | null {
+  const node = currentGraph?.nodes.get(end.key);
+  const at = currentLayout?.get(end.key);
+  if (!node || !at) return null;
+  return {
+    x: at.x,
+    y: at.y,
+    width: widthOf(node),
+    height: measure(node).height,
+    row: exposedRow(node, end.entry) ?? HEAD_H / 2,
+    side: node.context?.side ?? null,
+  };
+}
+
+/** How far a line between two places in one column swings out past them. */
+const SWING = 46;
+
+/**
+ * Where a line between two places meets them. Side by side, it runs from the
+ * near edge of one to the near edge of the other, at the rows it names. One
+ * above the other, it leaves and arrives on the same side and swings out past
+ * them, which keeps it clear of whatever stands between: away from the
+ * diagram for tiles, and to the right for anything else.
+ */
+function lineEnds(a: EndBox, b: EndBox, offset: number): { from: Point; to: Point; swing: number | null } {
+  const ay = a.y + a.row + offset;
+  const by = b.y + b.row + offset;
+  if (b.x >= a.x + a.width) return { from: { x: a.x + a.width, y: ay }, to: { x: b.x, y: by }, swing: null };
+  if (b.x + b.width <= a.x) return { from: { x: a.x, y: ay }, to: { x: b.x + b.width, y: by }, swing: null };
+  const left = (a.side ?? b.side) === "left";
+  return {
+    from: { x: left ? a.x : a.x + a.width, y: ay },
+    to: { x: left ? b.x : b.x + b.width, y: by },
+    swing: left ? -SWING : SWING,
+  };
+}
+
+/** The curve of one line, stopped short for its arrowhead, and a point on its middle for its label. */
+function executionPath(from: Point, to: Point, swing: number | null): { d: string; middle: Point } {
+  const pull = (to.x - from.x) * 0.45;
+  const c1 = swing === null ? { x: from.x + pull, y: from.y } : { x: from.x + swing, y: from.y };
+  const c2 = swing === null ? { x: to.x - pull, y: to.y } : { x: to.x + swing, y: to.y };
+  const stop = shortOf(to, c2);
+  return {
+    d: `M ${from.x} ${from.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${stop.x} ${stop.y}`,
+    middle: { x: (from.x + 3 * c1.x + 3 * c2.x + to.x) / 8, y: (from.y + 3 * c1.y + 3 * c2.y + to.y) / 8 },
+  };
+}
+
+/** How long a chip is for its words, which are set in a monospaced 9px. */
+const chipWidth = (text: string) => text.length * 5.6 + 14;
+const chipsWidth = (labels: string[]) => labels.reduce((sum, label) => sum + chipWidth(label) + 4, -4);
+const CHIP_H = 15;
+
+function drawExecution(): void {
+  const lines = element("exec-layer");
+  const marks = element("exec-marks");
+  lines.replaceChildren();
+  marks.replaceChildren();
+  const overlay = currentExecution;
+  if (!overlay || !currentGraph || !currentLayout) return;
+
+  // A line each way between the same two places is drawn a little apart, or
+  // the two would read as one.
+  const pairs = new Set<string>();
+  for (const line of overlay.lines) {
+    const to = endBox(line.to);
+    const from = line.from ? endBox(line.from) : null;
+    if (!to || (line.from && !from)) continue;
+    const pair = [line.from?.key ?? "", line.to.key].sort().join(" ");
+    const offset = pairs.has(pair) ? 7 : 0;
+    pairs.add(pair);
+
+    let geometry: { d: string; middle: Point };
+    if (from) {
+      const ends = lineEnds(from, to, offset);
+      geometry = executionPath(ends.from, ends.to, ends.swing);
+    } else {
+      // From outside the system: a mark just off to the left of where it
+      // arrives, and past anything the run left on that side of a tile.
+      const at = { x: to.x, y: to.y + to.row };
+      const chips = to.side === "left" ? overlay.effects.get(line.to.key)?.labels : undefined;
+      const start = { x: at.x - 64 - (chips ? chipsWidth(chips) + 8 : 0), y: at.y };
+      const outside = svgEl("g", { class: "exec-outside" }, lines);
+      svgEl("circle", { cx: start.x, cy: start.y, r: 4.5, class: "exec-outside-dot" }, outside);
+      svgEl("text", { x: start.x, y: start.y - 9, class: "exec-outside-label", "text-anchor": "middle" }, outside).textContent =
+        overlay.trigger;
+      geometry = executionPath({ x: start.x + 5, y: start.y }, at, null);
+    }
+
+    const group = svgEl("g", {
+      class: "exec-line-group",
+      "data-data": String(line.data),
+      "data-current": line.current ?? "none",
+    }, lines);
+    svgEl("path", { d: geometry.d, class: "exec-line", "marker-end": "url(#exec-arrow)" }, group);
+    svgEl("path", { d: geometry.d, class: "line-hit" }, group);
+    svgEl("title", {}, group).textContent = line.detail;
+    svgEl("text", { x: geometry.middle.x, y: geometry.middle.y - 6, class: "exec-label", "text-anchor": "middle" }, group).textContent =
+      line.label;
+  }
+
+  // What was left behind goes over a block, or beside a tile, on the side
+  // away from the diagram, where the tiles above and below leave room.
+  for (const [key, effect] of overlay.effects) {
+    const box = endBox({ key, entry: null });
+    if (!box) continue;
+    const widths = effect.labels.map(chipWidth);
+    const total = chipsWidth(effect.labels);
+    let x = box.side === null ? box.x : box.side === "right" ? box.x + box.width + 8 : box.x - 8 - total;
+    const y = box.side === null ? box.y - CHIP_H - 5 : box.y + (HEAD_H - CHIP_H) / 2;
+
+    const group = svgEl("g", { class: "exec-effect", "data-current": String(effect.current) }, marks);
+    svgEl("title", {}, group).textContent = effect.detail;
+    effect.labels.forEach((label, i) => {
+      const width = widths[i]!;
+      svgEl("rect", { x, y, width, height: CHIP_H, rx: CHIP_H / 2, class: "exec-effect-chip" }, group);
+      svgEl("text", { x: x + width / 2, y: y + 10.5, class: "exec-effect-text", "text-anchor": "middle" }, group).textContent = label;
+      x += width + 4;
+    });
+  }
+
+  // What happened out of sight inside a block, counted on its head.
+  for (const [key, inside] of overlay.inside) {
+    const box = endBox({ key, entry: null });
+    if (!box) continue;
+    const mark = svgEl("g", { class: "exec-inside", "data-current": String(inside.current) }, marks);
+    svgEl("title", {}, mark).textContent = inside.detail;
+    svgEl("text", { x: box.x + box.width - 10, y: box.y + 27, "text-anchor": "end" }, mark).textContent = `${inside.count} inside`;
   }
 }
 
@@ -271,8 +492,20 @@ function diagramBounds(): Box | null {
     const { height } = measure(node);
     minX = Math.min(minX, point.x - 30);
     minY = Math.min(minY, point.y - 20);
-    maxX = Math.max(maxX, point.x + NODE_W + 30);
+    maxX = Math.max(maxX, point.x + widthOf(node) + 30);
     maxY = Math.max(maxY, point.y + height + 34);
+  }
+
+  // An execution draws past the blocks: where it comes in from outside, and
+  // what it left beside a tile. Those are part of what has to be seen.
+  for (const id of ["exec-layer", "exec-marks"]) {
+    const layer = element<SVGGElement>(id);
+    if (layer.childElementCount === 0) continue;
+    const box = layer.getBBox();
+    minX = Math.min(minX, box.x - 12);
+    minY = Math.min(minY, box.y - 12);
+    maxX = Math.max(maxX, box.x + box.width + 12);
+    maxY = Math.max(maxY, box.y + box.height + 12);
   }
 
   return Number.isFinite(minX) ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY } : null;
@@ -335,7 +568,7 @@ function nodeBox(key: string): Box | null {
   const node = currentGraph?.nodes.get(key);
   const point = currentLayout?.get(key);
   if (!node || !point) return null;
-  return { x: point.x, y: point.y, width: NODE_W, height: measure(node).height };
+  return { x: point.x, y: point.y, width: widthOf(node), height: measure(node).height };
 }
 
 /**
@@ -483,7 +716,9 @@ export function resetArrivals(projectIsEmpty: boolean): void {
 /** Takes the diagram off the canvas, as when a project is closed. */
 export function clearCanvas(): void {
   element("access-layer").replaceChildren();
+  element("exec-layer").replaceChildren();
   element("node-layer").replaceChildren();
+  element("exec-marks").replaceChildren();
   nodeElements.clear();
   accessElements.clear();
   currentGraph = null;
@@ -585,7 +820,7 @@ const ARRIVAL_STAGGER_MS = 70;
 export function renderCanvas(): void {
   clearCanvas();
 
-  const graph = buildGraph(ui.view);
+  const graph = buildGraph(ui.view, { opened: ui.expanded, reached: executionReaches() });
   if (!graph) {
     const parent = requireSnapshot().blocks[ui.view];
     showCanvasMessage(
@@ -618,10 +853,11 @@ export function renderCanvas(): void {
   drawnBefore.set(ui.view, { nodes: new Set(graph.nodes.keys()) });
   everythingArrives = false;
 
+  applyDependencies();
   applySelection();
   applyBreakpoints();
   applyViewport();
-  drawn();
+  for (const listener of drawnListeners) listener();
 }
 
 /** Only TypeScript blocks in a structured project run, so only they can be paused. */
@@ -691,7 +927,7 @@ function accessGeometry(graph: Graph, layout: Map<string, Point>, link: AccessLi
 function accessLabel(link: AccessLink, resource: GraphNode | undefined): string {
   // The way into a service is named by the operation alone: "calls" would be
   // the wrong word for a boundary that is answering rather than asking.
-  if (link.source === WAY_IN) return link.entries[0]?.entry ?? "answers";
+  if (link.answers) return link.entries[0]?.entry ?? "answers";
   if (link.entries.length === 1) {
     const only = link.entries[0]!;
     // Named at both ends, the line already meets the two entries it joins, so
@@ -711,7 +947,7 @@ function accessLabel(link: AccessLink, resource: GraphNode | undefined): string 
 function accessDetail(link: AccessLink, resource: GraphNode | undefined, owner: GraphNode | undefined): string[] {
   // Into a service, what the operation accepts is written on the boundary the
   // line leaves rather than on the block it arrives at.
-  if (link.source === WAY_IN) {
+  if (link.answers) {
     return link.entries.map((each) => {
       const operation = owner?.exposes.find((exposed) => exposed.name === each.entry);
       return operation?.accepts ? `${each.entry}: ${operation.accepts}` : (each.entry ?? each.text);
@@ -848,13 +1084,17 @@ function drawRoleIcon(node: GraphNode, body: Element): void {
   // has no kind of its own to show.
   if (node.boundary || !node.block) return;
 
-  const icon = svgEl("g", { class: "role-icon", transform: `translate(${NODE_W - 21} 4)` }, body);
+  const icon = svgEl("g", { class: "role-icon", transform: `translate(${widthOf(node) - 21} 4)` }, body);
   svgEl("title", {}, icon).textContent = node.sublabel;
   for (const d of ROLE_ICONS[node.block.role]) svgEl("path", { d, class: "role-icon-line" }, icon);
 }
 
 /** `arrivalDelay` is null for a block that was already there, and otherwise when it should arrive. */
 function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, arrivalDelay: number | null): void {
+  if (node.context) {
+    drawTile(graph, node, point, layer, arrivalDelay);
+    return;
+  }
   const { height } = measure(node);
   const group = svgEl("g", {
     class: "block-box",
@@ -966,7 +1206,7 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
   });
 
   // Beside the block's name: where a run can be told to pause before it.
-  if (node.block && canPause(node.block)) {
+  if (node.block && !node.boundary && canPause(node.block)) {
     const blockPath = node.block.path;
     const breakpoint = svgEl("g", { class: "breakpoint", transform: `translate(-12 ${HEAD_H / 2})` }, group);
     svgEl("title", {}, breakpoint).textContent = "Pause here: a run stops before this block, so you can see what reaches it.";
@@ -977,6 +1217,83 @@ function drawNode(graph: Graph, node: GraphNode, point: Point, layer: Element, a
     hit.addEventListener("click", (event) => {
       event.stopPropagation();
       breakpointToggled(blockPath);
+    });
+  }
+
+  nodeElements.set(node.key, group);
+  attachNodeBehaviour(group, node);
+}
+
+/** Longer names are cut on a tile, which is narrower than a block. Hovering it gives the whole. */
+const TILE_NAME_CHARS = 17;
+
+/**
+ * A block outside the one in focus: its name and kind, small, with a switch
+ * to open it in place when it has parts. It is there to be arrived at, so it
+ * stays quiet until a run reaches it.
+ */
+function drawTile(graph: Graph, node: GraphNode, point: Point, layer: Element, arrivalDelay: number | null): void {
+  const tile = node.context!;
+  const block = node.block!;
+  const group = svgEl("g", {
+    class: "block-box",
+    transform: `translate(${point.x} ${point.y})`,
+    "data-context": "true",
+    "data-boundary": String(node.boundary),
+    "data-planned": String(block.planned),
+    "data-role": block.role,
+    "data-architecture": String(block.architecture),
+    "data-tinted": String(viewSettings.colourBy === "block" || block.architecture),
+    "data-key": node.key,
+  }, layer);
+  if (viewSettings.colourBy === "block" && !block.planned) {
+    group.style.setProperty("--role", blockColour(graph, ui.view, node.key));
+  }
+
+  svgEl("title", {}, group).textContent = [
+    `${block.name}, ${block.roleLabel.toLowerCase()}`,
+    block.responsibility,
+    "Double-click to go to it.",
+  ].join("\n\n");
+
+  if (tile.caption) svgEl("text", { x: 2, y: -7, class: "tile-caption" }, group).textContent = tile.caption;
+
+  const body = svgEl("g", { class: "block-body" }, group);
+  if (arrivalDelay !== null) {
+    body.classList.add("appearing");
+    body.style.animationDelay = `${arrivalDelay}ms`;
+  }
+  svgEl("rect", {
+    x: 0,
+    y: 0,
+    width: TILE_W,
+    height: HEAD_H,
+    rx: 3,
+    class: "block-plate",
+    tabindex: "0",
+    role: "button",
+    "aria-label": node.label,
+  }, body);
+  const left = tile.expandable ? 22 : 10;
+  const name = node.label.length > TILE_NAME_CHARS ? `${node.label.slice(0, TILE_NAME_CHARS - 1)}…` : node.label;
+  svgEl("text", { x: left, y: 15, class: "block-name" }, body).textContent = name;
+  svgEl("text", { x: left, y: 27, class: "block-kind" }, body).textContent = node.sublabel;
+  drawRoleIcon(node, body);
+  svgEl("text", { x: TILE_W - 10, y: 27, class: "run-note", "text-anchor": "end" }, body);
+
+  if (tile.expandable) {
+    const toggle = svgEl("g", { class: "tile-toggle", transform: `translate(11 ${HEAD_H / 2})` }, group);
+    svgEl("title", {}, toggle).textContent = tile.expanded ? `Close ${block.name}` : `Open ${block.name} here, to show its parts`;
+    svgEl("circle", { r: 8, class: "tile-toggle-hit" }, toggle);
+    svgEl("path", { d: tile.expanded ? "M -3.5 -1.5 L 0 2 L 3.5 -1.5" : "M -1.5 -3.5 L 2 0 L -1.5 3.5", class: "tile-toggle-mark" }, toggle);
+    toggle.addEventListener("pointerdown", (event) => event.stopPropagation());
+    toggle.addEventListener("dblclick", (event) => event.stopPropagation());
+    toggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (ui.expanded.has(block.path)) ui.expanded.delete(block.path);
+      else ui.expanded.add(block.path);
+      notify({ redraw: true });
+      if (!ui.userAdjusted) fitToView(true);
     });
   }
 
@@ -1003,7 +1320,10 @@ async function persistLayout(): Promise<void> {
   if (!snapshot || !currentLayout) return;
 
   const positions: Record<string, Point> = {};
-  for (const [key, point] of currentLayout) positions[key] = { x: Math.round(point.x), y: Math.round(point.y) };
+  for (const [key, point] of currentLayout) {
+    // Tiles are placed around the diagram, not by hand.
+    if (!isContextKey(key)) positions[key] = { x: Math.round(point.x), y: Math.round(point.y) };
+  }
 
   // Keep the open snapshot in step so a later redraw does not snap blocks back.
   snapshot.layout = { ...snapshot.layout, [ui.view]: positions };
@@ -1036,13 +1356,16 @@ function attachNodeBehaviour(group: SVGGElement, node: GraphNode): void {
       notify({ redraw: false });
     }
 
-    if (!currentLayout) return;
+    // A tile stands where the diagram puts it, so it is picked out but not moved.
+    if (!currentLayout || node.context) return;
     drag = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
       moved: false,
-      origin: new Map([...ui.selection].map((key) => [key, { ...(currentLayout!.get(key) ?? { x: 0, y: 0 }) }])),
+      origin: new Map(
+        [...ui.selection].filter((key) => !isContextKey(key)).map((key) => [key, { ...(currentLayout!.get(key) ?? { x: 0, y: 0 }) }]),
+      ),
     };
     element("canvas-svg").classList.add("dragging");
 
@@ -1080,15 +1403,23 @@ function attachNodeBehaviour(group: SVGGElement, node: GraphNode): void {
     window.addEventListener("pointercancel", onUp);
   });
 
+  // Into a part made of parts; to a tile, wherever it is.
+  const go = (): boolean => {
+    if (!node.block || node.block.path === ui.view) return false;
+    if (node.context) showBlock(node.block.path);
+    else if (node.block.children.length > 0) openDiagram(node.block.path);
+    else return false;
+    return true;
+  };
+
   group.addEventListener("dblclick", (event) => {
     event.stopPropagation();
-    if (node.block && node.block.children.length > 0 && node.block.path !== ui.view) openDiagram(node.block.path);
+    go();
   });
 
   group.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && node.block && node.block.children.length > 0 && node.block.path !== ui.view) {
+    if (event.key === "Enter" && go()) {
       event.preventDefault();
-      openDiagram(node.block.path);
       return;
     }
     if (event.key !== " ") return;

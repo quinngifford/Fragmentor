@@ -1,0 +1,8 @@
+{
+  "name": "State",
+  "responsibility": "Holds what the page shows, sends each thing the person asks for to the API, and takes in messages pushed to the page.",
+  "code": "src/client/state.ts#dispatch",
+  "inputs": {
+    "action": "Action"
+  }
+}

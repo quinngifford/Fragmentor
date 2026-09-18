@@ -1,0 +1,11 @@
+{
+  "responsibility": "Every night, removes the sessions that have run out.",
+  "code": "src/workers/cleanUp.ts#cleanUpSessions",
+  "inputs": {
+    "now": "number"
+  },
+  "access": [
+    "reads infrastructure/database.sessions",
+    "writes infrastructure/database.sessions"
+  ]
+}

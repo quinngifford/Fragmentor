@@ -2,7 +2,8 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod/v4";
 import { blockIdPattern, nameFromId } from "../model/block.js";
-import { INTERACTION_KINDS, isInside, parseAddress } from "../model/trace.js";
+import { identifierPattern } from "../model/types.js";
+import { INTERACTION_KINDS, isInside } from "../model/trace.js";
 import type { Address, Effect, Interaction, InteractionKind, Return, Trace, TraceEvent } from "../model/trace.js";
 import type { Expectations } from "../run/expect.js";
 import type { Project } from "./project.js";
@@ -22,6 +23,24 @@ import type { Project } from "./project.js";
  * `declared` and never passed off as something Fragmentor saw run, and it may
  * hold expectations, which is what makes it a test.
  */
+
+/** Reads an address as a file writes it: `app/api/messaging`, or `app/infrastructure/queue.publish`. */
+export function parseAddress(text: string): { ok: true; address: Address } | { ok: false; error: string } {
+  const dot = text.indexOf(".");
+  const path = dot === -1 ? text : text.slice(0, dot);
+  const entry = dot === -1 ? null : text.slice(dot + 1);
+
+  if (path === "" || !path.split("/").every((segment) => blockIdPattern.test(segment))) {
+    return {
+      ok: false,
+      error: `"${text}" is not an address: it should be block ids joined by "/", such as "app/api/messaging", optionally followed by "." and an entry.`,
+    };
+  }
+  if (entry !== null && !identifierPattern.test(entry)) {
+    return { ok: false, error: `"${entry}" in "${text}" is not a valid entry name.` };
+  }
+  return { ok: true, address: { path, entry } };
+}
 
 /** What sets an execution going. */
 export type TriggerKind =

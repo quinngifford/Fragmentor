@@ -39,8 +39,17 @@
               <marker id="access-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
                 <path d="M 0 0 L 8 4 L 0 8 z" class="access-arrow" fill="context-stroke" />
               </marker>
+              <!-- Which way a step of an execution went. -->
+              <marker id="exec-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                <path d="M 0 0 L 8 4 L 0 8 z" class="exec-arrow" fill="context-stroke" />
+              </marker>
             </defs>
-            <g id="viewport"><g id="access-layer"></g><g id="node-layer"></g></g>
+            <g id="viewport">
+              <g id="access-layer"></g>
+              <g id="exec-layer"></g>
+              <g id="node-layer"></g>
+              <g id="exec-marks"></g>
+            </g>
           </svg>
 
           <div class="zoom-bar">
@@ -51,15 +60,18 @@
             <button class="zoom-btn" id="layout-reset" title="Return blocks to the automatic layout">Re-layout</button>
             <span class="zoom-divider"></span>
             <button class="zoom-btn" id="colour-by" title="What the colours mean"></button>
+            <button class="zoom-btn" id="show-dependencies" title="Show or hide the lines saying what each block reaches"></button>
           </div>
 
           <div class="legend" id="legend" hidden></div>
 
-          <div class="hint">drag to move &middot; ctrl-click to multi-select &middot; scroll to zoom</div>
-
-          <div class="load-error" id="load-error" role="alert" hidden></div>
-
-          <div class="run-bar" id="run-bar" role="status" hidden></div>
+          <!-- Along the top, side by side while there is room for them. -->
+          <div class="canvas-top">
+            <div class="load-error" id="load-error" role="alert" hidden></div>
+            <div class="exec-bar" id="exec-bar" hidden></div>
+            <div class="run-bar" id="run-bar" role="status" hidden></div>
+            <div class="hint">drag to move &middot; ctrl-click to multi-select &middot; scroll to zoom</div>
+          </div>
 
           <section class="welcome" id="welcome">
             <h1>Fragmentor</h1>

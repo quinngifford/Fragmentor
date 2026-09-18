@@ -1,0 +1,14 @@
+{
+  "name": "Log Out",
+  "responsibility": "Ends a session, and sends the page back to signing in.",
+  "code": "src/api/auth.ts#logOut",
+  "inputs": {
+    "sessionId": "string"
+  },
+  "outputs": {
+    "redirect": "string"
+  },
+  "access": [
+    "writes infrastructure/database.sessions"
+  ]
+}

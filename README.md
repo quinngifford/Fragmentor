@@ -25,6 +25,8 @@ In **visual** mode the agent maps the code already in the folder into a diagram,
 
 A diagram is not only functions. A block can stand for a group of parts, a database, a queue, a store, a service of yours, someone else's API, or the browser that starts a request. Those carry what they offer rather than ports — a database shows its tables and their columns — and the blocks that read or write them are joined to them, so the diagram says where data is kept and who can reach it. Colour says which world each thing belongs to. Fragmentor generates, checks and runs nothing for these blocks; the functions inside a service are ordinary blocks and are checked and tested as usual. `examples/tickets` is a whole application drawn this way, and it runs.
 
+The agent also writes down what happens: for each thing that sets the system going — a button, a request, a scheduled job — an execution under `executions/`, with the path it takes through the architecture. Pick one above the diagram and it is drawn over whichever part you are looking at, with the rest of the system kept around it, and can be stepped through. `examples/messenger` is a chat application described this way.
+
 If you asked to plan first, the agent draws the whole architecture before building any of it. Blocks that are only planned appear greyed out, with nothing generated, checked or run for them; they turn into ordinary blocks as the agent builds them.
 
 The diagram updates as the agent works.

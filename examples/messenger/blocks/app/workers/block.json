@@ -1,0 +1,7 @@
+{
+  "name": "Workers",
+  "role": "service",
+  "subtype": "worker process",
+  "responsibility": "Does what should not hold up a request: delivering notifications, and tidying up overnight.",
+  "code": "src/workers"
+}

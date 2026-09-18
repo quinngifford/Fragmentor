@@ -1,0 +1,108 @@
+{
+  "name": "Log out",
+  "description": "Ada signs out: her session is removed and the page goes back to signing in.",
+  "trigger": {
+    "at": "app/client.logOut",
+    "kind": "action"
+  },
+  "trace": [
+    {
+      "from": "app/client.logOut",
+      "to": "app/client/state",
+      "kind": "call",
+      "payload": {
+        "type": "logOut"
+      }
+    },
+    {
+      "from": "app/client/state",
+      "to": "app/api.logOut",
+      "kind": "call",
+      "payload": {
+        "sessionId": "s-1"
+      },
+      "response": {
+        "redirect": "/login"
+      }
+    },
+    {
+      "from": "app/api.logOut",
+      "to": "app/api/router",
+      "kind": "call",
+      "payload": {
+        "path": "/logout"
+      }
+    },
+    {
+      "from": "app/api/router",
+      "to": "app/api/auth/log-out",
+      "kind": "call",
+      "payload": {
+        "sessionId": "s-1"
+      },
+      "response": {
+        "redirect": "/login"
+      }
+    },
+    {
+      "from": "app/api/auth/log-out",
+      "to": "app/infrastructure/database.sessions",
+      "kind": "remove",
+      "payload": {
+        "id": "s-1"
+      }
+    },
+    {
+      "effect": "row-removed",
+      "at": "app/infrastructure/database.sessions",
+      "detail": {
+        "id": "s-1"
+      }
+    },
+    {
+      "effect": "response",
+      "at": "app/api.logOut",
+      "detail": {
+        "status": 200,
+        "redirect": "/login"
+      }
+    },
+    {
+      "from": "app/client/state",
+      "to": "app/client/ui/login-form",
+      "kind": "call"
+    },
+    {
+      "effect": "ui-changed",
+      "at": "app/client/ui/login-form",
+      "detail": {
+        "screen": "login"
+      }
+    }
+  ],
+  "expect": {
+    "interactions": [
+      {
+        "to": "app/api/auth/log-out"
+      },
+      {
+        "to": "app/infrastructure/database.sessions",
+        "kind": "remove"
+      }
+    ],
+    "effects": [
+      {
+        "kind": "row-removed"
+      },
+      {
+        "kind": "response",
+        "detail": {
+          "redirect": "/login"
+        }
+      }
+    ],
+    "never": [
+      "app/api/messaging"
+    ]
+  }
+}

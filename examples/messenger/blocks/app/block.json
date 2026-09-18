@@ -1,0 +1,6 @@
+{
+  "name": "Messenger",
+  "role": "component",
+  "responsibility": "A chat application: a web page, the API behind it, the workers that do things later, and where it all keeps its data.",
+  "code": "src"
+}

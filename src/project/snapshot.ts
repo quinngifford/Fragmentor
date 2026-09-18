@@ -9,7 +9,11 @@ import type { PortType } from "../model/types.js";
 import { loadLayout } from "./layout.js";
 import type { Layout } from "./layout.js";
 import { loadProject, locateCode, resolveAccess, systemOf, validateProject } from "./project.js";
-import type { CodeLocation, Granularity, ProjectDiagnostic, Start } from "./project.js";
+import { EXECUTIONS_DIR, architectureOf, checkExecution, loadExecutions } from "./executions.js";
+import type { TriggerKind } from "./executions.js";
+import { formatAddress } from "../model/trace.js";
+import type { Trace } from "../model/trace.js";
+import type { CodeLocation, Granularity, Project, ProjectDiagnostic, Start } from "./project.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
 import { boundStores, describeBound } from "./stores.js";
 import { readCases } from "../run/cases.js";
@@ -171,6 +175,23 @@ export interface SnapshotBlock {
   code: SnapshotCode | null;
 }
 
+/**
+ * One thing that can set the system going, and what follows from it.
+ *
+ * A trace is plain data already — addresses and events — so it travels to the
+ * window as it is, and the window draws it at whatever resolution is on screen.
+ */
+export interface SnapshotExecution {
+  id: string;
+  name: string;
+  description: string | null;
+  trigger: { at: string; kind: TriggerKind; payload?: unknown };
+  /** The trace an agent wrote down, when there is one. Always `declared`. */
+  declared: Trace | null;
+  /** Whether it says what must happen, which is what makes it a test. */
+  expects: boolean;
+}
+
 export interface ProjectSnapshot {
   dir: string;
   name: string;
@@ -185,6 +206,7 @@ export interface ProjectSnapshot {
   granularity: Granularity;
   systems: SnapshotSystem[];
   blocks: Record<string, SnapshotBlock>;
+  executions: SnapshotExecution[];
   layout: Layout;
   diagnostics: ProjectDiagnostic[];
 }
@@ -211,6 +233,45 @@ function excerptOf(pointer: string, location: CodeLocation): SnapshotCode {
     excerpt: lines.slice(start - 1, start - 1 + EXCERPT_LINES).join("\n"),
     excerptStart: start,
   };
+}
+
+/**
+ * The project's executions, with what is wrong with them reported beside the
+ * diagram's own problems, against the file each came from. A trace naming a
+ * block that has since moved is exactly the drift worth being told about.
+ */
+async function executionsOf(project: Project, problems: ProjectDiagnostic[]): Promise<SnapshotExecution[]> {
+  let loaded: Awaited<ReturnType<typeof loadExecutions>>;
+  try {
+    loaded = await loadExecutions(project.dir);
+  } catch (error) {
+    // A broken project still opens: this is one more thing wrong with it.
+    const reason = error instanceof Error ? error.message : String(error);
+    problems.push({ severity: "error", blockPath: EXECUTIONS_DIR, message: `The executions could not be read: ${reason}` });
+    return [];
+  }
+  for (const unread of loaded.problems) {
+    for (const message of unread.problems) problems.push({ severity: "error", blockPath: unread.file, message });
+  }
+
+  const architecture = architectureOf(project);
+  return loaded.executions.map((execution) => {
+    for (const message of checkExecution(execution, architecture)) {
+      problems.push({ severity: "error", blockPath: `${EXECUTIONS_DIR}/${execution.id}.json`, message });
+    }
+    return {
+      id: execution.id,
+      name: execution.name,
+      description: execution.description,
+      trigger: {
+        at: formatAddress(execution.trigger.at),
+        kind: execution.trigger.kind,
+        ...(execution.trigger.payload === undefined ? {} : { payload: execution.trigger.payload }),
+      },
+      declared: execution.declared,
+      expects: execution.expect !== null,
+    };
+  });
 }
 
 export async function projectSnapshot(projectDir: string): Promise<ProjectSnapshot> {
@@ -333,6 +394,9 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
     };
   }
 
+  // Read before the snapshot is put together, because its problems go into the list below.
+  const executions = await executionsOf(project, fileProblems);
+
   return {
     dir: project.dir,
     name: project.manifest.name,
@@ -352,6 +416,7 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       };
     }),
     blocks,
+    executions,
     layout: await loadLayout(projectDir),
     diagnostics: [...validateProject(project), ...fileProblems],
   };

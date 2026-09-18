@@ -1,0 +1,81 @@
+{
+  "name": "Deliver a notification",
+  "description": "A notification comes off the queue, and Bo's open page shows Ada's message.",
+  "trigger": {
+    "at": "app/infrastructure/queue.notifications",
+    "kind": "message",
+    "payload": {
+      "to": "bo",
+      "messageId": "m-1"
+    }
+  },
+  "trace": [
+    {
+      "from": "app/infrastructure/queue.notifications",
+      "to": "app/workers/deliver-notification",
+      "kind": "deliver",
+      "payload": {
+        "to": "bo",
+        "messageId": "m-1"
+      }
+    },
+    {
+      "from": "app/workers/deliver-notification",
+      "to": "app/infrastructure/database.messages",
+      "kind": "read",
+      "payload": {
+        "id": "m-1"
+      },
+      "response": {
+        "from": "ada",
+        "text": "hi"
+      }
+    },
+    {
+      "from": "app/workers/deliver-notification",
+      "to": "app/infrastructure/database.sessions",
+      "kind": "read",
+      "payload": {
+        "userId": "bo"
+      },
+      "response": {
+        "open": true
+      }
+    },
+    {
+      "from": "app/workers/deliver-notification",
+      "to": "app/client/state",
+      "kind": "send",
+      "payload": {
+        "type": "received",
+        "from": "ada",
+        "text": "hi"
+      }
+    },
+    {
+      "from": "app/client/state",
+      "to": "app/client/ui/chat-view",
+      "kind": "call",
+      "payload": {
+        "from": "ada",
+        "text": "hi"
+      }
+    },
+    {
+      "effect": "ui-changed",
+      "at": "app/client/ui/chat-view",
+      "detail": {
+        "shows": "ada: hi"
+      }
+    }
+  ],
+  "expect": {
+    "entered": [
+      "app/workers",
+      "app/client"
+    ],
+    "never": [
+      "app/api"
+    ]
+  }
+}

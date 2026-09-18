@@ -1,0 +1,109 @@
+{
+  "name": "Log in",
+  "description": "Ada signs in with her email and password.",
+  "trigger": {
+    "at": "app/client/ui/login-form",
+    "kind": "action",
+    "payload": {
+      "email": "ada@example.com"
+    }
+  },
+  "trace": [
+    {
+      "from": "app/client/ui/login-form",
+      "to": "app/client/state",
+      "kind": "call",
+      "payload": {
+        "type": "logIn",
+        "email": "ada@example.com"
+      }
+    },
+    {
+      "from": "app/client/state",
+      "to": "app/api.logIn",
+      "kind": "call",
+      "payload": {
+        "email": "ada@example.com"
+      },
+      "response": {
+        "sessionId": "s-1"
+      }
+    },
+    {
+      "from": "app/api.logIn",
+      "to": "app/api/router",
+      "kind": "call",
+      "payload": {
+        "path": "/login"
+      }
+    },
+    {
+      "from": "app/api/router",
+      "to": "app/api/auth/log-in",
+      "kind": "call",
+      "payload": {
+        "email": "ada@example.com"
+      },
+      "response": {
+        "sessionId": "s-1"
+      }
+    },
+    {
+      "from": "app/api/auth/log-in",
+      "to": "app/infrastructure/database.users",
+      "kind": "read",
+      "payload": {
+        "email": "ada@example.com"
+      },
+      "response": {
+        "id": "ada"
+      }
+    },
+    {
+      "from": "app/api/auth/log-in",
+      "to": "app/infrastructure/database.sessions",
+      "kind": "write",
+      "payload": {
+        "id": "s-1",
+        "userId": "ada"
+      }
+    },
+    {
+      "effect": "row-changed",
+      "at": "app/infrastructure/database.sessions",
+      "detail": {
+        "id": "s-1"
+      }
+    },
+    {
+      "effect": "response",
+      "at": "app/api.logIn",
+      "detail": {
+        "status": 200,
+        "sessionId": "s-1"
+      }
+    },
+    {
+      "effect": "ui-changed",
+      "at": "app/client/state",
+      "detail": {
+        "screen": "chat"
+      }
+    }
+  ],
+  "expect": {
+    "entered": [
+      "app/api/auth"
+    ],
+    "effects": [
+      {
+        "at": "app/infrastructure/database.sessions",
+        "kind": "row-changed"
+      }
+    ],
+    "never": [
+      "app/api/messaging",
+      "app/infrastructure/queue"
+    ]
+  }
+}

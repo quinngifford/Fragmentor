@@ -1,0 +1,53 @@
+{
+  "name": "Clean up sessions",
+  "description": "The nightly job removes a session that has run out.",
+  "trigger": {
+    "at": "app/workers/clean-up-sessions",
+    "kind": "schedule",
+    "payload": {
+      "now": 1767225600000
+    }
+  },
+  "trace": [
+    {
+      "from": "app/workers/clean-up-sessions",
+      "to": "app/infrastructure/database.sessions",
+      "kind": "read",
+      "response": [
+        {
+          "id": "s-9",
+          "expiresAt": 1767139200000
+        }
+      ]
+    },
+    {
+      "from": "app/workers/clean-up-sessions",
+      "to": "app/infrastructure/database.sessions",
+      "kind": "remove",
+      "payload": {
+        "id": "s-9"
+      }
+    },
+    {
+      "effect": "row-removed",
+      "at": "app/infrastructure/database.sessions",
+      "detail": {
+        "id": "s-9"
+      }
+    }
+  ],
+  "expect": {
+    "effects": [
+      {
+        "kind": "row-removed",
+        "detail": {
+          "id": "s-9"
+        }
+      }
+    ],
+    "never": [
+      "app/client",
+      "app/api"
+    ]
+  }
+}

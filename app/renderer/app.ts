@@ -10,6 +10,7 @@ import {
 } from "./state.js";
 import type { ColourBy } from "./state.js";
 import {
+  applyDependencies,
   clearCanvas,
   fitToView,
   fitWhenReady,
@@ -30,6 +31,7 @@ import { onBenchChange } from "./bench.js";
 import { PROJECT_VIEW } from "./graph.js";
 import { askForProjectSettings } from "./newproject.js";
 import { onWatchChange, resetWatching, setUpWatching } from "./watch.js";
+import { onExecutionChange, paintExecution, resetExecutions } from "./execution.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
 
@@ -76,6 +78,8 @@ function forgetProject(): void {
   ui.selectedLink = null;
   // A run, and the places runs pause, belong to the project they were set in.
   resetWatching();
+  // So does the execution on the diagram, and which blocks around it are open.
+  resetExecutions();
 }
 
 /**
@@ -579,6 +583,8 @@ export function render(): void {
   renderPanels();
   if (ui.snapshot && !ui.waiting) renderCanvas();
   else if (ui.dir) showCanvasMessage(noDiagramText());
+  // Whichever diagram is on screen now, or none.
+  paintExecution();
   renderLoadError();
   renderInspector();
   renderStatus();
@@ -611,7 +617,21 @@ function wireViewSettings(): void {
     render();
   });
 
+  // What each block reaches is a standing fact rather than something that
+  // happened, and can be put away to leave the blocks, or an execution, alone.
+  const dependencies = element("show-dependencies");
+  const showDependencies = () => {
+    dependencies.textContent = ui.showDependencies ? "Dependencies: shown" : "Dependencies: hidden";
+    dependencies.setAttribute("aria-pressed", String(ui.showDependencies));
+  };
+  dependencies.addEventListener("click", () => {
+    ui.setShowDependencies(!ui.showDependencies);
+    showDependencies();
+    applyDependencies();
+  });
+
   show();
+  showDependencies();
 }
 
 function wireToolbar(): void {
@@ -665,6 +685,8 @@ try {
   onBenchChange(render);
   // A run being watched moves on by itself; the panels follow it.
   onWatchChange(renderPanels);
+  // Picking an execution can change what the diagram draws.
+  onExecutionChange(render);
   // The agent works in the same folder; follow what it does.
   window.fragmentor.onProjectChanged((dir) => {
     if (dir === ui.dir) void reload();

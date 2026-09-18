@@ -1,0 +1,7 @@
+{
+  "name": "Infrastructure",
+  "role": "component",
+  "subtype": "infrastructure",
+  "responsibility": "Where the application keeps its data and passes work along. None of it is code of ours.",
+  "code": "src/infrastructure"
+}

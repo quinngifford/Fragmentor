@@ -1,0 +1,13 @@
+{
+  "responsibility": "Says whose session this is, or that it is not a session at all.",
+  "code": "src/api/auth.ts#checkSession",
+  "inputs": {
+    "sessionId": "string"
+  },
+  "outputs": {
+    "userId": "string | undefined"
+  },
+  "access": [
+    "reads infrastructure/database.sessions"
+  ]
+}

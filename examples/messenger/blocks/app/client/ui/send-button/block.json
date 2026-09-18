@@ -1,0 +1,9 @@
+{
+  "name": "Send Button",
+  "responsibility": "Hands the message someone has written to the page's state when they press send.",
+  "code": "src/client/ui/sendButton.ts#onSendPressed",
+  "inputs": {
+    "to": "string",
+    "text": "string"
+  }
+}

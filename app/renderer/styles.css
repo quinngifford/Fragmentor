@@ -14,6 +14,9 @@
   --signal-dim: #2b8d5c;
   --signal-deep: #1a4b34;
   --effect: #e2a54b;
+  /* An execution's steps that carry nothing: a trigger, a call made for its
+     own sake. They light up rather than flow, in a colour of their own. */
+  --exec-trigger: #9fd3ff;
   --pending: #7a8b96;
   --bad: #e3778c;
   /* What kind of thing a block is: set on the document by the renderer, which
@@ -285,10 +288,25 @@ body[data-resizing="true"] { cursor: col-resize; }
   color: var(--ink-faint);
 }
 
-.hint {
+/* What sits along the top of the canvas, side by side while there is room and
+   wrapping when there is not, so none of it can land on the rest. */
+.canvas-top {
   position: absolute;
-  right: 14px;
   top: 12px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.canvas-top > * { pointer-events: auto; }
+
+.hint {
+  margin-left: auto;
+  padding-top: 2px;
   font-family: var(--mono);
   font-size: 10.5px;
   color: var(--ink-faint);
@@ -796,8 +814,11 @@ pre.code-view { max-height: 420px; overflow: auto; }
   to { opacity: 1; transform: scale(1); }
 }
 
+/* A glow rather than a change of outline: an outline drawn in a mix of the
+   block's colour cannot be animated towards without Chromium passing through
+   colours that are nothing like either end. */
 @keyframes plate-lit {
-  from, 30% { stroke: var(--signal); stroke-width: 2; }
+  from, 30% { filter: drop-shadow(0 0 4px var(--signal)); stroke-width: 2; }
 }
 
 @keyframes fade-in {
@@ -841,16 +862,7 @@ pre.code-view { max-height: 420px; overflow: auto; }
 .breakpoint:hover .breakpoint-dot { stroke: var(--bad); }
 .block-box[data-breakpoint="true"] .breakpoint-dot { fill: var(--bad); stroke: var(--bad); }
 
-/* Centred between both edges rather than pushed off the middle, so the bar
-   can use the whole width. Set from the left alone, it had only half the
-   canvas to grow into and ate its own message to fit another button. */
 .run-bar {
-  position: absolute;
-  top: 12px;
-  left: 14px;
-  right: 14px;
-  width: fit-content;
-  margin-inline: auto;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1032,10 +1044,8 @@ pre.code-view { max-height: 420px; overflow: auto; }
 
 /* Shown over the last good diagram when the newest files could not be read. */
 .load-error {
-  position: absolute;
-  top: 12px;
-  left: 14px;
-  max-width: min(64ch, calc(100% - 28px));
+  flex-basis: 100%;
+  max-width: min(64ch, 100%);
   padding: 8px 12px;
   background: var(--panel);
   border: 1px solid var(--bad);
@@ -1207,3 +1217,123 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
   color: var(--ink-faint);
   user-select: none;
 }
+
+/* ---- the rest of the architecture, around the block in focus ---- */
+
+/* A tile is there to be arrived at, so it stays quiet until a run reaches it. */
+.block-box[data-context="true"] { cursor: pointer; opacity: 0.78; }
+.block-box[data-context="true"] .block-name { font-size: 11.5px; }
+.tile-caption { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; fill: var(--ink-faint); pointer-events: none; }
+.tile-toggle { cursor: pointer; }
+.tile-toggle-hit { fill: transparent; }
+.tile-toggle-mark { fill: none; stroke: var(--ink-dim); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.tile-toggle:hover .tile-toggle-mark { stroke: var(--ink); }
+
+#canvas-svg[data-dependencies="hidden"] #access-layer { display: none; }
+
+/* ---- an execution on the diagram ---- */
+
+/* What exists steps back while what happened is shown. */
+#canvas-svg.tracing #access-layer { opacity: 0.2; }
+#canvas-svg.tracing .block-box[data-involved="false"] { opacity: 0.3; }
+#canvas-svg.tracing .block-box[data-context="true"][data-involved="true"] { opacity: 1; }
+#canvas-svg.tracing .block-box[data-current="true"] .block-plate { stroke: var(--exec-trigger); stroke-width: 2.2; }
+
+.exec-line { fill: none; stroke: var(--exec-trigger); stroke-width: 1.8; opacity: 0.8; }
+.exec-arrow { fill: context-stroke; }
+/* Something travelled along it: it flows, the way the data went. */
+.exec-line-group[data-data="true"] .exec-line {
+  stroke: var(--signal);
+  stroke-dasharray: 7 5;
+  animation: exec-flow 900ms linear infinite;
+}
+/* Nothing did: it lights up. */
+.exec-line-group[data-data="false"] .exec-line { filter: drop-shadow(0 0 3px var(--exec-trigger)); }
+.exec-line-group:hover .exec-line { opacity: 1; stroke-width: 2.6; }
+.exec-line-group[data-current="out"] .exec-line,
+.exec-line-group[data-current="back"] .exec-line { opacity: 1; stroke-width: 3.2; }
+/* An answer coming back runs the other way along the same line. */
+.exec-line-group[data-current="back"] .exec-line { animation-direction: reverse; }
+
+@keyframes exec-flow {
+  to { stroke-dashoffset: -12; }
+}
+
+.exec-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  fill: var(--ink);
+  paint-order: stroke;
+  stroke: var(--ground);
+  stroke-width: 3px;
+  pointer-events: none;
+}
+
+.exec-outside-dot { fill: var(--ground); stroke: var(--exec-trigger); stroke-width: 1.8; }
+.exec-outside-label { font-family: var(--mono); font-size: 9px; fill: var(--exec-trigger); pointer-events: none; }
+
+.exec-effect-chip { fill: color-mix(in srgb, var(--effect) 14%, var(--ground)); stroke: var(--effect); stroke-width: 1; }
+.exec-effect-text { font-family: var(--mono); font-size: 9px; fill: var(--effect); pointer-events: none; }
+.exec-effect[data-current="true"] .exec-effect-chip { stroke-width: 2; fill: color-mix(in srgb, var(--effect) 30%, var(--ground)); }
+
+.exec-inside text { font-family: var(--mono); font-size: 9px; fill: var(--exec-trigger); }
+.exec-inside[data-current="true"] text { fill: var(--ink); font-weight: 600; }
+
+.exec-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-width: min(780px, 100%);
+  padding: 5px 6px;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink);
+}
+
+.exec-bar[hidden] { display: none; }
+.exec-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+.exec-select {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 3px 6px;
+  max-width: 240px;
+  background: var(--panel-high);
+  color: var(--ink);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+}
+
+/* Where a trace came from is never left to be guessed. */
+.exec-source {
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  cursor: help;
+}
+.exec-source[data-source="declared"] { border: 1px dashed var(--ink-faint); color: var(--ink-dim); }
+.exec-source[data-source="recorded"] { border: 1px solid var(--signal-dim); color: var(--signal); }
+
+.exec-count { color: var(--ink-dim); padding-left: 2px; white-space: nowrap; }
+
+.exec-caption { display: flex; align-items: baseline; gap: 8px; padding: 0 4px 1px; min-width: 0; }
+.exec-caption-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-dim); user-select: text; }
+
+.exec-reveal {
+  flex: none;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  background: none;
+  border: none;
+  color: var(--exec-trigger);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.exec-reveal:hover { color: var(--ink); }

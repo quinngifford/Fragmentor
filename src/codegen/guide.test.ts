@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { GUIDE_FILE, agentGuide, architectureExample, compactJson, visualExample, workedExample } from "./guide.js";
+import { GUIDE_FILE, agentGuide, architectureExample, compactJson, executionExample, visualExample, workedExample } from "./guide.js";
 import { writeAgentFiles } from "./emit.js";
 import { blockFromFile } from "../model/block.js";
 import { CAPABILITIES } from "../model/capabilities.js";
@@ -131,7 +131,9 @@ describe("the guide", () => {
     // that once a diagram can hold a database, and that section is the only
     // thing that has been allowed to add to these numbers.
     expect(guides["structured TypeScript"]!.split("\n").length).toBeLessThan(225);
-    expect(guides.visual!.split("\n").length).toBeLessThan(165);
+    // The visual guide also teaches executions, which is the one thing it
+    // has gained since: what happens is half of what it now describes.
+    expect(guides.visual!.split("\n").length).toBeLessThan(190);
   });
 
   it("tells a structured agent about every capability, and how to check and test its work", () => {
@@ -302,6 +304,9 @@ describe("the visual worked example", () => {
       ].join("\n"),
       "utf8",
     );
+    // And what happens when it is set going, exactly as the guide shows it.
+    await mkdir(path.join(dir, "executions"));
+    await writeFile(path.join(dir, "executions", "report-totals.json"), JSON.stringify(executionExample), "utf8");
 
     const report = await checkProject(dir);
     expect(report.problems).toEqual([]);

@@ -1,4 +1,4 @@
-import type { ProjectSnapshot } from "../../src/project/snapshot.js";
+import type { ProjectSnapshot, SnapshotExecution } from "../../src/project/snapshot.js";
 import type { CaseResult, RunEvent, RunOutcome, StoreSeeds } from "../../src/run/run.js";
 import type { Role } from "../../src/model/roles.js";
 
@@ -51,6 +51,20 @@ export interface UiState {
   loadError: string | null;
   /** The block whose parts are on the canvas. */
   view: string;
+  /**
+   * Blocks around the one in focus opened to show their parts, by path. Kept
+   * while the person moves about, so a region they opened stays open.
+   */
+  expanded: Set<string>;
+  /** Whether the lines saying what each block reaches are drawn. A preference, like the colours. */
+  showDependencies: boolean;
+  setShowDependencies(value: boolean): void;
+  /**
+   * The execution drawn over the diagram, and the event it has been stepped
+   * to: everything up to it is showing. Null shows all of it, with nothing
+   * current. It stays picked whichever diagram is open.
+   */
+  execution: { id: string; at: number | null } | null;
   /** Node keys inside the current diagram: a part's id, or the way into a service. */
   selection: Set<string>;
   /** The line picked out on the diagram: an access reaching a database, a queue or a service. */
@@ -131,6 +145,23 @@ export const ui: UiState = {
   waiting: false,
   loadError: null,
   view: "",
+  expanded: new Set(),
+  showDependencies: (() => {
+    try {
+      return localStorage.getItem("fragmentor.showDependencies") !== "false";
+    } catch {
+      return true;
+    }
+  })(),
+  setShowDependencies(value: boolean): void {
+    this.showDependencies = value;
+    try {
+      localStorage.setItem("fragmentor.showDependencies", String(value));
+    } catch {
+      // Remembering is a nicety; the lines still come and go.
+    }
+  },
+  execution: null,
   selection: new Set(),
   selectedLink: null,
   zoom: 1,
@@ -170,6 +201,12 @@ export const ui: UiState = {
   watch: null,
   status: null,
 };
+
+/** The execution drawn over the diagram, while it is still in the project. */
+export function selectedExecution(): SnapshotExecution | null {
+  const id = ui.execution?.id;
+  return ui.snapshot?.executions.find((each) => each.id === id) ?? null;
+}
 
 export function requireSnapshot(): ProjectSnapshot {
   if (!ui.snapshot) throw new Error("No project is open.");

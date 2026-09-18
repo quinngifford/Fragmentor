@@ -89,6 +89,19 @@ A block with a role has no `inputs` or `outputs`. It says what it offers with `e
 - `reads` takes data out, `writes` puts data in, `calls` does both. Name the entry, as in `reads orders-db.orders`, or leave it off to mean the whole thing.
 - The block named is looked for among this block's own parts, then beside it, then above it, up to the top of the system, so a handler inside a service reaches a database the service keeps beside it. Name one inside a group by its path from there: `reads infrastructure/orders-db.orders`. Put the access on the block whose code really touches the resource; the diagrams above gather it up.
 
+## Executions
+
+The blocks say what exists. Also write down what happens: for each thing that sets the program going — a button, a request, a scheduled job, a queue message, a webhook — a file under `executions/`, such as `executions/report-totals.json`, written from reading the code:
+
+```json
+{{execution}}
+```
+
+- An address is a block's path under `blocks/`, optionally followed by `.` and one of its entries: `shop/api.checkout`. `trigger.at` is where it arrives, and `kind` is `action`, `request`, `schedule`, `message` or `webhook`.
+- `trace` lists what follows, in order. A step is an interaction — `from`, `to` and `kind` (`call`, `read`, `write`, `remove`, `send` or `deliver`), with `payload` for what it carried and `response` for what came back, where anything did — or an effect, `{ "effect": ..., "at": ... }`, such as `row-changed`, `row-removed`, `message-published`, `response` or `ui-changed`.
+- Write each step between the finest blocks the code shows, even across distant parts of the system. A step follows from the latest step that arrived where it starts, so two calls one block makes in turn are two branches; where the list cannot say so, give a step an `id` and another `"cause": "<id>"`.
+- This is documentation: it is shown as written by you, never as something observed. Keep it true to the code, and change it when the code changes.
+
 ## Granularity: level {{level}}
 
 {{granularity}}
