@@ -2,15 +2,32 @@
 
 Fragmentor is a modular, block-based environment for AI-assisted software development.
 
-Software is shown as a hierarchy of blocks — systems and subsystems — with precisely defined contracts and connections between them. An AI coding agent does the work in the project folder; Fragmentor gives that work its structure, makes it visible, and verifies it. The user inspects, tests, and steers the structure through a visual canvas.
-
-The reference point is MATLAB Simulink, applied to general software development rather than signal processing.
+Software is shown as a hierarchy of blocks: the architecture, meaning what exists and what owns what. Separately, it shows what actually happens when something sets the system going, drawn over that architecture. An AI coding agent does the work in the project folder; Fragmentor gives that work its structure, makes it visible, and verifies it. The user inspects, tests, and steers the structure through a visual canvas.
 
 ## Why
 
 Large AI-generated codebases become opaque. Neither the human nor the AI can hold them in mind, and every change begins with rediscovering how the system fits together.
 
-Fragmentor makes the structure the primary artifact. A user should be able to look at a system, see its parts, see exactly what flows between them, open any part, and test it in isolation without understanding the rest.
+Fragmentor makes the structure the primary artifact. A user should be able to look at a system, see its parts, see what actually happens between them when something sets it going, open any part, and test it without understanding the rest.
+
+## Architecture and execution
+
+Fragmentor keeps apart two things that are easily confused: what a system is, and what it does.
+
+- **Architecture** is containment and ownership. A block's children are the parts it is made of, not the things it calls. A part used by several others sits beside them, at the lowest block that owns all of them, rather than under whichever happens to use it. The architecture is not the folder structure of the code, though a block may point at the code it stands for.
+- **Dependencies** — which part is able to reach which — are static facts about the architecture, declared with `access`, and drawn only when asked for.
+- **An execution** is one trigger under stated starting conditions: a click, a request, a scheduled job, a queue message, a webhook. It produces a **trace**: every interaction and effect that happened, in order, anywhere in the architecture. An interaction can go from any part to any other, in any direction, and one execution can branch.
+- **An interaction** has a source, a target, a kind and a cause, and may or may not carry something. Carrying data or only triggering is a difference in what is drawn, not two kinds of connection.
+- **An effect** is an observable consequence — a row changed, a message published, a response sent — shown at the part responsible. It is never a part of the architecture.
+- **Contracts** exist only where they mean something. A part may take nothing, return nothing, or only be triggered.
+
+A trace never depends on what is on screen. Zooming into a block shows the architecture in more detail, never a different diagram, and the selected execution stays selected however far in or out the person goes. Each end of an interaction is drawn at the deepest visible part that contains its real end, so interactions inside a collapsed part become activity within it, and many interactions between two collapsed parts become one line with a count. Nothing is lost by collapsing: the trace keeps every event, and stepping can go into what a collapsed part hides.
+
+A trace is either **recorded**, meaning Fragmentor saw it happen by running the code, or **declared**, meaning an agent wrote it down after reading the code. A declared trace is documentation and is never presented as something observed.
+
+Tests are assertions over a trace: that the run crossed into a part, that an interaction happened and carried what it should, that an effect happened, that the stores hold what they should at the end, and that a part was never touched. Breakpoints pause on entering a part, an interaction, an effect or a change of state. Both work for parts with no parameters and no result.
+
+This replaces an earlier model borrowed from Simulink, in which every block was a function whose children were steps wired output to input. The sections below that describe wires, composite code generated from them, and tests as input and expected output describe that model, and are rewritten as the migration replaces it. `STATUS.md` says how far it has got.
 
 ## Two modes
 

@@ -18,7 +18,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export function compareValues(actual: unknown, expected: unknown, where = "output"): string[] {
+/**
+ * With `partial`, an object only has to have the fields the expectation
+ * names, so a test can say "the row's status became closed" without
+ * restating the rest of the row. Lists are still compared item for item.
+ */
+export function compareValues(actual: unknown, expected: unknown, where = "output", partial = false): string[] {
   if (Array.isArray(expected)) {
     if (!Array.isArray(actual)) return [`${where} should be a list but was ${describe(actual)}.`];
 
@@ -27,7 +32,7 @@ export function compareValues(actual: unknown, expected: unknown, where = "outpu
       differences.push(`${where} has ${actual.length} items, expected ${expected.length}.`);
     }
     for (let i = 0; i < Math.min(actual.length, expected.length); i += 1) {
-      differences.push(...compareValues(actual[i], expected[i], `${where}[${i}]`));
+      differences.push(...compareValues(actual[i], expected[i], `${where}[${i}]`, partial));
     }
     return differences;
   }
@@ -41,10 +46,12 @@ export function compareValues(actual: unknown, expected: unknown, where = "outpu
         differences.push(`${where}.${key} is missing.`);
         continue;
       }
-      differences.push(...compareValues(actual[key], expected[key], `${where}.${key}`));
+      differences.push(...compareValues(actual[key], expected[key], `${where}.${key}`, partial));
     }
-    for (const key of Object.keys(actual)) {
-      if (!(key in expected)) differences.push(`${where}.${key} was not expected.`);
+    if (!partial) {
+      for (const key of Object.keys(actual)) {
+        if (!(key in expected)) differences.push(`${where}.${key} was not expected.`);
+      }
     }
     return differences;
   }

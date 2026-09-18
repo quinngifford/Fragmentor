@@ -2,13 +2,16 @@
 
 ## Current focus
 
-A diagram now runs from the top. A block reaches a database, file, structure or queue through a `Store` or `Queue` capability, and the access naming that port is what says which entry it is a way into — so the line drawn on the diagram is the line the code runs along, rather than a description sitting beside one. The port is typed by what the entry holds, the test bench seeds it before a run and shows what the run left behind, and saved tests carry their rows with them.
+**Separating architecture from execution.** The block tree is being redefined as containment only, and runtime behaviour moves into executions: a trigger, the conditions it happens under, and the trace of everything that followed across the whole architecture. `PROJECT.md` describes the model. The work happens on the `execution-model` branch, in phases, each ending with the tests and the self-check passing.
 
-With that in place, an operation and the block answering it are held to the same shape. There is no mapping between them: where the outside world's shape really differs, the conversion is a block, drawn like everything else. And because nothing stands between the two ends, an entry can simply be run — a client's action or a service's operation now carries a bench, so pressing the button runs the blocks that answer it, watched and pausable as usual.
+1. **Done: the trace kernel, on its own.** `src/model/trace.ts` holds addresses, the three kinds of event (interaction, return, effect), entered and activated, and `project(trace, view)`, which draws one trace at any combination of expanded blocks. It also has stepping that passes over what a collapsed block hides, and `reveal`. `src/project/executions.ts` reads `executions/<name>.json`: a trigger, starting store contents, an optional trace an agent wrote (always kept as `declared`), and optional expectations. It also checks every address against the architecture. `src/run/expect.ts` evaluates expectations against any trace. Nothing in the application uses any of it yet.
+2. Next: draw executions on the canvas from declared traces, with `link-shortener` as the example, and have a person look at it.
+3. Remove wires, `each` and generated composites; contracts become optional; rebuild `lending-desk` without them.
+4. Record traces by running the code.
+5. Tests and breakpoints over traces.
+6. Documentation, retiring the pure-dataflow examples, and a simplification pass.
 
-`examples/lending-desk` is the example built this way: a kiosk, a REST API, a PostgreSQL catalogue and a notification queue, with a request path that reads two tables, writes one, puts a message on the queue, and ends in the block whose only job is turning what the desk worked out into the response the kiosk shows. Fifteen tests pass, and pressing `borrowBook` on the kiosk runs all of it.
-
-Neither mode has yet been run with a real agent. That is the next thing to find out.
+Until phase 3, everything under "Working" below still describes the application as it runs.
 
 ## Working
 
@@ -107,16 +110,17 @@ Neither mode has yet been run with a real agent. That is the next thing to find 
 
 ## Current checkpoint
 
+- `execution-model`: the redesign, currently with the trace kernel added and nothing else changed.
 - `main`, with stores a block actually reaches, an entry that can be run, and `examples/lending-desk` built that way.
-- Tags, newest first: `checkpoint/pre-store-capability` (before a capability reached a store at all), `checkpoint/pre-triggers` (before a connection could name the entry it starts from), `checkpoint/pre-subtypes` (before subtypes and chosen colours), `checkpoint/pre-connection-colours` (before the colour vocabulary and the arrangement rules), `checkpoint/pre-architecture-blocks` (before roles existed at all), then `checkpoint/pre-planned-blocks`, `checkpoint/pre-inspector-ui` and `checkpoint/pre-modes`.
+- Tags, newest first: `checkpoint/pre-execution-model` (the last state of the wired model, where the redesign branched off), `checkpoint/pre-store-capability` (before a capability reached a store at all), `checkpoint/pre-triggers` (before a connection could name the entry it starts from), `checkpoint/pre-subtypes` (before subtypes and chosen colours), `checkpoint/pre-connection-colours` (before the colour vocabulary and the arrangement rules), `checkpoint/pre-architecture-blocks` (before roles existed at all), then `checkpoint/pre-planned-blocks`, `checkpoint/pre-inspector-ui` and `checkpoint/pre-modes`.
 - One test has been failing since long before this work: `check.test.ts` > "puts back a composite that someone edited" compares generated code against a file this checkout has in CRLF. It is a line-ending artifact of the working copy, not a fault in the code. Everything else passes, as does `npm run check:app`.
 - **The colour palettes in `app/renderer/state.ts` are the person's own**, edited by hand: `DEFAULT_ROLE_COLOURS` and `BLOCK_PALETTE`. Do not tidy or re-pick them.
 
 ## Next major steps
 
-1. **Run both modes with a real agent**, plan-first included, and tighten `FRAGMENTOR.md` wherever the agent goes wrong. Everything an agent does is exercised by tests and the self-check; whether an agent actually follows the guide is the one thing none of that can tell us.
-2. Show everything `fragmentor check` finds in the application, code problems included.
-3. Decide whether a block should be able to read a queue, which is the half of `Queue` nothing needs yet.
+1. **Phases 2 to 6 of the redesign**, listed under "Current focus".
+2. **Run both modes with a real agent**, plan-first included, once the guide describes the new model, and tighten `FRAGMENTOR.md` wherever the agent goes wrong.
+3. Show everything `fragmentor check` finds in the application, code problems included.
 4. Decide how Python blocks are laid out as modules, so they can be run and watched.
 
 ## Status-file rule

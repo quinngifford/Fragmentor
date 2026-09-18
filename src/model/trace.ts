@@ -1,0 +1,351 @@
+import { blockIdPattern } from "./block.js";
+import { identifierPattern } from "./types.js";
+
+/**
+ * What happened, kept apart from what exists.
+ *
+ * The block tree says what a system is made of: which parts exist and what
+ * owns them. It says nothing about what runs when. A trace is the other half:
+ * one run of the system from one trigger, as a list of everything that
+ * happened, in order, across the whole architecture. An interaction can go
+ * from any part to any other, up, down or across branches, because the tree
+ * only ever meant ownership.
+ *
+ * A trace never depends on what is on screen. Every event names the real
+ * component it happened at. How much of the architecture is expanded decides
+ * only how finely the trace is drawn: `project` gathers events into whatever
+ * is visible, and nothing is ever dropped from the trace to do it.
+ */
+
+/**
+ * A place in the architecture: a component, by its path from the blocks
+ * root, and optionally one of its entries — a table, a channel, an operation.
+ *
+ * Written `app/api/messaging` or `app/infrastructure/queue.publish`. Block ids
+ * never contain a dot, so the first dot is always where the entry begins.
+ *
+ * Used as a pattern, an address without an entry stands for the component
+ * and everything inside it; with an entry, for exactly that entry.
+ */
+export interface Address {
+  path: string;
+  entry: string | null;
+}
+
+export function parseAddress(text: string): { ok: true; address: Address } | { ok: false; error: string } {
+  const dot = text.indexOf(".");
+  const path = dot === -1 ? text : text.slice(0, dot);
+  const entry = dot === -1 ? null : text.slice(dot + 1);
+
+  if (path === "" || !path.split("/").every((segment) => blockIdPattern.test(segment))) {
+    return {
+      ok: false,
+      error: `"${text}" is not an address: it should be block ids joined by "/", such as "app/api/messaging", optionally followed by "." and an entry.`,
+    };
+  }
+  if (entry !== null && !identifierPattern.test(entry)) {
+    return { ok: false, error: `"${entry}" in "${text}" is not a valid entry name.` };
+  }
+  return { ok: true, address: { path, entry } };
+}
+
+export function formatAddress(address: Address): string {
+  return address.entry === null ? address.path : `${address.path}.${address.entry}`;
+}
+
+/** Whether a path is this one or lies anywhere inside it. */
+function isWithinPath(path: string, ancestor: string): boolean {
+  return path === ancestor || path.startsWith(`${ancestor}/`);
+}
+
+/** Whether an address lies within a pattern: inside its subtree, or at exactly its entry. */
+export function isInside(address: Address, within: Address): boolean {
+  if (within.entry !== null) return address.path === within.path && address.entry === within.entry;
+  return isWithinPath(address.path, within.path);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Events                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What an interaction does. `trigger` is something outside the system setting
+ * it going; `deliver` is a channel handing a message to whoever consumes it.
+ */
+export type InteractionKind = "trigger" | "call" | "read" | "write" | "remove" | "send" | "deliver";
+
+export const INTERACTION_KINDS: InteractionKind[] = ["trigger", "call", "read", "write", "remove", "send", "deliver"];
+
+/**
+ * One part of the system reaching another.
+ *
+ * There is one kind of interaction, not one for data and one for signals.
+ * Some carry something and some do not: a button press is only a trigger, a
+ * write carries a row. Whether anything travelled is read off `payload` and
+ * the matching return's `response`, and how that is drawn is the canvas's
+ * business.
+ */
+export interface Interaction {
+  type: "interaction";
+  id: string;
+  /** The interaction that led to this one. Siblings with one cause are branches. */
+  cause: string | null;
+  /** Null when it came from outside the system: a person, a clock, another company's server. */
+  from: Address | null;
+  to: Address;
+  kind: InteractionKind;
+  /** What travelled along it. Left out when nothing did. */
+  payload?: unknown;
+}
+
+/**
+ * An interaction finishing, and whatever came back along it.
+ *
+ * Its own event rather than a field of the interaction, because it happens
+ * later: after everything the interaction set off. A debugger that could not
+ * stop at the moment a database read came back would be missing a step.
+ *
+ * It repeats the ends of the interaction it completes, as that interaction
+ * wrote them, so every event carries its own place in the architecture. The
+ * response travels from `to` back to `from`.
+ */
+export interface Return {
+  type: "return";
+  id: string;
+  of: string;
+  from: Address | null;
+  to: Address;
+  response?: unknown;
+}
+
+/**
+ * Something observable that a run left behind: a row changed, a message
+ * published, a response sent, a file written.
+ *
+ * An effect happens at the component responsible for it, and is drawn there,
+ * but it is never a part of the architecture. It belongs to this run alone.
+ */
+export interface Effect {
+  type: "effect";
+  id: string;
+  cause: string | null;
+  at: Address;
+  /** `row-changed`, `message-published`, `response`, `ui-changed`, ... Free text, as a subtype is. */
+  kind: string;
+  detail?: unknown;
+}
+
+export type TraceEvent = Interaction | Return | Effect;
+
+/**
+ * Where a trace came from.
+ *
+ * `recorded` is what Fragmentor saw happen when it ran the code. `declared`
+ * is what an agent wrote down after reading the code: documentation of how
+ * the system behaves, never evidence that it does. The two are never
+ * confused, whatever else is done with a trace.
+ */
+export type TraceSource = "recorded" | "declared";
+
+export interface Trace {
+  source: TraceSource;
+  /** The execution this is a trace of. */
+  execution: string;
+  /**
+   * Every event, in the order it happened, starting with the trigger.
+   * Nothing is ever left out of a recorded trace. A declared one has only
+   * what its agent wrote down: a call finishes in it only where the agent
+   * said what came back.
+   */
+  events: TraceEvent[];
+  /** What each store held when the run ended, by target. Only a recorded run knows. */
+  state?: Record<string, unknown>;
+}
+
+/** Where in the architecture an event happened: both ends of an interaction, or where an effect landed. */
+export function addressesOf(event: TraceEvent): Address[] {
+  if (event.type === "effect") return [event.at];
+  return event.from === null ? [event.to] : [event.from, event.to];
+}
+
+/**
+ * Whether something happened inside `within` — at either end of an
+ * interaction, or where an effect landed — whether or not the run crossed
+ * into it just then.
+ */
+export function activates(event: TraceEvent, within: Address): boolean {
+  return addressesOf(event).some((address) => isInside(address, within));
+}
+
+/**
+ * Whether the run crossed into `within` from outside it. A call from one
+ * block to another inside the same component activates that component
+ * without entering it. A response coming back is a return, not an entry.
+ */
+export function enters(event: TraceEvent, within: Address): boolean {
+  return (
+    event.type === "interaction" && isInside(event.to, within) && (event.from === null || !isInside(event.from, within))
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Drawing a trace at a resolution                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * How much of the architecture is open.
+ *
+ * An expanded component shows its children and its entries. Anything whose
+ * ancestors are all expanded is visible. The root — the project itself,
+ * path "" — is always expanded, so a system's top block is always visible.
+ *
+ * Nothing here says which component is in focus. Focusing into a block
+ * expands the chain down to it, but any other region can be expanded as
+ * well, and the trace is drawn the same way whatever the combination.
+ */
+export interface View {
+  expanded: ReadonlySet<string>;
+}
+
+/**
+ * Where an address is drawn: at the deepest visible component that contains
+ * it. An entry is kept only when its own component is expanded to show it;
+ * otherwise the component stands for it, as it stands for everything inside.
+ */
+export function place(address: Address, view: View): Address {
+  const segments = address.path.split("/");
+  let placed = segments[0]!;
+  // A system's top block sits directly under the root, which is always
+  // expanded, so it is always visible: the walk starts there.
+  for (let depth = 1; depth < segments.length && view.expanded.has(placed); depth += 1) {
+    placed = `${placed}/${segments[depth]}`;
+  }
+  if (placed !== address.path || !view.expanded.has(placed)) return { path: placed, entry: null };
+  return address;
+}
+
+/** Where one event shows at this resolution. */
+export type Placement =
+  /** An interaction, or its return, between two drawn places. */
+  | { on: "edge"; key: string; from: Address | null; to: Address }
+  /** An interaction, or its return, that starts and ends inside one drawn place. */
+  | { on: "inside"; key: string; at: Address }
+  /** An effect, on the drawn place responsible for it. */
+  | { on: "effect"; key: string; at: Address };
+
+/** Stands for outside the system in an edge's key. Brackets, so it can never be a block's path. */
+const OUTSIDE = "(outside)";
+
+export function placeEvent(event: TraceEvent, view: View): Placement {
+  if (event.type === "effect") {
+    const at = place(event.at, view);
+    return { on: "effect", key: formatAddress(at), at };
+  }
+  const from = event.from === null ? null : place(event.from, view);
+  const to = place(event.to, view);
+  const fromKey = from === null ? OUTSIDE : formatAddress(from);
+  const toKey = formatAddress(to);
+  if (from !== null && fromKey === toKey) return { on: "inside", key: toKey, at: to };
+  return { on: "edge", key: `${fromKey}->${toKey}`, from, to };
+}
+
+/** Lower-level interactions drawn as one line, because at this resolution they join the same two places. */
+export interface ProjectedEdge {
+  key: string;
+  from: Address | null;
+  to: Address;
+  /** Every interaction behind this line, in the order they happened. Their number is the count to show. */
+  interactions: Interaction[];
+  /** Whether anything travelled along it: a payload one way, or a response the other. */
+  carriesData: boolean;
+}
+
+export interface Projection {
+  edges: Map<string, ProjectedEdge>;
+  /** Interactions that start and end inside one drawn place, by that place: activity within it. */
+  inside: Map<string, Interaction[]>;
+  /** Effects, by the drawn place responsible. */
+  effects: Map<string, Effect[]>;
+  /** The paths of drawn places where anything happened. Everything else can be dimmed. */
+  involved: Set<string>;
+}
+
+/**
+ * The trace as it looks with this much of the architecture open.
+ *
+ * Every event lands somewhere: on a line between two drawn places, inside
+ * one of them, or as an effect on one. So the same trace can be read at any
+ * resolution, and zooming out only gathers events together.
+ *
+ * `through` stops after that event, for playing a trace back one step at a
+ * time.
+ */
+export function project(trace: Trace, view: View, through = trace.events.length - 1): Projection {
+  const projection: Projection = { edges: new Map(), inside: new Map(), effects: new Map(), involved: new Set() };
+  const append = <T>(map: Map<string, T[]>, key: string, value: T) => {
+    const list = map.get(key);
+    if (list) list.push(value);
+    else map.set(key, [value]);
+  };
+
+  for (const event of trace.events.slice(0, Math.max(0, through + 1))) {
+    const placement = placeEvent(event, view);
+
+    if (placement.on === "effect") {
+      append(projection.effects, placement.key, event as Effect);
+      projection.involved.add(placement.at.path);
+      continue;
+    }
+
+    if (placement.on === "inside") {
+      if (event.type === "interaction") append(projection.inside, placement.key, event);
+      projection.involved.add(placement.at.path);
+      continue;
+    }
+
+    if (placement.from) projection.involved.add(placement.from.path);
+    projection.involved.add(placement.to.path);
+
+    let edge = projection.edges.get(placement.key);
+    if (!edge) {
+      edge = { key: placement.key, from: placement.from, to: placement.to, interactions: [], carriesData: false };
+      projection.edges.set(placement.key, edge);
+    }
+    if (event.type === "interaction") {
+      edge.interactions.push(event);
+      if (event.payload !== undefined) edge.carriesData = true;
+    } else if (event.type === "return" && event.response !== undefined) {
+      edge.carriesData = true;
+    }
+  }
+
+  return projection;
+}
+
+/**
+ * The event to stop at after `after`, by its position in the trace.
+ *
+ * Stepping normally goes to the next event that changes what is drawn at
+ * this resolution — a line or an effect — and passes over activity hidden
+ * inside a collapsed component, the way stepping over a call passes over
+ * what happens inside it. `into` goes to the very next event instead,
+ * whatever it is; `reveal` then opens the architecture far enough to see it.
+ * Either way the events stepped past are still in the trace.
+ */
+export function nextStep(trace: Trace, view: View, after: number, into = false): number | null {
+  for (let at = Math.max(0, after + 1); at < trace.events.length; at += 1) {
+    if (into || placeEvent(trace.events[at]!, view).on !== "inside") return at;
+  }
+  return null;
+}
+
+/** The view with just enough more expanded to show an event at the components it really happened at. */
+export function reveal(view: View, event: TraceEvent): View {
+  const opened = new Set(view.expanded);
+  for (const address of addressesOf(event)) {
+    const segments = address.path.split("/");
+    for (let depth = 1; depth < segments.length; depth += 1) opened.add(segments.slice(0, depth).join("/"));
+    if (address.entry !== null) opened.add(address.path);
+  }
+  return { expanded: opened };
+}
