@@ -1,0 +1,70 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { beforeAll, describe, expect, it } from "vitest";
+import { projectSnapshot } from "../../src/project/snapshot.js";
+import { BOX_H, BOX_W, buildTree, shownAt } from "./tree.js";
+import { ui } from "./state.js";
+
+/**
+ * The architecture as one drawing. Where each block lands is decided here,
+ * before anything is drawn, so this is where it is held still: parts under
+ * what they are part of, nothing on top of anything else, and folding as the
+ * one thing that takes a block off the drawing.
+ */
+
+const messenger = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "examples", "messenger");
+
+beforeAll(async () => {
+  ui.snapshot = await projectSnapshot(messenger);
+});
+
+describe("the whole system as a tree", () => {
+  it("puts the system at the top and every part under what it is part of", () => {
+    const tree = buildTree();
+    expect(tree.roots.map((root) => root.path)).toEqual(["app"]);
+    expect(tree.nodes.size).toBe(Object.keys(ui.snapshot!.blocks).length);
+
+    for (const node of tree.nodes.values()) {
+      for (const child of node.children) {
+        expect(child.depth, child.path).toBe(node.depth + 1);
+        expect(child.y, child.path).toBeGreaterThan(node.y + BOX_H);
+      }
+    }
+  });
+
+  it("centres a block over its parts", () => {
+    const tree = buildTree();
+    const api = tree.nodes.get("app/api")!;
+    const first = api.children[0]!;
+    const last = api.children[api.children.length - 1]!;
+    expect(api.x).toBe((first.x + last.x) / 2);
+    expect(first.x).toBeLessThan(last.x);
+  });
+
+  it("leaves no two blocks on top of each other", () => {
+    const boxes = [...buildTree().nodes.values()];
+    for (const a of boxes) {
+      for (const b of boxes) {
+        if (a.path >= b.path) continue;
+        const apart = a.x + BOX_W <= b.x || b.x + BOX_W <= a.x || a.y + BOX_H <= b.y || b.y + BOX_H <= a.y;
+        expect(apart, `${a.path} and ${b.path} overlap`).toBe(true);
+      }
+    }
+  });
+
+  it("folds a block's parts away, and stands for them while they are gone", () => {
+    const whole = buildTree();
+    const folded = buildTree(new Set(["app/client"]));
+
+    expect(whole.nodes.has("app/client/ui/send-button")).toBe(true);
+    expect(folded.nodes.has("app/client/ui/send-button")).toBe(false);
+    expect(folded.nodes.get("app/client")!.folded).toBe(true);
+    expect(folded.width).toBeLessThan(whole.width);
+
+    // What happens inside a folded block is drawn at the block itself.
+    expect(shownAt(folded, "app/client/ui/send-button")!.path).toBe("app/client");
+    // Nothing else is folded, so everything else stands for itself.
+    expect(shownAt(folded, "app/api/router")!.path).toBe("app/api/router");
+    expect(shownAt(folded, "nothing/here")).toBeNull();
+  });
+});

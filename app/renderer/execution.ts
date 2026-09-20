@@ -1,33 +1,30 @@
-import { addressesOf, nextStep, placeEvent, project } from "../../src/model/trace.js";
-import type { Address, Interaction, InteractionKind, Trace, TraceEvent } from "../../src/model/trace.js";
+import { addressesOf, nextStep, placeEvent } from "../../src/model/trace.js";
+import type { Address, InteractionKind, Trace, TraceEvent, View } from "../../src/model/trace.js";
 import type { SnapshotExecution } from "../../src/project/snapshot.js";
 import type { TriggerKind } from "../../src/project/executions.js";
-import { applyExecutionOverlay, fitToView, graphInView, openDiagram } from "./canvas.js";
-import type { ExecutionEnd, ExecutionOverlay } from "./canvas.js";
-import { PROJECT_VIEW, drawnAt } from "./graph.js";
-import type { Graph } from "./graph.js";
+import { applyExecutionMark, keepInView, treeInView } from "./canvas.js";
+import type { ExecutionMark } from "./canvas.js";
+import { shownAt } from "./tree.js";
 import { selectedExecution, ui } from "./state.js";
 import { el } from "./dom.js";
 
 /**
- * An execution on the diagram.
+ * An execution on the tree.
  *
- * One execution is picked at a time, and it stays picked whichever diagram is
- * open: it is drawn at whatever resolution the canvas shows, each event at the
- * deepest block on screen that holds where it really happened. Stepping goes
- * to the next event that changes what is drawn, passing over what happens out
- * of sight inside a block, the way stepping over a call passes over what
- * happens inside it. Stepping in goes to the very next event, whatever it is,
- * and opens the diagram that shows it.
+ * The whole architecture is on screen, so an execution is not drawn over it
+ * as a web: it is stepped through, one arrow at a time, between the two
+ * blocks that step really joins. Nothing moves or opens as it goes, except
+ * that a step hidden inside a folded block can be shown by unfolding it.
+ *
+ * The whole of an execution at once is a drawing of its own, not a diagram
+ * of the architecture, so it lives somewhere else.
  */
 
 let notify: () => void = () => {};
-/** Called when picking an execution changes what the diagram has to draw. */
+/** Called when picking an execution, or stepping it, changes what the panels say. */
 export function onExecutionChange(callback: () => void): void {
   notify = callback;
 }
-
-const parentOf = (path: string) => path.split("/").slice(0, -1).join("/");
 
 /* -------------------------------------------------------------------------- */
 /* In words                                                                    */
@@ -57,7 +54,7 @@ const ARRIVALS: Record<TriggerKind, string> = {
   webhook: "A webhook arrives at",
 };
 
-/** What travelled, short enough for one line. The whole is in the detail. */
+/** What travelled, short enough for one line. The whole of it is on the step's own page. */
 function carried(value: unknown, most = 70): string {
   if (value === undefined) return "";
   const text = JSON.stringify(value) ?? "";
@@ -66,7 +63,7 @@ function carried(value: unknown, most = 70): string {
 
 const words = (kind: string) => kind.replace(/-/g, " ");
 
-/** One event in words: the caption says it of the current step, and a line's detail of each step it stands for. */
+/** One event in words, as the bar says it while stepping. */
 export function describeStep(event: TraceEvent, trigger: TriggerKind, most?: number): string {
   if (event.type === "effect") return `${words(event.kind)} at ${placeName(event.at)}${carried(event.detail, most)}`;
   if (event.type === "return") {
@@ -78,133 +75,60 @@ export function describeStep(event: TraceEvent, trigger: TriggerKind, most?: num
   return `${placeName(event.from)} ${VERBS[event.kind]} ${placeName(event.to)}${carried(event.payload, most)}`;
 }
 
-/* -------------------------------------------------------------------------- */
-/* On the diagram                                                              */
-/* -------------------------------------------------------------------------- */
-
-/**
- * An execution as the diagram on screen draws it, up to and including the
- * event at `at`, which is the current step; everything, with no current step,
- * when `at` is null.
- *
- * Every event the projection placed is given to whatever is drawn for its
- * place: a line between two nodes, a count on a node for what happened out of
- * sight inside it, or a chip for what it left behind. Several events between
- * the same two places on screen are one line with their number on it.
- */
-export function overlayOf(graph: Graph, execution: SnapshotExecution, trace: Trace, at: number | null): ExecutionOverlay {
-  const through = at ?? trace.events.length - 1;
-  const projection = project(trace, graph.view, through);
-  const currentEvent = at === null ? null : (trace.events[at] ?? null);
-  const current = currentEvent ? placeEvent(currentEvent, graph.view) : null;
-  const trigger = execution.trigger.kind;
-  const say = (event: TraceEvent) => describeStep(event, trigger, 120);
-
-  const overlay: ExecutionOverlay = {
-    lines: [],
-    effects: new Map(),
-    inside: new Map(),
-    involved: new Set(),
-    current: new Set(),
-    trigger,
-  };
-
-  // Lines are grouped by what is drawn at each end, not by where the
-  // projection put them. A frame tile shows no rows, so two operations of the
-  // block it stands for are one place on screen, and one line to it.
-  const endKey = (end: ExecutionEnd | null) => (end === null ? "(outside)" : end.entry === null ? end.key : `${end.key}.${end.entry}`);
-  const lineKey = (from: Address | null, to: Address) => {
-    const drawnFrom = from === null ? null : drawnAt(graph, from);
-    const drawnTo = drawnAt(graph, to);
-    return drawnTo && (from === null || drawnFrom) ? { key: `${endKey(drawnFrom)}->${endKey(drawnTo)}`, from: drawnFrom, to: drawnTo } : null;
-  };
-  const currentLine = current?.on === "edge" ? (lineKey(current.from, current.to)?.key ?? null) : null;
-  const order = new Map(trace.events.map((event, i) => [event, i]));
-
-  const gathered = new Map<string, { from: ExecutionEnd | null; to: ExecutionEnd; interactions: Interaction[]; data: boolean }>();
-  for (const edge of projection.edges.values()) {
-    const ends = lineKey(edge.from, edge.to);
-    if (!ends) continue;
-    const line = gathered.get(ends.key) ?? { from: ends.from, to: ends.to, interactions: [], data: false };
-    line.interactions.push(...edge.interactions);
-    line.data ||= edge.carriesData;
-    gathered.set(ends.key, line);
-  }
-
-  for (const [id, line] of gathered) {
-    const interactions = line.interactions.sort((a, b) => order.get(a)! - order.get(b)!);
-    const only = interactions.length === 1 ? interactions[0]! : null;
-    overlay.lines.push({
-      id,
-      from: line.from,
-      to: line.to,
-      data: line.data,
-      // What set it going is written at the mark it comes from, so its line needs no word of its own.
-      label: only ? (only.kind === "trigger" ? "" : only.kind) : `×${interactions.length}`,
-      detail: interactions.map(say).join("\n"),
-      current: id === currentLine ? (currentEvent?.type === "return" ? "back" : "out") : null,
-    });
-  }
-
-  for (const events of projection.inside.values()) {
-    const placed = placeEvent(events[0]!, graph.view);
-    const end = placed.on === "inside" ? drawnAt(graph, placed.at) : null;
-    if (!end) continue;
-    overlay.inside.set(end.key, {
-      count: events.length,
-      detail: events.map(say).join("\n"),
-      current: current?.on === "inside" && current.key === placed.key,
-    });
-  }
-
-  for (const effects of projection.effects.values()) {
-    const placed = placeEvent(effects[0]!, graph.view);
-    const end = placed.on === "effect" ? drawnAt(graph, placed.at) : null;
-    if (!end) continue;
-    const isCurrent = current?.on === "effect" && current.key === placed.key;
-    const existing = overlay.effects.get(end.key) ?? { labels: [], detail: "", current: false };
-    for (const effect of effects) {
-      const label = words(effect.kind);
-      if (!existing.labels.includes(label)) existing.labels.push(label);
-    }
-    existing.detail = [existing.detail, ...effects.map(say)].filter(Boolean).join("\n");
-    existing.current ||= isCurrent;
-    overlay.effects.set(end.key, existing);
-  }
-
-  for (const path of projection.involved) {
-    const end = drawnAt(graph, { path, entry: null });
-    if (end) overlay.involved.add(end.key);
-  }
-
-  if (current) {
-    const places = current.on === "edge" ? [current.from, current.to] : [current.at];
-    for (const place of places) {
-      const end = place ? drawnAt(graph, place) : null;
-      if (end) overlay.current.add(end.key);
-    }
-  }
-
-  return overlay;
+/** A word for the arrow itself: what kind of step it is. */
+function stepWord(event: TraceEvent, trigger: TriggerKind): string {
+  if (event.type === "return") return "gives back";
+  if (event.type === "effect") return words(event.kind);
+  return event.from === null ? trigger : event.kind;
 }
 
+/* -------------------------------------------------------------------------- */
+/* On the tree                                                                 */
+/* -------------------------------------------------------------------------- */
+
 /**
- * The diagram that shows an event at the blocks it really happened at: the
- * one holding both its ends, so each is a block of its own there, or the one
- * holding the single place it happened.
+ * How much of the architecture is showing, in the terms the trace kernel
+ * uses. Everything is expanded except what has been folded away, so an event
+ * inside a folded block is gathered onto the block standing for it.
  */
-export function diagramFor(event: TraceEvent): string {
-  const [first, second] = addressesOf(event).map((address) => address.path) as [string, string | undefined];
-  if (second !== undefined && second !== first) {
-    const a = first.split("/");
-    const b = second.split("/");
-    let shared = 0;
-    while (shared < a.length && shared < b.length && a[shared] === b[shared]) shared += 1;
-    return a.slice(0, shared).join("/");
+export function shownView(): View {
+  const paths = Object.keys(ui.snapshot?.blocks ?? {}).filter((path) => !ui.folded.has(path));
+  return { expanded: new Set(["", ...paths]) };
+}
+
+/** One step of a trace as the tree draws it: an arrow between two blocks, or a mark at one. */
+export function markFor(event: TraceEvent, trigger: TriggerKind): ExecutionMark | null {
+  const tree = treeInView();
+  if (!tree) return null;
+  const placement = placeEvent(event, shownView());
+  const label = stepWord(event, trigger);
+
+  if (placement.on === "effect") {
+    const at = shownAt(tree, placement.at.path);
+    return at ? { from: null, to: at.path, label, data: false, back: false, effect: label } : null;
   }
-  // Two entries of one block are both on its own diagram, where it is the frame.
-  const block = ui.snapshot?.blocks[first];
-  return second !== undefined && block && block.children.length > 0 ? first : parentOf(first) || PROJECT_VIEW;
+
+  if (placement.on === "inside") {
+    // Both ends are folded away into one block, which is all there is to show.
+    const at = shownAt(tree, placement.at.path);
+    return at ? { from: null, to: at.path, label, data: false, back: false, effect: `${label}, inside` } : null;
+  }
+
+  const to = shownAt(tree, placement.to.path);
+  const from = placement.from === null ? null : shownAt(tree, placement.from.path);
+  if (!to || (placement.from !== null && !from)) return null;
+  const carriedSomething =
+    (event.type === "interaction" && event.payload !== undefined) ||
+    (event.type === "return" && event.response !== undefined);
+
+  return {
+    from: from?.path ?? null,
+    to: to.path,
+    label,
+    data: carriedSomething,
+    back: event.type === "return",
+    effect: null,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -219,21 +143,29 @@ function picked(): { execution: SnapshotExecution; trace: Trace | null } | null 
   return { execution, trace };
 }
 
-/** Lays the execution over whatever diagram is on screen now, and brings its controls up to date. */
-export function paintExecution(): void {
-  const graph = graphInView();
+/** The step showing now, if an execution is being stepped through. */
+export function currentStep(): { execution: SnapshotExecution; trace: Trace; at: number; event: TraceEvent } | null {
   const shown = picked();
-  // A project read again may have lost the execution, or events of it.
+  if (!shown?.trace || !ui.execution) return null;
+  const at = Math.min(ui.execution.at, shown.trace.events.length - 1);
+  const event = shown.trace.events[at];
+  return event ? { execution: shown.execution, trace: shown.trace, at, event } : null;
+}
+
+/** Lays the step showing over the tree, and brings its controls up to date. */
+export function paintExecution(): void {
+  const shown = picked();
+  // A project read again may have lost the execution it was showing.
   if (ui.execution && !shown) ui.execution = null;
-  if (ui.execution && shown?.trace && ui.execution.at !== null && ui.execution.at >= shown.trace.events.length) {
-    ui.execution.at = null;
-  }
-  applyExecutionOverlay(graph && shown?.trace && ui.execution ? overlayOf(graph, shown.execution, shown.trace, ui.execution.at) : null);
+  const step = currentStep();
+  if (step && ui.execution) ui.execution.at = step.at;
+
+  applyExecutionMark(step ? markFor(step.event, step.execution.trigger.kind) : null);
   renderBar();
 }
 
 let playing: number | undefined;
-const PLAY_MS = 900;
+const PLAY_MS = 1100;
 
 function stopPlaying(): void {
   if (playing !== undefined) window.clearInterval(playing);
@@ -242,33 +174,36 @@ function stopPlaying(): void {
 
 function choose(id: string | null): void {
   stopPlaying();
-  ui.execution = id === null ? null : { id, at: null };
-  // The block in focus may need its frame now, or no longer.
-  notify();
+  ui.execution = id === null ? null : { id, at: 0 };
   paintExecution();
-  // Where it comes in from outside, and what it leaves, can reach past the blocks.
-  if (!ui.userAdjusted) fitToView(true);
+  notify();
 }
 
-/** The event a step from here goes to, or null at the end. */
+/** The event a step from here goes to, or null at the end of the trace. */
 function following(into: boolean): number | null {
-  const graph = graphInView();
-  const trace = picked()?.trace;
-  if (!graph || !trace || !ui.execution) return null;
-  if (ui.execution.at === null) return 0;
-  return nextStep(trace, graph.view, ui.execution.at, into);
+  const step = currentStep();
+  return step ? nextStep(step.trace, shownView(), step.at, into) : null;
 }
 
 function step(into: boolean): void {
-  const trace = picked()?.trace;
-  const graph = graphInView();
   const next = following(into);
-  if (!trace || !graph || !ui.execution || next === null) return;
+  const shown = picked();
+  if (next === null || !shown?.trace || !ui.execution) return;
   ui.execution.at = next;
-  // Stepping in to something hidden inside a block goes in far enough to see it.
-  const event = trace.events[next]!;
-  if (into && placeEvent(event, graph.view).on === "inside") openDiagram(diagramFor(event));
+
+  const event = shown.trace.events[next]!;
+  // Stepping in shows a step a fold has hidden, by unfolding what hides it.
+  if (into) {
+    for (const address of addressesOf(event)) {
+      const segments = address.path.split("/");
+      for (let depth = 1; depth <= segments.length; depth += 1) ui.folded.delete(segments.slice(0, depth).join("/"));
+    }
+  }
+
+  notify();
   paintExecution();
+  const mark = markFor(event, shown.execution.trigger.kind);
+  if (mark) keepInView([mark.from, mark.to].filter((each): each is string => each !== null));
 }
 
 function play(): void {
@@ -278,7 +213,7 @@ function play(): void {
     return;
   }
   if (!ui.execution) return;
-  if (following(false) === null || ui.execution.at === null) ui.execution.at = 0;
+  if (following(false) === null) ui.execution.at = 0;
   paintExecution();
   playing = window.setInterval(() => {
     if (following(false) === null) {
@@ -291,11 +226,12 @@ function play(): void {
   renderBar();
 }
 
-function jump(at: number | null): void {
+function jump(at: number): void {
   stopPlaying();
   if (!ui.execution) return;
   ui.execution.at = at;
   paintExecution();
+  notify();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -322,19 +258,15 @@ interface StepControls {
   step: HTMLButtonElement;
   into: HTMLButtonElement;
   play: HTMLButtonElement;
-  all: HTMLButtonElement;
   count: HTMLElement;
   caption: HTMLElement;
-  reveal: HTMLButtonElement;
 }
 
 /** The bar as built, and what it was built for: the executions offered, and the one picked. */
 let bar: { key: string; select: HTMLSelectElement; steps: StepControls | null } | null = null;
-/** Where Show where goes, for the step on screen. */
-let revealTo = PROJECT_VIEW;
 
 /**
- * The bar above the diagram. It is built afresh only when what it offers
+ * The bar above the tree. It is built afresh only when what it offers
  * changes; stepping, and playing above all, bring it up to date instead.
  * Replacing a button under the pointer loses the click on it, and replacing
  * the list closes it while it is open.
@@ -365,7 +297,7 @@ function buildBar(
   host.replaceChildren();
   const controls = el("div", "exec-controls");
   const select = el("select", "exec-select");
-  select.title = "An execution to draw over the diagram: one run of the system, from what set it going";
+  select.title = "An execution to step through on the tree: one run of the system, from what set it going";
   select.append(new Option("No execution", ""));
   for (const execution of executions) select.append(new Option(execution.name, execution.id));
   select.addEventListener("change", () => choose(select.value === "" ? null : select.value));
@@ -381,24 +313,21 @@ function buildBar(
   const steps: StepControls = {
     source: el("span", "exec-source"),
     restart: barButton("Restart", "Back to what set it going", () => jump(0)),
-    step: barButton("Step", "On to the next thing that changes on this diagram", () => {
+    step: barButton("Step", "On to the next step", () => {
       stopPlaying();
       step(false);
     }),
-    into: barButton("Step into", "On to the very next thing that happened, going in to see it if it is out of sight", () => {
+    into: barButton("Step into", "On to the very next thing that happened, unfolding whatever hides it", () => {
       stopPlaying();
       step(true);
     }),
     play: barButton("Play", "Step through it by itself", play),
-    all: barButton("Show all", "Everything it did at once", () => jump(null)),
     count: el("span", "exec-count"),
     caption: el("span", "exec-caption-text"),
-    reveal: barButton("Show where", "Open the diagram that shows this at the blocks it happened at", () => openDiagram(revealTo)),
   };
-  steps.reveal.className = "exec-reveal";
-  controls.append(steps.source, steps.restart, steps.step, steps.into, steps.play, steps.all, steps.count);
+  controls.append(steps.source, steps.restart, steps.step, steps.into, steps.play, steps.count);
   const caption = el("div", "exec-caption");
-  caption.append(steps.caption, steps.reveal);
+  caption.append(steps.caption);
   host.append(caption);
   return { key, select, steps };
 }
@@ -406,37 +335,27 @@ function buildBar(
 function updateBar(built: NonNullable<typeof bar>, shown: ReturnType<typeof picked>): void {
   built.select.value = ui.execution?.id ?? "";
   const { steps } = built;
-  const trace = shown?.trace;
-  if (!steps || !shown || !trace || !ui.execution) return;
+  const step = currentStep();
+  if (!steps || !shown?.trace || !step) return;
 
-  steps.source.textContent = trace.source;
-  steps.source.title = SOURCE_NOTES[trace.source];
-  steps.source.dataset.source = trace.source;
+  steps.source.textContent = shown.trace.source;
+  steps.source.title = SOURCE_NOTES[shown.trace.source];
+  steps.source.dataset.source = shown.trace.source;
 
-  const at = ui.execution.at;
-  steps.restart.disabled = at === 0;
-  steps.step.disabled = at !== null && following(false) === null;
-  steps.into.disabled = at !== null && following(true) === null;
+  steps.restart.disabled = step.at === 0;
+  steps.step.disabled = following(false) === null;
+  steps.into.disabled = following(true) === null;
   steps.play.textContent = playing === undefined ? "Play" : "Pause";
-  steps.all.disabled = at === null;
-  steps.count.textContent = at === null ? `${trace.events.length} steps` : `${at + 1} of ${trace.events.length}`;
+  steps.count.textContent = `${step.at + 1} of ${step.trace.events.length}`;
 
-  if (at === null) {
-    steps.caption.textContent = shown.execution.description ?? `${shown.execution.name}, all of it.`;
-    steps.caption.title = "";
-    steps.reveal.hidden = true;
-    return;
-  }
-  const event = trace.events[at]!;
-  steps.caption.textContent = describeStep(event, shown.execution.trigger.kind);
-  steps.caption.title = describeStep(event, shown.execution.trigger.kind, 4000);
-  revealTo = diagramFor(event);
-  steps.reveal.hidden = revealTo === ui.view;
+  const trigger = step.execution.trigger.kind;
+  steps.caption.textContent = describeStep(step.event, trigger);
+  steps.caption.title = describeStep(step.event, trigger, 4000);
 }
 
 /** A project was opened: nothing about the last one's executions carries over. */
 export function resetExecutions(): void {
   stopPlaying();
   ui.execution = null;
-  ui.expanded.clear();
+  ui.folded.clear();
 }

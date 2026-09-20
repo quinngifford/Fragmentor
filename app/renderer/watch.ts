@@ -4,14 +4,13 @@ import type { Result, RunCommand } from "../ipc.js";
 import {
   applyBreakpoints,
   applyRunOverlay,
-  applySelection,
-  graphInView,
   onBreakpointToggle,
   onCanvasDrawn,
-  openDiagram,
+  revealBlock,
+  treeInView,
 } from "./canvas.js";
 import type { RunOverlay } from "./canvas.js";
-import type { Graph } from "./graph.js";
+import type { Tree } from "./tree.js";
 import { requireSnapshot, ui } from "./state.js";
 import type { Watch, WatchedCall } from "./state.js";
 import { el, section, subsection } from "./dom.js";
@@ -34,8 +33,6 @@ export function onWatchChange(callback: () => void): void {
   notify = callback;
 }
 
-const parentOf = (blockPath: string) => blockPath.split("/").slice(0, -1).join("/");
-const idOf = (blockPath: string) => blockPath.split("/").at(-1)!;
 const isWithin = (blockPath: string, ancestor: string) =>
   ancestor === "" || blockPath === ancestor || blockPath.startsWith(`${ancestor}/`);
 
@@ -94,11 +91,10 @@ function nodeRun(calls: WatchedCall[]): { state: "running" | "paused" | "done" |
  * How each block on screen is doing: the calls made to it, or to anything
  * inside it, from wherever they came.
  */
-function overlayFor(watch: Watch, graph: Graph): RunOverlay {
+function overlayFor(watch: Watch, tree: Tree): RunOverlay {
   const overlay: RunOverlay = { nodes: new Map() };
-  for (const node of graph.nodes.values()) {
-    if (node.boundary || !node.block) continue;
-    const path = node.block.path;
+  for (const node of tree.nodes.values()) {
+    const path = node.path;
     const inside = [...watch.calls.values()].filter((call) => isWithin(call.block, path));
     if (inside.length === 0) continue;
     // A block that was called says how its own calls went; the calls made
@@ -107,7 +103,7 @@ function overlayFor(watch: Watch, graph: Graph): RunOverlay {
     // calls happened inside it instead.
     const own = inside.filter((call) => call.block === path);
     const run = nodeRun(own.length > 0 ? own : inside);
-    overlay.nodes.set(node.key, own.length > 0 || run.state !== "done" ? run : { state: "done", note: `${inside.length} inside` });
+    overlay.nodes.set(path, own.length > 0 || run.state !== "done" ? run : { state: "done", note: `${inside.length} inside` });
   }
   return overlay;
 }
@@ -120,8 +116,8 @@ function heldCall(watch: Watch | null): WatchedCall | null {
 }
 
 function paint(): void {
-  const graph = graphInView();
-  applyRunOverlay(ui.watch && graph ? overlayFor(ui.watch, graph) : null);
+  const tree = treeInView();
+  applyRunOverlay(ui.watch && tree ? overlayFor(ui.watch, tree) : null);
   renderRunBar();
 }
 
@@ -152,7 +148,6 @@ function stopPlayback(): void {
 
 function followWhenSettled(watch: Watch): void {
   if (settle !== undefined) window.clearTimeout(settle);
-  const from = ui.view;
   settle = window.setTimeout(() => {
     settle = undefined;
     if (ui.watch !== watch) return;
@@ -161,39 +156,22 @@ function followWhenSettled(watch: Watch): void {
       followWhenSettled(watch);
       return;
     }
-    // The person opened another diagram while the run was settling. They are
-    // looking at something; the run has waited this long and can wait.
-    if (ui.view !== from) return;
     const call = heldCall(watch);
     if (call) follow(watch, call.id);
   }, SETTLE_MS);
 }
 
-/** How long to linger on an event: long enough to see it, if it can be seen from the diagram on screen. */
-function pace(event: RunEvent, watch: Watch): number {
+/** How long to linger on an event: long enough to see a block light up. */
+function pace(event: RunEvent): number {
   if (event.type === "paused" || event.type === "resumed") return 0;
-  const block = event.type === "call" ? event.block : watch.calls.get(event.id)?.block;
-  if (!block || !isWithin(block, ui.view) || block === ui.view) return 0;
   return event.type === "call" ? 280 : 140;
 }
 
-/** Brings a call held at a breakpoint into view and selects it, so what is about to go into it can be read. */
+/** Brings a call held at a breakpoint into view and picks it out, so what is about to go into it can be read. */
 function follow(watch: Watch, id: number): void {
   const call = watch.calls.get(id);
   if (!call) return;
-
-  const select = () => {
-    ui.selection.clear();
-    ui.selection.add(idOf(call.block));
-    ui.selectedLink = null;
-  };
-  const diagram = parentOf(call.block);
-  if (diagram !== ui.view) {
-    openDiagram(diagram, select);
-    return;
-  }
-  select();
-  applySelection();
+  revealBlock(call.block);
   paint();
   notify();
 }
@@ -207,7 +185,7 @@ function playNext(watch: Watch): void {
     watch.played += 1;
     played += 1;
     play(watch, event);
-  } while (watch.played < watch.events.length && pace(watch.events[watch.played]!, watch) === 0 && played < 500);
+  } while (watch.played < watch.events.length && pace(watch.events[watch.played]!) === 0 && played < 500);
 
   paint();
   // Follow the run to where it is held, once it has settled there. A replay of
@@ -234,7 +212,7 @@ function schedule(): void {
 
   // A long run catches up faster, rather than keeping the person waiting.
   const behind = watch.events.length - watch.played;
-  const delay = pace(watch.events[watch.played]!, watch) / Math.max(1, behind / 12);
+  const delay = pace(watch.events[watch.played]!) / Math.max(1, behind / 12);
   timer = window.setTimeout(() => {
     timer = undefined;
     if (ui.watch !== watch) return;

@@ -1,10 +1,9 @@
 import type { SnapshotBlock, SnapshotCode } from "../../src/project/snapshot.js";
 import type { ProjectDiagnostic } from "../../src/project/project.js";
-import { blockColours, requireSnapshot, ui, viewSettings } from "./state.js";
-import { blockColour } from "./graph.js";
-import type { AccessLink, Graph } from "./graph.js";
+import { blockColours, requireSnapshot, selectedBlock, ui, viewSettings } from "./state.js";
 import { ROLES } from "../../src/model/roles.js";
-import { graphInView, openDiagram, showBlock } from "./canvas.js";
+import { accessArrows, blockColour, revealBlock, toggleFold, treeInView } from "./canvas.js";
+import type { AccessArrow } from "./canvas.js";
 import { benchSections, entryBenchSection } from "./bench.js";
 import { watchSection } from "./watch.js";
 import { el, group, section } from "./dom.js";
@@ -41,7 +40,7 @@ function problemsSection(diagnostics: ProjectDiagnostic[], linked: boolean): HTM
     if (linked) row.append(el("span", "problem-where", diagnostic.blockPath));
     if (goes) {
       row.title = "Show this block";
-      row.addEventListener("click", () => showBlock(diagnostic.blockPath));
+      row.addEventListener("click", () => revealBlock(diagnostic.blockPath));
     }
     row.append(el("span", "problem-text", diagnostic.message));
     list.append(row);
@@ -275,22 +274,21 @@ function linkedCodeSection(block: SnapshotBlock): HTMLElement {
  * project, where it would be someone else's diagram too.
  */
 function blockColourControl(block: SnapshotBlock): HTMLElement | null {
-  const graph = graphInView();
-  if (viewSettings.colourBy !== "block" || !graph || !graph.nodes.has(block.id)) return null;
+  if (viewSettings.colourBy !== "block" || !treeInView()?.nodes.has(block.path)) return null;
 
   const row = el("div", "block-colour");
   const swatch = el("input", "legend-swatch");
   swatch.type = "color";
-  swatch.value = blockColour(graph, ui.view, block.id);
+  swatch.value = blockColour(block.path);
   swatch.title = `What "${block.name}" is drawn in`;
   swatch.addEventListener("input", () => {
-    blockColours.set(ui.view, block.id, swatch.value);
+    blockColours.set("", block.path, swatch.value);
     notify();
   });
 
   const reset = el("button", "btn quiet tiny", "Default");
   reset.addEventListener("click", () => {
-    blockColours.set(ui.view, block.id, null);
+    blockColours.set("", block.path, null);
     notify();
   });
 
@@ -411,7 +409,7 @@ function whatHappensSection(block: SnapshotBlock): HTMLElement | null {
     if (!last.block.architecture) {
       const open = el("button", "btn quiet tiny", "Go there");
       open.title = `Show ${last.block.name}, where this is answered`;
-      open.addEventListener("click", () => showBlock(last.block.path));
+      open.addEventListener("click", () => revealBlock(last.block.path));
       row.append(open);
     }
     list.append(row);
@@ -469,7 +467,7 @@ function accessSection(block: SnapshotBlock): HTMLElement | null {
       const where = access.entry === null ? access.resourceName : `${access.resourceName} · ${access.entry}`;
       row.append(el("div", "ptype", where));
       const open = el("button", "btn quiet tiny", "Show");
-      open.addEventListener("click", () => openDiagram(access.resourcePath!));
+      open.addEventListener("click", () => revealBlock(access.resourcePath!));
       row.append(open);
     }
 
@@ -480,29 +478,28 @@ function accessSection(block: SnapshotBlock): HTMLElement | null {
   return node;
 }
 
-/** One access line picked out on the diagram. */
-function accessPanel(panel: HTMLElement, graph: Graph, link: AccessLink): void {
-  const source = graph.nodes.get(link.source);
-  const target = graph.nodes.get(link.target);
+/** One dependency arrow picked out on the tree. */
+function accessPanel(panel: HTMLElement, arrow: AccessArrow): void {
+  const snapshot = requireSnapshot();
+  const source = snapshot.blocks[arrow.source];
+  const target = snapshot.blocks[arrow.target];
 
   const head = el("div", "insp-head");
-  head.append(el("h2", undefined, `${source?.label ?? link.source} and ${target?.label ?? link.target}`));
-  head.append(el("div", "insp-id", "access"));
+  head.append(el("h2", undefined, `${source?.name ?? arrow.source} and ${target?.name ?? arrow.target}`));
+  head.append(el("div", "insp-id", "dependency"));
   panel.append(head);
 
   panel.append(
     el(
       "p",
       "responsibility",
-      link.fromWithin
-        ? `Nothing at this level declares this. It is gathered from the blocks inside ${source?.label ?? link.source}, so this diagram shows what they depend on.`
-        : "Something this block reaches, rather than a value handed from one call to the next.",
+      "Something this block is able to reach. It says nothing about what happens, or when: that is what an execution shows.",
     ),
   );
 
   const what = group("Access");
   const list = el("div", "ports");
-  for (const access of link.entries) {
+  for (const access of arrow.entries) {
     const row = el("div", "port-row cap");
     row.append(el("div", "pname", access.verb));
     row.append(el("div", "ptype", access.entry === null ? "the whole thing" : access.entry));
@@ -513,9 +510,9 @@ function accessPanel(panel: HTMLElement, graph: Graph, link: AccessLink): void {
   what.append(entries);
   panel.append(what);
 
-  if (target?.block?.architecture) {
-    const offered = group(target.block.name);
-    offered.append(exposedSection(target.block));
+  if (target?.architecture) {
+    const offered = group(target.name);
+    offered.append(exposedSection(target));
     panel.append(offered);
   }
 }
@@ -558,9 +555,9 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   const colour = blockColourControl(block);
   if (colour) head.append(colour);
 
-  if (block.children.length > 0 && block.path !== ui.view) {
-    const open = el("button", "btn", "Open diagram");
-    open.addEventListener("click", () => openDiagram(block.path));
+  if (block.children.length > 0) {
+    const open = el("button", "btn quiet tiny", ui.folded.has(block.path) ? "Show its parts" : "Fold its parts");
+    open.addEventListener("click", () => toggleFold(block.path));
     head.append(open);
   }
   panel.append(head);
@@ -661,20 +658,24 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   panel.append(testing);
 }
 
-function multiPanel(panel: HTMLElement, graph: Graph): void {
+function multiPanel(panel: HTMLElement): void {
+  const snapshot = requireSnapshot();
   const keys = [...ui.selection];
   const head = el("div", "insp-head");
   head.append(el("h2", undefined, `${keys.length} blocks selected`), el("div", "insp-id", keys.join(", ")));
   panel.append(head);
 
-  const between = [...graph.accesses.values()].filter((link) => ui.selection.has(link.source) && ui.selection.has(link.target));
+  const tree = treeInView();
+  const between = tree
+    ? [...accessArrows(tree).values()].filter((arrow) => ui.selection.has(arrow.source) && ui.selection.has(arrow.target))
+    : [];
   if (between.length > 0) {
     const node = section("What one reaches in another");
     const list = el("div", "ports");
-    for (const link of between) {
+    for (const arrow of between) {
       const row = el("div", "port-row");
-      row.append(el("div", "pname", `${graph.nodes.get(link.source)?.label} → ${graph.nodes.get(link.target)?.label}`));
-      row.append(el("div", "ptype", link.entries.map((entry) => entry.text).join(", ")));
+      row.append(el("div", "pname", `${snapshot.blocks[arrow.source]?.name} → ${snapshot.blocks[arrow.target]?.name}`));
+      row.append(el("div", "ptype", arrow.entries.map((entry) => entry.text).join(", ")));
       list.append(row);
     }
     node.append(list);
@@ -699,34 +700,25 @@ export function renderInspector(): void {
     return;
   }
 
-  const graph = graphInView();
+  const tree = treeInView();
 
-  if (graph && ui.selectedLink) {
-    const access = graph.accesses.get(ui.selectedLink);
-    if (access) {
-      accessPanel(panel, graph, access);
+  if (tree && ui.selectedLink) {
+    const arrow = accessArrows(tree).get(ui.selectedLink);
+    if (arrow) {
+      accessPanel(panel, arrow);
       return;
     }
   }
 
-  if (graph && ui.selection.size > 1) {
-    multiPanel(panel, graph);
+  if (ui.selection.size > 1) {
+    multiPanel(panel);
     return;
   }
 
-  if (graph && ui.selection.size === 1) {
-    const key = [...ui.selection][0]!;
-    const node = graph.nodes.get(key);
-    if (node?.block) {
-      blockPanel(panel, node.block);
-      return;
-    }
-  }
-
   const snapshot = requireSnapshot();
-  const current = snapshot.blocks[ui.view];
-  if (current) {
-    blockPanel(panel, current);
+  const only = selectedBlock();
+  if (only) {
+    blockPanel(panel, only);
     return;
   }
 

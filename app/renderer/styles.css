@@ -1218,16 +1218,29 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
   user-select: none;
 }
 
-/* ---- the rest of the architecture, around the block in focus ---- */
+/* ---- the tree ---- */
 
-/* A tile is there to be arrived at, so it stays quiet until a run reaches it. */
-.block-box[data-context="true"] { cursor: pointer; opacity: 0.78; }
-.block-box[data-context="true"] .block-name { font-size: 11.5px; }
-.tile-caption { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; fill: var(--ink-faint); pointer-events: none; }
-.tile-toggle { cursor: pointer; }
-.tile-toggle-hit { fill: transparent; }
-.tile-toggle-mark { fill: none; stroke: var(--ink-dim); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.tile-toggle:hover .tile-toggle-mark { stroke: var(--ink); }
+/* What is part of what, and nothing else: plain lines, no arrowheads, no
+   colour. Anything that carries meaning of its own is drawn as an arrow. */
+.branch { fill: none; stroke: var(--rule-bright); stroke-width: 1.3; }
+
+/* Where a block's parts are folded away and brought back. */
+.fold { cursor: pointer; }
+.fold-hit { fill: transparent; }
+.fold-dot { fill: var(--panel); stroke: var(--rule-bright); stroke-width: 1.2; }
+.fold-mark { fill: none; stroke: var(--ink-dim); stroke-width: 1.4; stroke-linecap: round; }
+.fold:hover .fold-dot { stroke: var(--ink-dim); }
+.fold:hover .fold-mark { stroke: var(--ink); }
+
+/* The windows a block can open. They keep out of the way of its name until
+   the pointer is on the block. */
+.block-button { cursor: pointer; opacity: 0; }
+.block-box:hover .block-button,
+.block-box[data-selected="true"] .block-button { opacity: 1; }
+.block-button-plate { fill: var(--panel); stroke: var(--rule-bright); stroke-width: 1; }
+.block-button-text { font-family: var(--mono); font-size: 8px; fill: var(--ink-dim); pointer-events: none; }
+.block-button:hover .block-button-plate { stroke: var(--signal-dim); }
+.block-button:hover .block-button-text { fill: var(--ink); }
 
 #canvas-svg[data-dependencies="hidden"] #access-layer { display: none; }
 
@@ -1235,8 +1248,7 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
 
 /* What exists steps back while what happened is shown. */
 #canvas-svg.tracing #access-layer { opacity: 0.2; }
-#canvas-svg.tracing .block-box[data-involved="false"] { opacity: 0.3; }
-#canvas-svg.tracing .block-box[data-context="true"][data-involved="true"] { opacity: 1; }
+#canvas-svg.tracing #branch-layer { opacity: 0.55; }
 #canvas-svg.tracing .block-box[data-current="true"] .block-plate { stroke: var(--exec-trigger); stroke-width: 2.2; }
 
 .exec-line { fill: none; stroke: var(--exec-trigger); stroke-width: 1.8; opacity: 0.8; }
@@ -1249,9 +1261,7 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
 }
 /* Nothing did: it lights up. */
 .exec-line-group[data-data="false"] .exec-line { filter: drop-shadow(0 0 3px var(--exec-trigger)); }
-.exec-line-group:hover .exec-line { opacity: 1; stroke-width: 2.6; }
-.exec-line-group[data-current="out"] .exec-line,
-.exec-line-group[data-current="back"] .exec-line { opacity: 1; stroke-width: 3.2; }
+.exec-line-group .exec-line { opacity: 1; stroke-width: 2.6; }
 /* An answer coming back runs the other way along the same line. */
 .exec-line-group[data-current="back"] .exec-line { animation-direction: reverse; }
 

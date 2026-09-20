@@ -5,6 +5,7 @@ import {
   rememberInspectorWidth,
   requireSnapshot,
   roleColours,
+  selectedBlock,
   ui,
   viewSettings,
 } from "./state.js";
@@ -14,21 +15,18 @@ import {
   clearCanvas,
   fitToView,
   fitWhenReady,
-  graphInView,
   onCanvasChange,
-  openDiagram,
   renderCanvas,
   resetArrivals,
-  resetLayout,
+  revealBlock,
   setUpCanvasGestures,
-  showBlock,
   showCanvasMessage,
+  treeInView,
   watchCanvasSize,
   zoomAbout,
 } from "./canvas.js";
 import { onInspectorChange, renderInspector } from "./inspector.js";
 import { onBenchChange } from "./bench.js";
-import { PROJECT_VIEW } from "./graph.js";
 import { askForProjectSettings } from "./newproject.js";
 import { onWatchChange, resetWatching, setUpWatching } from "./watch.js";
 import { onExecutionChange, paintExecution, resetExecutions } from "./execution.js";
@@ -134,15 +132,13 @@ function show(load: ProjectLoad, opening: boolean): void {
   ui.snapshot = load.snapshot;
 
   if (firstSight) {
-    ui.view = load.snapshot.systems.length > 1 ? PROJECT_VIEW : (load.snapshot.systems[0]?.rootBlock ?? PROJECT_VIEW);
     ui.selection.clear();
     ui.selectedLink = null;
     ui.userAdjusted = false;
-  } else if (ui.view !== PROJECT_VIEW && !load.snapshot.blocks[ui.view]) {
-    // The diagram that was on screen no longer exists.
-    ui.view = PROJECT_VIEW;
-    ui.selection.clear();
-    ui.selectedLink = null;
+  } else {
+    // Whatever was picked out, or folded away, may be gone from the project.
+    for (const path of [...ui.selection]) if (!load.snapshot.blocks[path]) ui.selection.delete(path);
+    for (const path of [...ui.folded]) if (!load.snapshot.blocks[path]) ui.folded.delete(path);
   }
 
   render();
@@ -205,7 +201,6 @@ async function closeProject(): Promise<void> {
   ui.snapshot = null;
   ui.loadError = null;
   ui.waiting = false;
-  ui.view = PROJECT_VIEW;
   ui.userAdjusted = false;
   treeBefore = null;
 
@@ -376,27 +371,32 @@ function setUpSplitter(): void {
   });
 }
 
+/** Where the block picked out sits: the project, then each block holding it. */
 function renderCrumbs(): void {
   const nav = element("crumbs");
   nav.replaceChildren();
   if (!ui.snapshot || ui.waiting) return;
 
   const snapshot = requireSnapshot();
+  const picked = selectedBlock();
   const projectCrumb = el("button", "crumb", snapshot.name);
-  projectCrumb.setAttribute("aria-current", String(ui.view === PROJECT_VIEW));
-  if (ui.view !== PROJECT_VIEW) projectCrumb.addEventListener("click", () => openDiagram(PROJECT_VIEW));
+  projectCrumb.setAttribute("aria-current", String(picked === null));
+  projectCrumb.addEventListener("click", () => {
+    ui.selection.clear();
+    ui.selectedLink = null;
+    render();
+  });
   nav.append(projectCrumb);
+  if (!picked) return;
 
-  if (ui.view === PROJECT_VIEW) return;
-
-  const parts = ui.view.split("/");
-  parts.forEach((part, i) => {
+  const parts = picked.path.split("/");
+  parts.forEach((part, at) => {
     nav.append(el("span", "crumb-sep", "/"));
-    const path = parts.slice(0, i + 1).join("/");
+    const path = parts.slice(0, at + 1).join("/");
     const button = el("button", "crumb", part);
-    const isCurrent = i === parts.length - 1;
+    const isCurrent = at === parts.length - 1;
     button.setAttribute("aria-current", String(isCurrent));
-    if (!isCurrent) button.addEventListener("click", () => openDiagram(path));
+    if (!isCurrent) button.addEventListener("click", () => revealBlock(path));
     nav.append(button);
   });
 }
@@ -416,7 +416,7 @@ function renderTree(): void {
 
     const button = el("button", "node");
     button.setAttribute("role", "treeitem");
-    button.setAttribute("aria-selected", String(path === ui.view));
+    button.setAttribute("aria-selected", String(ui.selection.has(path)));
     button.dataset.path = path;
     button.style.paddingLeft = `${8 + depth * 14}px`;
     // A block that is not code gets its own mark, so the rail says what kind
@@ -438,7 +438,7 @@ function renderTree(): void {
       if (system?.displayName) button.append(el("span", "lang", system.displayName));
     }
 
-    button.addEventListener("click", () => showBlock(path));
+    button.addEventListener("click", () => revealBlock(path));
 
     tree.append(button);
     for (const child of block.children) walk(child, depth + 1);
@@ -473,7 +473,7 @@ function renderStatus(): void {
     const code = all.filter((block) => !block.architecture);
     const architecture = all.length - code.length;
     const implemented = code.filter((block) => block.implemented).length;
-    const graph = graphInView();
+    const shown = treeInView()?.nodes.size ?? all.length;
     const errors = snapshot.diagnostics.filter((d) => d.severity === "error").length;
     const warnings = snapshot.diagnostics.length - errors;
 
@@ -489,7 +489,9 @@ function renderStatus(): void {
       ),
     );
     if (architecture > 0) bar.append(stat("architecture", architecture));
-    if (graph) bar.append(stat("in view", graph.nodes.size));
+    // Folding is the one thing that takes blocks off the tree, so it is the
+    // one thing worth saying about what is on screen.
+    if (shown < all.length) bar.append(stat("folded away", all.length - shown));
     bar.append(stat("errors", errors, errors > 0 ? "bad" : undefined));
     bar.append(stat("warnings", warnings, warnings > 0 ? "warn" : undefined));
   }
@@ -666,7 +668,6 @@ function wireToolbar(): void {
     ui.userAdjusted = false;
     fitToView(true);
   });
-  element("layout-reset").addEventListener("click", resetLayout);
 }
 
 function reportFailure(error: unknown): void {

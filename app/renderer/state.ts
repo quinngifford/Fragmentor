@@ -49,23 +49,19 @@ export interface UiState {
   waiting: boolean;
   /** Why the newest version of the project could not be read. The last good snapshot stays on screen. */
   loadError: string | null;
-  /** The block whose parts are on the canvas. */
-  view: string;
+  /** Blocks whose parts are folded away on the tree, by path. */
+  folded: Set<string>;
   /**
-   * Blocks around the one in focus opened to show their parts, by path. Kept
-   * while the person moves about, so a region they opened stays open.
-   */
-  expanded: Set<string>;
   /** Whether the lines saying what each block reaches are drawn. A preference, like the colours. */
   showDependencies: boolean;
   setShowDependencies(value: boolean): void;
   /**
-   * The execution drawn over the diagram, and the event it has been stepped
-   * to: everything up to it is showing. Null shows all of it, with nothing
-   * current. It stays picked whichever diagram is open.
+   * The execution being stepped through on the tree, and which of its steps
+   * is showing. One step is on screen at a time; the whole of it at once is
+   * a drawing of its own.
    */
-  execution: { id: string; at: number | null } | null;
-  /** Node keys inside the current diagram: a part's id, or the way into a service. */
+  execution: { id: string; at: number } | null;
+  /** The blocks picked out on the tree, by path. */
   selection: Set<string>;
   /** The line picked out on the diagram: an access reaching a database, a queue or a service. */
   selectedLink: string | null;
@@ -144,11 +140,12 @@ export const ui: UiState = {
   dir: null,
   waiting: false,
   loadError: null,
-  view: "",
-  expanded: new Set(),
+  folded: new Set(),
   showDependencies: (() => {
     try {
-      return localStorage.getItem("fragmentor.showDependencies") !== "false";
+      // Off to begin with: the tree is what a system is made of, and the
+      // arrows over it are a different question, asked when it is asked.
+      return localStorage.getItem("fragmentor.showDependencies") === "true";
     } catch {
       return true;
     }
@@ -217,8 +214,11 @@ export function blockAt(path: string) {
   return requireSnapshot().blocks[path];
 }
 
-export function currentBlock() {
-  return blockAt(ui.view);
+/** The one block picked out, when exactly one is. */
+export function selectedBlock() {
+  if (ui.selection.size !== 1) return null;
+  const [only] = [...ui.selection];
+  return only === undefined ? null : (ui.snapshot?.blocks[only] ?? null);
 }
 
 /* -------------------------------------------------------------------------- */

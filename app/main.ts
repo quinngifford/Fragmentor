@@ -2034,7 +2034,44 @@ function createWindow(): void {
   const id = window.webContents.id;
   window.webContents.on("destroyed", () => stopWatching(id));
 
-  if (selfCheck) {
+  // Temporary while the canvas is being rebuilt: open a project, capture the
+  // window, and quit, so the drawing can be looked at.
+  const looking = process.argv.includes("--look") ? (process.argv[process.argv.indexOf("--look") + 1] ?? null) : null;
+  if (looking) {
+    window.once("ready-to-show", () => window.showInactive());
+    window.webContents.on("console-message", (event) => {
+      if (event.level === "error") console.error(`Window: ${event.message} (${event.sourceId}:${event.lineNumber})`);
+    });
+    window.webContents.once("did-finish-load", () => {
+      void (async () => {
+        const steps = process.argv.includes("--steps") ? Number(process.argv[process.argv.indexOf("--steps") + 1]) : 0;
+        await window.webContents.executeJavaScript(`(async () => {
+          const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+          for (let i = 0; i < 60; i += 1) {
+            const link = [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(looking)});
+            if (link) { link.click(); return true; }
+            await wait(100);
+          }
+          return false;
+        })()`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        if (steps > 0) {
+          await window.webContents.executeJavaScript(`(async () => {
+            const bar = document.getElementById("exec-bar");
+            const select = bar.querySelector(".exec-select");
+            select.value = select.options[1].value;
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            await new Promise((r) => setTimeout(r, 400));
+            const step = [...document.querySelectorAll("#exec-bar .run-btn")].find((b) => b.textContent === "Step");
+            for (let i = 0; i < ${steps}; i += 1) { step.click(); await new Promise((r) => setTimeout(r, 300)); }
+            return true;
+          })()`);
+        }
+        await capture(window, "look");
+        app.exit(0);
+      })();
+    });
+  } else if (selfCheck) {
     // Shown but not focused: the page has to be composited to be captured,
     // and taking focus from whoever started the check would be rude.
     window.once("ready-to-show", () => window.showInactive());
