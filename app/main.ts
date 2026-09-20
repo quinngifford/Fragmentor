@@ -1628,8 +1628,12 @@ function attachSelfCheck(
           await wait(300);
 
           // And the block that reads it is joined to it, once the arrows are asked for.
-          document.getElementById("show-dependencies").click();
-          await wait(400);
+          const dependencies = document.getElementById("show-dependencies");
+          const setArrows = async (wanted) => {
+            if (dependencies.textContent !== "Dependencies: " + wanted) dependencies.click();
+            await wait(400);
+          };
+          await setArrows("shown");
           const join = document.querySelector('.access-group[data-access="tickets/booking-api/find-event=>tickets/booking-api/venues-db:reads"]');
           const drawn = {
             label: text('.block-box[data-id="venues-db"] .block-kind'),
@@ -1641,8 +1645,7 @@ function attachSelfCheck(
             // It is a part of the service that keeps it, so it hangs under it.
             under: box.getBoundingClientRect().top >= document.querySelector('.block-box[data-id="booking-api"]').getBoundingClientRect().bottom,
           };
-          document.getElementById("show-dependencies").click();
-          await wait(300);
+          await setArrows("hidden");
 
           return {
             drawn: true,
@@ -1745,8 +1748,7 @@ function attachSelfCheck(
           };
           fold.dispatchEvent(new MouseEvent("click", { bubbles: true }));
           await wait(500);
-          document.getElementById("show-dependencies").click();
-          await wait(300);
+          // Left showing, so the screenshot this check leaves behind has them on.
           return { shown, folded, back: Boolean(document.querySelector('.block-box[data-id="book-seats"]')) };
         `);
         await capture(window, "self-check-reaches");
@@ -2080,15 +2082,13 @@ function attachSelfCheck(
           // And the same step is still the one showing back on the tree.
           chip("Tree").click();
           await wait(500);
-          return {
-            boxes: boxes.length,
-            rows: rows.size,
-            repeated,
-            arrows: arrows.length,
-            picked,
-            backOnTree: Boolean(document.querySelector("#exec-layer .exec-line-group")),
-            sameStep: text(".exec-count"),
-          };
+          const backOnTree = Boolean(document.querySelector("#exec-layer .exec-line-group"));
+          const sameStep = text(".exec-count");
+
+          // Left on the flow, so the screenshot this check leaves behind is of it.
+          chip("Flow").click();
+          await wait(500);
+          return { boxes: boxes.length, rows: rows.size, repeated, arrows: arrows.length, picked, backOnTree, sameStep };
         `);
         await capture(window, "self-check-flow");
 
