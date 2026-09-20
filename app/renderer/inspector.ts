@@ -2,7 +2,9 @@ import type { SnapshotBlock, SnapshotCode } from "../../src/project/snapshot.js"
 import type { ProjectDiagnostic } from "../../src/project/project.js";
 import { blockColours, requireSnapshot, selectedBlock, ui, viewSettings } from "./state.js";
 import { ROLES } from "../../src/model/roles.js";
-import { accessArrows, blockColour, revealBlock, toggleFold, treeInView } from "./canvas.js";
+import { accessSection, exposedSection, portSection } from "./detail.js";
+import { accessArrows, blockColour, hasCode, hasDetails, revealBlock, toggleFold, treeInView } from "./canvas.js";
+import { openBlockWindow } from "./popup.js";
 import type { AccessArrow } from "./canvas.js";
 import { benchSections, entryBenchSection } from "./bench.js";
 import { watchSection } from "./watch.js";
@@ -50,34 +52,6 @@ function problemsSection(diagnostics: ProjectDiagnostic[], linked: boolean): HTM
   return node;
 }
 
-function portSection(
-  title: string,
-  ports: { name: string; type?: string; capability?: string; description: string | null }[],
-  isCapability = false,
-): HTMLElement {
-  const node = section(title);
-  if (ports.length === 0) {
-    node.append(el("p", "bench-note", "None."));
-    return node;
-  }
-
-  const list = el("div", "ports");
-  for (const port of ports) {
-    const row = el("div", `port-row${isCapability ? " cap" : ""}`);
-    row.append(el("div", "pname", port.name));
-    row.append(el("div", "ptype", (isCapability ? port.capability : port.type) ?? ""));
-    if (port.description) row.append(el("div", "pdesc", port.description));
-    list.append(row);
-  }
-  node.append(list);
-  return node;
-}
-
-/**
- * A code box that can be typed in and is still coloured. The coloured copy is
- * drawn underneath, and the box itself is transparent apart from its caret, so
- * there is only ever one piece of text to keep in step — what was typed.
- */
 function editableCode(value: string, language: ReturnType<typeof languageOf>): {
   wrap: HTMLElement;
   editor: HTMLTextAreaElement;
@@ -420,64 +394,6 @@ function whatHappensSection(block: SnapshotBlock): HTMLElement | null {
 }
 
 /** What an architecture block offers, in place of the contract it has none of. */
-function exposedSection(block: SnapshotBlock): HTMLElement {
-  const noun = ROLES[block.role].entryNoun;
-  const node = section(`${noun.charAt(0).toUpperCase()}${noun.slice(1)}s`);
-
-  if (block.exposes.length === 0) {
-    node.append(el("p", "bench-note", `Nothing is written down yet. The agent lists each ${noun} under "exposes".`));
-    return node;
-  }
-
-  const list = el("div", "ports");
-  for (const entry of block.exposes) {
-    // A store holds one shape, so saying it twice would read as two things.
-    const oneShape = entry.accepts !== null && entry.accepts === entry.returns;
-    const shape = oneShape
-      ? entry.accepts!
-      : [entry.accepts === null ? null : `in ${entry.accepts}`, entry.returns === null ? null : `out ${entry.returns}`]
-          .filter(Boolean)
-          .join("    ");
-
-    const row = el("div", "port-row");
-    row.append(el("div", "pname", entry.name), el("div", "ptype", shape));
-    if (entry.description) row.append(el("div", "pdesc", entry.description));
-    list.append(row);
-  }
-  node.append(list);
-  return node;
-}
-
-/** What this block reaches, with each resource named as it was found. */
-function accessSection(block: SnapshotBlock): HTMLElement | null {
-  if (block.access.length === 0) return null;
-
-  const node = section("Reaches");
-  const list = el("div", "ports");
-
-  for (const access of block.access) {
-    const row = el("div", "port-row cap");
-    row.append(el("div", "pname", access.verb));
-
-    if (access.resourcePath === null) {
-      const missing = el("div", "ptype bad");
-      missing.textContent = `${access.resource} — nothing of that name is among its parts, beside it, or above it`;
-      row.append(missing);
-    } else {
-      const where = access.entry === null ? access.resourceName : `${access.resourceName} · ${access.entry}`;
-      row.append(el("div", "ptype", where));
-      const open = el("button", "btn quiet tiny", "Show");
-      open.addEventListener("click", () => revealBlock(access.resourcePath!));
-      row.append(open);
-    }
-
-    list.append(row);
-  }
-
-  node.append(list);
-  return node;
-}
-
 /** One dependency arrow picked out on the tree. */
 function accessPanel(panel: HTMLElement, arrow: AccessArrow): void {
   const snapshot = requireSnapshot();
@@ -555,11 +471,25 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   const colour = blockColourControl(block);
   if (colour) head.append(colour);
 
-  if (block.children.length > 0) {
-    const open = el("button", "btn quiet tiny", ui.folded.has(block.path) ? "Show its parts" : "Fold its parts");
-    open.addEventListener("click", () => toggleFold(block.path));
-    head.append(open);
+  // The same windows the block's own buttons open, for whoever is reading
+  // the panel rather than the tree.
+  const windows = el("div", "insp-windows");
+  if (hasDetails(block)) {
+    const details = el("button", "btn quiet tiny", "What it holds");
+    details.addEventListener("click", () => openBlockWindow("details", block.path));
+    windows.append(details);
   }
+  if (hasCode(block)) {
+    const code = el("button", "btn quiet tiny", "Code");
+    code.addEventListener("click", () => openBlockWindow("code", block.path));
+    windows.append(code);
+  }
+  if (block.children.length > 0) {
+    const fold = el("button", "btn quiet tiny", ui.folded.has(block.path) ? "Show its parts" : "Fold its parts");
+    fold.addEventListener("click", () => toggleFold(block.path));
+    windows.append(fold);
+  }
+  if (windows.childElementCount > 0) head.append(windows);
   panel.append(head);
 
   panel.append(el("p", "responsibility", block.responsibility));

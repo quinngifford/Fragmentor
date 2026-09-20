@@ -13,6 +13,7 @@ import type { ColourBy } from "./state.js";
 import {
   applyDependencies,
   clearCanvas,
+  onBlockWindow,
   fitToView,
   fitWhenReady,
   onCanvasChange,
@@ -30,6 +31,7 @@ import { onBenchChange } from "./bench.js";
 import { askForProjectSettings } from "./newproject.js";
 import { onWatchChange, resetWatching, setUpWatching } from "./watch.js";
 import { onExecutionChange, paintExecution, resetExecutions } from "./execution.js";
+import { closeWindow, openBlockWindow, setUpWindows } from "./popup.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
 
@@ -76,8 +78,9 @@ function forgetProject(): void {
   ui.selectedLink = null;
   // A run, and the places runs pause, belong to the project they were set in.
   resetWatching();
-  // So does the execution on the diagram, and which blocks around it are open.
+  // So does the execution being stepped through, and anything folded away.
   resetExecutions();
+  closeWindow();
 }
 
 /**
@@ -697,6 +700,8 @@ try {
   setUpCanvasGestures();
   watchCanvasSize();
   setUpWatching();
+  setUpWindows();
+  onBlockWindow(openBlockWindow);
   render();
   void renderWelcome();
 } catch (error) {

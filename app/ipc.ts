@@ -26,6 +26,7 @@ export const CHANNELS = {
   emitCode: "codegen:emit",
   revealBlock: "block:reveal",
   revealCode: "code:reveal",
+  readCode: "code:read",
   watchRun: "run:start",
   controlRun: "run:control",
   runEvent: "run:event",
@@ -107,6 +108,8 @@ export interface FragmentorApi {
   revealBlock(dir: string, blockPath: string): Promise<Result<null>>;
   /** Shows a file a visual block points at, given relative to the project. */
   revealCode(dir: string, file: string): Promise<Result<null>>;
+  /** The whole of the file a block points at, for reading in a window of its own. */
+  readCode(dir: string, pointer: string): Promise<Result<{ file: string; line: number | null; text: string | null }>>;
   /** Runs a block, reporting every block call beneath it to onRunEvent as it happens. Resolves when the run ends. */
   watchRun(request: WatchRunRequest): Promise<Result<RunOutcome>>;
   /** Resumes, re-aims or stops a watched run. */

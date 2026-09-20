@@ -1347,3 +1347,67 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
   text-underline-offset: 2px;
 }
 .exec-reveal:hover { color: var(--ink); }
+
+/* ---- a window over the drawing ---- */
+
+/* A block on the tree says what it is; everything else about it is read here,
+   in a window big enough for it. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 26px;
+  background: rgba(4, 6, 7, 0.74);
+}
+
+.overlay[hidden] { display: none; }
+
+.window {
+  display: flex;
+  flex-direction: column;
+  width: min(980px, 100%);
+  max-height: 100%;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.window-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.window-names h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.window-sub { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; }
+
+.window-close {
+  margin-left: auto;
+  flex: none;
+  padding: 2px 8px;
+  font-size: 13px;
+  color: var(--ink-dim);
+  background: none;
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.window-close:hover { color: var(--ink); background: var(--panel-high); }
+
+.window-body { overflow: auto; padding: 14px 16px 20px; user-select: text; }
+.window-sections { display: flex; flex-direction: column; gap: 18px; }
+.window-code { max-height: none; font-size: 12px; }
+.window-foot { display: flex; gap: 12px; align-items: center; }
+
+.insp-windows { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+
+/* A button beside what it acts on, rather than stretched across the row. */
+.window-body .port-row .btn { width: fit-content; }

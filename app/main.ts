@@ -17,7 +17,7 @@ import type {
 } from "./ipc.js";
 import { projectSnapshot } from "../src/project/snapshot.js";
 import { saveViewLayout } from "../src/project/layout.js";
-import { blockDir, loadProject, manifestPath, systemOf } from "../src/project/project.js";
+import { blockDir, loadProject, locateCode, manifestPath, systemOf } from "../src/project/project.js";
 import { getPack, isKnownLanguage } from "../src/lang/index.js";
 import { isArchitecture } from "../src/model/roles.js";
 import { emitProject, startProject } from "../src/codegen/emit.js";
@@ -507,6 +507,19 @@ function registerHandlers(): void {
       return failed(error);
     }
   });
+
+  ipcMain.handle(
+    CHANNELS.readCode,
+    async (_event, dir: string, pointer: string): Promise<Result<{ file: string; line: number | null; text: string | null }>> => {
+      try {
+        const found = await locateCode(dir, pointer);
+        if (!found.ok) return { ok: false, error: found.problem };
+        return ok({ file: found.location.file, line: found.location.line, text: found.location.text });
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
 
   ipcMain.handle(CHANNELS.revealCode, async (_event, dir: string, file: string): Promise<Result<null>> => {
     try {
@@ -2045,6 +2058,7 @@ function createWindow(): void {
     window.webContents.once("did-finish-load", () => {
       void (async () => {
         const steps = process.argv.includes("--steps") ? Number(process.argv[process.argv.indexOf("--steps") + 1]) : 0;
+        const script = process.argv.includes("--js") ? (process.argv[process.argv.indexOf("--js") + 1] ?? "") : "";
         await window.webContents.executeJavaScript(`(async () => {
           const wait = (ms) => new Promise((r) => setTimeout(r, ms));
           for (let i = 0; i < 60; i += 1) {
@@ -2066,6 +2080,10 @@ function createWindow(): void {
             for (let i = 0; i < ${steps}; i += 1) { step.click(); await new Promise((r) => setTimeout(r, 300)); }
             return true;
           })()`);
+        }
+        if (script) {
+          await window.webContents.executeJavaScript(`(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); ${script} })()`);
+          await new Promise((resolve) => setTimeout(resolve, 900));
         }
         await capture(window, "look");
         app.exit(0);
