@@ -4,7 +4,8 @@ import { blockColours, requireSnapshot, selectedBlock, ui, viewSettings } from "
 import { ROLES } from "../../src/model/roles.js";
 import { accessSection, exposedSection, portSection } from "./detail.js";
 import { accessArrows, blockColour, hasCode, hasDetails, revealBlock, toggleFold, treeInView } from "./canvas.js";
-import { openBlockWindow } from "./popup.js";
+import { openBlockWindow, openCodeAt } from "./popup.js";
+import { STEP_LINK, currentStep, describeStep } from "./execution.js";
 import type { AccessArrow } from "./canvas.js";
 import { benchSections, entryBenchSection } from "./bench.js";
 import { watchSection } from "./watch.js";
@@ -394,6 +395,89 @@ function whatHappensSection(block: SnapshotBlock): HTMLElement | null {
 }
 
 /** What an architecture block offers, in place of the contract it has none of. */
+/**
+ * One step of an execution: what it is, which blocks it joins, what it
+ * carried, and the code that makes it happen.
+ *
+ * The step is the thing being read while someone is stepping through, so it
+ * has a page of its own rather than a line in the bar above the tree.
+ */
+function stepPanel(panel: HTMLElement): boolean {
+  const step = currentStep();
+  if (!step) return false;
+  const snapshot = requireSnapshot();
+  const { event, execution } = step;
+  const trigger = execution.trigger.kind;
+
+  const head = el("div", "insp-head");
+  head.append(
+    el("h2", undefined, `Step ${step.at + 1} of ${step.trace.events.length}`),
+    el("div", "insp-id", `${execution.name} · ${step.trace.source}`),
+  );
+  panel.append(head);
+
+  // What the agent said about this step, and failing that, what it does.
+  const said = event.type === "return" ? undefined : event.description;
+  panel.append(el("p", "responsibility", said ?? describeStep(event, trigger, 400)));
+  if (said) panel.append(el("p", "bench-note", describeStep(event, trigger, 400)));
+
+  const where = section("Between");
+  const list = el("div", "ports");
+  const place = (label: string, address: { path: string; entry: string | null } | null) => {
+    const row = el("div", "port-row");
+    row.append(el("div", "pname", label));
+    if (address === null) {
+      row.append(el("div", "ptype", "outside the system"));
+    } else {
+      const block = snapshot.blocks[address.path];
+      row.append(el("div", "ptype", address.entry === null ? (block?.name ?? address.path) : `${block?.name ?? address.path} · ${address.entry}`));
+      const show = el("button", "btn quiet tiny", "Show");
+      show.addEventListener("click", () => revealBlock(address.path));
+      row.append(show);
+    }
+    list.append(row);
+  };
+
+  if (event.type === "effect") {
+    place("at", event.at);
+  } else {
+    place("from", event.from);
+    place("to", event.to);
+    const kind = el("div", "port-row");
+    kind.append(el("div", "pname", "kind"), el("div", "ptype", event.type === "return" ? "gives back" : event.kind));
+    list.append(kind);
+  }
+  where.append(list);
+  panel.append(where);
+
+  const carried =
+    event.type === "effect" ? event.detail : event.type === "return" ? event.response : event.payload;
+  if (carried !== undefined) {
+    const what = section(event.type === "return" ? "What came back" : "What it carried");
+    what.append(codeBlock(JSON.stringify(carried, null, 2) ?? "", "json"));
+    panel.append(what);
+  }
+
+  const pointer = event.type === "return" ? undefined : event.code;
+  const code = section("The code that does it");
+  if (pointer === undefined) {
+    code.append(el("p", "bench-note", "This step does not say which function makes it."));
+  } else {
+    code.append(el("div", "code-where", pointer));
+    const open = el("button", "btn", "Open the code");
+    open.addEventListener("click", () => void openCodeAt(pointer, `Step ${step.at + 1}: ${execution.name}`));
+    code.append(open);
+  }
+  panel.append(code);
+
+  if (step.trace.source === "declared") {
+    panel.append(
+      el("p", "bench-note", "Written down by the agent from reading the code. Fragmentor has not seen it run."),
+    );
+  }
+  return true;
+}
+
 /** One dependency arrow picked out on the tree. */
 function accessPanel(panel: HTMLElement, arrow: AccessArrow): void {
   const snapshot = requireSnapshot();
@@ -629,6 +713,10 @@ export function renderInspector(): void {
     panel.append(el("p", "bench-note", note));
     return;
   }
+
+  // The step being stepped through is what someone reading it wants, and it
+  // gives way as soon as they pick something else out.
+  if (ui.selectedLink === STEP_LINK && stepPanel(panel)) return;
 
   const tree = treeInView();
 

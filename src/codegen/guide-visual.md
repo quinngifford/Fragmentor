@@ -99,6 +99,7 @@ The blocks say what exists. Also write down what happens: for each thing that se
 
 - An address is a block's path under `blocks/`, optionally followed by `.` and one of its entries: `shop/api.checkout`. `trigger.at` is where it arrives, and `kind` is `action`, `request`, `schedule`, `message` or `webhook`.
 - `trace` lists what follows, in order. A step is an interaction — `from`, `to` and `kind` (`call`, `read`, `write`, `remove`, `send` or `deliver`), with `payload` for what it carried and `response` for what came back, where anything did — or an effect, `{ "effect": ..., "at": ... }`, such as `row-changed`, `row-removed`, `message-published`, `response` or `ui-changed`.
+- Every step says what it is with `description`, in a sentence a person reading it would want: why this happens, not a rewording of the blocks it joins. And every step says which function makes it with `code`, written as a block's is — `"src/api/router.ts#route"`. `fragmentor check` makes sure that function exists. An effect may have both as well, and should where the code that leaves it behind is somewhere in particular.
 - Write each step between the finest blocks the code shows, even across distant parts of the system. A step follows from the latest step that arrived where it starts, so two calls one block makes in turn are two branches; where the list cannot say so, give a step an `id` and another `"cause": "<id>"`.
 - This is documentation: it is shown as written by you, never as something observed. Keep it true to the code, and change it when the code changes.
 

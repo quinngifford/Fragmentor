@@ -14,6 +14,7 @@ import {
   applyDependencies,
   clearCanvas,
   onBlockWindow,
+  onStepPicked,
   fitToView,
   fitWhenReady,
   onCanvasChange,
@@ -30,7 +31,7 @@ import { onInspectorChange, renderInspector } from "./inspector.js";
 import { onBenchChange } from "./bench.js";
 import { askForProjectSettings } from "./newproject.js";
 import { onWatchChange, resetWatching, setUpWatching } from "./watch.js";
-import { onExecutionChange, paintExecution, resetExecutions } from "./execution.js";
+import { onExecutionChange, paintExecution, resetExecutions, showStep } from "./execution.js";
 import { closeWindow, openBlockWindow, setUpWindows } from "./popup.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
@@ -702,6 +703,11 @@ try {
   setUpWatching();
   setUpWindows();
   onBlockWindow(openBlockWindow);
+  // Clicking the step drawn on the tree asks about that step.
+  onStepPicked(() => {
+    showStep();
+    render();
+  });
   render();
   void renderWelcome();
 } catch (error) {

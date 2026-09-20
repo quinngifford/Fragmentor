@@ -14,6 +14,8 @@
       "from": "app/infrastructure/queue.notifications",
       "to": "app/workers/deliver-notification",
       "kind": "deliver",
+      "description": "The queue hands the notification to whoever subscribed to it.",
+      "code": "src/infrastructure/queue.ts#publish",
       "payload": {
         "to": "bo",
         "messageId": "m-1"
@@ -23,6 +25,8 @@
       "from": "app/workers/deliver-notification",
       "to": "app/infrastructure/database.messages",
       "kind": "read",
+      "description": "The message itself is read, because the notification carries only its id.",
+      "code": "src/workers/delivery.ts#deliverNotification",
       "payload": {
         "id": "m-1"
       },
@@ -35,6 +39,8 @@
       "from": "app/workers/deliver-notification",
       "to": "app/infrastructure/database.sessions",
       "kind": "read",
+      "description": "The recipient's sessions say whether they have the page open at all.",
+      "code": "src/workers/delivery.ts#deliverNotification",
       "payload": {
         "userId": "bo"
       },
@@ -46,6 +52,8 @@
       "from": "app/workers/deliver-notification",
       "to": "app/client/state",
       "kind": "send",
+      "description": "With a page open, the message is pushed straight to it.",
+      "code": "src/workers/delivery.ts#deliverNotification",
       "payload": {
         "type": "received",
         "from": "ada",
@@ -56,6 +64,8 @@
       "from": "app/client/state",
       "to": "app/client/ui/chat-view",
       "kind": "call",
+      "description": "The page adds the message that has just arrived to the conversation.",
+      "code": "src/client/state.ts#dispatch",
       "payload": {
         "from": "ada",
         "text": "hi"
@@ -63,6 +73,8 @@
     },
     {
       "effect": "ui-changed",
+      "description": "The recipient sees the message without having asked for it.",
+      "code": "src/client/ui/chatView.ts#showMessage",
       "at": "app/client/ui/chat-view",
       "detail": {
         "shows": "ada: hi"

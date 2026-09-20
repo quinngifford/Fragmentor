@@ -139,6 +139,27 @@ export async function openCodeWindow(block: SnapshotBlock): Promise<void> {
   body.append(foot);
 }
 
+/** The code one step of an execution runs, which may be any function in the project. */
+export async function openCodeAt(pointer: string, title: string): Promise<void> {
+  const snapshot = requireSnapshot();
+  const body = el("div", "window-sections");
+  body.append(el("p", "bench-note", `Reading ${pointer}…`));
+  openWindow(title, pointer, body);
+
+  const result = await window.fragmentor.readCode(snapshot.dir, pointer);
+  if (!windowIsOpen()) return;
+  body.replaceChildren();
+  if (!result.ok) {
+    body.append(el("p", "bench-note bad", result.error));
+    return;
+  }
+  if (result.value.text === null) {
+    body.append(el("p", "bench-note", "This points at a folder, or at a file too large to show."));
+    return;
+  }
+  body.append(codeView(result.value.text, languageOf(snapshot.language ?? "", result.value.file), result.value.line));
+}
+
 /* -------------------------------------------------------------------------- */
 /* What a block holds                                                          */
 /* -------------------------------------------------------------------------- */

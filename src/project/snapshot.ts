@@ -255,23 +255,44 @@ async function executionsOf(project: Project, problems: ProjectDiagnostic[]): Pr
   }
 
   const architecture = architectureOf(project);
-  return loaded.executions.map((execution) => {
+  // A pointer read once is a pointer read: several steps of one execution
+  // usually run the same function.
+  const pointers = new Map<string, string | null>();
+
+  const snapshots: SnapshotExecution[] = [];
+  for (const execution of loaded.executions) {
+    const file = `${EXECUTIONS_DIR}/${execution.id}.json`;
     for (const message of checkExecution(execution, architecture)) {
-      problems.push({ severity: "error", blockPath: `${EXECUTIONS_DIR}/${execution.id}.json`, message });
+      problems.push({ severity: "error", blockPath: file, message });
     }
-    return {
-      id: execution.id,
-      name: execution.name,
-      description: execution.description,
-      trigger: {
-        at: formatAddress(execution.trigger.at),
-        kind: execution.trigger.kind,
-        ...(execution.trigger.payload === undefined ? {} : { payload: execution.trigger.payload }),
-      },
-      declared: execution.declared,
-      expects: execution.expect !== null,
-    };
-  });
+
+    // Each step says which function makes it, and a pointer that leads
+    // nowhere is exactly the drift worth being told about.
+    for (const event of execution.declared?.events ?? []) {
+      const pointer = event.type === "return" ? undefined : event.code;
+      if (pointer === undefined) continue;
+      if (!pointers.has(pointer)) {
+        const found = await locateCode(project.dir, pointer);
+        pointers.set(pointer, found.ok ? null : found.problem);
+      }
+      const problem = pointers.get(pointer);
+      if (problem) problems.push({ severity: "error", blockPath: file, message: `trace step ${event.id}, code: ${problem}` });
+    }
+
+    snapshots.push({
+        id: execution.id,
+        name: execution.name,
+        description: execution.description,
+        trigger: {
+          at: formatAddress(execution.trigger.at),
+          kind: execution.trigger.kind,
+          ...(execution.trigger.payload === undefined ? {} : { payload: execution.trigger.payload }),
+        },
+        declared: execution.declared,
+        expects: execution.expect !== null,
+    });
+  }
+  return snapshots;
 }
 
 export async function projectSnapshot(projectDir: string): Promise<ProjectSnapshot> {

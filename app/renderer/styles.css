@@ -1410,4 +1410,4 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
 .insp-windows { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
 
 /* A button beside what it acts on, rather than stretched across the row. */
-.window-body .port-row .btn { width: fit-content; }
+.port-row .btn { width: fit-content; }

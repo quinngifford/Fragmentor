@@ -10,6 +10,8 @@
       "from": "app/client.logOut",
       "to": "app/client/state",
       "kind": "call",
+      "description": "Pressing sign out tells the page's state to end the session.",
+      "code": "src/client/state.ts#dispatch",
       "payload": {
         "type": "logOut"
       }
@@ -18,6 +20,8 @@
       "from": "app/client/state",
       "to": "app/api.logOut",
       "kind": "call",
+      "description": "The page asks the API to end the session it is signed in with.",
+      "code": "src/client/state.ts#dispatch",
       "payload": {
         "sessionId": "s-1"
       },
@@ -29,6 +33,8 @@
       "from": "app/api.logOut",
       "to": "app/api/router",
       "kind": "call",
+      "description": "The HTTP server turns the request into a call to the router.",
+      "code": "src/server.ts#handle",
       "payload": {
         "path": "/logout"
       }
@@ -37,6 +43,8 @@
       "from": "app/api/router",
       "to": "app/api/auth/log-out",
       "kind": "call",
+      "description": "The router hands signing out to the part of the API that does it.",
+      "code": "src/api/router.ts#route",
       "payload": {
         "sessionId": "s-1"
       },
@@ -48,12 +56,16 @@
       "from": "app/api/auth/log-out",
       "to": "app/infrastructure/database.sessions",
       "kind": "remove",
+      "description": "The session is taken out, so nothing can be done with it again.",
+      "code": "src/api/auth.ts#logOut",
       "payload": {
         "id": "s-1"
       }
     },
     {
       "effect": "row-removed",
+      "description": "The session is gone from the database.",
+      "code": "src/infrastructure/db.ts#db",
       "at": "app/infrastructure/database.sessions",
       "detail": {
         "id": "s-1"
@@ -61,6 +73,8 @@
     },
     {
       "effect": "response",
+      "description": "The API answers with where the page should go next.",
+      "code": "src/api/router.ts#route",
       "at": "app/api.logOut",
       "detail": {
         "status": 200,
@@ -70,10 +84,14 @@
     {
       "from": "app/client/state",
       "to": "app/client/ui/login-form",
-      "kind": "call"
+      "kind": "call",
+      "description": "The page forgets the session and goes back to the sign-in form.",
+      "code": "src/client/state.ts#dispatch"
     },
     {
       "effect": "ui-changed",
+      "description": "The sign-in form is what the person sees again.",
+      "code": "src/client/ui/loginForm.ts#onLogInSubmitted",
       "at": "app/client/ui/login-form",
       "detail": {
         "screen": "login"

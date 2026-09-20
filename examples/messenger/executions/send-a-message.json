@@ -14,6 +14,8 @@
       "from": "app/client/ui/send-button",
       "to": "app/client/state",
       "kind": "call",
+      "description": "Pressing send hands what was written to the page's state.",
+      "code": "src/client/ui/sendButton.ts#onSendPressed",
       "payload": {
         "type": "send",
         "to": "bo",
@@ -24,6 +26,8 @@
       "from": "app/client/state",
       "to": "app/api.sendMessage",
       "kind": "call",
+      "description": "The page asks the API to send it, on the session it is signed in with.",
+      "code": "src/client/state.ts#dispatch",
       "payload": {
         "to": "bo",
         "text": "hi",
@@ -37,6 +41,8 @@
       "from": "app/api.sendMessage",
       "to": "app/api/router",
       "kind": "call",
+      "description": "The HTTP server turns the request into a call to the router.",
+      "code": "src/server.ts#handle",
       "payload": {
         "path": "/messages",
         "to": "bo",
@@ -47,6 +53,8 @@
       "from": "app/api/router",
       "to": "app/api/auth/check-session",
       "kind": "call",
+      "description": "The router checks who is asking before it does anything with the message.",
+      "code": "src/api/router.ts#route",
       "payload": {
         "sessionId": "s-1"
       },
@@ -58,6 +66,8 @@
       "from": "app/api/auth/check-session",
       "to": "app/infrastructure/database.sessions",
       "kind": "read",
+      "description": "The session is looked up to find out who is sending.",
+      "code": "src/api/auth.ts#checkSession",
       "payload": {
         "id": "s-1"
       },
@@ -69,6 +79,8 @@
       "from": "app/api/router",
       "to": "app/api/messaging/save-message",
       "kind": "call",
+      "description": "Whoever is signed in, the message is handed to messaging to be kept.",
+      "code": "src/api/router.ts#route",
       "payload": {
         "from": "ada",
         "to": "bo",
@@ -82,6 +94,8 @@
       "from": "app/api/messaging/save-message",
       "to": "app/infrastructure/database.messages",
       "kind": "write",
+      "description": "The message is written down under a new id.",
+      "code": "src/api/messaging/saveMessage.ts#saveMessage",
       "payload": {
         "id": "m-1",
         "from": "ada",
@@ -91,6 +105,8 @@
     },
     {
       "effect": "row-changed",
+      "description": "The message is now in the database, to be read again later.",
+      "code": "src/infrastructure/db.ts#db",
       "at": "app/infrastructure/database.messages",
       "detail": {
         "id": "m-1"
@@ -100,6 +116,8 @@
       "from": "app/api/router",
       "to": "app/api/messaging/notify-recipient",
       "kind": "call",
+      "description": "The recipient is told about it, without the sender waiting for that.",
+      "code": "src/api/router.ts#route",
       "payload": {
         "to": "bo",
         "messageId": "m-1"
@@ -109,6 +127,8 @@
       "from": "app/api/messaging/notify-recipient",
       "to": "app/infrastructure/queue.notifications",
       "kind": "send",
+      "description": "A notification goes on the queue for whoever delivers it.",
+      "code": "src/api/messaging/notifyRecipient.ts#notifyRecipient",
       "payload": {
         "to": "bo",
         "messageId": "m-1"
@@ -116,10 +136,14 @@
     },
     {
       "effect": "message-published",
+      "description": "Anything watching the queue will now hear about this message.",
+      "code": "src/infrastructure/queue.ts#publish",
       "at": "app/infrastructure/queue.notifications"
     },
     {
       "effect": "response",
+      "description": "The API answers the page with the id the message was saved under.",
+      "code": "src/api/router.ts#route",
       "at": "app/api.sendMessage",
       "detail": {
         "status": 201,
@@ -130,6 +154,8 @@
       "from": "app/client/state",
       "to": "app/client/ui/chat-view",
       "kind": "call",
+      "description": "The page adds what was just sent to the conversation.",
+      "code": "src/client/state.ts#dispatch",
       "payload": {
         "from": "you",
         "text": "hi"
@@ -137,6 +163,8 @@
     },
     {
       "effect": "ui-changed",
+      "description": "The conversation now ends with the message that was just sent.",
+      "code": "src/client/ui/chatView.ts#showMessage",
       "at": "app/client/ui/chat-view",
       "detail": {
         "shows": "you: hi"

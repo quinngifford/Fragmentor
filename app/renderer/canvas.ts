@@ -35,6 +35,12 @@ export function onCanvasDrawn(callback: () => void): void {
   drawnListeners.push(callback);
 }
 
+let stepPicked: () => void = () => {};
+/** Called when the person clicks the step drawn on the tree. */
+export function onStepPicked(callback: () => void): void {
+  stepPicked = callback;
+}
+
 let breakpointToggled: (blockPath: string) => void = () => {};
 /** Called when the person clicks a block's breakpoint. */
 export function onBreakpointToggle(callback: (blockPath: string) => void): void {
@@ -143,6 +149,8 @@ export interface ExecutionMark {
   /** The block it arrived at, or where the effect landed. */
   to: string;
   label: string;
+  /** The whole step in words, for hovering over the arrow. */
+  title: string;
   /** Whether anything travelled, which is drawn as flow rather than as a line lighting up. */
   data: boolean;
   /** An answer coming back, which runs the other way. */
@@ -217,6 +225,15 @@ function arrowPath(start: { x: number; y: number }, end: { x: number; y: number 
 
 /** How wide a chip is for its words, which are set in a monospaced 9px. */
 const chipWidth = (text: string) => text.length * 5.6 + 14;
+const CHIP_H = 15;
+
+/** Whether a chip put here would land on a block: parts listed under a block sit close under it. */
+function clearOf(x: number, y: number, width: number): boolean {
+  for (const node of currentTree?.nodes.values() ?? []) {
+    if (x < node.x + BOX_W && node.x < x + width && y < node.y + BOX_H && node.y < y + CHIP_H) return false;
+  }
+  return true;
+}
 
 function drawExecutionMark(): void {
   const layer = element("exec-layer");
@@ -229,13 +246,14 @@ function drawExecutionMark(): void {
   const to = currentTree.nodes.get(mark.to);
   if (!to) return;
 
-  // Something the run left behind: a chip over the block responsible.
+  // Something the run left behind: a chip over the block responsible, or
+  // under it where the block above leaves no room.
   if (mark.effect !== null) {
     const width = chipWidth(mark.effect);
     const group = svgEl("g", { class: "exec-effect", "data-current": "true" }, marks);
     const x = to.x + BOX_W / 2 - width / 2;
-    const y = to.y - 22;
-    svgEl("rect", { x, y, width, height: 15, rx: 7.5, class: "exec-effect-chip" }, group);
+    const y = clearOf(x, to.y - 22, width) ? to.y - 22 : to.y + BOX_H + 7;
+    svgEl("rect", { x, y, width, height: CHIP_H, rx: CHIP_H / 2, class: "exec-effect-chip" }, group);
     svgEl("text", { x: x + width / 2, y: y + 10.5, class: "exec-effect-text", "text-anchor": "middle" }, group).textContent =
       mark.effect;
     return;
@@ -264,12 +282,20 @@ function drawExecutionMark(): void {
     "data-current": mark.back ? "back" : "out",
   }, layer);
   svgEl("path", { d: geometry.d, class: "exec-line", "marker-end": "url(#exec-arrow)" }, group);
+  svgEl("path", { d: geometry.d, class: "line-hit" }, group);
+  svgEl("title", {}, group).textContent = mark.title;
   svgEl("text", {
     x: geometry.middle.x,
     y: geometry.middle.y - 6,
     class: "exec-label",
     "text-anchor": "middle",
   }, group).textContent = mark.label;
+
+  // The step is a thing in its own right, with its own page.
+  group.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+    stepPicked();
+  });
 }
 
 /* -------------------------------------------------------------------------- */

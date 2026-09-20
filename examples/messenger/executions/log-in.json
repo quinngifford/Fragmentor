@@ -13,6 +13,8 @@
       "from": "app/client/ui/login-form",
       "to": "app/client/state",
       "kind": "call",
+      "description": "Submitting the form hands the email and password to the page's state.",
+      "code": "src/client/ui/loginForm.ts#onLogInSubmitted",
       "payload": {
         "type": "logIn",
         "email": "ada@example.com"
@@ -22,6 +24,8 @@
       "from": "app/client/state",
       "to": "app/api.logIn",
       "kind": "call",
+      "description": "The page asks the API to sign this person in.",
+      "code": "src/client/state.ts#dispatch",
       "payload": {
         "email": "ada@example.com"
       },
@@ -33,6 +37,8 @@
       "from": "app/api.logIn",
       "to": "app/api/router",
       "kind": "call",
+      "description": "The HTTP server turns the request into a call to the router.",
+      "code": "src/server.ts#handle",
       "payload": {
         "path": "/login"
       }
@@ -41,6 +47,8 @@
       "from": "app/api/router",
       "to": "app/api/auth/log-in",
       "kind": "call",
+      "description": "The router hands signing in to the part of the API that does it.",
+      "code": "src/api/router.ts#route",
       "payload": {
         "email": "ada@example.com"
       },
@@ -52,6 +60,8 @@
       "from": "app/api/auth/log-in",
       "to": "app/infrastructure/database.users",
       "kind": "read",
+      "description": "The person is looked up by the email they typed.",
+      "code": "src/api/auth.ts#logIn",
       "payload": {
         "email": "ada@example.com"
       },
@@ -63,6 +73,8 @@
       "from": "app/api/auth/log-in",
       "to": "app/infrastructure/database.sessions",
       "kind": "write",
+      "description": "A session is written down, so later requests can say who they are.",
+      "code": "src/api/auth.ts#logIn",
       "payload": {
         "id": "s-1",
         "userId": "ada"
@@ -70,6 +82,8 @@
     },
     {
       "effect": "row-changed",
+      "description": "The session is now in the database, and will last until it runs out.",
+      "code": "src/infrastructure/db.ts#db",
       "at": "app/infrastructure/database.sessions",
       "detail": {
         "id": "s-1"
@@ -77,6 +91,8 @@
     },
     {
       "effect": "response",
+      "description": "The API answers with the session the page is to use from now on.",
+      "code": "src/api/router.ts#route",
       "at": "app/api.logIn",
       "detail": {
         "status": 200,
@@ -85,6 +101,8 @@
     },
     {
       "effect": "ui-changed",
+      "description": "The page keeps the session and shows the conversation instead of the form.",
+      "code": "src/client/state.ts#dispatch",
       "at": "app/client/state",
       "detail": {
         "screen": "chat"

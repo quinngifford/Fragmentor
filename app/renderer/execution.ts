@@ -20,6 +20,9 @@ import { el } from "./dom.js";
  * of the architecture, so it lives somewhere else.
  */
 
+/** What `ui.selectedLink` holds while the inspector is showing the step on screen. */
+export const STEP_LINK = "step";
+
 let notify: () => void = () => {};
 /** Called when picking an execution, or stepping it, changes what the panels say. */
 export function onExecutionChange(callback: () => void): void {
@@ -102,16 +105,19 @@ export function markFor(event: TraceEvent, trigger: TriggerKind): ExecutionMark 
   if (!tree) return null;
   const placement = placeEvent(event, shownView());
   const label = stepWord(event, trigger);
+  // What it is in the agent's words, over what it does in Fragmentor's.
+  const said = event.type === "return" ? undefined : event.description;
+  const title = [said, describeStep(event, trigger, 400)].filter(Boolean).join("\n\n");
 
   if (placement.on === "effect") {
     const at = shownAt(tree, placement.at.path);
-    return at ? { from: null, to: at.path, label, data: false, back: false, effect: label } : null;
+    return at ? { from: null, to: at.path, label, title, data: false, back: false, effect: label } : null;
   }
 
   if (placement.on === "inside") {
     // Both ends are folded away into one block, which is all there is to show.
     const at = shownAt(tree, placement.at.path);
-    return at ? { from: null, to: at.path, label, data: false, back: false, effect: `${label}, inside` } : null;
+    return at ? { from: null, to: at.path, label, title, data: false, back: false, effect: `${label}, inside` } : null;
   }
 
   const to = shownAt(tree, placement.to.path);
@@ -125,6 +131,7 @@ export function markFor(event: TraceEvent, trigger: TriggerKind): ExecutionMark 
     from: from?.path ?? null,
     to: to.path,
     label,
+    title,
     data: carriedSomething,
     back: event.type === "return",
     effect: null,
@@ -175,8 +182,19 @@ function stopPlaying(): void {
 function choose(id: string | null): void {
   stopPlaying();
   ui.execution = id === null ? null : { id, at: 0 };
+  showStep();
   paintExecution();
   notify();
+}
+
+/** Puts the step itself in the inspector, which is what someone stepping through is reading. */
+export function showStep(): void {
+  if (!ui.execution) {
+    if (ui.selectedLink === STEP_LINK) ui.selectedLink = null;
+    return;
+  }
+  ui.selection.clear();
+  ui.selectedLink = STEP_LINK;
 }
 
 /** The event a step from here goes to, or null at the end of the trace. */
@@ -192,6 +210,7 @@ function step(into: boolean): void {
   ui.execution.at = next;
 
   const event = shown.trace.events[next]!;
+  showStep();
   // Stepping in shows a step a fold has hidden, by unfolding what hides it.
   if (into) {
     for (const address of addressesOf(event)) {
@@ -230,6 +249,7 @@ function jump(at: number): void {
   stopPlaying();
   if (!ui.execution) return;
   ui.execution.at = at;
+  showStep();
   paintExecution();
   notify();
 }

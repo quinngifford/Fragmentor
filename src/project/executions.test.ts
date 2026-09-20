@@ -21,18 +21,21 @@ function problemsOf(raw: unknown, id = "send-a-message"): string[] {
   return result.ok ? [] : result.problems;
 }
 
+/** What every step says of itself. The words are the agent's; only that they are there is checked. */
+const said = { description: "One step of sending a message.", code: "src/api/router.ts#route" };
+
 /** The chat example, written down the way an agent would after reading the code. */
 const sendAMessage = {
   description: "Someone sends a chat message; it is saved, and the recipient is told.",
   trigger: { at: "app/client/ui/button", kind: "action" },
   trace: [
-    { from: "app/client/ui/button", to: "app/client/state", kind: "call", payload: { text: "hi" } },
-    { from: "app/client/state", to: "app/api/router", kind: "call", payload: { text: "hi", to: "bo" } },
-    { from: "app/api/router", to: "app/api/messaging/save-message", kind: "call", response: { id: "m1" } },
-    { from: "app/api/messaging/save-message", to: "app/infrastructure/database.messages", kind: "write" },
+    { ...said, from: "app/client/ui/button", to: "app/client/state", kind: "call", payload: { text: "hi" } },
+    { ...said, from: "app/client/state", to: "app/api/router", kind: "call", payload: { text: "hi", to: "bo" } },
+    { ...said, from: "app/api/router", to: "app/api/messaging/save-message", kind: "call", response: { id: "m1" } },
+    { ...said, from: "app/api/messaging/save-message", to: "app/infrastructure/database.messages", kind: "write" },
     { effect: "row-changed", at: "app/infrastructure/database.messages" },
-    { from: "app/api/router", to: "app/api/messaging/notify-recipient", kind: "call" },
-    { from: "app/api/messaging/notify-recipient", to: "app/infrastructure/queue.publish", kind: "send" },
+    { ...said, from: "app/api/router", to: "app/api/messaging/notify-recipient", kind: "call" },
+    { ...said, from: "app/api/messaging/notify-recipient", to: "app/infrastructure/queue.publish", kind: "send" },
     { effect: "message-published", at: "app/infrastructure/queue.publish" },
   ],
   expect: {
@@ -272,6 +275,9 @@ describe("checking an execution against the architecture", () => {
       'given.app/infrastructure/database: "app/infrastructure/database" names a block but not which of its entries, as in "app/infrastructure/database.<entry>".',
       'given.app/infrastructure/database.users: "app/infrastructure/database" has no entry called "users". Its entries are: messages.',
       'trace step #1, to: "app/infrastructure/queue" has no entry called "subscribe". Its entries are: publish.',
+      // A step nobody has said anything about is a step nobody can read.
+      'trace step #1: say what this step is, with "description".',
+      'trace step #1: name the code that makes it, with "code", as in "src/api/router.ts#handleSend".',
       'expect.never.0: there is no block at "app/payments".',
     ]);
   });

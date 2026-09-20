@@ -68,6 +68,14 @@ export const INTERACTION_KINDS: InteractionKind[] = ["trigger", "call", "read", 
 export interface Interaction {
   type: "interaction";
   id: string;
+  /** What this step is, in the words of whoever wrote the trace down. */
+  description?: string;
+  /**
+   * The code that makes it: a file, and the function in it, written the way a
+   * block's `code` is — `src/api/router.ts#handleSend`. What actually runs at
+   * this step, which is the thing a diagram can never say by itself.
+   */
+  code?: string;
   /** The interaction that led to this one. Siblings with one cause are branches. */
   cause: string | null;
   /** Null when it came from outside the system: a person, a clock, another company's server. */
@@ -108,6 +116,10 @@ export interface Return {
 export interface Effect {
   type: "effect";
   id: string;
+  /** What this consequence is, in the words of whoever wrote the trace down. */
+  description?: string;
+  /** The code that leaves it behind, as a block's `code` is written. */
+  code?: string;
   cause: string | null;
   at: Address;
   /** `row-changed`, `message-published`, `response`, `ui-changed`, ... Free text, as a subtype is. */

@@ -13,6 +13,8 @@
       "from": "app/workers/clean-up-sessions",
       "to": "app/infrastructure/database.sessions",
       "kind": "read",
+      "description": "Every session is read, to find the ones that have run out.",
+      "code": "src/workers/cleanUp.ts#cleanUpSessions",
       "response": [
         {
           "id": "s-9",
@@ -24,12 +26,16 @@
       "from": "app/workers/clean-up-sessions",
       "to": "app/infrastructure/database.sessions",
       "kind": "remove",
+      "description": "Each session past its time is taken out.",
+      "code": "src/workers/cleanUp.ts#cleanUpSessions",
       "payload": {
         "id": "s-9"
       }
     },
     {
       "effect": "row-removed",
+      "description": "The session that ran out is gone, and cannot be used again.",
+      "code": "src/infrastructure/db.ts#db",
       "at": "app/infrastructure/database.sessions",
       "detail": {
         "id": "s-9"

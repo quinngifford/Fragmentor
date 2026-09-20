@@ -108,10 +108,18 @@ const causeId = z
 /** The trigger is the execution's own, so no step inside it is one. */
 const STEP_KINDS = INTERACTION_KINDS.filter((kind) => kind !== "trigger");
 
+/** What a step is, and the code that makes it: written for every step of a trace. */
+const stepDescription = z.string().min(1, "say what this step is, in a sentence");
+const stepCode = z
+  .string()
+  .min(1, 'name the code that makes it, as a block does: "src/api/router.ts#handleSend"');
+
 const interactionStepSchema = z
   .object({
     id: stepId.optional(),
     cause: causeId.optional(),
+    description: stepDescription.optional(),
+    code: stepCode.optional(),
     from: addressSchema,
     to: addressSchema,
     kind: z.enum(STEP_KINDS as [InteractionKind, ...InteractionKind[]], {
@@ -126,6 +134,8 @@ const effectStepSchema = z
   .object({
     id: stepId.optional(),
     cause: causeId.optional(),
+    description: stepDescription.optional(),
+    code: stepCode.optional(),
     effect: z.string().min(1, "say what kind of effect it is, such as row-changed or message-published"),
     at: addressSchema,
     detail: z.unknown().optional(),
@@ -273,6 +283,8 @@ function declaredTrace(
         cause: step.cause ?? inferCause(events, step.at),
         at: step.at,
         kind: step.effect,
+        ...(step.description === undefined ? {} : { description: step.description }),
+        ...(step.code === undefined ? {} : { code: step.code }),
         ...(step.detail === undefined ? {} : { detail: step.detail }),
       });
       return;
@@ -285,6 +297,8 @@ function declaredTrace(
       from: step.from,
       to: step.to,
       kind: step.kind,
+      ...(step.description === undefined ? {} : { description: step.description }),
+      ...(step.code === undefined ? {} : { code: step.code }),
       ...(step.payload === undefined ? {} : { payload: step.payload }),
     });
     if (step.response !== undefined) responses.set(stepIdOf, step.response);
@@ -453,6 +467,14 @@ export function checkExecution(execution: Execution, architecture: Architecture)
     } else {
       if (event.from) check(event.from, `${where}, from`);
       check(event.to, `${where}, to`);
+      // A step is only worth stepping through if it says what it is and
+      // where the code that does it lives.
+      if (event.description === undefined) {
+        problems.push(`${where}: say what this step is, with "description".`);
+      }
+      if (event.code === undefined) {
+        problems.push(`${where}: name the code that makes it, with "code", as in "src/api/router.ts#handleSend".`);
+      }
     }
   }
 

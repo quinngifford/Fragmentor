@@ -181,9 +181,29 @@ export const executionExample = {
   description: "Someone asks for the totals of a file of orders.",
   trigger: { at: "price-orders/report-totals", kind: "action", payload: { path: "orders.json" } },
   trace: [
-    { from: "price-orders/report-totals", to: "price-orders/load-orders", kind: "call", payload: { path: "orders.json" } },
-    { from: "price-orders/report-totals", to: "price-orders/price-order", kind: "call", payload: { order: "A-1" }, response: { total: 17 } },
-    { effect: "response", at: "price-orders/report-totals", detail: { grandTotal: 17 } },
+    {
+      from: "price-orders/report-totals",
+      to: "price-orders/load-orders",
+      kind: "call",
+      description: "The orders are read off disk before anything can be priced.",
+      code: "src/pricing.ts#reportTotals",
+      payload: { path: "orders.json" },
+    },
+    {
+      from: "price-orders/report-totals",
+      to: "price-orders/price-order",
+      kind: "call",
+      description: "Each order is priced in turn, and the totals added up.",
+      code: "src/pricing.ts#reportTotals",
+      payload: { order: "A-1" },
+      response: { total: 17 },
+    },
+    {
+      effect: "response",
+      at: "price-orders/report-totals",
+      description: "The caller is given the total of every order in the file.",
+      code: "src/pricing.ts#reportTotals",
+    },
   ],
 };
 

@@ -132,8 +132,9 @@ describe("the guide", () => {
     // thing that has been allowed to add to these numbers.
     expect(guides["structured TypeScript"]!.split("\n").length).toBeLessThan(225);
     // The visual guide also teaches executions, which is the one thing it
-    // has gained since: what happens is half of what it now describes.
-    expect(guides.visual!.split("\n").length).toBeLessThan(190);
+    // has gained since: what happens is half of what it now describes, and
+    // every step of it says what it is and which function makes it.
+    expect(guides.visual!.split("\n").length).toBeLessThan(205);
   });
 
   it("tells a structured agent about every capability, and how to check and test its work", () => {
