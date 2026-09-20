@@ -2,8 +2,9 @@ import { addressesOf, nextStep, placeEvent } from "../../src/model/trace.js";
 import type { Address, InteractionKind, Trace, TraceEvent, View } from "../../src/model/trace.js";
 import type { SnapshotExecution } from "../../src/project/snapshot.js";
 import type { TriggerKind } from "../../src/project/executions.js";
-import { applyExecutionMark, keepInView, treeInView } from "./canvas.js";
+import { applyExecutionMark, keepInView, onFlowWanted, onStepChosen, setShownStep, treeInView } from "./canvas.js";
 import type { ExecutionMark } from "./canvas.js";
+import { buildFlow } from "./flow.js";
 import { shownAt } from "./tree.js";
 import { selectedExecution, ui } from "./state.js";
 import { el } from "./dom.js";
@@ -167,8 +168,27 @@ export function paintExecution(): void {
   const step = currentStep();
   if (step && ui.execution) ui.execution.at = step.at;
 
-  applyExecutionMark(step ? markFor(step.event, step.execution.trigger.kind) : null);
+  setShownStep(step?.at ?? -1);
+  // The flow is a drawing of the execution itself, so the step is marked on
+  // it rather than laid over it.
+  applyExecutionMark(step && ui.shows === "tree" ? markFor(step.event, step.execution.trigger.kind) : null);
   renderBar();
+}
+
+/** Called once, as the window starts: the canvas asks for the flow when it is showing one. */
+export function setUpExecutions(): void {
+  onFlowWanted(() => {
+    const step = currentStep();
+    if (!step) return null;
+    return {
+      flow: buildFlow(step.trace, (event) => stepWord(event, step.execution.trigger.kind)),
+      at: step.at,
+      name: (path) => (path === null ? "Outside" : (ui.snapshot?.blocks[path]?.name ?? path)),
+    };
+  });
+  onStepChosen((at) => {
+    jump(at);
+  });
 }
 
 let playing: number | undefined;
@@ -182,6 +202,8 @@ function stopPlaying(): void {
 function choose(id: string | null): void {
   stopPlaying();
   ui.execution = id === null ? null : { id, at: 0 };
+  // Nothing to draw a flow of without an execution.
+  if (id === null) ui.shows = "tree";
   showStep();
   paintExecution();
   notify();
@@ -303,7 +325,7 @@ function renderBar(): void {
   }
 
   const shown = picked();
-  const key = JSON.stringify([executions.map((each) => [each.id, each.name]), ui.execution?.id ?? null, Boolean(shown?.trace)]);
+  const key = JSON.stringify([executions.map((each) => [each.id, each.name]), ui.execution?.id ?? null, Boolean(shown?.trace), ui.shows]);
   if (bar?.key !== key) bar = buildBar(host, key, executions, shown);
   updateBar(bar, shown);
 }
@@ -329,6 +351,26 @@ function buildBar(
     controls.append(el("span", "exec-count", "nothing written down for it yet"));
     return { key, select, steps: null };
   }
+
+  // Either drawing: the architecture with the step on it, or the execution
+  // itself from beginning to end.
+  const shows = el("div", "exec-shows");
+  for (const [mode, label, title] of [
+    ["tree", "Tree", "The architecture, with this step drawn on it"],
+    ["flow", "Flow", "This execution from beginning to end, as its own drawing"],
+  ] as const) {
+    const chip = el("button", "chip", label);
+    chip.type = "button";
+    chip.title = title;
+    chip.setAttribute("aria-pressed", String(ui.shows === mode));
+    chip.addEventListener("click", () => {
+      if (ui.shows === mode) return;
+      ui.shows = mode;
+      notify();
+    });
+    shows.append(chip);
+  }
+  controls.append(shows);
 
   const steps: StepControls = {
     source: el("span", "exec-source"),
@@ -378,4 +420,5 @@ export function resetExecutions(): void {
   stopPlaying();
   ui.execution = null;
   ui.folded.clear();
+  ui.shows = "tree";
 }

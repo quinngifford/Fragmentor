@@ -1411,3 +1411,15 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
 
 /* A button beside what it acts on, rather than stretched across the row. */
 .port-row .btn { width: fit-content; }
+
+/* ---- one execution, end to end ---- */
+
+/* Which of the two drawings is on the canvas. */
+.exec-shows { display: flex; gap: 4px; margin-right: 2px; }
+
+/* A box of the flow is where the run was, not a part of the architecture, so
+   it is drawn flatter than a block on the tree. */
+.flow-box { cursor: pointer; }
+.flow-box .block-plate { stroke-dasharray: none; }
+.flow-box[data-current="true"] .block-plate { stroke: var(--exec-trigger); stroke-width: 2.2; }
+#canvas-svg .exec-line-group[data-current="none"] .exec-line { opacity: 0.5; }

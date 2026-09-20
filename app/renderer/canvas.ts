@@ -1,6 +1,8 @@
 import type { SnapshotAccess, SnapshotBlock } from "../../src/project/snapshot.js";
 import { BOX_H, BOX_W, buildTree, busY, shownAt, spineX } from "./tree.js";
 import type { Tree, TreeNode } from "./tree.js";
+import { boxOfStep, buildFlow } from "./flow.js";
+import type { Flow, FlowBox } from "./flow.js";
 import { BLOCK_PALETTE, blockColours, requireSnapshot, roleColours, ui, viewSettings } from "./state.js";
 import { el } from "./dom.js";
 import { ROLES, ROLE_IDS } from "../../src/model/roles.js";
@@ -54,6 +56,24 @@ export function onBlockWindow(callback: (kind: "code" | "details", blockPath: st
 }
 
 let currentTree: Tree | null = null;
+let currentFlow: Flow | null = null;
+
+/** What the canvas is drawing now: the architecture, or one execution end to end. */
+export function flowInView(): Flow | null {
+  return currentFlow;
+}
+
+/** The execution to draw as a flow, and how to word each of its steps. Set by whoever holds the trace. */
+let flowSource: () => { flow: Flow; at: number; name: (path: string | null) => string } | null = () => null;
+export function onFlowWanted(source: () => { flow: Flow; at: number; name: (path: string | null) => string } | null): void {
+  flowSource = source;
+}
+
+let stepChosen: (at: number) => void = () => {};
+/** Called when the person picks one step out of the flow. */
+export function onStepChosen(callback: (at: number) => void): void {
+  stepChosen = callback;
+}
 /** The drawn elements, so they can be updated rather than replaced. */
 const nodeElements = new Map<string, SVGGElement>();
 const accessElements = new Map<string, SVGGElement>();
@@ -97,7 +117,9 @@ export function applyViewport(): void {
 export function blockColour(path: string): string {
   const chosen = blockColours.get("", path);
   if (chosen) return chosen;
-  const order = currentTree ? [...currentTree.nodes.keys()].indexOf(path) : -1;
+  // Taken from where the block sits in the project, so it is the same colour
+  // on the tree, in an execution, and in the inspector.
+  const order = Object.keys(ui.snapshot?.blocks ?? {}).indexOf(path);
   return BLOCK_PALETTE[(order < 0 ? 0 : order) % BLOCK_PALETTE.length]!;
 }
 
@@ -160,6 +182,11 @@ export interface ExecutionMark {
 }
 
 let currentMark: ExecutionMark | null = null;
+/** The step being shown, so the flow can mark it. */
+let shownStep = -1;
+export function setShownStep(at: number): void {
+  shownStep = at;
+}
 
 export function applyExecutionMark(mark: ExecutionMark | null): void {
   currentMark = mark;
@@ -380,6 +407,9 @@ function tween(duration: number, step: (t: number) => void, current: () => boole
 let moves = 0;
 
 function treeBounds(): Box | null {
+  if (currentFlow) {
+    return { x: -30, y: -30, width: currentFlow.width + 60, height: currentFlow.height + 90 };
+  }
   if (!currentTree || currentTree.nodes.size === 0) return null;
   let minX = Infinity;
   let minY = Infinity;
@@ -509,6 +539,7 @@ export function clearCanvas(): void {
   nodeElements.clear();
   accessElements.clear();
   currentTree = null;
+  currentFlow = null;
   document.querySelectorAll(".canvas-empty").forEach((each) => each.remove());
   renderLegend(false);
 }
@@ -527,6 +558,11 @@ const ARRIVAL_STAGGER_MS = 70;
 
 export function renderCanvas(): void {
   clearCanvas();
+
+  if (ui.shows === "flow") {
+    renderFlow();
+    return;
+  }
 
   const tree = buildTree(ui.folded);
   if (tree.nodes.size === 0) {
@@ -555,6 +591,127 @@ export function renderCanvas(): void {
   applyBreakpoints();
   applyViewport();
   for (const listener of drawnListeners) listener();
+}
+
+/* -------------------------------------------------------------------------- */
+/* One execution, end to end                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The execution being stepped through, as its own drawing: every step in
+ * order, left to right, wrapping onto another row when it runs out of width.
+ *
+ * Nothing here is the architecture. A block is drawn once for every time the
+ * run is at it, so the drawing only ever goes forwards.
+ */
+function renderFlow(): void {
+  const shown = flowSource();
+  if (!shown) {
+    showCanvasMessage("Pick an execution above to see it from beginning to end.");
+    return;
+  }
+
+  currentFlow = shown.flow;
+  const layer = element("node-layer");
+  // The lines of the drawing itself, which the step showing never clears.
+  const lines = element("branch-layer");
+  const current = boxOfStep(shown.flow, shown.at);
+
+  shown.flow.boxes.forEach((box, at) => {
+    const before = at > 0 ? shown.flow.boxes[at - 1]! : null;
+    if (box.arrow && before) drawFlowArrow(before, box, box === current, lines);
+    drawFlowBox(box, shown.name(box.path), box === current, layer);
+  });
+
+  applyViewport();
+  for (const listener of drawnListeners) listener();
+}
+
+/** One box of the flow: where the run was, at that moment. */
+function drawFlowBox(box: FlowBox, name: string, current: boolean, layer: Element): void {
+  const block = (box.path === null ? null : ui.snapshot?.blocks[box.path]) ?? null;
+  const group = svgEl("g", {
+    class: "block-box flow-box",
+    transform: `translate(${box.x} ${box.y})`,
+    "data-role": block?.role ?? "function",
+    "data-planned": String(Boolean(block?.planned)),
+    "data-architecture": String(Boolean(block?.architecture)),
+    "data-tinted": String(block !== null && (viewSettings.colourBy === "block" || block.architecture)),
+    "data-current": String(current),
+    "data-key": box.path ?? "(outside)",
+  }, layer);
+  if (block && viewSettings.colourBy === "block" && !block.planned) {
+    group.style.setProperty("--role", blockColour(block.path));
+  }
+
+  const body = svgEl("g", { class: "block-body" }, group);
+  svgEl("rect", { x: 0, y: 0, width: BOX_W, height: BOX_H, rx: 3, class: "block-plate" }, body);
+  svgEl("text", { x: 12, y: 17, class: "block-name" }, body).textContent =
+    name.length > NAME_CHARS ? `${name.slice(0, NAME_CHARS - 1)}…` : name;
+  svgEl("text", { x: 12, y: 30, class: "block-kind" }, body).textContent = block?.roleLabel ?? "OUTSIDE THE SYSTEM";
+
+  // What the run left while it was here, under the box it left it at.
+  box.effects.forEach((effect, at) => {
+    const width = chipWidth(effect.label);
+    const chip = svgEl("g", { class: "exec-effect", "data-current": String(shownStep === effect.at) }, group);
+    const y = BOX_H + 8 + at * (CHIP_H + 4);
+    svgEl("rect", { x: 0, y, width, height: CHIP_H, rx: CHIP_H / 2, class: "exec-effect-chip" }, chip);
+    svgEl("text", { x: width / 2, y: y + 10.5, class: "exec-effect-text", "text-anchor": "middle" }, chip).textContent =
+      effect.label;
+    chip.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+      stepChosen(effect.at);
+    });
+  });
+
+  if (box.arrow) {
+    const at = box.arrow.at;
+    group.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+      stepChosen(at);
+    });
+  }
+  if (block) svgEl("title", {}, group).textContent = `${block.name} — ${block.responsibility}`;
+}
+
+/** The step between one box and the next: along the row, or down onto the next one. */
+function drawFlowArrow(from: FlowBox, to: FlowBox, current: boolean, layer: Element): void {
+  const arrow = to.arrow!;
+  const sameRow = from.y === to.y;
+  // Along the row, or round the end of it: out to the right, down, back
+  // across, and into the first box of the next row.
+  const geometry = sameRow
+    ? {
+        d: `M ${from.x + BOX_W} ${from.y + BOX_H / 2} H ${to.x - 9}`,
+        middle: { x: (from.x + BOX_W + to.x) / 2, y: from.y + BOX_H / 2 },
+      }
+    : (() => {
+        const out = from.x + BOX_W + 26;
+        const back = to.x - 26;
+        const down = (from.y + BOX_H + to.y) / 2;
+        return {
+          d: `M ${from.x + BOX_W} ${from.y + BOX_H / 2} H ${out} V ${down} H ${back} V ${to.y + BOX_H / 2} H ${to.x - 9}`,
+          middle: { x: (out + back) / 2, y: down },
+        };
+      })();
+
+  const group = svgEl("g", {
+    class: "exec-line-group",
+    "data-data": String(arrow.data),
+    "data-current": current ? (arrow.back ? "back" : "out") : "none",
+  }, layer);
+  svgEl("path", { d: geometry.d, class: "exec-line", "marker-end": "url(#exec-arrow)" }, group);
+  svgEl("path", { d: geometry.d, class: "line-hit" }, group);
+  svgEl("text", {
+    x: geometry.middle.x,
+    y: geometry.middle.y - 7,
+    class: "exec-label",
+    "text-anchor": "middle",
+  }, group).textContent = arrow.label;
+  group.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+    stepChosen(arrow.at);
+  });
 }
 
 /** The lines saying what is part of what: down out of a block, across, and down into each part. */

@@ -4,6 +4,8 @@
   "trigger": {
     "at": "app/client/ui/send-button",
     "kind": "action",
+    "description": "Ada presses send on a message she has written to Bo.",
+    "code": "src/client/ui/sendButton.ts#onSendPressed",
     "payload": {
       "to": "bo",
       "text": "hi"

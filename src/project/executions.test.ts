@@ -24,10 +24,13 @@ function problemsOf(raw: unknown, id = "send-a-message"): string[] {
 /** What every step says of itself. The words are the agent's; only that they are there is checked. */
 const said = { description: "One step of sending a message.", code: "src/api/router.ts#route" };
 
+/** What sets a run going says the same two things of itself. */
+const setOff = { description: "Someone presses send.", code: "src/client/ui/button.ts#onSendPressed" };
+
 /** The chat example, written down the way an agent would after reading the code. */
 const sendAMessage = {
   description: "Someone sends a chat message; it is saved, and the recipient is told.",
-  trigger: { at: "app/client/ui/button", kind: "action" },
+  trigger: { at: "app/client/ui/button", kind: "action", ...setOff },
   trace: [
     { ...said, from: "app/client/ui/button", to: "app/client/state", kind: "call", payload: { text: "hi" } },
     { ...said, from: "app/client/state", to: "app/api/router", kind: "call", payload: { text: "hi", to: "bo" } },
@@ -74,6 +77,7 @@ describe("reading an execution", () => {
       from: null,
       to: { path: "app/client/ui/button", entry: null },
       kind: "trigger",
+      ...setOff,
     });
   });
 
@@ -272,6 +276,9 @@ describe("checking an execution against the architecture", () => {
     });
     expect(checkExecution(execution, chatArchitecture)).toEqual([
       'trigger.at: there is no block at "app/client/ui/buton".',
+      // Nothing was said about what sets it going, either.
+      'trigger: say what sets this going, with "description".',
+      'trigger: name the code it arrives at, with "code", as in "src/client/ui/sendButton.ts#onSendPressed".',
       'given.app/infrastructure/database: "app/infrastructure/database" names a block but not which of its entries, as in "app/infrastructure/database.<entry>".',
       'given.app/infrastructure/database.users: "app/infrastructure/database" has no entry called "users". Its entries are: messages.',
       'trace step #1, to: "app/infrastructure/queue" has no entry called "subscribe". Its entries are: publish.',
@@ -289,7 +296,13 @@ describe("checking an execution against the architecture", () => {
 
     const book = parsed(
       {
-        trigger: { at: "tickets/box-office.bookSeats", kind: "action", payload: { eventId: "gig", seats: 2, email: "ada@example.com" } },
+        trigger: {
+          at: "tickets/box-office.bookSeats",
+          kind: "action",
+          description: "Someone at the box office books seats for a gig.",
+          code: "src/pricing.ts#bookSeats",
+          payload: { eventId: "gig", seats: 2, email: "ada@example.com" },
+        },
         given: { "tickets/tickets-db.events": { gig: { id: "gig", name: "Night Gig", seatsLeft: 10, price: 25 } } },
         expect: { effects: [{ at: "tickets/outbox.confirmations", kind: "message-published" }] },
       },

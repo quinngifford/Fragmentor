@@ -179,7 +179,13 @@ export const visualExample: Record<string, Record<string, unknown>> = {
  */
 export const executionExample = {
   description: "Someone asks for the totals of a file of orders.",
-  trigger: { at: "price-orders/report-totals", kind: "action", payload: { path: "orders.json" } },
+  trigger: {
+    at: "price-orders/report-totals",
+    kind: "action",
+    description: "Someone asks for the totals of a file of orders.",
+    code: "src/pricing.ts#reportTotals",
+    payload: { path: "orders.json" },
+  },
   trace: [
     {
       from: "price-orders/report-totals",

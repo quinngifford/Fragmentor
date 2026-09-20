@@ -60,6 +60,10 @@ export const TRIGGER_KINDS: TriggerKind[] = ["action", "request", "schedule", "m
 export interface Trigger {
   at: Address;
   kind: TriggerKind;
+  /** What sets the system going, in the words of whoever wrote the trace down. */
+  description?: string;
+  /** The code it arrives at, written as a block's `code` is. */
+  code?: string;
   payload?: unknown;
 }
 
@@ -183,6 +187,8 @@ const executionFileSchema = z
         kind: z.enum(TRIGGER_KINDS as [TriggerKind, ...TriggerKind[]], {
           error: `must be one of ${TRIGGER_KINDS.join(", ")}`,
         }),
+        description: stepDescription.optional(),
+        code: stepCode.optional(),
         payload: z.unknown().optional(),
       })
       .strict(),
@@ -251,6 +257,8 @@ function declaredTrace(
     from: null,
     to: trigger.at,
     kind: "trigger",
+    ...(trigger.description === undefined ? {} : { description: trigger.description }),
+    ...(trigger.code === undefined ? {} : { code: trigger.code }),
     ...(trigger.payload === undefined ? {} : { payload: trigger.payload }),
   };
   const events: (Interaction | Effect)[] = [first];
@@ -359,6 +367,8 @@ export function parseExecutionFile(raw: unknown, id: string): { ok: true; execut
   const trigger: Trigger = {
     at: file.trigger.at,
     kind: file.trigger.kind,
+    ...(file.trigger.description === undefined ? {} : { description: file.trigger.description }),
+    ...(file.trigger.code === undefined ? {} : { code: file.trigger.code }),
     ...(file.trigger.payload === undefined ? {} : { payload: file.trigger.payload }),
   };
 
@@ -457,6 +467,12 @@ export function checkExecution(execution: Execution, architecture: Architecture)
   };
 
   check(execution.trigger.at, "trigger.at");
+  // What sets the system going is a step like any other: it says what it is,
+  // and where the run arrives in the code.
+  if (execution.trigger.description === undefined) problems.push('trigger: say what sets this going, with "description".');
+  if (execution.trigger.code === undefined) {
+    problems.push('trigger: name the code it arrives at, with "code", as in "src/client/ui/sendButton.ts#onSendPressed".');
+  }
   for (const target of Object.keys(execution.given)) checkTarget(target, `given.${target}`);
 
   for (const event of execution.declared?.events ?? []) {

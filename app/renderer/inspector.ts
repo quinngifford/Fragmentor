@@ -458,8 +458,11 @@ function stepPanel(panel: HTMLElement): boolean {
     panel.append(what);
   }
 
-  const pointer = event.type === "return" ? undefined : event.code;
-  const code = section("The code that does it");
+  // An answer comes back out of the call it answers, so that call's function
+  // is the one it returns from.
+  const answers = event.type === "return" ? step.trace.events.find((each) => each.id === event.of) : undefined;
+  const pointer = event.type === "return" ? (answers?.type === "interaction" ? answers.code : undefined) : event.code;
+  const code = section(event.type === "return" ? "The code it comes back from" : "The code that does it");
   if (pointer === undefined) {
     code.append(el("p", "bench-note", "This step does not say which function makes it."));
   } else {

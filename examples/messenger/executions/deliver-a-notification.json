@@ -4,6 +4,8 @@
   "trigger": {
     "at": "app/infrastructure/queue.notifications",
     "kind": "message",
+    "description": "A notification about Ada's message comes off the queue.",
+    "code": "src/infrastructure/queue.ts#publish",
     "payload": {
       "to": "bo",
       "messageId": "m-1"

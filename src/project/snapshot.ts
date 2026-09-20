@@ -185,7 +185,7 @@ export interface SnapshotExecution {
   id: string;
   name: string;
   description: string | null;
-  trigger: { at: string; kind: TriggerKind; payload?: unknown };
+  trigger: { at: string; kind: TriggerKind; description?: string; code?: string; payload?: unknown };
   /** The trace an agent wrote down, when there is one. Always `declared`. */
   declared: Trace | null;
   /** Whether it says what must happen, which is what makes it a test. */
@@ -286,6 +286,8 @@ async function executionsOf(project: Project, problems: ProjectDiagnostic[]): Pr
         trigger: {
           at: formatAddress(execution.trigger.at),
           kind: execution.trigger.kind,
+          ...(execution.trigger.description === undefined ? {} : { description: execution.trigger.description }),
+          ...(execution.trigger.code === undefined ? {} : { code: execution.trigger.code }),
           ...(execution.trigger.payload === undefined ? {} : { payload: execution.trigger.payload }),
         },
         declared: execution.declared,

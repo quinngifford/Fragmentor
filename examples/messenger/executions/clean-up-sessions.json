@@ -4,6 +4,8 @@
   "trigger": {
     "at": "app/workers/clean-up-sessions",
     "kind": "schedule",
+    "description": "The nightly job starts.",
+    "code": "src/workers/cleanUp.ts#cleanUpSessions",
     "payload": {
       "now": 1767225600000
     }

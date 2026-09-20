@@ -3,7 +3,9 @@
   "description": "Ada signs out: her session is removed and the page goes back to signing in.",
   "trigger": {
     "at": "app/client.logOut",
-    "kind": "action"
+    "kind": "action",
+    "description": "Ada presses sign out.",
+    "code": "src/client/state.ts#dispatch"
   },
   "trace": [
     {

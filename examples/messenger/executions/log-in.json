@@ -4,6 +4,8 @@
   "trigger": {
     "at": "app/client/ui/login-form",
     "kind": "action",
+    "description": "Ada fills in the sign-in form and submits it.",
+    "code": "src/client/ui/loginForm.ts#onLogInSubmitted",
     "payload": {
       "email": "ada@example.com"
     }

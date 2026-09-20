@@ -52,6 +52,11 @@ export interface UiState {
   /** Blocks whose parts are folded away on the tree, by path. */
   folded: Set<string>;
   /**
+   * Which drawing is on the canvas: the architecture as a tree, or the
+   * execution being stepped through, from beginning to end.
+   */
+  shows: "tree" | "flow";
+  /**
   /** Whether the lines saying what each block reaches are drawn. A preference, like the colours. */
   showDependencies: boolean;
   setShowDependencies(value: boolean): void;
@@ -141,6 +146,7 @@ export const ui: UiState = {
   waiting: false,
   loadError: null,
   folded: new Set(),
+  shows: "tree",
   showDependencies: (() => {
     try {
       // Off to begin with: the tree is what a system is made of, and the
