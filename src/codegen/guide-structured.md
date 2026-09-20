@@ -28,7 +28,7 @@ blocks/<system>/          a system's top block           a block's parts are the
 blocks/{{capabilitiesFile}}    the capability interfaces      generated
 ```
 
-A block's id is its folder name, in kebab-case. Never edit a generated file, or `layout.json`.
+A block's id is its folder name, in kebab-case. Never edit a generated file.
 
 ## fragmentor.json
 

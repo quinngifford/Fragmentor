@@ -11,12 +11,10 @@ import type {
   Result,
   RunCommand,
   SaveCasesRequest,
-  SaveLayoutRequest,
   WatchRunRequest,
   WriteImplRequest,
 } from "./ipc.js";
 import { projectSnapshot } from "../src/project/snapshot.js";
-import { saveViewLayout } from "../src/project/layout.js";
 import { blockDir, loadProject, locateCode, manifestPath, systemOf } from "../src/project/project.js";
 import { getPack, isKnownLanguage } from "../src/lang/index.js";
 import { isArchitecture } from "../src/model/roles.js";
@@ -414,16 +412,6 @@ function registerHandlers(): void {
     }
   });
 
-  ipcMain.handle(CHANNELS.saveLayout, async (_event, request: SaveLayoutRequest): Promise<Result<null>> => {
-    try {
-      resolveInside(request.dir, "layout.json");
-      await saveViewLayout(request.dir, request.viewPath, request.positions);
-      return ok(null);
-    } catch (error) {
-      return failed(error);
-    }
-  });
-
   ipcMain.handle(CHANNELS.emitCode, async (_event, dir: string): Promise<Result<EmitResult>> => {
     try {
       return ok(await emitProject(await loadProject(dir)));
@@ -651,7 +639,7 @@ const INTERACTIONS = `
     }
   };
 
-  const nodeOf = (key) => document.querySelector('.block-box[data-key="' + key + '"]');
+  const nodeOf = (key) => document.querySelector('.block-box[data-id="' + key + '"]');
 
   const tests = await attempt(async () => {
     const runAll = [...document.querySelectorAll(".section .btn")]
@@ -685,22 +673,18 @@ const INTERACTIONS = `
     return moved ? (restored ? "moved" : "moved but not restored") : "DID NOT MOVE";
   });
 
-  // Opening a block made of parts moves into it with a zoom, and ends on them.
-  const openedByDoubleClick = await attempt(async () => {
-    const api = [...document.querySelectorAll(".tree .node")]
-      .find((node) => (node.querySelector(".label") || {}).textContent === "booking-api");
-    if (!api) return "no booking-api in the tree";
-    api.click();
-    await until(() => nodeOf("pricing"), 3000);
-    await wait(900);
-    const withParts = nodeOf("pricing");
-    if (!withParts) return "no block with parts to open";
-    const moving = () => document.getElementById("canvas-svg").classList.contains("moving");
-    withParts.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-    const zoomed = Boolean(await until(moving, 400));
-    await until(() => !moving(), 3000);
-    const crumb = text('.crumb[aria-current="true"]') || "no current crumb";
-    return zoomed ? crumb : crumb + " (without zooming)";
+  // A block with parts folds them away and brings them back, which is the
+  // one thing that takes a block off the tree.
+  const foldedAway = await attempt(async () => {
+    const pricing = nodeOf("pricing");
+    if (!pricing) return "no block with parts to fold";
+    pricing.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await wait(500);
+    const gone = !nodeOf("price-seat");
+    pricing.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await wait(500);
+    const back = Boolean(nodeOf("price-seat"));
+    return gone && back ? "folded and unfolded" : gone ? "did not come back" : "DID NOT FOLD";
   });
 
   // Finish on a block that has saved tests, scrolled to them, so the
@@ -743,7 +727,7 @@ const INTERACTIONS = `
     ran,
     tests,
     dragged,
-    openedByDoubleClick,
+    foldedAway,
     shown,
     savedToDisk: /Saved .*impl\\.ts/.test(afterSave),
     saveMessage: afterSave.slice(-70),
@@ -776,22 +760,41 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("dialog", "answerableAgain") === true,
     ],
     [
-      "a whole application reads across and down: who starts it on the left, what it calls to the right, and what it keeps underneath",
+      "a whole application is one tree: every block of it on screen, each under what it is part of",
       value("application", "opened") === true &&
-        value("application", "clientLeft") === true &&
-        value("application", "callsRight") === true &&
-        value("application", "storeBelow") === true &&
-        value("application", "queueBelow") === true &&
-        value("application", "readAndWrite") === true &&
+        value("application", "systemOnTop") === true &&
+        value("application", "partsUnder") === true &&
+        Number(value("application", "blocks")) === 13 &&
+        value("application", "tidy") === true &&
+        // What is part of what is drawn as plain lines, never as arrows.
+        Number(value("application", "branches")) > 0 &&
+        Number(value("application", "branchArrows")) === 0 &&
         // Four kinds, four colours. Which exact colours is the person's to
         // choose, and a screen can shift them, so what is held here is that
         // they are told apart rather than what they are.
         value("application", "distinctColours") === true &&
         value("application", "marks") === value("application", "blocks") &&
-        Number(value("application", "marks")) === 5 &&
         value("application", "plannedBlock") === "true" &&
-        value("application", "plannedLine") === true &&
-        value("application", "withinTheBlocks") === true,
+        value("application", "dependencies") === "Dependencies: hidden" &&
+        value("application", "arrowsHidden") === "none",
+    ],
+    [
+      "what each block reaches is asked for separately, and is gathered onto whatever is on screen",
+      (() => {
+        const shown = value("reaches", "shown") as { label?: string; arrows?: number; readAndWrite?: boolean; plannedLine?: boolean };
+        const folded = value("reaches", "folded") as { partsGone?: boolean; gathered?: boolean };
+        return (
+          shown?.label === "Dependencies: shown" &&
+          Number(shown?.arrows) > 0 &&
+          shown?.readAndWrite === true &&
+          shown?.plannedLine === true &&
+          // Folding takes the parts off the tree, and what they reach is then
+          // reached through the block standing for them.
+          folded?.partsGone === true &&
+          folded?.gathered === true &&
+          value("reaches", "back") === true
+        );
+      })(),
     ],
     [
       "the functions inside a service still have a bench and a run behind them, and a button leads to one",
@@ -799,12 +802,14 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("structured", "subtype") === "SERVICE: REST API" &&
         value("structured", "bench") === true &&
         value("structured", "runnable") === true &&
-        value("structured", "wayIn") === true &&
-        value("structured", "answers") === "bookSeats" &&
-        // The service's parts, and the way into it.
-        value("structured", "drawn") === "(way in) book-seats cancel-booking find-event pricing" &&
-        value("structured", "tiles") === "ctx:tickets/box-office ctx:tickets/outbox ctx:tickets/reminders ctx:tickets/tickets-db" &&
-        String(value("structured", "triggers")).includes("box-office.bookSeats=>booking-api:calls") &&
+        // Every block of the application, on one tree.
+      value("structured", "drawn") ===
+        "book-seats booking-api box-office cancel-booking find-event outbox price-seat pricing refund-for reminders reserve tickets tickets-db" &&
+        // What a service offers, read in a window of its own.
+        value("structured", "window") === "Booking API" &&
+        String(value("structured", "operations")).includes("bookSeats") &&
+        value("structured", "closed") === true &&
+        String(value("structured", "triggers")).includes("tickets/box-office=>tickets/booking-api:calls") &&
         /Booking API/.test(String(value("structured", "route"))) &&
         /Book Seats/.test(String(value("structured", "route"))) &&
         value("structured", "canGo") === true &&
@@ -841,53 +846,75 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("backToBlock", "label") === "Colour: by block",
     ],
     [
-      "an execution is drawn over the architecture at any depth, stepped through, and followed inside",
+      "an execution is stepped through on the tree, one arrow at a time, and read end to end as its own drawing",
       value("execution", "opened") === true &&
         value("execution", "offered") === "clean-up-sessions deliver-a-notification log-in log-out send-a-message" &&
         value("execution", "source") === "declared" &&
-        value("execution", "labels") === " call ×3" &&
-        value("execution", "flowing") === true &&
-        value("execution", "effects") === "message published, response, row changed, ui changed" &&
-        value("execution", "inside") === "2 inside, 4 inside" &&
-        value("execution", "api") === "true" &&
-        value("execution", "workers") === "false" &&
-        Number(value("execution", "fadedWorkers")) < 0.5 &&
-        Number(value("execution", "faintDependencies")) < 0.5 &&
-        value("execution", "count") === "19 steps" &&
-        JSON.stringify(value("stepping", "restarted")) === JSON.stringify({ count: "1 of 19", lines: 1 }) &&
-        JSON.stringify(value("stepping", "stepped")) ===
-          JSON.stringify({
-            count: "3 of 19",
-            caption: 'State calls API · sendMessage: {"to":"bo","text":"hi","sessionId":"s-1"}',
-            current: "call",
-            lit: "api client",
-          }) &&
-        value("stepping", "intoCount") === "4 of 19" &&
-        value("stepping", "intoCrumb") === "api" &&
-        /API · sendMessage calls Router/.test(String(value("stepping", "intoCaption"))) &&
-        value("stepping", "intoCurrent") === "call" &&
-        value("stepping", "frame") === true &&
-        value("stepping", "router") === true &&
-        value("stepping", "tiles") === "ctx:app/client ctx:app/infrastructure ctx:app/workers" &&
-        value("opened", "toggle") === true &&
-        Number(value("opened", "after")) > Number(value("opened", "before")) &&
-        value("opened", "queueLine") === "send" &&
-        value("opened", "shownLabel") === "Dependencies: shown" &&
-        value("opened", "hidden") === "none" &&
-        value("opened", "back") !== "none",
+        value("execution", "count") === "1 of 19" &&
+        // What sets it going, in the agent's words, from outside the system.
+        /Someone uses Send Button/.test(String(value("execution", "caption"))) &&
+        Number(value("execution", "arrows")) === 1 &&
+        value("execution", "fromOutside") === "outside" &&
+        value("execution", "lit") === "send-button" &&
+        value("execution", "page") === "Step 1 of 19" &&
+        /Ada presses send/.test(String(value("execution", "said"))) &&
+        value("execution", "code") === "src/client/ui/sendButton.ts#onSendPressed" &&
+        (() => {
+          const stepped = value("stepping", "stepped") as { count?: string; lit?: string; label?: string };
+          const back = value("stepping", "back") as { count?: string; way?: string; caption?: string };
+          const hidden = value("stepping", "hidden") as { partsGone?: boolean; count?: string; caption?: string };
+          const opened = value("stepping", "opened") as { partsBack?: boolean; count?: string; lit?: string; caption?: string };
+          return (
+            stepped?.count === "2 of 19" &&
+            stepped?.lit === "send-button state" &&
+            stepped?.label === "call" &&
+            // The answer out of the database runs the other way along its arrow.
+            back?.count === "7 of 19" &&
+            back?.way === "back" &&
+            /gives back/.test(String(back?.caption)) &&
+            // Folded away, the step between two of the client's parts is
+            // passed over: stepping lands on what it can show instead.
+            hidden?.partsGone === true &&
+            hidden?.count === "3 of 19" &&
+            // Stepping in goes to it anyway, and opens what hid it.
+            opened?.partsBack === true &&
+            opened?.count === "2 of 19" &&
+            opened?.lit === "send-button state" &&
+            /Send Button calls State/.test(String(opened?.caption))
+          );
+        })() &&
+        (() => {
+          const picked = value("flow", "picked") as { page?: string; count?: string };
+          return (
+            // Every step of the run, wrapped onto more than one row.
+            Number(value("flow", "boxes")) === 18 &&
+            Number(value("flow", "rows")) > 1 &&
+            // One arrow for every step but the four it left behind.
+            Number(value("flow", "arrows")) === 15 &&
+            // The router is drawn again each time the run comes back to it.
+            Number(value("flow", "repeated")) > 1 &&
+            // Picking a step out of the flow asks about that step, on both drawings.
+            picked?.page === "Step 6 of 19" &&
+            value("flow", "backOnTree") === true &&
+            value("flow", "sameStep") === picked?.count
+          );
+        })(),
     ],
     [
       "a database is drawn as itself, with its shape on show and the block that reads it joined to it",
       value("architecture", "drawn") === true &&
         value("architecture", "label") === "DATABASE" &&
-        Number(value("architecture", "columns")) === 3 &&
+        (() => {
+          const held = value("architecture", "held") as { title?: string; table?: string; shape?: string };
+          return held?.title === "Venues" && held?.table === "venues" && /capacity/.test(String(held?.shape));
+        })() &&
         value("architecture", "joined") === true &&
         value("architecture", "joinLabel") === "reads venues" &&
         // A line takes the colour of what it reaches, so the two agree.
         value("architecture", "lineMatchesStore") === true &&
         // Dashed means not built yet, and this one is built.
         ["none", ""].includes(String(value("architecture", "solid"))) &&
-        value("architecture", "below") === true &&
+        value("architecture", "under") === true &&
         /database/.test(String(value("architecture", "badges"))) &&
         !/not code/.test(String(value("architecture", "badges"))) &&
         /venues/.test(String(value("architecture", "offers"))) &&
@@ -927,7 +954,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
     ["a block renamed on disk is redrawn without a manual reload", value("renamed", "renamed") === true],
     [
       "reloading keeps the diagram and the selection that were on screen",
-      value("renamed", "keptView") === "pricing" && value("renamed", "keptSelection") === "Refund For",
+      value("renamed", "keptView") === "refund-for" && value("renamed", "keptSelection") === "Refund For",
     ],
     [
       "a half-written file is reported over the last good diagram",
@@ -943,19 +970,22 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       "a visual project hides what only generated code has, and shows the code a block points at",
       value("visual", "generateHidden") === true && value("visual", "linked") === true && value("visual", "noBench") === true,
     ],
-    ["opening a block zooms into it and ends on the parts it is made of", value("interface", "openedByDoubleClick") === "pricing"],
+    ["a block with parts folds them away and brings them back", value("interface", "foldedAway") === "folded and unfolded"],
     [
       "a run stops at a breakpoint, then runs on to the end",
       value("paused", "breakpointSet") === true &&
         value("paused", "paused") === true &&
-        value("paused", "heldAt") === "price-seat" &&
+        String(value("paused", "heldAt")).split(" ").includes("price-seat") &&
         value("watched", "finished") === true &&
         value("cleared", "cleared") === true &&
         value("cleared", "breakpoints") === 0,
     ],
     [
       "a block on screen shows what a run did anywhere inside it, whoever called it, and one it never touched stays dark",
-      value("watched", "done") === "book-seats find-event pricing" && value("watched", "untouched") === true,
+      // Every block that holds something the run touched says so, up to the
+      // system itself; the handler it never called stays dark.
+      value("watched", "done") === "book-seats booking-api find-event price-seat pricing reserve tickets" &&
+        value("watched", "untouched") === true,
     ],
     [
       "a held run can be stopped, and the diagram shows what it cut short",
@@ -1173,10 +1203,10 @@ function attachSelfCheck(
         await run("ring", `
           const api = [...document.querySelectorAll(".tree .node")].find((node) => (node.querySelector(".label") || {}).textContent === "booking-api");
           if (api) api.click();
-          await until(() => document.querySelector('.block-box[data-key="find-event"]'), 3000);
+          await until(() => document.querySelector('.block-box[data-id="find-event"]'), 3000);
           await wait(900);
           const measure = (key) => {
-            const block = document.querySelector('.block-box[data-key="' + key + '"]');
+            const block = document.querySelector('.block-box[data-id="' + key + '"]');
             if (!block) return null;
             const plate = block.querySelector(".block-plate");
             const focusable = [...block.querySelectorAll('[tabindex="0"]')];
@@ -1190,7 +1220,7 @@ function attachSelfCheck(
           };
           // Moving what can be focused onto the plate must not take the
           // keyboard with it: the keys are still answered by the block.
-          const plate = document.querySelector('.block-box[data-key="book-seats"] .block-plate');
+          const plate = document.querySelector('.block-box[data-id="book-seats"] .block-plate');
           plate.focus();
           const focused = document.activeElement === plate;
           plate.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
@@ -1228,11 +1258,11 @@ function attachSelfCheck(
         await run("paused", `
           const node = (label) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === label);
           node("price-seat").click();
-          const toggle = await until(() => document.querySelector('.block-box[data-key="price-seat"] .breakpoint-hit'));
+          const toggle = await until(() => document.querySelector('.block-box[data-id="price-seat"] .breakpoint-hit'));
           if (!toggle) return { paused: false, stage: "no breakpoint to set" };
           await wait(700);
-          document.querySelector('.block-box[data-key="price-seat"] .breakpoint-hit').dispatchEvent(new MouseEvent("click", { bubbles: true }));
-          const breakpointSet = document.querySelector('.block-box[data-key="price-seat"]').dataset.breakpoint === "true";
+          document.querySelector('.block-box[data-id="price-seat"] .breakpoint-hit').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          const breakpointSet = document.querySelector('.block-box[data-id="price-seat"]').dataset.breakpoint === "true";
 
           node("book-seats").click();
           const bench = await until(() => text(".insp-id") === "tickets/booking-api/book-seats" && document.querySelector(".bench"), 5000);
@@ -1254,11 +1284,10 @@ function attachSelfCheck(
 
           const paused = Boolean(await until(() => /Paused before Price Seat/.test(text("#run-bar")), 20000));
           await wait(900);
-          const held = document.querySelector('.block-box[data-run="paused"]');
           return {
             breakpointSet,
             paused,
-            heldAt: held ? held.dataset.key : null,
+            heldAt: [...document.querySelectorAll('.block-box[data-run="paused"]')].map((box) => box.dataset.id).join(" "),
             inspector: text("#inspector h2"),
             runBar: text("#run-bar"),
           };
@@ -1328,13 +1357,13 @@ function attachSelfCheck(
           const finished = Boolean(await until(() => /finished/.test(text("#run-bar")), 20000));
           const api = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "booking-api");
           if (api) api.click();
-          await until(() => document.querySelector('.block-box[data-key="cancel-booking"]'), 3000);
+          await until(() => document.querySelector('.block-box[data-id="cancel-booking"]'), 3000);
           await wait(900);
           return {
             finished,
             runBar: text("#run-bar"),
-            done: [...document.querySelectorAll('.block-box[data-run="done"]')].map((box) => box.dataset.key).sort().join(" "),
-            untouched: !document.querySelector('.block-box[data-key="cancel-booking"]').dataset.run,
+            done: [...document.querySelectorAll('.block-box[data-run="done"]')].map((box) => box.dataset.id).sort().join(" "),
+            untouched: !document.querySelector('.block-box[data-id="cancel-booking"]').dataset.run,
           };
         `);
         await capture(window, "self-check-watched");
@@ -1377,9 +1406,9 @@ function attachSelfCheck(
           const clear = [...document.querySelectorAll("#run-bar button")].find((button) => button.textContent === "Clear");
           if (clear) clear.click();
           node("price-seat").click();
-          await until(() => document.querySelector('.block-box[data-key="price-seat"] .breakpoint-hit'), 3000);
+          await until(() => document.querySelector('.block-box[data-id="price-seat"] .breakpoint-hit'), 3000);
           await wait(700);
-          const toggle = document.querySelector('.block-box[data-key="price-seat"] .breakpoint-hit');
+          const toggle = document.querySelector('.block-box[data-id="price-seat"] .breakpoint-hit');
           if (toggle) toggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
           node("refund-for").click();
           await wait(500);
@@ -1394,7 +1423,10 @@ function attachSelfCheck(
         const renamed = { ...JSON.parse(await readFile(priceSeatFile, "utf8")), name: "Price Seat (renamed on disk)" };
         await writeFile(priceSeatFile, JSON.stringify(renamed, null, 2), "utf8");
         await run("renamed", `
-          const renamed = await until(() => text('.block-box[data-key="price-seat"] .block-name') === "Price Seat (renamed on disk)");
+          const renamed = await until(() => {
+            const plate = document.querySelector('.block-box[data-id="price-seat"] .block-plate');
+            return plate && plate.getAttribute("aria-label") === "Price Seat (renamed on disk)";
+          });
           return {
             renamed,
             keptView: text('.crumb[aria-current="true"]'),
@@ -1410,10 +1442,10 @@ function attachSelfCheck(
         await mkdir(auditLog, { recursive: true });
         await writeFile(path.join(auditLog, "block.json"), JSON.stringify({ responsibility: "Record what was priced." }), "utf8");
         await run("added", `
-          const added = Boolean(await until(() => document.querySelector('.block-box[data-key="audit-log"]')));
+          const added = Boolean(await until(() => document.querySelector('.block-box[data-id="audit-log"]')));
           return {
             added,
-            arriving: [...document.querySelectorAll(".block-body.appearing")].map((body) => body.parentElement.dataset.key),
+            arriving: [...document.querySelectorAll(".block-body.appearing")].map((body) => body.parentElement.dataset.id),
             inTree: [...document.querySelectorAll(".tree .node.appearing")].some((node) => node.textContent.includes("audit-log")),
           };
         `);
@@ -1435,25 +1467,22 @@ function attachSelfCheck(
           "utf8",
         );
         await run("planned", `
-          if (!(await until(() => document.querySelector('.block-box[data-key="audit-log"][data-planned="true"]')))) {
+          if (!(await until(() => document.querySelector('.block-box[data-id="audit-log"][data-planned="true"]')))) {
             return { drawn: false };
           }
-          // A block nobody has laid out lands wherever the automatic layout
-          // puts it. Lay the diagram out afresh and fit it, so the screenshot
-          // this check leaves behind shows the plan beside what is built.
-          document.getElementById("layout-reset").click();
-          await wait(500);
+          // Fitted, so the screenshot this check leaves behind shows the
+          // plan beside what is built.
           document.getElementById("zoom-fit").click();
           await wait(500);
           const node = [...document.querySelectorAll(".tree .node")].find((n) => n.textContent.includes("audit-log"));
           if (node) node.click();
           await wait(400);
-          const box = document.querySelector('.block-box[data-key="audit-log"]');
+          const box = document.querySelector('.block-box[data-id="audit-log"]');
           const pane = document.getElementById("inspector-pane");
           return {
             drawn: Boolean(box),
             onScreen: Boolean(box) && box.getBoundingClientRect().right < pane.getBoundingClientRect().left,
-            label: text('.block-box[data-key="audit-log"] .block-kind'),
+            label: text('.block-box[data-id="audit-log"] .block-kind'),
             noBreakpoint: Boolean(box) && !box.querySelector(".breakpoint"),
             explained: /generates, checks and runs nothing/.test(text(".planned-note")),
             noTesting: ![...document.querySelectorAll(".group-title")].some((h) => h.textContent === "Testing"),
@@ -1533,7 +1562,7 @@ function attachSelfCheck(
         );
         await run("visual", `
           const generateHidden = Boolean(await until(() => document.getElementById("generate-code").hidden));
-          const block = await until(() => document.querySelector('.block-box[data-key="find-event"]'));
+          const block = await until(() => document.querySelector('.block-box[data-id="find-event"]'));
           if (!block) return { generateHidden, linked: false };
           block.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 9, clientX: 5, clientY: 5, isPrimary: true }));
           window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 9, clientX: 5, clientY: 5 }));
@@ -1577,33 +1606,48 @@ function attachSelfCheck(
         );
 
         await run("architecture", `
-          if (!(await until(() => document.querySelector('.block-box[data-key="venues-db"][data-architecture="true"]')))) {
+          if (!(await until(() => document.querySelector('.block-box[data-id="venues-db"][data-architecture="true"]')))) {
             return { drawn: false };
           }
-          document.getElementById("layout-reset").click();
-          await wait(500);
           document.getElementById("zoom-fit").click();
           await wait(500);
-          // Laying the diagram out afresh replaces every element, so the
-          // blocks have to be found again before anything is measured.
-          const box = document.querySelector('.block-box[data-key="venues-db"]');
+          const box = document.querySelector('.block-box[data-id="venues-db"]');
           box.querySelector(".block-plate").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 11, clientX: 5, clientY: 5, isPrimary: true }));
           window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 11, clientX: 5, clientY: 5 }));
           await wait(400);
-          const join = document.querySelector('.access-group[data-access="find-event=>venues-db:reads"]');
-          return {
-            drawn: true,
-            label: text('.block-box[data-key="venues-db"] .block-kind'),
-            columns: box.querySelectorAll(".exposed-field").length,
+
+          // What it holds is read in its own window: a table, and its columns.
+          document.querySelector('.block-box[data-id="venues-db"] .block-button').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          await wait(400);
+          const held = {
+            title: text("#overlay .window-names h2"),
+            table: [...document.querySelectorAll("#overlay .pname")].map((each) => each.textContent).join(" "),
+            shape: [...document.querySelectorAll("#overlay .ptype")].map((each) => each.textContent).join(" "),
+          };
+          document.querySelector("#overlay .window-close").click();
+          await wait(300);
+
+          // And the block that reads it is joined to it, once the arrows are asked for.
+          document.getElementById("show-dependencies").click();
+          await wait(400);
+          const join = document.querySelector('.access-group[data-access="tickets/booking-api/find-event=>tickets/booking-api/venues-db:reads"]');
+          const drawn = {
+            label: text('.block-box[data-id="venues-db"] .block-kind'),
             joined: Boolean(join),
             joinLabel: join ? join.querySelector(".access-label").textContent : "",
             lineMatchesStore: Boolean(join) &&
               getComputedStyle(join.querySelector(".access")).stroke === getComputedStyle(box.querySelector(".block-kind")).fill,
             solid: join ? getComputedStyle(join.querySelector(".access")).strokeDasharray : "",
-            below: (() => {
-              const reader = document.querySelector('.block-box[data-key="find-event"]').getBoundingClientRect();
-              return box.getBoundingClientRect().top >= reader.bottom;
-            })(),
+            // It is a part of the service that keeps it, so it hangs under it.
+            under: box.getBoundingClientRect().top >= document.querySelector('.block-box[data-id="booking-api"]').getBoundingClientRect().bottom,
+          };
+          document.getElementById("show-dependencies").click();
+          await wait(300);
+
+          return {
+            drawn: true,
+            held,
+            ...drawn,
             badges: [...document.querySelectorAll(".badge")].map((b) => b.textContent).join(" "),
             offers: [...document.querySelectorAll(".insp-body .pname, .ports .pname")].map((n) => n.textContent).join(" "),
             noPorts: ![...document.querySelectorAll(".section h4")].some((h) => h.textContent === "Inputs"),
@@ -1624,49 +1668,88 @@ function attachSelfCheck(
           };
         `);
 
-        // A whole application, which is the only diagram that puts every kind
-        // of block on screen at once.
+        // A whole application, drawn as one tree: every block of it on screen
+        // at once, each under whatever it is part of.
         await run("application", `
           const link = [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.application)});
           if (!link) return { opened: false };
           link.click();
-          if (!(await until(() => document.querySelector('.block-box[data-key="tickets-db"]')))) return { opened: false };
+          if (!(await until(() => document.querySelector('.block-box[data-id="tickets-db"]')))) return { opened: false };
           document.getElementById("zoom-fit").click();
           await wait(600);
 
-          const box = (key) => document.querySelector('.block-box[data-key="' + key + '"]').getBoundingClientRect();
-          const colour = (key) => getComputedStyle(document.querySelector('.block-box[data-key="' + key + '"] .block-kind')).fill;
-          const line = (id) => document.querySelector('.access-group[data-access="' + id + '"] .access');
+          const node = (id) => document.querySelector('.block-box[data-id="' + id + '"]');
+          const box = (id) => node(id).getBoundingClientRect();
+          const colour = (id) => getComputedStyle(node(id).querySelector(".block-kind")).fill;
 
-          // No field may be drawn wider than the block holding it, or it
-          // would run across whatever sits to the right.
-          const overflowed = [...document.querySelectorAll(".block-box")].some((each) => {
-            const edge = each.getBoundingClientRect().right;
-            return [...each.querySelectorAll(".exposed-field, .exposed-name")].some((f) => f.getBoundingClientRect().right > edge);
-          });
+          // Every part is drawn under the block it is part of.
+          const under = (part, whole) => box(part).top >= box(whole).bottom;
+
+          // Nothing on the tree may overlap anything else on it.
+          const boxes = [...document.querySelectorAll(".block-box")].map((each) => each.getBoundingClientRect());
+          const overlapping = boxes.some((a, i) =>
+            boxes.some((b, j) => i !== j && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom),
+          );
 
           return {
             opened: true,
-            // Whoever starts the system on the left, what it calls to the right.
-            clientLeft: box("box-office").left < box("booking-api").left,
-            callsRight: box("booking-api").left > box("box-office").right,
-            // What it keeps, underneath rather than further along.
-            storeBelow: box("tickets-db").top >= box("booking-api").bottom,
-            queueBelow: box("outbox").top >= box("booking-api").bottom,
-            // One line each way to the database, not one line saying "connected".
-            readAndWrite: Boolean(line("booking-api=>tickets-db:reads")) && Boolean(line("booking-api=>tickets-db:writes")),
-            distinctColours: new Set([colour("booking-api"), colour("tickets-db"), colour("outbox"), colour("box-office")]).size === 4,
-            // A mark in the corner of every block.
-            marks: document.querySelectorAll(".block-box .role-icon").length,
+            // The system at the top, its parts beneath it, and theirs beneath them.
+            systemOnTop: box("tickets").bottom <= box("booking-api").top,
+            partsUnder: under("booking-api", "tickets") && under("book-seats", "booking-api") && under("reserve", "book-seats"),
+            // Every block of the system, at once, with nothing overlapping.
             blocks: document.querySelectorAll(".block-box[data-key]").length,
-            // Nothing sends reminders yet, so both the job and its line to the
-            // database are drawn as the plan they are.
-            plannedLine: getComputedStyle(line("reminders=>tickets-db:reads")).strokeDasharray !== "none",
-            plannedBlock: document.querySelector('.block-box[data-key="reminders"]').dataset.planned,
-            withinTheBlocks: !overflowed,
+            tidy: !overlapping,
+            // Plain lines for what is part of what, with no arrowheads on them.
+            branches: document.querySelectorAll("#branch-layer .branch").length,
+            branchArrows: [...document.querySelectorAll("#branch-layer .branch")].filter((line) => line.getAttribute("marker-end")).length,
+            // A mark in the corner of every block, and a colour of its own.
+            marks: document.querySelectorAll(".block-box .role-icon").length,
+            distinctColours: new Set([colour("booking-api"), colour("tickets-db"), colour("outbox"), colour("box-office")]).size === 4,
+            plannedBlock: node("reminders").dataset.planned,
+            // What each block reaches is put away until it is asked for.
+            dependencies: document.getElementById("show-dependencies").textContent,
+            arrowsHidden: getComputedStyle(document.getElementById("access-layer")).display,
           };
         `);
         await capture(window, "self-check-application");
+
+        // What each block is able to reach, which is a different question
+        // from what it is part of, and is drawn as arrows over the tree.
+        await run("reaches", `
+          document.getElementById("show-dependencies").click();
+          await wait(400);
+          const line = (id) => document.querySelector('.access-group[data-access="' + id + '"] .access');
+          const into = (target) =>
+            [...document.querySelectorAll(".access-group")].map((group) => group.dataset.access).filter((id) => id.includes("=>" + target + ":"));
+          const reaching = into("tickets/tickets-db");
+          const readAndWrite = reaching.some((id) => id.endsWith(":reads")) && reaching.some((id) => id.endsWith(":writes"));
+          const planned = line("tickets/reminders=>tickets/tickets-db:reads");
+          const shown = {
+            label: document.getElementById("show-dependencies").textContent,
+            arrows: document.querySelectorAll("#access-layer .access").length,
+            // One line each way to the database, not one saying "connected".
+            readAndWrite,
+            // Nothing sends reminders yet, so its line is drawn as the plan it is.
+            plannedLine: planned ? getComputedStyle(planned).strokeDasharray !== "none" : false,
+          };
+
+          // Folding a block takes its parts off the tree, and what they reach
+          // is then reached through the block standing for them.
+          const fold = document.querySelector('.block-box[data-id="booking-api"] .fold');
+          fold.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          await wait(500);
+          const folded = {
+            partsGone: !document.querySelector('.block-box[data-id="book-seats"]'),
+            // What the parts reached is now reached through the block standing for them.
+            gathered: Boolean(line("tickets/booking-api=>tickets/tickets-db:reads")),
+          };
+          fold.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          await wait(500);
+          document.getElementById("show-dependencies").click();
+          await wait(300);
+          return { shown, folded, back: Boolean(document.querySelector('.block-box[data-id="book-seats"]')) };
+        `);
+        await capture(window, "self-check-reaches");
 
         // Colouring, shown to change what is actually drawn rather than only
         // what the button says.
@@ -1698,7 +1781,7 @@ function attachSelfCheck(
           // legend is also where a colour is chosen, and each swatch shows the
           // colour that kind is actually drawn in.
           const swatch = roleOf('#legend .legend-row[data-role="database"]');
-          const named = legendRows() === 10 && swatch !== "" && swatch === roleOf('.block-box[data-key="tickets-db"]');
+          const named = legendRows() === 10 && swatch !== "" && swatch === roleOf('.block-box[data-id="tickets-db"]');
 
           // The arrow that folds it away sits at its top right.
           const head = document.querySelector("#legend .legend-head").getBoundingClientRect();
@@ -1734,7 +1817,7 @@ function attachSelfCheck(
         // Every block a colour of its own, which is how a diagram is read
         // unless the person asks for the other way.
         await run("byBlock", `
-          const role = (key) => getComputedStyle(document.querySelector('.block-box[data-key="' + key + '"]')).getPropertyValue("--role").trim();
+          const role = (key) => getComputedStyle(document.querySelector('.block-box[data-id="' + key + '"]')).getPropertyValue("--role").trim();
           return { apart: new Set([role("box-office"), role("booking-api"), role("tickets-db")]).size === 3 };
         `);
         await capture(window, "self-check-by-block");
@@ -1743,14 +1826,14 @@ function attachSelfCheck(
         // and a run behind them, and the box office's button leads to one.
         await run("structured", `
           const node = (label) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === label);
-          const top = { subtype: text('.block-box[data-key="booking-api"] .block-kind') };
+          const top = { subtype: text('.block-box[data-id="booking-api"] .block-kind') };
 
           // The box office's buttons, and where pressing one leads. One line
           // from each action to the operation it triggers, and a route from
           // it to the code.
           top.triggers = [...document.querySelectorAll(".access-group")]
             .map((group) => group.dataset.access)
-            .filter((id) => id.startsWith("box-office"))
+            .filter((id) => id.startsWith("tickets/box-office"))
             .join(" ");
           node("box-office").click();
           await wait(500);
@@ -1766,15 +1849,20 @@ function attachSelfCheck(
             top.benchThere = Boolean(document.querySelector(".bench"));
           }
 
-          // Into the service, where its way in is drawn.
+          // The service and everything inside it are on the one tree.
           node("booking-api").click();
-          await until(() => document.querySelector('.block-box[data-key="find-event"]'), 3000);
-          await wait(900);
-          top.wayIn = Boolean(document.querySelector('.block-box[data-key="(way in)"]'));
-          top.answers = text('.access-group[data-access="(way in)=>book-seats:bookSeats"] .access-label');
-          top.drawn = [...document.querySelectorAll(".block-box[data-key]:not([data-context])")].map((box) => box.dataset.key).sort().join(" ");
-          // The rest of the application stands around it.
-          top.tiles = [...document.querySelectorAll('.block-box[data-context="true"]')].map((box) => box.dataset.key).sort().join(" ");
+          await wait(700);
+          top.drawn = [...document.querySelectorAll(".block-box[data-key]")].map((box) => box.dataset.id).sort().join(" ");
+
+          // What a block holds, in a window of its own.
+          const offers = document.querySelector('.block-box[data-id="booking-api"] .block-button');
+          offers.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          await wait(400);
+          top.window = text("#overlay .window-names h2");
+          top.operations = [...document.querySelectorAll("#overlay .pname")].map((each) => each.textContent).join(" ");
+          document.querySelector("#overlay .window-close").click();
+          await wait(300);
+          top.closed = document.getElementById("overlay").hidden;
 
           // And on into the handler, which is a function with a part of its own.
           node("book-seats").click();
@@ -1784,9 +1872,10 @@ function attachSelfCheck(
             opened: true,
             subtype: top.subtype,
             bench,
-            runnable: Boolean(document.querySelector('.block-box[data-key="reserve"] .breakpoint')),
-            wayIn: top.wayIn,
-            answers: top.answers,
+            runnable: Boolean(document.querySelector('.block-box[data-id="reserve"] .breakpoint')),
+            window: top.window,
+            operations: top.operations,
+            closed: top.closed,
             drawn: top.drawn,
             tiles: top.tiles,
             triggers: top.triggers,
@@ -1882,121 +1971,126 @@ function attachSelfCheck(
 
         // An execution written down in the messenger: picked, drawn over the
         // whole application, stepped through, and followed inside.
+        // An execution written down in the messenger, stepped through on the
+        // tree one arrow at a time, and then read end to end as its own drawing.
         await run("execution", `
           document.getElementById("close-project").click();
           await until(() => document.body.dataset.project !== "open");
           const link = await until(() => [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.messenger)}));
           if (!link) return { opened: false };
           link.click();
-          if (!(await until(() => document.querySelector('.block-box[data-key="api"]')))) return { opened: false };
+          if (!(await until(() => document.querySelector('.block-box[data-id="api"]')))) return { opened: false };
           document.getElementById("zoom-fit").click();
           await wait(600);
 
-          const bar = document.getElementById("exec-bar");
-          const select = bar.querySelector(".exec-select");
+          const select = document.querySelector("#exec-bar .exec-select");
           const offered = select ? [...select.options].map((option) => option.value).filter(Boolean).join(" ") : "";
           select.value = "send-a-message";
           select.dispatchEvent(new Event("change", { bubbles: true }));
           await until(() => document.querySelector("#exec-layer .exec-line-group"));
-          await wait(300);
+          await wait(400);
 
-          const lines = () => [...document.querySelectorAll("#exec-layer .exec-line-group")];
-          const involved = (key) => (document.querySelector('.block-box[data-key="' + key + '"]') || { dataset: {} }).dataset.involved;
+          const lit = () => [...document.querySelectorAll('.block-box[data-current="true"]')].map((box) => box.dataset.id).sort().join(" ");
           return {
             opened: true,
             offered,
             source: text(".exec-source"),
-            labels: lines().map((group) => group.querySelector(".exec-label").textContent).sort().join(" "),
-            flowing: lines().every((group) => group.dataset.data === "true") &&
-              getComputedStyle(lines()[0].querySelector(".exec-line")).animationName === "exec-flow",
-            effects: [...document.querySelectorAll(".exec-effect-text")].map((chip) => chip.textContent).sort().join(", "),
-            inside: [...document.querySelectorAll(".exec-inside text")].map((mark) => mark.textContent).sort().join(", "),
-            api: involved("api"),
-            workers: involved("workers"),
-            fadedWorkers: getComputedStyle(document.querySelector('.block-box[data-key="workers"]')).opacity,
-            faintDependencies: getComputedStyle(document.getElementById("access-layer")).opacity,
             count: text(".exec-count"),
+            caption: text(".exec-caption-text"),
+            // One arrow at a time, and nothing else laid over the tree.
+            arrows: document.querySelectorAll("#exec-layer .exec-line-group").length,
+            fromOutside: text(".exec-outside-label"),
+            lit: lit(),
+            // The step has a page of its own, in the agent's words, with the
+            // function that makes it.
+            page: text("#inspector .insp-head h2"),
+            said: text("#inspector .responsibility"),
+            code: text("#inspector .code-where"),
           };
         `);
         await capture(window, "self-check-execution");
 
         await run("stepping", `
           const button = (label) => [...document.querySelectorAll("#exec-bar .run-btn")].find((b) => b.textContent === label);
+          const arrow = () => document.querySelector("#exec-layer .exec-line-group");
+          const lit = () => [...document.querySelectorAll('.block-box[data-current="true"]')].map((box) => box.dataset.id).sort().join(" ");
+
+          button("Step").click();
+          await wait(300);
+          const stepped = { count: text(".exec-count"), lit: lit(), label: text(".exec-label") };
+
+          // On to the answer coming back out of the database, which runs the
+          // other way along its arrow.
+          for (let i = 0; i < 5; i += 1) {
+            button("Step").click();
+            await wait(200);
+          }
+          const back = { count: text(".exec-count"), way: arrow() ? arrow().dataset.current : "", caption: text(".exec-caption-text") };
+
+          // Folded away, the client's parts are off the tree, so stepping
+          // passes over what happens between them.
           button("Restart").click();
           await wait(200);
-          const restarted = { count: text(".exec-count"), lines: document.querySelectorAll("#exec-layer .exec-line-group").length };
-
-          // Stepping passes over the button calling the page's state, which
-          // happens inside the client, to the page calling the API.
+          document.querySelector('.block-box[data-id="client"] .fold').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          await wait(400);
           button("Step").click();
-          await wait(200);
-          const current = document.querySelector('#exec-layer .exec-line-group[data-current="out"]');
-          const stepped = {
+          await wait(300);
+          const hidden = {
+            partsGone: !document.querySelector('.block-box[data-id="send-button"]'),
             count: text(".exec-count"),
             caption: text(".exec-caption-text"),
-            current: current ? current.querySelector(".exec-label").textContent : "",
-            lit: [...document.querySelectorAll('.block-box[data-current="true"]')].map((box) => box.dataset.key).sort().join(" "),
           };
 
-          // Stepping in goes to the API passing the message to its router,
-          // which is out of sight inside the API, so the canvas goes in.
-          const moving = () => document.getElementById("canvas-svg").classList.contains("moving");
-          button("Step into").click();
-          await until(moving, 600);
-          await until(() => !moving(), 3000);
-          await wait(400);
-          const inside = document.querySelector('#exec-layer .exec-line-group[data-current="out"]');
-          return {
-            restarted,
-            stepped,
-            intoCount: text(".exec-count"),
-            intoCrumb: text('.crumb[aria-current="true"]'),
-            intoCaption: text(".exec-caption-text"),
-            intoCurrent: inside ? inside.querySelector(".exec-label").textContent : "",
-            frame: Boolean(document.querySelector('.block-box[data-key="(way in)"][data-current="true"]')),
-            router: Boolean(document.querySelector('.block-box[data-key="router"][data-current="true"]')),
-            // The rest of the application is around the API, and still drawn.
-            tiles: [...document.querySelectorAll('.block-box[data-context="true"]')].map((box) => box.dataset.key).sort().join(" "),
-          };
-        `);
-        await capture(window, "self-check-execution-inside");
-
-        await run("opened", `
-          const button = (label) => [...document.querySelectorAll("#exec-bar .run-btn")].find((b) => b.textContent === label);
-          button("Show all").click();
-          await wait(200);
-          const before = document.querySelectorAll("#exec-layer .exec-line-group").length;
-
-          // Open the infrastructure where it stands, beside the API.
-          const toggle = document.querySelector('.block-box[data-key="ctx:app/infrastructure"] .tile-toggle');
-          if (!toggle) return { toggle: false };
-          toggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-          await until(() => document.querySelector('.block-box[data-key="ctx:app/infrastructure/queue"]'));
+          // Stepping in goes to it anyway, and opens what hides it.
+          button("Restart").click();
           await wait(300);
-          const toQueue = [...document.querySelectorAll("#exec-layer .exec-line-group")]
-            .find((group) => /Notify Recipient sends to Queue/.test((group.querySelector("title") || {}).textContent || ""));
+          button("Step into").click();
+          await wait(500);
+          const opened = {
+            partsBack: Boolean(document.querySelector('.block-box[data-id="send-button"]')),
+            count: text(".exec-count"),
+            lit: lit(),
+            caption: text(".exec-caption-text"),
+          };
+          return { stepped, back, hidden, opened };
+        `);
+        await capture(window, "self-check-stepping");
 
-          // Dependencies can be put away altogether.
-          const dependencies = document.getElementById("show-dependencies");
-          const shownLabel = dependencies.textContent;
-          dependencies.click();
-          await wait(200);
-          const hidden = getComputedStyle(document.getElementById("access-layer")).display;
-          dependencies.click();
-          await wait(200);
+        await run("flow", `
+          const chip = (label) => [...document.querySelectorAll("#exec-bar .chip")].find((c) => c.textContent === label);
+          chip("Flow").click();
+          await until(() => document.querySelector(".flow-box"));
+          document.getElementById("zoom-fit").click();
+          await wait(600);
 
+          const boxes = [...document.querySelectorAll(".flow-box")];
+          const rows = new Set(boxes.map((box) => Math.round(box.getBoundingClientRect().top)));
+          const names = boxes.map((box) => box.dataset.key);
+          // A block is drawn again every time the run comes back to it.
+          const repeated = names.filter((name) => name === "app/api/router").length;
+          // Every step, and nothing that loops backwards.
+          const arrows = [...document.querySelectorAll("#branch-layer .exec-line-group")];
+
+          // Picking a step out of the flow asks about that step.
+          const at = boxes.findIndex((box) => box.dataset.key === "app/infrastructure/database");
+          boxes[at].dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 21, isPrimary: true }));
+          await wait(400);
+          const picked = { page: text("#inspector .insp-head h2"), count: text(".exec-count") };
+
+          // And the same step is still the one showing back on the tree.
+          chip("Tree").click();
+          await wait(500);
           return {
-            toggle: true,
-            before,
-            after: document.querySelectorAll("#exec-layer .exec-line-group").length,
-            queueLine: toQueue ? toQueue.querySelector(".exec-label").textContent : "",
-            queueChip: text('.exec-effect-text'),
-            shownLabel,
-            hidden,
-            back: getComputedStyle(document.getElementById("access-layer")).display,
+            boxes: boxes.length,
+            rows: rows.size,
+            repeated,
+            arrows: arrows.length,
+            picked,
+            backOnTree: Boolean(document.querySelector("#exec-layer .exec-line-group")),
+            sameStep: text(".exec-count"),
           };
         `);
-        await capture(window, "self-check-execution-opened");
+        await capture(window, "self-check-flow");
 
         console.log(JSON.stringify(report, null, 2));
 
@@ -2026,8 +2120,8 @@ function attachSelfCheck(
 
 function createWindow(): void {
   const window = new BrowserWindow({
-    width: 1500,
-    height: 940,
+    width: 1600,
+    height: 1000,
     minWidth: 1040,
     minHeight: 640,
     backgroundColor: "#07090a",
@@ -2047,49 +2141,7 @@ function createWindow(): void {
   const id = window.webContents.id;
   window.webContents.on("destroyed", () => stopWatching(id));
 
-  // Temporary while the canvas is being rebuilt: open a project, capture the
-  // window, and quit, so the drawing can be looked at.
-  const looking = process.argv.includes("--look") ? (process.argv[process.argv.indexOf("--look") + 1] ?? null) : null;
-  if (looking) {
-    window.once("ready-to-show", () => window.showInactive());
-    window.webContents.on("console-message", (event) => {
-      if (event.level === "error") console.error(`Window: ${event.message} (${event.sourceId}:${event.lineNumber})`);
-    });
-    window.webContents.once("did-finish-load", () => {
-      void (async () => {
-        const steps = process.argv.includes("--steps") ? Number(process.argv[process.argv.indexOf("--steps") + 1]) : 0;
-        const script = process.argv.includes("--js") ? (process.argv[process.argv.indexOf("--js") + 1] ?? "") : "";
-        await window.webContents.executeJavaScript(`(async () => {
-          const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-          for (let i = 0; i < 60; i += 1) {
-            const link = [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(looking)});
-            if (link) { link.click(); return true; }
-            await wait(100);
-          }
-          return false;
-        })()`);
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        if (steps > 0) {
-          await window.webContents.executeJavaScript(`(async () => {
-            const bar = document.getElementById("exec-bar");
-            const select = bar.querySelector(".exec-select");
-            select.value = select.options[1].value;
-            select.dispatchEvent(new Event("change", { bubbles: true }));
-            await new Promise((r) => setTimeout(r, 400));
-            const step = [...document.querySelectorAll("#exec-bar .run-btn")].find((b) => b.textContent === "Step");
-            for (let i = 0; i < ${steps}; i += 1) { step.click(); await new Promise((r) => setTimeout(r, 300)); }
-            return true;
-          })()`);
-        }
-        if (script) {
-          await window.webContents.executeJavaScript(`(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); ${script} })()`);
-          await new Promise((resolve) => setTimeout(resolve, 900));
-        }
-        await capture(window, "look");
-        app.exit(0);
-      })();
-    });
-  } else if (selfCheck) {
+  if (selfCheck) {
     // Shown but not focused: the page has to be composited to be captured,
     // and taking focus from whoever started the check would be rude.
     window.once("ready-to-show", () => window.showInactive());

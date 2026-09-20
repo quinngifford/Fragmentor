@@ -1,5 +1,4 @@
 import type { ProjectSnapshot } from "../src/project/snapshot.js";
-import type { Point } from "../src/project/layout.js";
 import type { EmitResult, NewProjectSettings } from "../src/codegen/emit.js";
 import type { CaseResult, RunEvent, RunOutcome, StoreSeeds } from "../src/run/run.js";
 import type { TestCase } from "../src/run/cases.js";
@@ -22,7 +21,6 @@ export const CHANNELS = {
   recentProjects: "project:recent",
   exampleProjects: "project:examples",
   writeImpl: "block:write-impl",
-  saveLayout: "layout:save",
   emitCode: "codegen:emit",
   revealBlock: "block:reveal",
   revealCode: "code:reveal",
@@ -47,12 +45,6 @@ export interface ProjectLoad {
   snapshot: ProjectSnapshot | null;
   /** Why the project could not be read, when it could not. */
   error: string | null;
-}
-
-export interface SaveLayoutRequest {
-  dir: string;
-  viewPath: string;
-  positions: Record<string, Point>;
 }
 
 export interface WatchRunRequest {
@@ -102,7 +94,6 @@ export interface FragmentorApi {
   /** Example projects shipped with Fragmentor, so there is something to open. */
   exampleProjects(): Promise<Result<{ dir: string; name: string }[]>>;
   writeImpl(request: WriteImplRequest): Promise<Result<null>>;
-  saveLayout(request: SaveLayoutRequest): Promise<Result<null>>;
   emitCode(dir: string): Promise<Result<EmitResult>>;
   /** Shows a block's folder in the system file manager. */
   revealBlock(dir: string, blockPath: string): Promise<Result<null>>;

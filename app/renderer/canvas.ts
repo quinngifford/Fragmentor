@@ -117,10 +117,16 @@ export function applyViewport(): void {
 export function blockColour(path: string): string {
   const chosen = blockColours.get("", path);
   if (chosen) return chosen;
-  // Taken from where the block sits in the project, so it is the same colour
-  // on the tree, in an execution, and in the inspector.
-  const order = Object.keys(ui.snapshot?.blocks ?? {}).indexOf(path);
-  return BLOCK_PALETTE[(order < 0 ? 0 : order) % BLOCK_PALETTE.length]!;
+
+  // Taken from where the block sits in the hierarchy, so it is the same
+  // colour on the tree, in an execution and in the inspector, and so no two
+  // blocks beside each other, or one inside another, are given the same hue.
+  const snapshot = ui.snapshot;
+  const parent = path.split("/").slice(0, -1).join("/");
+  const siblings = parent === "" ? (snapshot?.systems.map((system) => system.rootBlock) ?? []) : (snapshot?.blocks[parent]?.children ?? []);
+  const depth = path.split("/").length - 1;
+  const at = Math.max(0, siblings.indexOf(path));
+  return BLOCK_PALETTE[(depth * 3 + at) % BLOCK_PALETTE.length]!;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -807,7 +813,11 @@ function drawAccesses(tree: Tree, layer: Element): void {
     }, layer);
     // Coloured block by block, a line matches the block the data comes out
     // of, so one colour can be followed from where it starts.
-    if (viewSettings.colourBy === "block" && !planned) group.style.setProperty("--role", blockColour(source.path));
+    // Reading takes data out of what is read, so that line is the colour of
+    // the store; everything else is the colour of the block that reaches.
+    if (viewSettings.colourBy === "block" && !planned) {
+      group.style.setProperty("--role", blockColour(arrow.verb === "reads" ? target.path : source.path));
+    }
 
     const between = arrowEnds(source, target);
     const geometry = arrowPath(between.start, between.end, between.over);
@@ -902,6 +912,9 @@ function drawNode(node: TreeNode, layer: Element, arrivalDelay: number | null): 
     "data-architecture": String(block.architecture),
     "data-tinted": String(viewSettings.colourBy === "block" || block.architecture),
     "data-key": node.path,
+    // Its own id as well as its path, which is how anything looking for one
+    // block by name finds it without writing out where it sits.
+    "data-id": block.id,
   }, layer);
   if (viewSettings.colourBy === "block" && !block.planned) group.style.setProperty("--role", blockColour(node.path));
 

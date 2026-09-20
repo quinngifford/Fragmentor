@@ -6,8 +6,6 @@ import { isArchitecture, roleLabel } from "../model/roles.js";
 import type { Role } from "../model/roles.js";
 import { describeType } from "../model/types.js";
 import type { PortType } from "../model/types.js";
-import { loadLayout } from "./layout.js";
-import type { Layout } from "./layout.js";
 import { loadProject, locateCode, resolveAccess, systemOf, validateProject } from "./project.js";
 import { EXECUTIONS_DIR, architectureOf, checkExecution, loadExecutions } from "./executions.js";
 import type { TriggerKind } from "./executions.js";
@@ -207,7 +205,6 @@ export interface ProjectSnapshot {
   systems: SnapshotSystem[];
   blocks: Record<string, SnapshotBlock>;
   executions: SnapshotExecution[];
-  layout: Layout;
   diagnostics: ProjectDiagnostic[];
 }
 
@@ -440,7 +437,6 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
     }),
     blocks,
     executions,
-    layout: await loadLayout(projectDir),
     diagnostics: [...validateProject(project), ...fileProblems],
   };
 }

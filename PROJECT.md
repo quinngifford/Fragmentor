@@ -21,7 +21,20 @@ Fragmentor keeps apart two things that are easily confused: what a system is, an
 - **An effect** is an observable consequence — a row changed, a message published, a response sent — shown at the part responsible. It is never a part of the architecture.
 - **Contracts** exist only where they mean something. A part may take nothing, return nothing, or only be triggered.
 
-A trace never depends on what is on screen. Zooming into a block shows the architecture in more detail, never a different diagram, and the selected execution stays selected however far in or out the person goes. Each end of an interaction is drawn at the deepest visible part that contains its real end, so interactions inside a collapsed part become activity within it, and many interactions between two collapsed parts become one line with a count. Nothing is lost by collapsing: the trace keeps every event, and stepping can go into what a collapsed part hides. The rest of the architecture stays on screen around the part in focus, so an interaction leaving it has somewhere to go, and any region of it can be opened on its own without moving the focus.
+## What is on screen
+
+The architecture is one drawing: every block of every system, each under the block it is part of, joined by plain right-angled lines that mean containment and nothing else. There are no levels to move between — the whole system is there at once, and a block with parts can be folded to put them away. Granularity decides how finely the architecture is divided in the first place, not how much of it is shown.
+
+A block on the tree is a small box: its name and what kind of thing it is. Everything else about it — its code, its contract, the tables or operations it offers, what it reaches — opens in a window of its own.
+
+An execution is read in one of two ways, and neither of them is a web over the architecture:
+
+- **Stepped through on the tree**, one arrow at a time, between the two blocks that step really joins. Nothing moves or opens as it goes; a step hidden inside a folded block is reached by stepping into it, which unfolds what hides it.
+- **As its own drawing**, from beginning to end: step after step, left to right, wrapping onto the next row, with a block drawn again each time the run comes back to it, so nothing loops backwards.
+
+A trace never depends on what is on screen. Each end of a step is drawn at the deepest block showing that contains its real end, so what happens inside a folded block is gathered onto the block standing for it. Nothing is lost by folding: the trace keeps every event.
+
+Every step says what it is, in the words of whoever wrote the trace down, and names the function that makes it. Fragmentor checks that function exists, as it checks a block's own code. A step has a page of its own: what it is, the blocks it joins, what it carried, and the code behind it.
 
 A trace is either **recorded**, meaning Fragmentor saw it happen by running the code, or **declared**, meaning an agent wrote it down after reading the code. A declared trace is documentation and is never presented as something observed.
 
@@ -144,13 +157,13 @@ Every function has tests, written by the agent alongside its code. This is not o
 
 Beyond automated tests, each function has an interactive test bench. Its input schema generates an input form, capability ports are filled with substitutes, stores can be given rows before the run, and the user runs the function and sees what it returned and what it left behind in the stores.
 
-Running a function records every call it makes, anywhere in the system, with the call that made it. The user can watch the parts of the architecture light up as the run reaches them, stop the run at a breakpoint before any function, and step through it. This is the start of what executions complete: a trace of everything a trigger set off, drawn over the architecture at whatever level of detail is on screen.
+Running a function records every call it makes, anywhere in the system, with the call that made it. The user can watch the parts of the architecture light up as the run reaches them, stop the run at a breakpoint before any function, and step through it. This is the start of what executions complete: a trace of everything a trigger set off, stepped through on the tree or read end to end as its own drawing.
 
 Each block carries a state: specified, implemented, tests passing, or stale. A block becomes stale when a contract it depends on changes. Stale propagation is what keeps a large hierarchy honest as it evolves.
 
 ## Developer interface
 
-The interface is a visual canvas — dark, high-contrast, structural — where the user navigates the hierarchy, opens blocks, reads code, runs tests, follows runs, and watches the agent's work take shape. Moving into a block and back out of it is animated as a zoom, and blocks appear on the diagram as the agent creates them, so the structure reads as a place rather than a series of pages. The user directs the agent in the agent's own tool; Fragmentor is where they see and check what it built.
+The interface is a visual canvas — dark, high-contrast, structural — where the user reads the hierarchy, opens blocks, reads code, runs tests, follows runs, and watches the agent's work take shape. The whole system is one drawing rather than a series of pages, and blocks appear on it as the agent creates them. The user directs the agent in the agent's own tool; Fragmentor is where they see and check what it built.
 
 **The user interacts through the UI.** Understanding the structure should come from looking at it, and every action the user takes should be a clear, clickable control. The user is never expected to learn or type commands to operate Fragmentor. The `fragmentor` command exists for the coding agent, and for developing and verifying Fragmentor itself; it is not a user-facing surface.
 

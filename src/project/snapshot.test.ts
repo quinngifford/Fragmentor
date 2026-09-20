@@ -4,7 +4,6 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { blockDir, createProject, writeBlock, loadProject } from "./project.js";
 import type { Manifest } from "./project.js";
-import { loadLayout, layoutPath, saveViewLayout } from "./layout.js";
 import { projectSnapshot } from "./snapshot.js";
 import { emitProject } from "../codegen/emit.js";
 import { makeBlock, t } from "../model/testing.js";
@@ -46,34 +45,6 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-describe("layout", () => {
-  it("is empty when the project has never been arranged", async () => {
-    expect(await loadLayout(dir)).toEqual({});
-  });
-
-  it("round trips one diagram's positions", async () => {
-    await saveViewLayout(dir, "double-it", { input: { x: 10.6, y: 20.2 }, "add-to-self": { x: 300, y: 40 } });
-
-    expect(await loadLayout(dir)).toEqual({
-      "double-it": { input: { x: 11, y: 20 }, "add-to-self": { x: 300, y: 40 } },
-    });
-  });
-
-  it("leaves other diagrams alone when one is rearranged", async () => {
-    await saveViewLayout(dir, "double-it", { input: { x: 1, y: 1 } });
-    await saveViewLayout(dir, "double-it/add-to-self", { input: { x: 2, y: 2 } });
-
-    const layout = await loadLayout(dir);
-    expect(Object.keys(layout).sort()).toEqual(["double-it", "double-it/add-to-self"]);
-    expect(layout["double-it"]).toEqual({ input: { x: 1, y: 1 } });
-  });
-
-  it("ignores a layout file it cannot read rather than failing to open the project", async () => {
-    await writeFile(layoutPath(dir), "{ not json", "utf8");
-    expect(await loadLayout(dir)).toEqual({});
-  });
-});
-
 describe("projectSnapshot", () => {
   it("describes every block, with types both as text and as structure", async () => {
     const snapshot = await projectSnapshot(dir);
@@ -111,12 +82,6 @@ describe("projectSnapshot", () => {
     // Its code is the agent's to write, whatever is inside it, and the
     // starting point is not code anyone wrote.
     expect(after.implemented).toBe(false);
-  });
-
-  it("carries the saved layout so the canvas opens where it was left", async () => {
-    await saveViewLayout(dir, "double-it", { "add-to-self": { x: 400, y: 120 } });
-    const snapshot = await projectSnapshot(dir);
-    expect(snapshot.layout["double-it"]).toEqual({ "add-to-self": { x: 400, y: 120 } });
   });
 
   it("reports diagnostics rather than throwing, so a broken project still opens", async () => {

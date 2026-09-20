@@ -25,7 +25,7 @@ blocks/<system>/          a system's top block           a block's parts are the
   block.json              the block                      you write
 ```
 
-A block's id is its folder name, in kebab-case. Never edit `layout.json`.
+A block's id is its folder name, in kebab-case.
 
 ## fragmentor.json
 

@@ -170,7 +170,9 @@ export const ui: UiState = {
   zoom: 1,
   panX: 40,
   panY: 30,
-  showRail: true,
+  // The canvas draws the whole hierarchy now, so the rail beside it starts
+  // out of the way; it is still there for finding one block by name.
+  showRail: false,
   showInspector: true,
   // Folded away or not is a preference like the others, and outlives a
   // project, so it is remembered here rather than reset on every open.
