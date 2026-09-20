@@ -4,13 +4,31 @@
 
 **Separating architecture from execution.** The block tree now means containment only: what a system is made of, and what owns what. Runtime behaviour is moving into executions: a trigger, the conditions it happens under, and the trace of everything that followed across the whole architecture. `PROJECT.md` describes the model. The work happens on the `execution-model` branch, in phases, each ending with the tests and the self-check passing.
 
-1. **Done: the trace kernel, on its own.** `src/model/trace.ts` holds addresses, the three kinds of event (interaction, return, effect), entered and activated, and `project(trace, view)`, which draws one trace at any combination of expanded blocks. It also has stepping that passes over what a collapsed block hides. `src/project/executions.ts` reads `executions/<name>.json`: a trigger, starting store contents, an optional trace an agent wrote (always kept as `declared`), and optional expectations. `src/run/expect.ts` evaluates expectations against any trace.
+1. **Done: the trace kernel, on its own.** `src/model/trace.ts` holds addresses, the three kinds of event (interaction, return, effect), entered and activated, `place`/`placeEvent`, which say where an event is drawn given how much of the architecture is showing, and stepping that passes over what a folded block hides. `src/project/executions.ts` reads `executions/<name>.json`: a trigger, starting store contents, an optional trace an agent wrote (always kept as `declared`), and optional expectations. `src/run/expect.ts` evaluates expectations against any trace.
 2. **Done: the wired model is gone.** There are no wires, no `each`, no list of children and no generated composite code. A block's parts are the folders inside it. Every function's code is the agent's, and calls whichever other functions it needs directly. Contracts are optional. A `component` role covers groups of parts that are not called. The five old examples are replaced by `examples/tickets`.
 3. **Done: executions on the canvas**, from traces an agent wrote, over `examples/messenger`.
-4. **Done: the canvas rebuilt around the tree.** After a first look, the person asked for the architecture to be one top-down tree with the whole system on it, blocks small with their details in windows, an execution stepped through one arrow at a time, and a separate drawing of each execution from beginning to end. All of that is built; waiting for a person to look at it before phase 5.
-5. **Next: record traces by running the code**, so a structured project's executions are observed rather than written down, and the watched run becomes one of them.
-5. Tests and breakpoints over traces.
+4. **Done: the canvas rebuilt around the tree**, and looked at. After a first look the person asked for the architecture to be one top-down tree with the whole system on it, blocks small with their details in windows, an execution stepped through one arrow at a time, and a separate drawing of each execution from beginning to end. All of that is built, reviewed and seen; the person called it "absolutely fantastic".
+5. **Next: what the agent is told.** The rebuild changed what the person reads, not yet what the agent writes. The question the person asked, unanswered so far, is under "The decision waiting" below.
+6. Then: record traces by running the code, so a structured project's executions are observed rather than written down, and the watched run becomes one of them.
+7. Then: tests and breakpoints over traces.
 6. Documentation and a simplification pass.
+
+## The decision waiting
+
+The person asked, right after seeing the rebuilt canvas: **what has to change in what the agent is told, do structured and visual still both need to exist, and is generated code still worth keeping?** With a preference: the instructions should be as short and plain as they can be while still leaving the agent in no doubt about how to use the tool.
+
+Nothing has been decided or changed. What is true today:
+
+- **Two guides**, generated into a project's `FRAGMENTOR.md` from `src/codegen/guide-structured.md` (133 lines) and `guide-visual.md` (110), filled in by `src/codegen/guide.ts`. In a real project they come out at about 200 lines each.
+- **The two modes differ in three ways only.** Where a block's code is (implied by the block's folder in structured, a `code` pointer in visual); whether Fragmentor writes a contract file and a scaffold for each function and holds calls to them (structured only); and whether a block can be run, benched and tested from the window (structured only).
+- **The rebuild made the two more alike than they were.** Every step of an execution now carries a `code` pointer in both modes, so "point at the function that does this" is already something the agent does either way.
+- **What a mode costs the agent** is most of the guide: capability ports, generated files, the import rule, `cases.json`, and the vocabulary that goes with them.
+
+The shape of the answer, as it looks from here (not a decision):
+
+- **One mode, with generation as an option rather than a kind of project.** A block always says where its code is; Fragmentor generates a contract, checks calls and runs a block only where a language pack can, and says so. That would cut the instructions roughly in half and remove the word "mode" from them.
+- **Keep generated contracts.** They are what makes Fragmentor check rather than only draw, and running a block from the window rests on them. Dropping them would take the bench, saved tests and breakpoints with them, and phase 6 (recording traces by running) needs a way to run.
+- **What needs checking before any of it:** how much of each guide exists only to explain generation, and whether a structured project can carry an explicit `code` pointer without the generator fighting it.
 
 ## Working
 
@@ -76,7 +94,7 @@
 
 ## Human verification needed
 
-- **The tree, the windows and the two ways of reading an execution (the phase 4 check).** Open **Messenger**, read the tree, open a block's windows, then pick **Send a message** and step through it; fold a block and step into what it hides; switch to **Flow**. Judge whether the tree reads as the architecture, whether the windows hold the right things, and whether stepping and the flow each make the run clear.
+- **Done: the tree, the windows and the two ways of reading an execution.** Looked at and approved. Two things were changed without being asked and left that way, so they are the person's to reverse: the hierarchy rail starts hidden, and dependency arrows start hidden.
 - **Starting a project, and answering its questions.** Run `npm run app`, choose **New project…**, walk the questions both ways, then ask an agent for something small. Judge whether the questions are clear and whether the agent follows the new guide: parts inside what owns them, shared parts beside what uses them.
 - **Booking seats from the box office.** Open **Tickets**, select **box-office**, fill in `gig`, `2` and an email under "Try bookSeats", put `{"gig": {"id":"gig","name":"Night Gig","seatsLeft":10,"price":25}}` in the events box, and press **Run bookSeats**. It should say two seats were booked, show the event with 8 left, a booking row, and one message sent. Judge whether what the run left is as useful as what it returned.
 - **Watching and pausing a run.** Set a breakpoint on **price-seat** inside **booking-api / pricing**, then book five seats from **book-seats**. Judge whether the pace is right, whether Continue, Step and Continue all do what you expect, and whether blocks lighting up for what ran inside them reads well.
