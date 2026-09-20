@@ -1,5 +1,6 @@
 {
   "responsibility": "Price one seat of a booking: the fifth seat onwards is ten percent off.",
+  "code": "src/booking/price-seat.ts#priceSeat",
   "inputs": {
     "fullPrice": "number",
     "seat": {

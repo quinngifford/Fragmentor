@@ -34,7 +34,6 @@ beforeAll(async () => {
     JSON.stringify({
       name: "Ledger",
       goal: "Prove a block can reach a store.",
-      mode: "structured",
       granularity: { level: 3, maxDepth: 4 },
       systems: [{ rootBlock: "ledger", language: "typescript" }],
     }),
@@ -61,6 +60,7 @@ beforeAll(async () => {
     "ledger/settle",
     {
       responsibility: "Clear what an account owes, and put a receipt out about it.",
+      code: "blocks/ledger/settle/impl.ts#settle",
       inputs: { accountId: "string" },
       outputs: { paid: "number" },
       capabilities: { accounts: "Store", receipts: "Queue" },

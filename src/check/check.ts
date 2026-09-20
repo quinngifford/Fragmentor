@@ -1,9 +1,8 @@
 import { emitProject } from "../codegen/emit.js";
 import type { EmitResult } from "../codegen/emit.js";
-import type { Mode } from "../model/block.js";
-import { getPack, isKnownLanguage } from "../lang/index.js";
 import { loadProject } from "../project/project.js";
 import type { ProjectDiagnostic } from "../project/project.js";
+import { packFor, readAllCode } from "../project/code.js";
 import { projectSnapshot } from "../project/snapshot.js";
 import { checkSystemCode } from "./typescript.js";
 import type { CodeProblem } from "./typescript.js";
@@ -13,23 +12,35 @@ import type { CodeProblem } from "./typescript.js";
  *
  * This is what the coding agent runs after each change. Contracts are
  * regenerated first, so the code is checked against the diagram as it is now
- * rather than as it was when someone last remembered to generate them. A visual project has no code of Fragmentor's to check: what
- * is checked there is the diagram, and that it points at code that exists.
+ * rather than as it was when someone last remembered to generate them.
+ *
+ * What is checked depends on what each block turns out to be rather than on
+ * anything the project declares: the diagram always, and the code of whichever
+ * blocks are held to a contract. The rest is drawn, and the report says which
+ * blocks those are and why, because a block Fragmentor is quietly not checking
+ * is worse than one it says it cannot.
  */
 
 export interface SystemCheck {
   rootBlock: string;
   language: string;
   displayName: string;
-  /** False when Fragmentor cannot check code in this language yet, or does not check it at all. */
+  /** False when Fragmentor cannot check code in this language yet, or has no pack for it. */
   codeChecked: boolean;
+  /** How many of the system's blocks are held to a contract, and so checked. */
+  codeHeld: number;
   codeProblems: CodeProblem[];
+}
+
+/** A block whose code Fragmentor draws rather than checks, and why. */
+export interface DrawnOnly {
+  blockPath: string;
+  reason: string;
 }
 
 export interface CheckReport {
   name: string;
   dir: string;
-  mode: Mode;
   blockCount: number;
   /** Problems with the diagram, and with the files that sit beside it. */
   problems: ProjectDiagnostic[];
@@ -43,13 +54,16 @@ export interface CheckReport {
    */
   architecture: string[];
   /**
-   * Function blocks whose implementation is still the untouched starting
-   * point, or in a visual project, blocks not yet linked to the code they
-   * stand for. Planned blocks are not among these: nothing about a plan is
-   * unfinished, it is simply not started.
+   * Function blocks whose code is not there: either nobody has written it yet,
+   * or it has moved and the block still points where it was. Fragmentor cannot
+   * tell those apart, so it reports the one fact and lets whoever knows decide.
+   * Planned blocks are not among these: nothing about a plan is unfinished, it
+   * is simply not started.
    */
   unimplemented: string[];
-  /** Blocks with no saved tests. Always empty in a visual project, which has none. */
+  /** Function blocks Fragmentor draws rather than checks and runs, and why. */
+  drawnOnly: DrawnOnly[];
+  /** Blocks Fragmentor can run that have no saved tests. */
   untested: string[];
   /** Errors of every kind. Warnings and unfinished work are not errors. */
   errorCount: number;
@@ -57,21 +71,26 @@ export interface CheckReport {
 
 export async function checkProject(projectDir: string): Promise<CheckReport> {
   const project = await loadProject(projectDir);
-  const visual = project.manifest.mode === "visual";
-  const generated = await emitProject(project);
-  // Read after generating, so blocks that were only just given an
-  // implementation file are counted.
+  // What binds a block to a contract is its code importing one, which is true
+  // or not before anything is generated, so this is read once and passed on.
+  const code = await readAllCode(project);
+  const generated = await emitProject(project, code);
   const snapshot = await projectSnapshot(projectDir);
 
   const systems: SystemCheck[] = project.systems.map((system) => {
-    const pack = !visual && isKnownLanguage(system.language) ? getPack(system.language) : null;
+    const pack = packFor(project, system.rootBlock);
     const codeChecked = pack?.canCheck ?? false;
+    const held = [...code].filter(
+      ([blockPath, found]) =>
+        found.bound && (blockPath === system.rootBlock || blockPath.startsWith(`${system.rootBlock}/`)),
+    );
     return {
       rootBlock: system.rootBlock,
       language: system.language,
       displayName: pack?.displayName ?? (system.language || "unspecified"),
       codeChecked,
-      codeProblems: codeChecked ? checkSystemCode(project, system.rootBlock) : [],
+      codeHeld: held.length,
+      codeProblems: codeChecked ? checkSystemCode(project, system.rootBlock, code) : [],
     };
   });
 
@@ -86,7 +105,6 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
   return {
     name: snapshot.name,
     dir: snapshot.dir,
-    mode: project.manifest.mode,
     blockCount: blocks.length,
     problems: snapshot.diagnostics,
     generated,
@@ -94,7 +112,10 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
     planned: blocks.filter((block) => block.planned).map((block) => block.path),
     architecture: blocks.filter((block) => !block.planned && block.architecture).map((block) => block.path),
     unimplemented: real.filter((block) => !block.implemented).map((block) => block.path),
-    untested: visual ? [] : real.filter((block) => block.cases.length === 0).map((block) => block.path),
+    drawnOnly: real
+      .filter((block) => block.drawnBecause !== null)
+      .map((block) => ({ blockPath: block.path, reason: block.drawnBecause! })),
+    untested: real.filter((block) => block.runnable && block.cases.length === 0).map((block) => block.path),
     errorCount,
   };
 }

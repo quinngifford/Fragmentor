@@ -1,5 +1,6 @@
 {
   "responsibility": "Take the seats off the event, record the booking, and send the confirmation.",
+  "code": "src/booking/reserve.ts#reserve",
   "inputs": {
     "event": "{ id: string; name: string; seatsLeft: number; price: number }",
     "seats": "number",

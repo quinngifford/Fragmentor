@@ -2,7 +2,8 @@ import { access, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promi
 import path from "node:path";
 import { z } from "zod/v4";
 import { blockIdPattern, blockToFileShape, formatAccess, parseBlockFile } from "../model/block.js";
-import type { Access, Block, Exposed, Mode, Port } from "../model/block.js";
+import type { Access, Block, Exposed, Port } from "../model/block.js";
+import { normaliseLanguage } from "../lang/index.js";
 import { describeType, typesEqual } from "../model/types.js";
 import type { PortType } from "../model/types.js";
 import { CAPABILITIES, capabilitiesReaching, reachesResource } from "../model/capabilities.js";
@@ -30,10 +31,14 @@ import { resolveInside } from "./safePath.js";
  *       train-model/        <- another, possibly in another language
  *         block.json
  *
- * The person chooses the mode, the granularity and optionally the language
- * when the project is created, and Fragmentor writes them into fragmentor.json.
- * The agent fills in the rest, so a project with no systems yet is simply
- * waiting for it.
+ * A block's folder says where the block sits in the architecture. It says
+ * nothing about where the block's code lives: that is the codebase's own
+ * business, and each function block points at it with `code`.
+ *
+ * The person chooses the granularity and optionally the language when the
+ * project is created, and Fragmentor writes them into fragmentor.json. The
+ * agent fills in the rest, so a project with no systems yet is simply waiting
+ * for it.
  */
 
 export interface Granularity {
@@ -67,7 +72,6 @@ export interface Manifest {
   name: string;
   /** What the software being built is supposed to do, in the user's words. */
   goal: string;
-  mode: Mode;
   /**
    * Whether the folder already held code when the project was started. It
    * decides whether the agent is describing code or writing it from nothing,
@@ -92,9 +96,6 @@ export const manifestSchema = z
   .object({
     name: z.string().min(1),
     goal: z.string().default(""),
-    mode: z.enum(["structured", "visual"], {
-      error: `must be "structured" (Fragmentor generates, checks and runs the code) or "visual" (Fragmentor only draws it)`,
-    }),
     // Both were added after the first projects were, so a manifest without
     // them reads as one started from nothing and built straight away.
     existingCode: z.boolean().default(false),
@@ -132,7 +133,7 @@ export interface LoadedBlock {
 
 export interface LoadedSystem {
   rootBlock: string;
-  /** The system's own language, or the project's. Empty in a visual project that names none. */
+  /** The system's own language, or the project's. Empty when neither names one. */
   language: string;
   root: LoadedBlock;
 }
@@ -203,6 +204,12 @@ export async function readManifest(projectDir: string): Promise<Manifest> {
     });
   }
 
+  if (raw && typeof raw === "object" && "mode" in raw) {
+    throw new Error(
+      `The project at ${projectDir} sets "mode". There are no modes any more: every function block says where its code is with "code", and Fragmentor writes a contract for, checks and runs whichever blocks it can. Remove "mode" from fragmentor.json.`,
+    );
+  }
+
   if (raw && typeof raw === "object" && "rootBlock" in raw && !("systems" in raw)) {
     throw new Error(
       `The project at ${projectDir} uses the old single-system manifest. Replace "rootBlock" with a "systems" list, for example: "systems": [{ "rootBlock": "${String((raw as { rootBlock: unknown }).rootBlock)}", "language": "typescript" }].`,
@@ -214,7 +221,18 @@ export async function readManifest(projectDir: string): Promise<Manifest> {
     const detail = parsed.error.issues.map((i) => `  ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
     throw new Error(`The project file at ${file} is not valid:\n${detail}`);
   }
-  return parsed.data;
+
+  // "TypeScript" means the TypeScript pack. Anything no pack answers to stays
+  // as it was written, and is drawn rather than checked.
+  const manifest = parsed.data;
+  return {
+    ...manifest,
+    ...(manifest.language === undefined ? {} : { language: normaliseLanguage(manifest.language) }),
+    systems: manifest.systems.map((system) => ({
+      ...system,
+      ...(system.language === undefined ? {} : { language: normaliseLanguage(system.language) }),
+    })),
+  };
 }
 
 export async function loadProject(projectDir: string): Promise<Project> {
@@ -229,15 +247,7 @@ export async function loadProject(projectDir: string): Promise<Project> {
 
   for (const declaration of manifest.systems) {
     const language = declaration.language ?? manifest.language;
-    // Structured code is generated and checked in a language, so it has to be
-    // known. A visual project only shows it, and can manage without.
-    if (language === undefined && manifest.mode === "structured") {
-      throw new Error(
-        `fragmentor.json does not say what language the system "${declaration.rootBlock}" is written in. Add "language" to the system, or to the whole project.`,
-      );
-    }
-
-    const root = await loadBlockTree(blockDir(projectDir, declaration.rootBlock), declaration.rootBlock, manifest.mode, false);
+    const root = await loadBlockTree(blockDir(projectDir, declaration.rootBlock), declaration.rootBlock, false);
     systems.push({ rootBlock: declaration.rootBlock, language: language ?? "", root });
     index(root);
   }
@@ -245,7 +255,7 @@ export async function loadProject(projectDir: string): Promise<Project> {
   return { dir: projectDir, manifest, systems, byPath };
 }
 
-async function loadBlockTree(dir: string, blockPath: string, mode: Mode, plannedAbove: boolean): Promise<LoadedBlock> {
+async function loadBlockTree(dir: string, blockPath: string, plannedAbove: boolean): Promise<LoadedBlock> {
   const id = blockPath.split("/").at(-1)!;
   const file = path.join(dir, BLOCK_FILE);
 
@@ -263,7 +273,7 @@ async function loadBlockTree(dir: string, blockPath: string, mode: Mode, planned
     throw new Error(`Could not read the block definition at ${file}: ${reason}.`, { cause });
   }
 
-  const parsed = parseBlockFile(raw, id, mode, plannedAbove);
+  const parsed = parseBlockFile(raw, id, plannedAbove);
   if (!parsed.ok) {
     throw new Error(`The block definition at ${file} is not valid:\n  ${parsed.problems.join("\n  ")}`);
   }
@@ -291,7 +301,7 @@ async function loadBlockTree(dir: string, blockPath: string, mode: Mode, planned
     } catch {
       continue;
     }
-    children.push(await loadBlockTree(childDir, `${blockPath}/${childId}`, mode, planned));
+    children.push(await loadBlockTree(childDir, `${blockPath}/${childId}`, planned));
   }
 
   return { block: parsed.block, path: blockPath, dir, children };
@@ -304,11 +314,11 @@ async function loadBlockTree(dir: string, blockPath: string, mode: Mode, planned
 export function validateProject(project: Project): ProjectDiagnostic[] {
   const diagnostics: ProjectDiagnostic[] = [];
   const { maxDepth } = project.manifest.granularity;
-  const { mode, language } = project.manifest;
+  const { language } = project.manifest;
 
-  // In a visual project the language only describes existing code, which may
-  // well mix several; in a structured one the person's choice binds.
-  if (mode === "structured" && language !== undefined) {
+  // A language on the project is the person's answer for every system in it,
+  // so a system contradicting it is a mistake rather than a second opinion.
+  if (language !== undefined) {
     for (const declaration of project.manifest.systems) {
       if (declaration.language !== undefined && declaration.language !== language) {
         diagnostics.push({
@@ -321,6 +331,18 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
   }
 
   for (const node of project.byPath.values()) {
+    // A function block is one function in the codebase, so it says which. The
+    // code's layout is the codebase's own — Fragmentor never moves code, and
+    // nothing is implied by where a block's folder happens to sit — so without
+    // this there is nothing to read, check or run.
+    if (!node.block.planned && !isArchitecture(node.block.role) && node.block.code === undefined) {
+      diagnostics.push({
+        severity: "error",
+        blockPath: node.path,
+        message: `"${node.block.name}" does not say where its code is. Add "code", such as "src/pricing.ts#reportTotals". Give it a "role" if it is not a function, or "planned": true if it does not exist yet.`,
+      });
+    }
+
     if (node.block.pinnedAsLeaf && node.children.length > 0) {
       diagnostics.push({
         severity: "error",
@@ -334,7 +356,7 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
     for (const [name, entry] of Object.entries(node.block.exposes)) {
       if (entry.block === undefined) continue;
       const answering = node.children.find((child) => child.block.id === entry.block);
-      const severity = mode === "visual" || node.block.planned ? "warning" : "error";
+      const severity = node.block.planned ? "warning" : "error";
 
       if (!answering) {
         diagnostics.push({
@@ -357,7 +379,9 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
 
     // Access is declared by the block that does the reaching, and only the
     // project knows what lies around a block, so it is checked here.
-    const loose = mode === "visual" || node.block.planned;
+    // A planned block is a drawing of something nobody has built, so what it
+    // says it reaches is a plan too, and reported as a warning.
+    const loose = node.block.planned;
     for (const access of node.block.access) {
       diagnostics.push(...accessDiagnostics(project, node, access, loose));
     }
@@ -411,10 +435,10 @@ export function resolveAccess(project: Project, blockPath: string, resource: str
  * block's code converts it. A block that needs nothing from the request may
  * take no inputs at all.
  *
- * A shape written in words is not checked, at either end. In a visual project
- * every port is words, and so is every port of a planned block, because
- * neither is Fragmentor's to enforce; comparing a parsed operation against
- * them would report a mismatch on every diagram that has one.
+ * A shape written in words is not checked, at either end: a port standing for
+ * something the type language cannot say, or something a planned block has not
+ * decided yet, is nobody's to enforce, and comparing a parsed operation
+ * against it would report a mismatch on every diagram that has one.
  */
 function answeringShapeProblems(name: string, entryName: string, entry: Exposed, answering: Block): string[] {
   const asPorts = (ports: Record<string, Port>): PortType => ({
@@ -654,7 +678,7 @@ export async function createProject(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Where a visual block's code is                                              */
+/* Where a block's code is                                                     */
 /* -------------------------------------------------------------------------- */
 
 export interface CodeLocation {
@@ -671,10 +695,10 @@ export interface CodeLocation {
 const LARGEST_SHOWN = 2_000_000;
 
 /**
- * Finds what a visual block's `code` points at: `src/pricing.ts`, `src/pricing/`
- * or `src/pricing.ts#priceOrder`. A pointer that leads nowhere is reported,
+ * Finds what a block's `code` points at: `src/pricing.ts`, `src/pricing/` or
+ * `src/pricing.ts#priceOrder`. A pointer that leads nowhere is reported,
  * because a diagram pointing at code that has moved is exactly the drift a
- * visual project has to show.
+ * diagram of code has to show.
  */
 export async function locateCode(
   projectDir: string,
@@ -711,7 +735,7 @@ export async function locateCode(
 
 const escapeForPattern = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Words that introduce a declaration, in the languages a visual project is likely to be written in. */
+/** Words that introduce a declaration, in the languages a project is likely to be written in. */
 const DECLARING = "function|def|class|fn|func|interface|type|const|let|var|struct|enum|trait|module|object|val|sub";
 
 /**

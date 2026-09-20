@@ -22,8 +22,6 @@ import type { ContractRequest, LanguagePack } from "./pack.js";
  * TypeScript writes inline.
  */
 
-const UNIMPLEMENTED = "has no implementation yet";
-
 /**
  * pydantic reserves the `model_` prefix for its own attributes and warns when
  * a field uses it. A port called `modelName` snake-cases straight into that,
@@ -127,7 +125,6 @@ export const pythonPack: LanguagePack = {
   id: "python",
   displayName: "Python",
   contractFile: "contract.py",
-  implFile: "impl.py",
   capabilitiesFile: "capabilities.py",
 
   functionName: (blockId) => snakeCase(blockId),
@@ -188,23 +185,6 @@ export const pythonPack: LanguagePack = {
     return `${[...header, ``, ``, body.join("\n\n\n")].join("\n")}\n`;
   },
 
-  implScaffold(block: Block): string {
-    const input = this.typeName(block.id, "Input");
-    const output = this.typeName(block.id, "Output");
-    const caps = this.typeName(block.id, "Caps");
-    const fn = snakeCase(block.id);
-
-    return [
-      `from contract import ${input}, ${output}, ${caps}`,
-      ``,
-      ``,
-      `async def ${fn}(value: ${input}, caps: ${caps}) -> ${output}:`,
-      `    """${block.responsibility}"""`,
-      `    raise NotImplementedError("${block.name} ${UNIMPLEMENTED}.")`,
-      ``,
-    ].join("\n");
-  },
-
   capabilitiesSource(): string {
     const parameters = [...new Set(Object.values(CAPABILITIES).map((each) => each.parameter).filter(Boolean))] as string[];
 
@@ -232,11 +212,13 @@ export const pythonPack: LanguagePack = {
     ].join("\n");
   },
 
-  // Generating Python works; running it needs the module layout question
-  // in STATUS.md settled first.
+  // How one Python file reaches another in an arbitrary layout is the module
+  // question STATUS.md leaves open, so no Python block is held to its
+  // contract, and none is checked or run.
+  contractSpecifier: () => null,
+
   canRun: false,
   canCheck: false,
-  isUnimplemented: (source) => source.includes(UNIMPLEMENTED),
 };
 
 registerPack(pythonPack);

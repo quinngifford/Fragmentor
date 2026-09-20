@@ -1,12 +1,13 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { AccessVerb, Mode } from "../model/block.js";
+import type { AccessVerb } from "../model/block.js";
 import { formatAccess } from "../model/block.js";
 import { isArchitecture, roleLabel } from "../model/roles.js";
 import type { Role } from "../model/roles.js";
 import { describeType } from "../model/types.js";
 import type { PortType } from "../model/types.js";
 import { loadProject, locateCode, resolveAccess, systemOf, validateProject } from "./project.js";
+import { packFor, readAllCode } from "./code.js";
 import { EXECUTIONS_DIR, architectureOf, checkExecution, loadExecutions } from "./executions.js";
 import type { TriggerKind } from "./executions.js";
 import { formatAddress } from "../model/trace.js";
@@ -106,14 +107,14 @@ export interface SnapshotStore {
 
 export interface SnapshotSystem {
   rootBlock: string;
-  /** Language pack id, e.g. `typescript`, or in a visual project whatever the code is written in. */
+  /** Language pack id, e.g. `typescript`, or whatever the code is written in. */
   language: string;
   displayName: string;
-  /** False when a structured project asks for a language Fragmentor has no pack for. */
+  /** False when Fragmentor has no language pack for it, so it generates and runs nothing. */
   known: boolean;
 }
 
-/** The code a visual block points at, as much of it as the inspector shows. */
+/** The code a block points at, as much of it as the inspector shows. */
 export interface SnapshotCode {
   /** As written in block.json, e.g. `src/pricing.ts#priceOrder`. */
   pointer: string;
@@ -157,19 +158,35 @@ export interface SnapshotBlock {
   stores: SnapshotStore[];
   /** The paths of the blocks it is made of, in the order their folders sort. */
   children: string[];
-  sources: { impl: string | null; contract: string | null };
+  /**
+   * The text of the code Fragmentor holds to a contract, which is the code it
+   * offers to edit, and of the contract itself. Null for code it only draws:
+   * that is read on demand instead, so the snapshot does not carry a copy of
+   * the codebase.
+   */
+  sources: { code: string | null; contract: string | null };
   /** Which system this block belongs to, and therefore which language. */
   language: string;
-  /** File names for this block, which differ by language. Empty in a visual project. */
-  files: { impl: string; contract: string };
+  /** Where this block's code and contract are, relative to the project. Empty for neither. */
+  files: { code: string; contract: string };
   /**
-   * Whether the block's code exists: an implementation that is more than the
-   * untouched scaffold, or in a visual project, a pointer that leads to code.
+   * Whether the code this block points at is there. False means either nobody
+   * has written it yet or it has moved, which Fragmentor cannot tell apart.
    */
   implemented: boolean;
-  /** Tests saved alongside this block. Always empty in a visual project. */
+  /**
+   * Whether Fragmentor can run this block: its code is held to its contract,
+   * in a language it can run.
+   */
+  runnable: boolean;
+  /**
+   * Why Fragmentor draws this block's code rather than checking and running
+   * it, or null when it does. Only ever set for a function that is not planned.
+   */
+  drawnBecause: string | null;
+  /** Tests saved alongside this block. Empty for a block Fragmentor cannot run. */
   cases: TestCase[];
-  /** Visual projects only: the code this block stands for. */
+  /** The code this block stands for, and where it is. */
   code: SnapshotCode | null;
 }
 
@@ -194,7 +211,6 @@ export interface ProjectSnapshot {
   dir: string;
   name: string;
   goal: string;
-  mode: Mode;
   /** Whether the folder already held code when the project was started. */
   existingCode: boolean;
   /** Whether the agent draws the architecture as a plan before building it. */
@@ -216,7 +232,7 @@ async function readIfPresent(filePath: string): Promise<string | null> {
   }
 }
 
-/** Lines shown from a visual block's code: enough to recognise it, not the whole file. */
+/** Lines shown from a block's code in the inspector: enough to recognise it, not the whole file. */
 const EXCERPT_LINES = 60;
 
 function excerptOf(pointer: string, location: CodeLocation): SnapshotCode {
@@ -296,7 +312,7 @@ async function executionsOf(project: Project, problems: ProjectDiagnostic[]): Pr
 
 export async function projectSnapshot(projectDir: string): Promise<ProjectSnapshot> {
   const project = await loadProject(projectDir);
-  const { mode } = project.manifest;
+  const code = await readAllCode(project);
   const blocks: Record<string, SnapshotBlock> = {};
 
   // Problems found reading the files beside the diagram are reported with the
@@ -312,11 +328,8 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
   for (const [blockPath, node] of project.byPath) {
     const block = node.block;
     const language = systemOf(project, blockPath)?.language ?? "";
-
-    // Naming and file names are language conventions, so they come from the
-    // pack for whichever system this block belongs to. A visual project has
-    // no generated code, so it has no pack either.
-    const pack = mode === "structured" ? getPack(isKnownLanguage(language) ? language : "typescript") : null;
+    const found = code.get(blockPath)!;
+    const pack = packFor(project, blockPath);
 
     /** A shape's named parts, so a table can be drawn as its columns. */
     const fieldsOf = (type: PortType | null) =>
@@ -358,16 +371,16 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
         description: port.description ?? null,
       }));
 
-    let code: SnapshotCode | null = null;
-    if (mode === "visual" && block.code !== undefined) {
-      const found = await locateCode(projectDir, block.code);
-      if (found.ok) code = excerptOf(block.code, found.location);
-      else fileProblems.push({ severity: "error", blockPath, message: `"${block.name}" points at code that is not there: ${found.problem}` });
+    const where = found.location === null || found.pointer === null ? null : excerptOf(found.pointer, found.location);
+    if (found.problem !== null) {
+      // Not written yet, or moved and left behind: the same fact either way,
+      // and only whoever is working on it knows which.
+      fileProblems.push({
+        severity: "warning",
+        blockPath,
+        message: `"${block.name}" points at code that is not there: ${found.problem} Write it, or point the block at where the code went.`,
+      });
     }
-
-    // An architecture block has no implementation file to look for, and a
-    // stray one in its folder has already been reported by the generator.
-    const impl = pack && !isArchitecture(block.role) ? await readIfPresent(path.join(node.dir, pack.implFile)) : null;
 
     blocks[blockPath] = {
       path: blockPath,
@@ -379,7 +392,7 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       roleLabel: roleLabel(block.role, block.subtype),
       architecture: isArchitecture(block.role),
       planned: block.planned,
-      functionName: pack?.functionName(block.id) ?? "",
+      functionName: found.functionName ?? "",
       inputs: ports(block.inputs),
       outputs: ports(block.outputs),
       exposes,
@@ -403,14 +416,19 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       })),
       children: node.children.map((child) => child.path),
       sources: {
-        impl,
-        contract: pack ? await readIfPresent(path.join(node.dir, pack.contractFile)) : null,
+        code: found.bound ? (found.location?.text ?? null) : null,
+        contract:
+          found.contract === null
+            ? null
+            : await readIfPresent(path.join(projectDir, ...found.contract.split("/"))),
       },
       language,
-      files: { impl: pack?.implFile ?? "", contract: pack?.contractFile ?? "" },
-      implemented: pack ? impl !== null && !pack.isUnimplemented(impl) : code !== null,
-      cases: pack && !block.planned && !isArchitecture(block.role) ? await casesFor(blockPath) : [],
-      code,
+      files: { code: found.location?.file ?? found.pointer ?? "", contract: found.contract ?? "" },
+      implemented: found.location !== null,
+      runnable: found.bound && (pack?.canRun ?? false),
+      drawnBecause: found.drawnBecause,
+      cases: found.bound && (pack?.canRun ?? false) ? await casesFor(blockPath) : [],
+      code: where,
     };
   }
 
@@ -421,7 +439,6 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
     dir: project.dir,
     name: project.manifest.name,
     goal: project.manifest.goal,
-    mode,
     existingCode: project.manifest.existingCode,
     start: project.manifest.start,
     language: project.manifest.language ?? null,
@@ -431,8 +448,8 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
       return {
         rootBlock: system.rootBlock,
         language: system.language,
-        displayName: mode === "structured" && known ? getPack(system.language).displayName : system.language,
-        known: mode === "visual" || known,
+        displayName: known ? getPack(system.language).displayName : system.language,
+        known,
       };
     }),
     blocks,

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { GUIDE_FILE, agentGuide, architectureExample, compactJson, executionExample, visualExample, workedExample } from "./guide.js";
+import { GUIDE_FILE, agentGuide, architectureExample, compactJson, executionExample, workedExample } from "./guide.js";
 import { writeAgentFiles } from "./emit.js";
 import { blockFromFile } from "../model/block.js";
 import { CAPABILITIES } from "../model/capabilities.js";
@@ -24,26 +24,16 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-const structured = (language?: string): Manifest => ({
+const project = (over: Partial<Manifest> = {}): Manifest => ({
   name: "Test",
   goal: "",
-  mode: "structured",
   existingCode: false,
   start: "build",
-  ...(language ? { language } : {}),
+  language: "typescript",
   granularity: { level: 3, maxDepth: 4 },
   systems: [],
+  ...over,
 });
-
-const visual: Manifest = {
-  name: "Test",
-  goal: "",
-  mode: "visual",
-  existingCode: true,
-  start: "build",
-  granularity: { level: 2, maxDepth: 5 },
-  systems: [],
-};
 
 async function writeBlocks(blocks: Record<string, unknown>): Promise<void> {
   for (const [blockPath, file] of Object.entries(blocks)) {
@@ -52,11 +42,17 @@ async function writeBlocks(blocks: Record<string, unknown>): Promise<void> {
   }
 }
 
+async function writeSource(file: string, source: string): Promise<void> {
+  const target = path.join(dir, ...file.split("/"));
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, source, "utf8");
+}
+
 /** A Python that can parse a file, or nothing if the machine has none. */
 const python = ["python", "python3", "py"].find((candidate) => spawnSync(candidate, ["-c", "print(1)"]).status === 0) ?? null;
 
 describe("writeAgentFiles", () => {
-  const manifest = structured("typescript");
+  const manifest = project();
 
   it("prepares a folder for an agent", async () => {
     expect(await writeAgentFiles(dir, manifest)).toEqual({
@@ -110,71 +106,91 @@ describe("writeAgentFiles", () => {
 
 describe("the guide", () => {
   const guides: Record<string, string> = {
-    "structured TypeScript": agentGuide(structured("typescript")),
-    "structured Python": agentGuide(structured("python")),
-    "structured with the language left open": agentGuide(structured()),
-    visual: agentGuide(visual),
+    TypeScript: agentGuide(project()),
+    Python: agentGuide(project({ language: "python" })),
+    "with the language left open": agentGuide(project({ language: undefined })),
+    "in a language there is no pack for": agentGuide(project({ language: "Go", existingCode: true })),
   };
 
   for (const [label, guide] of Object.entries(guides)) {
     it(`(${label}) has nothing left unfilled, and one kind of line ending`, () => {
       expect(guide).not.toMatch(/\{\{|\}\}/);
       expect(guide).not.toContain("\r");
+      expect(guide).not.toMatch(/\n\n\n/);
     });
   }
 
   it("is short enough for an agent to take in at once", () => {
-    // The guide these replaced ran to 375 lines. Keep it from growing back.
-    // The room above what they first measured is the section on the rest of
-    // the system: what the roles are, what a block exposes, what it reaches,
-    // and which block answers an operation. A guide cannot do without any of
-    // that once a diagram can hold a database, and that section is the only
-    // thing that has been allowed to add to these numbers.
-    expect(guides["structured TypeScript"]!.split("\n").length).toBeLessThan(225);
-    // The visual guide also teaches executions, which is the one thing it
-    // has gained since: what happens is half of what it now describes, and
-    // every step of it says what it is and which function makes it.
-    expect(guides.visual!.split("\n").length).toBeLessThan(205);
+    // The two guides these replaced ran to 213 and 197 lines, and every
+    // project now gets one that also teaches executions, which the structured
+    // one never did. That section, and saying where each block's code is, is
+    // the whole of what has been allowed to add to these numbers.
+    expect(guides.TypeScript!.split("\n").length).toBeLessThan(265);
+    // Nothing is generated or run without a pack, so the whole of contracts,
+    // running and testing falls away.
+    expect(guides["in a language there is no pack for"]!.split("\n").length).toBeLessThan(220);
   });
 
-  it("tells a structured agent about every capability, and how to check and test its work", () => {
-    const guide = guides["structured TypeScript"]!;
+  it("tells an agent about every capability, and how to check and test its work", () => {
+    const guide = guides.TypeScript!;
     for (const name of Object.keys(CAPABILITIES)) expect(guide).toContain(`**${name}**`);
     expect(guide).toContain("`fragmentor check`");
     expect(guide).toContain("`fragmentor test`");
     expect(guide).toContain("readFile(path: string) → string");
   });
 
+  it("says that every function block points at its code, and that the layout is the codebase's own", () => {
+    for (const guide of Object.values(guides)) {
+      expect(guide).toContain("**Every function block has one.**");
+      expect(guide).toContain("The code is yours, wherever it belongs in the codebase**");
+    }
+  });
+
+  it("makes the contract's own file, and what binds code to it, plain", () => {
+    const guide = guides.TypeScript!;
+    expect(guide).toContain("blocks/<the block>/contract.ts");
+    expect(guide).toContain("**Importing that contract is what binds your code to it.**");
+    expect(guide).toContain('from "../../blocks/price-orders/report-totals/contract.js"');
+  });
+
   it("speaks the language the person chose", () => {
-    const guide = guides["structured Python"]!;
-    expect(guide).toContain("impl.py");
-    expect(guide).toContain("async def price_order");
+    const guide = guides.Python!;
+    expect(guide).toContain("contract.py");
     expect(guide).toContain("read_file(path: str) → str");
-    expect(guide).toContain("cannot run Python yet");
-    expect(guide).not.toContain("impl.ts");
+    expect(guide).toContain("cannot hold Python code to a contract");
+    expect(guide).not.toContain("contract.ts");
+    // Nothing is run, so nothing is tested either.
+    expect(guide).not.toContain("fragmentor test");
+    expect(guide).not.toContain("cases.json");
   });
 
   it("leaves the language to the agent when the person did", () => {
-    const guide = guides["structured with the language left open"]!;
+    const guide = guides["with the language left open"]!;
     expect(guide).toContain('`"typescript"`');
     expect(guide).toContain('`"python"`');
   });
 
-  it("describes only the granularity the person chose", () => {
-    expect(guides["structured TypeScript"]).toContain("## Granularity: level 3");
-    expect(guides["structured TypeScript"]).toContain("around 30 to 80 lines");
-    expect(guides["structured TypeScript"]).not.toContain("around 10 to 30 lines");
-    // The size is something to aim at, not a rule the agent has to satisfy.
-    expect(guides["structured TypeScript"]).toContain("aims rather than rules");
-    expect(guides.visual).toContain("## Granularity: level 2");
-    expect(guides.visual).toContain("at most 5 levels deep");
+  it("says plainly when it can do nothing with the code but draw it", () => {
+    const guide = guides["in a language there is no pack for"]!;
+    expect(guide).toContain("It has no language pack for Go");
+    expect(guide).not.toContain("## Contracts");
+    expect(guide).not.toContain("fragmentor test");
   });
 
-  it("tells a visual agent to leave the code alone, and never mentions tests", () => {
-    expect(guides.visual).toContain("Never change the program's code");
-    expect(guides.visual).toContain("`fragmentor check`");
-    expect(guides.visual).not.toContain("fragmentor test");
-    expect(guides.visual).not.toContain("cases.json");
+  it("teaches executions in every project, because what happens is half of what a diagram shows", () => {
+    for (const guide of Object.values(guides)) {
+      expect(guide).toContain("## Executions");
+      expect(guide).toContain("executions/report-totals.json");
+    }
+  });
+
+  it("describes only the granularity the person chose", () => {
+    expect(guides.TypeScript).toContain("## Granularity: level 3");
+    expect(guides.TypeScript).toContain("around 30 to 80 lines");
+    expect(guides.TypeScript).not.toContain("around 10 to 30 lines");
+    // The size is something to aim at, not a rule the agent has to satisfy.
+    expect(guides.TypeScript).toContain("aims rather than rules");
+    expect(agentGuide(project({ granularity: { level: 2, maxDepth: 5 } }))).toContain("at most 5 levels deep");
   });
 });
 
@@ -189,7 +205,7 @@ describe("compactJson", () => {
   });
 });
 
-describe("the structured worked example", () => {
+describe("the worked example", () => {
   it("is a valid project by the same rules the checker applies", () => {
     expect(manifestSchema.safeParse(workedExample.manifest).success).toBe(true);
     for (const [blockPath, file] of Object.entries(workedExample.blocks)) {
@@ -204,36 +220,38 @@ describe("the structured worked example", () => {
     await writeBlocks(workedExample.blocks);
 
     const specified = await checkProject(dir);
+    // No code is there yet, which is where an agent starts and is not an error.
     expect(specified.errorCount).toBe(0);
-    // Every function is the agent's to write, the one calling the others included.
     expect(specified.unimplemented).toEqual([
       "price-orders/load-orders",
       "price-orders/price-order",
       "price-orders/report-totals",
     ]);
 
-    // The code the guide shows, plus the two blocks it leaves to the reader.
-    const code: Record<string, string> = {
-      [workedExample.codeBlock.typescript!]: workedExample.code.typescript!,
-      "price-orders/price-order": `import type { PriceOrderInput, PriceOrderOutput, PriceOrderCaps } from "./contract.js";
+    // The code the guide shows, plus the two blocks it leaves to the reader,
+    // each in the file its block points at.
+    await writeSource(workedExample.codeFile, workedExample.code);
+    await writeSource(
+      "src/pricing/price-order.ts",
+      `import type { PriceOrderInput, PriceOrderOutput, PriceOrderCaps } from "../../blocks/price-orders/price-order/contract.js";
 
 export async function priceOrder(input: PriceOrderInput, caps: PriceOrderCaps): Promise<PriceOrderOutput> {
   return { total: input.order.lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0) };
 }
 `,
-      "price-orders/load-orders": `import type { LoadOrdersInput, LoadOrdersOutput, LoadOrdersCaps } from "./contract.js";
+    );
+    await writeSource(
+      "src/pricing/load-orders.ts",
+      `import type { LoadOrdersInput, LoadOrdersOutput, LoadOrdersCaps } from "../../blocks/price-orders/load-orders/contract.js";
 
 export async function loadOrders(input: LoadOrdersInput, caps: LoadOrdersCaps): Promise<LoadOrdersOutput> {
   return { orders: JSON.parse(await caps.files.readFile(input.path)) };
 }
 `,
-    };
-    for (const [blockPath, source] of Object.entries(code)) {
-      await writeFile(path.join(blockDir(dir, blockPath), "impl.ts"), source, "utf8");
-    }
+    );
 
     for (const [blockPath, cases] of Object.entries(workedExample.cases)) {
-      await writeFile(path.join(blockDir(dir, blockPath), "cases.json"), JSON.stringify(cases, null, 2), "utf8");
+      await writeFile(path.join(blockDir(dir, blockPath), "cases.json"), JSON.stringify(cases), "utf8");
     }
     await writeFile(
       path.join(dir, "orders.json"),
@@ -248,11 +266,19 @@ export async function loadOrders(input: LoadOrdersInput, caps: LoadOrdersCaps): 
       JSON.stringify([{ name: "prices a file of orders", input: { path: "orders.json" }, expected: { totals: [17, 0], grandTotal: 17 } }]),
       "utf8",
     );
+    // And what happens when it is set going, exactly as the guide shows it.
+    await mkdir(path.join(dir, "executions"));
+    await writeFile(path.join(dir, "executions", "report-totals.json"), JSON.stringify(executionExample), "utf8");
 
     const implemented = await checkProject(dir);
     expect(implemented.systems[0]!.codeProblems).toEqual([]);
+    expect(implemented.problems).toEqual([]);
     expect(implemented.errorCount).toBe(0);
     expect(implemented.unimplemented).toEqual([]);
+    // Every one of them is held to its contract, so every one can be run.
+    expect(implemented.drawnOnly).toEqual([]);
+    // The guide shows tests for one of the three, so the other two are asked for.
+    expect(implemented.untested).toEqual(["price-orders/load-orders"]);
 
     expect((await runCases(dir, "price-orders/price-order")).map((r) => [r.status, r.differences])).toEqual([
       ["passed", []],
@@ -261,114 +287,56 @@ export async function loadOrders(input: LoadOrdersInput, caps: LoadOrdersCaps): 
     expect((await runCases(dir, "price-orders/report-totals")).map((r) => [r.status, r.differences])).toEqual([["passed", []]]);
   }, 30_000);
 
-  it.skipIf(!python)("shows Python that parses", () => {
-    const parsed = spawnSync(python!, ["-c", "import ast,sys; ast.parse(sys.stdin.read())"], {
-      input: workedExample.code.python,
-      encoding: "utf8",
-    });
-    expect(parsed.stderr).toBe("");
-  });
-});
-
-describe("the visual worked example", () => {
-  it("passes the check over code that matches it", async () => {
-    await writeFile(
-      manifestPath(dir),
-      JSON.stringify({ name: "Order Pricer", mode: "visual", granularity: { level: 3 }, systems: [{ rootBlock: "price-orders" }] }),
-      "utf8",
-    );
-    // The guide shows two of the blocks; the other two are written the same way.
-    await writeBlocks({
-      ...visualExample,
-      "price-orders/load-orders": {
-        responsibility: "Read and parse the orders file.",
-        code: "src/pricing.ts#loadOrders",
-        inputs: { path: "string" },
-        outputs: { orders: "Order[]" },
-        capabilities: { files: "FileSystem" },
-      },
-      "price-orders/price-order": {
-        responsibility: "Add up one order.",
-        code: "src/pricing.ts#priceOrder",
-        inputs: { order: "Order" },
-        outputs: { total: "number" },
-      },
-    });
-
-    await mkdir(path.join(dir, "src"));
-    await writeFile(
-      path.join(dir, "src", "pricing.ts"),
-      [
-        "export async function loadOrders(path: string, files: FileSystem): Promise<Order[]> { return []; }",
-        "export function priceOrder(order: Order): number { return 0; }",
-        "export async function reportTotals(path: string, files: FileSystem) { return {}; }",
-      ].join("\n"),
-      "utf8",
-    );
-    // And what happens when it is set going, exactly as the guide shows it.
-    await mkdir(path.join(dir, "executions"));
-    await writeFile(path.join(dir, "executions", "report-totals.json"), JSON.stringify(executionExample), "utf8");
-
-    const report = await checkProject(dir);
-    expect(report.problems).toEqual([]);
-    expect(report.errorCount).toBe(0);
-    expect(report.unimplemented).toEqual([]);
-    expect(report.generated.written).toEqual(["FRAGMENTOR.md"]);
+  it.skipIf(!python)("shows a Python project its own contract file", () => {
+    const guide = agentGuide(project({ language: "python" }));
+    expect(guide).toContain("contract.py");
   });
 });
 
 describe("the guide says where the project starts", () => {
-  const withAnswers = (over: Partial<Manifest>): Manifest => ({ ...structured("typescript"), ...over });
-
   it("tells an agent in an empty folder that the program is its own to write", () => {
-    const guide = agentGuide(withAnswers({ existingCode: false }));
+    const guide = agentGuide(project({ existingCode: false }));
     expect(guide).toContain("**This folder started empty**");
-    expect(guide).not.toContain("rebuilding it as blocks");
+    expect(guide).toContain("Lay the code out however suits it");
+    expect(guide).not.toContain("the diagram describes it");
   });
 
-  it("tells an agent in a folder of code to commit it and rebuild it", () => {
-    const guide = agentGuide(withAnswers({ existingCode: true }));
+  it("tells an agent in a folder of code that the diagram follows the code", () => {
+    const guide = agentGuide(project({ existingCode: true }));
     expect(guide).toContain("**This folder already held code**");
-    expect(guide).toContain("committed to version control");
+    expect(guide).toContain("Never restructure the program to make the diagram tidier");
   });
 
   it("asks for the architecture as a plan first when that is what the person chose", () => {
-    const planning = agentGuide(withAnswers({ start: "plan" }));
+    const planning = agentGuide(project({ start: "plan" }));
     expect(planning).toContain("**This project starts as a plan.**");
     expect(planning).toContain('Give every block `"planned": true` to begin with');
-    expect(agentGuide(withAnswers({ start: "build" }))).not.toContain("starts as a plan");
+    expect(agentGuide(project({ start: "build" }))).not.toContain("starts as a plan");
   });
 
   it("tells an agent building straight away not to stop for agreement", () => {
-    const building = agentGuide(withAnswers({ start: "build" }));
+    const building = agentGuide(project({ start: "build" }));
     expect(building).toContain("Carry straight on to the code.");
     expect(building).toContain("do not stop to ask for agreement");
     expect(building).not.toContain("wait for them to agree");
 
-    const planning = agentGuide(withAnswers({ start: "plan" }));
+    const planning = agentGuide(project({ start: "plan" }));
     expect(planning).toContain("wait for them to agree before you write any code");
     expect(planning).not.toContain("Carry straight on");
   });
 
-  it("says the same to a visual agent, in its own terms", () => {
-    const drawing = agentGuide({ ...visual, existingCode: false, start: "plan" });
-    expect(drawing).toContain("**This folder started empty.**");
-    expect(drawing).toContain("**This project starts as a plan.**");
-    expect(drawing).not.toContain("committed to version control");
-  });
-
-  it("explains planned blocks in both modes", () => {
-    for (const guide of [agentGuide(structured("typescript")), agentGuide(visual)]) {
-      expect(guide).toContain("`planned: true`");
-      expect(guide).toContain("greyed out");
-    }
+  it("explains planned blocks", () => {
+    const guide = agentGuide(project());
+    expect(guide).toContain("`planned: true`");
+    expect(guide).toContain("greyed out");
   });
 
   it("shows the person's answers in the example project file, so they are not changed", () => {
-    const guide = agentGuide(withAnswers({ existingCode: true, start: "plan" }));
+    const guide = agentGuide(project({ existingCode: true, start: "plan" }));
     expect(guide).toContain('"existingCode": true');
     expect(guide).toContain('"start": "plan"');
-    expect(guide).toContain("Leave `mode`, `existingCode`, `start` and `granularity` as the person set them.");
+    expect(guide).toContain("Leave `existingCode`, `start` and `granularity` as the person set them.");
+    expect(guide).not.toContain('"mode"');
   });
 });
 
@@ -393,7 +361,6 @@ describe("the architecture the guide shows", () => {
     });
 
     const report = await checkProject(dir);
-    expect(report.problems).toEqual([]);
     expect(report.errorCount).toBe(0);
     // Neither a database nor someone else's payment service is unfinished work.
     expect([...report.architecture].sort()).toEqual([
@@ -403,24 +370,27 @@ describe("the architecture the guide shows", () => {
       "orders-app/orders-api/orders-db",
       "orders-app/orders-page",
     ]);
-    // The one block that is code is the one still to be written.
+    // The one block that is code is the one still to be written, which is
+    // reported once, against it, as the warning it is.
     expect(report.unimplemented).toEqual(["orders-app/orders-api/load-orders"]);
+    expect(report.problems).toEqual([
+      expect.objectContaining({ severity: "warning", blockPath: "orders-app/orders-api/load-orders" }),
+    ]);
   });
 
   it("names every role it offers, and shows both halves of joining one up", () => {
-    for (const guide of [agentGuide(structured("typescript")), agentGuide(visual)]) {
-      for (const role of ARCHITECTURE_ROLES) expect(guide).toContain(`\`"${role}"\``);
-      expect(guide).toContain('"role": "database"');
-      // The access names the capability port at this end, which is what makes
-      // it the way the code actually gets there rather than only a description.
-      expect(guide).toContain('"access": ["orders reads orders-db.orders"]');
-      expect(guide).toContain('"capabilities": { "orders": "Store" }');
-      // And which block answers an operation, without which the blocks inside
-      // a service show inputs arriving from nowhere.
-      expect(guide).toContain('"block": "load-orders"');
-      // And which of a block's own entries does the reaching, without which
-      // two buttons calling two operations would be one line.
-      expect(guide).toContain('"showOrders calls orders-api.listOrders"');
-    }
+    const guide = agentGuide(project());
+    for (const role of ARCHITECTURE_ROLES) expect(guide).toContain(`\`"${role}"\``);
+    expect(guide).toContain('"role": "database"');
+    // The access names the capability port at this end, which is what makes
+    // it the way the code actually gets there rather than only a description.
+    expect(guide).toContain('"access": ["orders reads orders-db.orders"]');
+    expect(guide).toContain('"capabilities": { "orders": "Store" }');
+    // And which block answers an operation, without which the blocks inside
+    // a service show inputs arriving from nowhere.
+    expect(guide).toContain('"block": "load-orders"');
+    // And which of a block's own entries does the reaching, without which
+    // two buttons calling two operations would be one line.
+    expect(guide).toContain('"showOrders calls orders-api.listOrders"');
   });
 });

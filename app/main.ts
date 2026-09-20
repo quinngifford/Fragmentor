@@ -16,6 +16,7 @@ import type {
 } from "./ipc.js";
 import { projectSnapshot } from "../src/project/snapshot.js";
 import { blockDir, loadProject, locateCode, manifestPath, systemOf } from "../src/project/project.js";
+import { readBlockCode } from "../src/project/code.js";
 import { getPack, isKnownLanguage } from "../src/lang/index.js";
 import { isArchitecture } from "../src/model/roles.js";
 import { emitProject, startProject } from "../src/codegen/emit.js";
@@ -141,9 +142,6 @@ async function holdsFiles(dir: string): Promise<boolean> {
 /** The settings as the window sent them. The window is not trusted to send sensible ones. */
 function settingsFrom(raw: unknown): NewProjectSettings {
   const value = (raw ?? {}) as Partial<Record<keyof NewProjectSettings, unknown>>;
-  if (value.mode !== "structured" && value.mode !== "visual") {
-    throw new Error("Choose whether Fragmentor structures the code or only draws it.");
-  }
   if (typeof value.granularity !== "number" || ![1, 2, 3, 4, 5].includes(value.granularity)) {
     throw new Error("Choose how finely to divide the work, from 1 to 5.");
   }
@@ -159,12 +157,8 @@ function settingsFrom(raw: unknown): NewProjectSettings {
   }
 
   const language = typeof value.language === "string" && value.language.trim() ? value.language.trim().slice(0, 40) : null;
-  if (value.mode === "structured" && language !== null && !isKnownLanguage(language)) {
-    throw new Error(`Fragmentor cannot generate ${language} code. Choose TypeScript or Python, or leave it to the agent.`);
-  }
 
   return {
-    mode: value.mode,
     granularity: value.granularity as NewProjectSettings["granularity"],
     language,
     existingCode: value.existingCode,
@@ -300,21 +294,6 @@ function registerHandlers(): void {
         if (hasFiles) settings.start = "build";
       }
 
-      // Structured mode rebuilds whatever code is already there. That is what
-      // the person asked for, but it should never come as a surprise.
-      if (settings.mode === "structured" && hasFiles) {
-        const { response } = await ask({
-          type: "warning",
-          buttons: ["Rebuild it as blocks", "Cancel"],
-          defaultId: 1,
-          cancelId: 1,
-          message: "Your agent will rebuild the code in this folder as blocks",
-          detail:
-            "In structured mode the agent moves this folder's code into Fragmentor blocks, and deletes the old files once the blocks pass their tests. Commit the code to version control first, so every change can be undone.\n\nTo only see how the code works, cancel and choose Visual instead. Visual mode never changes the code.",
-        });
-        if (response !== 0) return ok(null);
-      }
-
       // The guide is what tells an agent opened in this folder what to do.
       const { withoutGuide } = await startProject(dir, settings);
       if (withoutGuide.length > 0) {
@@ -387,20 +366,20 @@ function registerHandlers(): void {
 
   ipcMain.handle(CHANNELS.writeImpl, async (_event, request: WriteImplRequest): Promise<Result<null>> => {
     try {
-      // The file name depends on the language of the system this block is in,
-      // and the renderer is not trusted to say which file to write.
+      // Which file a block's code is in is the block's to say, and the
+      // renderer is not trusted to say it.
       const project = await loadProject(request.dir);
-      const system = systemOf(project, request.blockPath);
-      if (!system) throw new Error(`"${request.blockPath}" is not part of any system in this project.`);
-      // Generated code is rewritten from the diagram, so an edit to it would
-      // be lost, and a visual project's code is not Fragmentor's to change.
-      if (project.manifest.mode === "visual") throw new Error("A visual project's code is never changed from Fragmentor.");
       const node = project.byPath.get(request.blockPath);
-      if (node && isArchitecture(node.block.role)) {
-        throw new Error(`"${request.blockPath}" is not a function, so it has no code of its own.`);
+      if (!node) throw new Error(`There is no block at "${request.blockPath}".`);
+
+      const found = await readBlockCode(project, node);
+      // Only the code Fragmentor holds to a contract is offered for editing.
+      // Anything else it is only drawing, and the window says so instead.
+      if (!found.bound || found.location === null) {
+        throw new Error(found.drawnBecause ?? `"${request.blockPath}" has no code of its own.`);
       }
 
-      const target = resolveInside(blockDir(request.dir, request.blockPath), getPack(system.language).implFile);
+      const target = resolveInside(request.dir, found.location.file);
       await writeFile(target, request.contents, "utf8");
       return ok(null);
     } catch (error) {

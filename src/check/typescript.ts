@@ -2,25 +2,29 @@ import { existsSync } from "node:fs";
 import { builtinModules, createRequire } from "node:module";
 import path from "node:path";
 import ts from "typescript";
-import { getPack } from "../lang/index.js";
-import { isArchitecture } from "../model/roles.js";
+import type { BlockCode } from "../project/code.js";
 import type { LoadedBlock, Project } from "../project/project.js";
 
 /**
  * Checking a TypeScript system's code against its diagram.
  *
- * The code is typechecked against the generated contracts, so a function that
+ * Only the files whose blocks are bound to a contract are compiled — the ones
+ * that import it. The rest of the codebase is nobody's to hold to Fragmentor's
+ * rules, and compiling it here, with a compiler set up for blocks, would
+ * report hundreds of things about code Fragmentor was only ever asked to draw.
+ *
+ * What is compiled is typechecked against those contracts, so a function that
  * returns the wrong shape fails here before anything runs. Contracts import
  * zod, which a project may well not have installed, so the checker lends it
  * Fragmentor's copy.
  *
- * What each block imports is checked as well, because the test runner
- * compiles every implementation in a system into a folder of its own and runs
- * it from there: types, which disappear when it is compiled, the code of
- * other blocks in the same system, which is compiled beside it, and packages
- * installed in the project itself, which is the one place the runner looks.
- * Not Node's built-in modules, though, which reach the files, the network and
- * the process directly — that is what capabilities are for.
+ * What each block imports is checked as well, because the test runner compiles
+ * a system's bound files into a folder of its own and runs it from there:
+ * types, which disappear when it is compiled, the code of other bound blocks
+ * in the same system, which is compiled beside it, and packages installed in
+ * the project itself, which is the one place the runner looks. Not Node's
+ * built-in modules, though, which reach the files, the network and the process
+ * directly — that is what capabilities are for.
  */
 
 export interface CodeProblem {
@@ -93,13 +97,14 @@ function importProblems(
   /** The compiled code of every block in the system that can be called, as absolute paths. */
   callable: Set<string>,
 ): CodeProblem[] {
+  const from = path.dirname(path.join(projectDir, ...file.split("/")));
   const problems: CodeProblem[] = [];
   for (const statement of source.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
 
     const specifier = statement.moduleSpecifier.text;
     if (importsOnlyTypes(statement)) continue;
-    if (!isPackage(specifier) && callable.has(path.resolve(node.dir, specifier))) continue;
+    if (!isPackage(specifier) && callable.has(path.resolve(from, specifier))) continue;
     const where = at(file, source, statement.getStart(source));
 
     if (isBuiltin(specifier)) {
@@ -110,7 +115,7 @@ function importProblems(
     } else if (!isPackage(specifier)) {
       problems.push({
         ...where,
-        message: `"${node.block.name}" imports values from "${specifier}", which will not run: a block can import types, the code of another function block in its system (its ${getPack("typescript").implFile.replace(/\.ts$/, ".js")}), and packages installed in the project, and nothing else. Use \`import type\` for types, and a capability for anything outside the system.`,
+        message: `"${node.block.name}" imports values from "${specifier}", which will not run: a block can import types, the code of another block in this system that is held to its contract, and packages installed in the project, and nothing else. Use \`import type\` for types, a block for a shared helper, and a capability for anything outside the system.`,
       });
     } else if (!existsSync(path.join(projectDir, "node_modules", packageName(specifier)))) {
       // Found anywhere else, it would typecheck and still fail to run.
@@ -123,23 +128,20 @@ function importProblems(
   return problems;
 }
 
-export function checkSystemCode(project: Project, rootBlock: string): CodeProblem[] {
-  const implFile = getPack("typescript").implFile;
-  const compiledName = implFile.replace(/\.ts$/, ".js");
+export function checkSystemCode(project: Project, rootBlock: string, code: Map<string, BlockCode>): CodeProblem[] {
+  /** The file each block of this system is held to its contract in. */
   const files = new Map<string, LoadedBlock>();
-  const callable = new Set<string>();
   for (const node of project.byPath.values()) {
     if (node.path !== rootBlock && !node.path.startsWith(`${rootBlock}/`)) continue;
-    // Nothing is generated, checked or run for a planned block, nor for a
-    // piece of the architecture. Anything left in either's folder has already
-    // been reported by the generator.
-    if (node.block.planned || isArchitecture(node.block.role)) continue;
-    callable.add(path.join(node.dir, compiledName));
-    const file = path.join(node.dir, implFile);
-    if (existsSync(file)) files.set(file, node);
+    const found = code.get(node.path);
+    if (!found?.bound || found.location === null) continue;
+    files.set(path.join(project.dir, ...found.location.file.split("/")), node);
   }
 
   if (files.size === 0) return [];
+
+  // What an import of one of these files resolves to once it is compiled.
+  const callable = new Set([...files.keys()].map((file) => file.replace(/\.ts$/, ".js")));
 
   const relative = (fileName: string) => path.relative(project.dir, fileName).split(path.sep).join("/");
   const program = ts.createProgram([...files.keys()], OPTIONS);

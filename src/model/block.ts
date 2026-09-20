@@ -23,15 +23,6 @@ import type { PortType } from "./types.js";
  * (see `trace.ts`), never the tree's.
  */
 
-/**
- * How a project relates to its code. In `structured` mode the diagram is a
- * specification: Fragmentor generates the code between blocks, checks the
- * rest against it, and runs it. In `visual` mode the diagram is a picture of
- * code Fragmentor never touches, so its types are free text and nothing is
- * enforced beyond the diagram holding together.
- */
-export type Mode = "structured" | "visual";
-
 export interface Port {
   type: PortType;
   description?: string;
@@ -195,7 +186,12 @@ export interface Block {
    * being built; nothing does that today.
    */
   planned: boolean;
-  /** Visual mode only: the file or folder, optionally `#name`, that this block stands for. */
+  /**
+   * Where this block's implementation lives: a file or folder relative to the
+   * project, optionally followed by `#` and the name of a function, class or
+   * method. Every function block that is not planned has one, because the
+   * code's layout is the codebase's business and not the diagram's.
+   */
   code?: string;
 }
 
@@ -208,56 +204,43 @@ const blockId = z
 
 const portName = z.string().regex(identifierPattern, "port names must be valid identifiers");
 
-/**
- * On disk a port's type is written the way a developer writes types, e.g.
- * `{ title: string; salary?: number }[]`. In memory it is the structured form
- * the test bench walks to build a form. describeType and parseType are exact
- * inverses, so the file stays readable without the structure being lossy.
- */
-const typeExpression = z.string().transform((value, ctx): PortType => {
-  const parsed = tryParseType(value);
-  if (!parsed.ok) {
-    ctx.addIssue({ code: "custom", message: parsed.error });
-    return z.NEVER;
-  }
-  return parsed.type;
-});
-
-/** In visual mode a type is shown as the code writes it, and never checked. */
-const typeText = z
-  .string()
-  .min(1, "a type cannot be empty")
-  .transform((text): PortType => ({ kind: "text", text }));
-
 /** Lets something usually written in full be written as just its main field. */
 function orJust(field: string) {
   return (value: unknown) => (typeof value === "string" ? { [field]: value } : value);
 }
 
 /**
- * A planned block's types are free text for the same reason a visual block's
- * are: neither is Fragmentor's to enforce. What flows between planned blocks
- * is often exactly what has not been decided yet, so `"the scored postings"`
- * has to be as writable as `number[]`.
+ * A port's type is read with the type parser first, and kept as the words it
+ * was written in when the parser does not recognise them.
+ *
+ * Both happen in real projects. A block Fragmentor generates a contract for
+ * needs `{ id: string }[]`, and gets a contract, a form and a check out of it.
+ * A block standing for code that already exists writes what that code writes,
+ * `Promise<Order[]>`, and a planned block writes `"the scored postings"`,
+ * because what flows between planned blocks is usually the thing still being
+ * decided. Refusing either would cost a correct diagram to gain a check
+ * nothing can rely on; `fragmentor check` says instead what it cannot do with
+ * words.
  */
-function portSchema(freeText: boolean) {
+function portSchema() {
   return z.preprocess(
     orJust("type"),
-    z.object({ type: freeText ? typeText : typeExpression, description: z.string().optional() }).strict(),
+    z.object({ type: describedType, description: z.string().optional() }).strict(),
   );
 }
 
 /**
- * A type on an architecture block: what a table holds, what an operation
- * returns.
+ * Every type in a block file: a port's, a table's, an operation's.
  *
- * Nothing is generated, checked or run from these, so they are descriptions
- * rather than contracts. They are read with the ordinary type parser first,
- * because a schema written as `{ id: string; email: string }` can then be
- * drawn field by field on the block. Anything the parser does not recognise
- * — `timestamp`, `jsonb`, `Order[]` in a visual project — is kept as the
- * words it was written in rather than refused, because refusing it would cost
- * the person a correct diagram to gain a check nothing relies on.
+ * On disk a type is written the way a developer writes types, e.g.
+ * `{ title: string; salary?: number }[]`. In memory it is the structured form
+ * the test bench walks to build a form, and describeType and parseType are
+ * exact inverses, so the file stays readable without the structure being
+ * lossy. Anything the parser does not recognise — `timestamp`, `jsonb`,
+ * `Promise<Order[]>` — is kept as the words it was written in rather than
+ * refused, because refusing it would cost a correct diagram to gain a check
+ * nothing can rely on. What Fragmentor cannot then do with it, `fragmentor
+ * check` says.
  */
 const describedType = z
   .string()
@@ -319,8 +302,7 @@ const capabilityPortSchema = z.preprocess(
   z.object({ capability: z.string().min(1), description: z.string().optional() }).strict(),
 );
 
-function blockFileSchema(mode: Mode, planned: boolean) {
-  const freeText = mode === "visual" || planned;
+function blockFileSchema(planned: boolean) {
   return z
     .object({
       name: z.string().min(1).optional(),
@@ -333,19 +315,18 @@ function blockFileSchema(mode: Mode, planned: boolean) {
       subtype: z.string().min(1, "a subtype cannot be empty").optional(),
       planned: z.boolean().default(false),
       code: z.string().min(1).optional(),
-      inputs: z.record(portName, portSchema(freeText)).default({}),
-      outputs: z.record(portName, portSchema(freeText)).default({}),
+      inputs: z.record(portName, portSchema()).default({}),
+      outputs: z.record(portName, portSchema()).default({}),
       exposes: z.record(portName, exposedSchema).default({}),
       access: z.array(accessSchema).default([]),
       capabilities: z.record(portName, capabilityPortSchema).default({}),
       pinnedAsLeaf: z.boolean().default(false),
     })
     .strict()
-    .refine((file) => mode === "visual" || file.code === undefined, {
-      message: `"code" is only for visual mode. In structured mode a block's code is the implementation file in its folder.`,
-      path: ["code"],
-    })
-    .refine((file) => !(planned || file.planned) || file.code === undefined, {
+    // Only what this file itself says: a block planned from above was written
+    // before whatever holds it became a plan, and refusing to read it would
+    // take the whole diagram down for a pointer nothing looks at.
+    .refine((file) => !file.planned || file.code === undefined, {
       message: "a planned block stands for code that does not exist yet, so it cannot point at any",
       path: ["code"],
     })
@@ -390,7 +371,6 @@ export function nameFromId(id: string): string {
 export function parseBlockFile(
   raw: unknown,
   id: string,
-  mode: Mode = "structured",
   /** True when a block above this one is planned, which makes this one planned too. */
   plannedAbove = false,
 ): { ok: true; block: Block } | { ok: false; problems: string[] } {
@@ -421,7 +401,7 @@ export function parseBlockFile(
   const planned =
     plannedAbove || (typeof raw === "object" && raw !== null && (raw as { planned?: unknown }).planned === true);
 
-  const parsed = blockFileSchema(mode, planned).safeParse(raw);
+  const parsed = blockFileSchema(planned).safeParse(raw);
   if (!parsed.success) {
     return { ok: false, problems: parsed.error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`) };
   }
@@ -446,8 +426,8 @@ export function parseBlockFile(
 }
 
 /** The same, for a file already known to be valid, such as an example written in code. */
-export function blockFromFile(raw: unknown, id: string, mode: Mode = "structured", plannedAbove = false): Block {
-  const result = parseBlockFile(raw, id, mode, plannedAbove);
+export function blockFromFile(raw: unknown, id: string, plannedAbove = false): Block {
+  const result = parseBlockFile(raw, id, plannedAbove);
   if (!result.ok) throw new Error(`"${id}" is not a valid block:\n  ${result.problems.join("\n  ")}`);
   return result.block;
 }

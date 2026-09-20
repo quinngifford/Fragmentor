@@ -1,7 +1,7 @@
-import type { BookSeatsInput, BookSeatsOutput, BookSeatsCaps } from "./contract.js";
-import { findEvent } from "../find-event/impl.js";
-import { priceSeat } from "../pricing/price-seat/impl.js";
-import { reserve } from "./reserve/impl.js";
+import type { BookSeatsInput, BookSeatsOutput, BookSeatsCaps } from "../../blocks/tickets/booking-api/book-seats/contract.js";
+import { findEvent } from "./find-event.js";
+import { priceSeat } from "./price-seat.js";
+import { reserve } from "./reserve.js";
 
 /**
  * Book seats at one event for one person when there are enough left, and say

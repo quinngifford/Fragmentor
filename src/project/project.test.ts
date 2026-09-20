@@ -20,7 +20,6 @@ let dir: string;
 const manifest: Manifest = {
   name: "Job Ranker",
   goal: "Rank job postings against a profile.",
-  mode: "structured",
   existingCode: false,
   start: "build",
   granularity: { level: 3, maxDepth: 4 },
@@ -43,6 +42,7 @@ async function writeSmallProject() {
 
   const child = makeBlock({
     id: "score-posting",
+    code: "src/score-posting.ts#scorePosting",
     inputs: { posting: { type: t.object({ title: t.string }) } },
     outputs: { score: { type: t.number } },
   });
@@ -142,16 +142,15 @@ describe("block paths", () => {
 
 describe("project settings", () => {
   it("may have no systems yet, while it waits for the agent to define them", async () => {
-    await writeManifestJson({ name: "Waiting", mode: "structured", granularity: { level: 2 } });
+    await writeManifestJson({ name: "Waiting", granularity: { level: 2 } });
 
     const project = await loadProject(dir);
     expect(project.systems).toEqual([]);
     expect(project.manifest).toEqual({
       name: "Waiting",
       goal: "",
-      mode: "structured",
-  existingCode: false,
-  start: "build",
+      existingCode: false,
+      start: "build",
       granularity: { level: 2, maxDepth: 4 },
       systems: [],
     });
@@ -160,7 +159,14 @@ describe("project settings", () => {
   it("says what the person has to decide that a project file leaves out", async () => {
     await writeManifestJson({ name: "Undecided", systems: [] });
 
-    await expect(loadProject(dir)).rejects.toThrow(/mode: must be "structured".*granularity: must say how finely/s);
+    await expect(loadProject(dir)).rejects.toThrow(/granularity: must say how finely/);
+  });
+
+  it("says what became of the mode a project used to be in", async () => {
+    await writeSmallProject();
+    await writeManifestJson({ ...manifest, mode: "visual" });
+
+    await expect(loadProject(dir)).rejects.toThrow(/There are no modes any more.*Remove "mode"/s);
   });
 
   it("explains how to fix a project still using the old single-system manifest", async () => {
@@ -190,14 +196,21 @@ describe("project settings", () => {
     expect((await loadProject(dir)).systems[0]!.language).toBe("typescript");
   });
 
-  it("asks for a language when neither a structured system nor its project names one", async () => {
+  it("reads a system that names no language at all, which is drawn and nothing more", async () => {
     await writeSmallProject();
     await writeManifestJson({ ...manifest, systems: [{ rootBlock: "rank-jobs" }] });
 
-    await expect(loadProject(dir)).rejects.toThrow(/does not say what language the system "rank-jobs"/);
+    expect((await loadProject(dir)).systems[0]!.language).toBe("");
   });
 
-  it("reports a structured system in another language than the one the person chose", async () => {
+  it("takes a language written the way a person writes it", async () => {
+    await writeSmallProject();
+    await writeManifestJson({ ...manifest, systems: [{ rootBlock: "rank-jobs", language: "TypeScript" }] });
+
+    expect((await loadProject(dir)).systems[0]!.language).toBe("typescript");
+  });
+
+  it("reports a system in another language than the one the person chose", async () => {
     await writeSmallProject();
     await writeManifestJson({ ...manifest, language: "python" });
 
@@ -207,9 +220,9 @@ describe("project settings", () => {
   });
 });
 
-describe("a visual project", () => {
-  it("reads blocks whose types are the code's own, which structured mode would refuse", async () => {
-    await writeManifestJson({ name: "Seen", mode: "visual", granularity: { level: 3 }, systems: [{ rootBlock: "serve" }] });
+describe("a block describing code that already exists", () => {
+  it("keeps a type the parser cannot read as the words it was written in", async () => {
+    await writeManifestJson({ name: "Seen", granularity: { level: 3 }, systems: [{ rootBlock: "serve" }] });
     await mkdir(blockDir(dir, "serve"), { recursive: true });
     await writeFile(
       path.join(blockDir(dir, "serve"), "block.json"),
@@ -328,7 +341,6 @@ describe("a project file written before the questions were asked", () => {
     await writeManifestJson({
       name: "Older",
       goal: "",
-      mode: "structured",
       language: "typescript",
       granularity: { level: 3, maxDepth: 4 },
       systems: [],

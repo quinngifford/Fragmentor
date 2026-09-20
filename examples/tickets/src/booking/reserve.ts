@@ -1,4 +1,4 @@
-import type { ReserveInput, ReserveOutput, ReserveCaps } from "./contract.js";
+import type { ReserveInput, ReserveOutput, ReserveCaps } from "../../blocks/tickets/booking-api/book-seats/reserve/contract.js";
 
 /**
  * Take the seats off the event, record the booking, and send the confirmation.

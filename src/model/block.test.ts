@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { blockFromFile, blockToFileShape, functionNameOf, parseAccessText, parseBlockFile, typeStemOf } from "./block.js";
-import type { Mode } from "./block.js";
 import { describeType, typesEqual } from "./types.js";
 import { t } from "./testing.js";
 
 const minimal = { responsibility: "Rate how well a posting matches the profile." };
 
 /** What is wrong with a file, as the loader would report it. */
-function problemsWith(raw: unknown, mode: Mode = "structured"): string[] {
-  const result = parseBlockFile(raw, "score-posting", mode);
+function problemsWith(raw: unknown): string[] {
+  const result = parseBlockFile(raw, "score-posting");
   return result.ok ? [] : result.problems;
 }
 
@@ -46,10 +45,11 @@ describe("reading a block file", () => {
     expect(problemsWith({ ...minimal, inputs: { "not-an-identifier": "string" } })).not.toEqual([]);
   });
 
-  it("says where a port type it cannot read is", () => {
-    expect(problemsWith({ ...minimal, inputs: { posting: "Posting[]" } })).toEqual([
-      expect.stringMatching(/^inputs\.posting\.type: Unknown type "Posting"/),
-    ]);
+  it("keeps a port type it cannot read as the words it was written in", () => {
+    // Refusing it would cost a correct diagram to gain a check nothing can
+    // rely on. What it costs the block is its contract, which the check says.
+    const block = blockFromFile({ ...minimal, inputs: { posting: "Posting[]" } }, "score-posting");
+    expect(block.inputs.posting!.type).toEqual({ kind: "text", text: "Posting[]" });
   });
 
   it("rejects fields it does not know, including ones the format no longer has", () => {
@@ -121,22 +121,17 @@ describe("reading a block file", () => {
   });
 });
 
-describe("a visual block", () => {
-  it("keeps types as the code writes them, without reading them", () => {
+describe("a block describing code that already exists", () => {
+  it("says where its code is, and keeps types as that code writes them", () => {
     const block = blockFromFile(
       { ...minimal, code: "src/score.ts#score", inputs: { posting: "Posting" }, outputs: { score: "Promise<number>" } },
       "score-posting",
-      "visual",
     );
 
     expect(block.inputs.posting!.type).toEqual({ kind: "text", text: "Posting" });
     expect(describeType(block.outputs.score!.type)).toBe("Promise<number>");
     expect(block.code).toBe("src/score.ts#score");
     expect(blockToFileShape(block)).toMatchObject({ code: "src/score.ts#score", inputs: { posting: "Posting" } });
-  });
-
-  it("is the only kind that says where its code is", () => {
-    expect(problemsWith({ ...minimal, code: "src/score.ts" })).toEqual([expect.stringContaining("only for visual mode")]);
   });
 });
 
@@ -176,14 +171,12 @@ describe("planned blocks", () => {
     outputs: { written: "whether it was recorded" },
   };
 
-  it("write their types as words, in a structured project as much as a visual one", () => {
-    for (const mode of ["structured", "visual"] as Mode[]) {
-      const block = blockFromFile(auditLog, "audit-log", mode);
-      expect(block.planned).toBe(true);
-      expect(block.inputs.entries!.type).toEqual({ kind: "text", text: "the ranked postings" });
-      // What was written is what reads back: the file is the whole record.
-      expect(blockToFileShape(block)).toEqual(auditLog);
-    }
+  it("write their types as words, which is usually what has not been decided", () => {
+    const block = blockFromFile(auditLog, "audit-log");
+    expect(block.planned).toBe(true);
+    expect(block.inputs.entries!.type).toEqual({ kind: "text", text: "the ranked postings" });
+    // What was written is what reads back: the file is the whole record.
+    expect(blockToFileShape(block)).toEqual(auditLog);
   });
 
   it("are not planned unless they say so", () => {
@@ -191,7 +184,7 @@ describe("planned blocks", () => {
   });
 
   it("cannot point at code, because there is none to point at", () => {
-    const result = parseBlockFile({ ...auditLog, code: "src/audit.ts" }, "audit-log", "visual");
+    const result = parseBlockFile({ ...auditLog, code: "src/audit.ts" }, "audit-log");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.problems.join(" ")).toMatch(/code that does not exist yet/);
   });

@@ -328,8 +328,9 @@ function renderPanes(): void {
 
   // Only worth offering with something open to close.
   element("close-project").hidden = !ui.dir;
-  // A visual project's code is the person's own, so there is nothing to generate.
-  element("generate-code").hidden = ui.snapshot?.mode !== "structured";
+  // Only worth offering where there is something to generate: a block whose
+  // code is held to a contract Fragmentor writes.
+  element("generate-code").hidden = !Object.values(ui.snapshot?.blocks ?? {}).some((block) => block.files.contract !== "");
 }
 
 /** Dragging the edge between the diagram and the inspector, or nudging it with the arrow keys. */
@@ -482,16 +483,15 @@ function renderStatus(): void {
     const warnings = snapshot.diagnostics.length - errors;
 
     bar.append(el("span", "project-name", snapshot.name));
-    bar.append(el("span", `mode-tag ${snapshot.mode}`, snapshot.mode));
     bar.append(el("span", undefined, snapshot.systems.map((system) => `${system.rootBlock}${system.displayName ? ` (${system.displayName})` : ""}`).join("  ")));
     bar.append(stat("blocks", all.length));
     bar.append(
-      stat(
-        snapshot.mode === "visual" ? "linked to code" : "implemented",
-        `${implemented}/${code.length}`,
-        implemented === code.length ? "good" : "warn",
-      ),
+      stat("code found", `${implemented}/${code.length}`, implemented === code.length ? "good" : "warn"),
     );
+    // How much of the code Fragmentor holds to a contract, and so checks and
+    // runs, rather than only draws.
+    const held = code.filter((block) => block.runnable).length;
+    if (held > 0) bar.append(stat("checked", `${held}/${code.length}`, held === code.length ? "good" : undefined));
     if (architecture > 0) bar.append(stat("architecture", architecture));
     // Folding is the one thing that takes blocks off the tree, so it is the
     // one thing worth saying about what is on screen.
@@ -521,23 +521,11 @@ function firstInstructions(): { headline: string; ask: string; note: string } {
   const existingCode = snapshot?.existingCode ?? false;
   const planFirst = snapshot?.start === "plan";
 
-  if (snapshot?.mode === "visual") {
-    return {
-      headline: "Nothing has been drawn yet.",
-      ask: existingCode
-        ? "Open your coding agent (Claude Code or Codex) in this folder and ask it to map the code into a Fragmentor diagram:"
-        : planFirst
-          ? "Open your coding agent (Claude Code or Codex) in this folder, describe what you want built, and ask it to draw the shape of it before it writes anything:"
-          : "Open your coding agent (Claude Code or Codex) in this folder and describe what you want built. It writes the program however suits it best and keeps the diagram describing what it wrote:",
-      note: "It learns how from FRAGMENTOR.md, and it never changes the code. The diagram appears here as soon as it defines the first system.",
-    };
-  }
-
   if (existingCode) {
     return {
-      headline: "No system has been defined here yet.",
-      ask: "Open your coding agent (Claude Code or Codex) in this folder and ask it to rebuild this code as blocks. Commit the code first: it is genuinely rewritten.",
-      note: "It learns how this project works from FRAGMENTOR.md. The diagram appears here as soon as it defines the first system.",
+      headline: "Nothing has been drawn yet.",
+      ask: "Open your coding agent (Claude Code or Codex) in this folder and ask it to map the code into a Fragmentor diagram:",
+      note: "It learns how from FRAGMENTOR.md. Every block points at the code it stands for, and the diagram appears here as soon as it defines the first system.",
     };
   }
 

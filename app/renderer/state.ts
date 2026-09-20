@@ -79,7 +79,7 @@ export interface UiState {
   setLegendCollapsed(value: boolean): void;
   /** How wide the inspector is, in pixels. Dragged by hand and kept between sessions. */
   inspectorWidth: number;
-  codeTab: "impl" | "contract";
+  codeTab: "code" | "contract";
   /** Once the view has been moved by hand, stop refitting it automatically. */
   userAdjusted: boolean;
   /**
@@ -191,7 +191,7 @@ export const ui: UiState = {
     }
   },
   inspectorWidth: readWidth(),
-  codeTab: "impl",
+  codeTab: "code",
   userAdjusted: false,
   edits: new Map(),
   benchInputs: new Map(),

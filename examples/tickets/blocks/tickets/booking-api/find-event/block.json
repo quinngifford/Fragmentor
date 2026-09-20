@@ -1,5 +1,6 @@
 {
   "responsibility": "Find the event someone asked about, or say there is none. Both booking and cancelling use it, so it sits beside them.",
+  "code": "src/booking/find-event.ts#findEvent",
   "inputs": {
     "eventId": "string"
   },

@@ -1,10 +1,10 @@
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Mode } from "../model/block.js";
 import { CAPABILITIES, isKnownCapability } from "../model/capabilities.js";
-import { getPack, isKnownLanguage } from "../lang/index.js";
-import { ROLES, isArchitecture } from "../model/roles.js";
-import { blocksRoot, manifestPath, systemOf, writeManifest } from "../project/project.js";
+import { getPack, normaliseLanguage } from "../lang/index.js";
+import { blocksRoot, manifestPath, writeManifest } from "../project/project.js";
+import { packFor, readAllCode } from "../project/code.js";
+import type { BlockCode } from "../project/code.js";
 import { boundStores } from "../project/stores.js";
 import type { LoadedBlock, Manifest, Project, Start } from "../project/project.js";
 import type { PortType } from "../model/types.js";
@@ -13,33 +13,29 @@ import { AGENTS_FILE, AGENTS_SCAFFOLD, CLAUDE_FILE, CLAUDE_SCAFFOLD, GUIDE_FILE,
 /**
  * Writes the generated half of a project to disk, one language pack per system.
  *
- * That half is small: each function block's contract, the shared capability
- * interfaces, and the agent's guide. They are regenerated every time, because
- * they are derived from the diagram and must never drift from it. Every
- * block's code is the agent's, whether or not the block has parts inside it,
- * because the diagram says what a system is made of and not what calls what.
- * A starting file is created where there is none, and is never overwritten.
+ * That half is small, and all of it sits inside `blocks/`: each function
+ * block's contract, the shared capability interfaces, and the agent's guide.
+ * Fragmentor writes no code at all. Every implementation is the agent's, at
+ * whatever path its block points at, and nothing of Fragmentor's is ever
+ * written into the codebase's own tree.
  *
- * A file is only written when its contents change. The application watches
- * the project, and a check that rewrote identical files would redraw the
- * window under the person using it every time the agent ran one.
+ * What is generated is regenerated every time, because it is derived from the
+ * diagram and must never drift from it. A file is only written when its
+ * contents change: the application watches the project, and a check that
+ * rewrote identical files would redraw the window under the person using it
+ * every time the agent ran one.
  *
- * A visual project has no generated code at all. Its code is the person's
- * own, and all Fragmentor keeps current there is the guide.
- *
- * Planned blocks have no code either: a planned block is a drawing of
- * something nobody has written. Neither has a block of any role but
- * `function`, such as a database or a component, which is not called. Whatever
- * Fragmentor generated for one before is taken away, so a contract cannot
- * outlive what it described.
+ * A contract is written for a block whose code imports it, and for no other:
+ * the import is what binds the two, so a contract nobody imports would be a
+ * file nobody reads. Whatever was written for a block before is taken away once
+ * that stops being true, so a contract cannot outlive what it described.
+ * `code.ts` says how a block comes to be bound.
  */
 
 export interface EmitResult {
   /** Files created or changed, relative to the project. */
   written: string[];
-  /** Implementations that already existed, and were left alone. */
-  skipped: string[];
-  /** Generated files taken away, because what they described is now planned. */
+  /** Generated files taken away, because Fragmentor no longer writes them. */
   removed: string[];
   problems: string[];
 }
@@ -110,7 +106,6 @@ export async function writeAgentFiles(
 
 /** What the person decides when starting a project. */
 export interface NewProjectSettings {
-  mode: Mode;
   granularity: 1 | 2 | 3 | 4 | 5;
   /** Null when the agent is left to choose. */
   language: string | null;
@@ -134,10 +129,9 @@ export async function startProject(
   const manifest: Manifest = {
     name: path.basename(path.resolve(dir)),
     goal: "",
-    mode: settings.mode,
     existingCode: settings.existingCode,
     start: settings.start,
-    ...(settings.language ? { language: settings.language } : {}),
+    ...(settings.language ? { language: normaliseLanguage(settings.language) } : {}),
     granularity: { level: settings.granularity, maxDepth: 4 },
     systems: [],
   };
@@ -159,9 +153,8 @@ function boundShapes(project: Project, node: LoadedBlock): Record<string, PortTy
   );
 }
 
-export async function emitProject(project: Project): Promise<EmitResult> {
+export async function emitProject(project: Project, known?: Map<string, BlockCode>): Promise<EmitResult> {
   const written: string[] = [];
-  const skipped: string[] = [];
   const removed: string[] = [];
   const problems: string[] = [];
 
@@ -169,14 +162,10 @@ export async function emitProject(project: Project): Promise<EmitResult> {
   const write = async (target: string, contents: string) => {
     if (await writeIfChanged(target, contents)) written.push(relative(target));
   };
-  /**
-   * Takes away a file that is Fragmentor's to take away, and only that.
-   * Anything else in a planned block's folder is someone's work, and is
-   * reported instead so that they decide what becomes of it.
-   */
-  const discard = async (target: string, ours: (source: string) => boolean = isGeneratedSource) => {
+  /** Takes away a file of Fragmentor's, and only ever one of Fragmentor's. */
+  const discard = async (target: string) => {
     const existing = await readIfPresent(target);
-    if (existing === null || !ours(existing)) return;
+    if (existing === null || !isGeneratedSource(existing)) return;
     await rm(target);
     removed.push(relative(target));
   };
@@ -184,13 +173,6 @@ export async function emitProject(project: Project): Promise<EmitResult> {
   // The guide does not depend on the project being valid, and is most needed
   // when it is not, so it is kept current before anything can be refused.
   await write(path.join(project.dir, GUIDE_FILE), agentGuide(project.manifest));
-  if (project.manifest.mode === "visual") return { written, skipped, removed, problems };
-
-  for (const system of project.systems) {
-    if (!isKnownLanguage(system.language)) {
-      problems.push(`The system "${system.rootBlock}" is written in "${system.language}", which Fragmentor has no language pack for.`);
-    }
-  }
 
   for (const node of project.byPath.values()) {
     for (const [name, cap] of Object.entries(node.block.capabilities)) {
@@ -202,84 +184,39 @@ export async function emitProject(project: Project): Promise<EmitResult> {
     }
   }
 
-  if (problems.length > 0) return { written, skipped, removed, problems };
+  if (problems.length > 0) return { written, removed, problems };
 
-  // One shared capabilities module per language actually used.
-  const languagesUsed = [...new Set(project.systems.map((system) => system.language))];
-  for (const language of languagesUsed) {
-    const pack = getPack(language);
-    await write(path.join(blocksRoot(project.dir), pack.capabilitiesFile), pack.capabilitiesSource());
-  }
+  const code = known ?? (await readAllCode(project));
+  const written_for = new Set<string>();
 
   for (const node of project.byPath.values()) {
-    const system = systemOf(project, node.path);
-    if (!system) {
-      problems.push(`"${node.path}" does not belong to any system in this project.`);
-      continue;
-    }
-    const pack = getPack(system.language);
-    const implFile = path.join(node.dir, pack.implFile);
-    const existing = (await readIfPresent(implFile))?.replace(/\r\n/g, "\n") ?? null;
+    const pack = packFor(project, node.path);
+    if (pack === null) continue;
+    const found = code.get(node.path);
 
-    /**
-     * What Fragmentor may rewrite or take away here: code it generated, or
-     * the starting point it created that nobody has filled in since.
-     *
-     * The starting point is matched exactly rather than by the "no
-     * implementation yet" marker inside it, because that phrase can appear in
-     * real code — in a branch someone has left unfinished, say — and here it
-     * decides what gets deleted.
-     */
-    const ours = (source: string) => isGeneratedSource(source) || source === pack.implScaffold(node.block);
-
-    /** Leaves the block with no code: Fragmentor's own goes, anyone else's is reported. */
-    const clearImpl = async (problem: string) => {
-      if (existing !== null && !ours(existing)) problems.push(problem);
-      else await discard(implFile, ours);
-    };
-
-    if (node.block.planned) {
-      // Its ports say what is meant to flow rather than what does, so there
-      // is no contract to write and nothing to write code against.
+    if (!found?.bound || found.contract === null) {
+      // Not a function, planned, written in words, or code that says nothing
+      // about a contract: anything written for it before describes something
+      // that is no longer there.
       await discard(path.join(node.dir, pack.contractFile));
-      await clearImpl(
-        `"${node.block.name}" is planned, so it is only a drawing, but ${relative(implFile)} holds code someone wrote. Take "planned" off the block if it is real now, or move that code out of it.`,
-      );
-      continue;
-    }
-
-    if (isArchitecture(node.block.role)) {
-      // It is not called, so it has no contract to be called through and no
-      // body to write. What it offers is described by "exposes" instead.
-      await discard(path.join(node.dir, pack.contractFile));
-      await clearImpl(
-        `"${node.block.name}" is ${ROLES[node.block.role].label.toLowerCase()} rather than a function, so it is not called and has no code of its own, but ${relative(implFile)} holds code someone wrote. Take the "role" off the block if it really is a function, or move that code into a block inside it.`,
-      );
       continue;
     }
 
     await write(
-      path.join(node.dir, pack.contractFile),
+      path.join(project.dir, ...found.contract.split("/")),
       pack.contractSource({ block: node.block, blockPath: node.path, bound: boundShapes(project, node) }),
     );
+    written_for.add(pack.id);
+  }
 
-    if (existing === null) {
-      await write(implFile, pack.implScaffold(node.block));
-    } else if (isGeneratedSource(existing)) {
-      // Code Fragmentor once generated from a block's wires. There are no
-      // wires to generate it from any more, and the file may already hold
-      // the agent's own code beneath the old first line, so it is pointed
-      // out rather than replaced.
-      problems.push(
-        `"${node.block.name}" has code Fragmentor generated from wires, which no longer exist, in ${relative(implFile)}. Write the block's own code there, calling the blocks it needs directly, without the "Generated" first line.`,
-      );
-    } else {
-      skipped.push(relative(implFile));
-    }
+  // The shared capabilities module, for each language something was written in.
+  // A project nothing is generated for has none, rather than one nobody imports.
+  for (const language of written_for) {
+    const pack = getPack(language);
+    await write(path.join(blocksRoot(project.dir), pack.capabilitiesFile), pack.capabilitiesSource());
   }
 
   written.sort();
-  skipped.sort();
   removed.sort();
-  return { written, skipped, removed, problems };
+  return { written, removed, problems };
 }

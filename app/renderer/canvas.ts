@@ -871,14 +871,14 @@ const ROLE_ICONS: Record<Role, string[]> = {
   client: ["M4 4 A2 2 0 1 1 8 4 A2 2 0 1 1 4 4", "M1.8 10.6 C1.8 7.6 10.2 7.6 10.2 10.6"],
 };
 
-/** Only TypeScript blocks in a structured project run, so only they can be paused. */
+/** Only a block Fragmentor runs can be paused on the way through. */
 function canPause(block: SnapshotBlock): boolean {
-  return ui.snapshot?.mode === "structured" && block.language === "typescript" && !block.planned && !block.architecture;
+  return block.runnable;
 }
 
 /** Whether there is code to show, and whether there is anything else worth a window of its own. */
 export function hasCode(block: SnapshotBlock): boolean {
-  return block.code !== null || (!block.architecture && !block.planned && ui.snapshot?.mode === "structured");
+  return block.code !== null;
 }
 
 export function hasDetails(block: SnapshotBlock): boolean {

@@ -1,6 +1,6 @@
-import type { CancelBookingInput, CancelBookingOutput, CancelBookingCaps } from "./contract.js";
-import { findEvent } from "../find-event/impl.js";
-import { refundFor } from "../pricing/refund-for/impl.js";
+import type { CancelBookingInput, CancelBookingOutput, CancelBookingCaps } from "../../blocks/tickets/booking-api/cancel-booking/contract.js";
+import { findEvent } from "./find-event.js";
+import { refundFor } from "./refund-for.js";
 
 /** Cancel one booking, put its seats back on sale, and say how much is refunded. */
 export async function cancelBooking(input: CancelBookingInput, caps: CancelBookingCaps): Promise<CancelBookingOutput> {

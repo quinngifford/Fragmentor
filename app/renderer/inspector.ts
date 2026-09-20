@@ -87,7 +87,7 @@ function codeSection(block: SnapshotBlock): HTMLElement {
   const language = languageOf(block.language, block.files[ui.codeTab]);
 
   const tabs = el("div", "code-tabs");
-  for (const [key, label] of [["impl", block.files.impl], ["contract", block.files.contract]] as const) {
+  for (const [key, label] of [["code", block.files.code], ["contract", block.files.contract]] as const) {
     const chip = el("button", "chip", label);
     chip.setAttribute("aria-pressed", String(ui.codeTab === key));
     chip.addEventListener("click", () => {
@@ -111,7 +111,9 @@ function codeSection(block: SnapshotBlock): HTMLElement {
       el(
         "p",
         "bench-note",
-        "This file has not been generated yet. Use Generate code.",
+        ui.codeTab === "contract"
+          ? "This block's contract has not been written yet. Its code imports it, and `fragmentor check` writes it."
+          : "The code this block points at is not there.",
       ),
     );
     return node;
@@ -171,9 +173,9 @@ function codeSection(block: SnapshotBlock): HTMLElement {
       if (!result.ok) {
         ui.status = { text: `Could not save ${block.path}: ${result.error}`, tone: "bad" };
       } else {
-        block.sources.impl = editor.value;
+        block.sources.code = editor.value;
         ui.edits.delete(block.path);
-        ui.status = { text: `Saved ${block.path}/${block.files.impl}`, tone: "good" };
+        ui.status = { text: `Saved ${block.files.code}`, tone: "good" };
       }
       notify();
     })();
@@ -197,7 +199,7 @@ function codeSection(block: SnapshotBlock): HTMLElement {
   return node;
 }
 
-/** The lines a visual block points at, numbered as in the file, with the one it names picked out. */
+/** The lines a block points at, numbered as in the file, with the one it names picked out. */
 function excerptOf(code: SnapshotCode, language: ReturnType<typeof languageOf>): HTMLElement {
   const pre = el("pre", "code code-excerpt");
   codeLines(code.excerpt ?? "", language).forEach((coloured, i) => {
@@ -210,7 +212,7 @@ function excerptOf(code: SnapshotCode, language: ReturnType<typeof languageOf>):
   return pre;
 }
 
-/** In a visual project a block's code is the person's own, shown and never changed. */
+/** Code Fragmentor only draws: shown, never edited from here. */
 function linkedCodeSection(block: SnapshotBlock): HTMLElement {
   const node = section("Source");
   const code = block.code;
@@ -237,7 +239,10 @@ function linkedCodeSection(block: SnapshotBlock): HTMLElement {
   reveal.addEventListener("click", () => {
     void window.fragmentor.revealCode(requireSnapshot().dir, code.file);
   });
-  foot.append(reveal, el("p", "bench-note", "Visual mode: Fragmentor shows this code and never changes it."));
+  foot.append(
+    reveal,
+    el("p", "bench-note", block.drawnBecause ?? "Fragmentor shows this code and never changes it."),
+  );
   node.append(foot);
   return node;
 }
@@ -342,7 +347,7 @@ function runnableEntries(block: SnapshotBlock): { entry: string; answering: Snap
     const route = whatHappens(block, entry.name);
     const last = route.at(-1);
     if (route.length < 2 || !last || last.block.architecture) return [];
-    if (!last.block.implemented || last.block.planned) return [];
+    if (!last.block.runnable || block.planned) return [];
 
     return [
       {
@@ -531,8 +536,6 @@ function accessPanel(panel: HTMLElement, arrow: AccessArrow): void {
 }
 
 function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
-  const visual = requireSnapshot().mode === "visual";
-
   const head = el("div", "insp-head");
   head.append(el("h2", undefined, block.name), el("div", "insp-id", block.path));
 
@@ -540,25 +543,19 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   // For a database or a queue, what it is matters more than whether it has
   // blocks inside it, so the role takes the first badge.
   badges.append(roleBadge(block));
-  // What state a block is in only means something for one Fragmentor writes
-  // or runs. A service is code — its blocks are right there inside it — so
-  // saying "not code" of it was worse than saying nothing. In a visual
-  // project it still points at a file, and that is worth saying.
+  // What state a block is in: whether the code it points at is there, and
+  // whether Fragmentor holds that code to a contract or only draws it. A block
+  // that names no code at all — a service, a group of parts — says nothing,
+  // because "not code" of a service was worse than saying nothing.
   const state = block.planned
     ? "planned"
-    : block.architecture
-      ? visual
-        ? block.implemented
-          ? "linked to code"
-          : "not linked"
-        : null
-      : visual
-        ? block.implemented
-          ? "linked to code"
-          : "not linked"
-        : block.implemented
-          ? "implemented"
-          : "specified";
+    : block.code === null
+      ? null
+      : !block.implemented
+        ? "code not found"
+        : block.runnable
+          ? "checked and runnable"
+          : "drawn";
   if (state) badges.append(el("span", `badge state${block.planned ? " planned" : ""}`, state));
   if (block.language) badges.append(el("span", "badge", block.language));
   head.append(badges);
@@ -628,20 +625,18 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
 
     // Pressing the button, rather than only following where it leads. The
     // route ends at code, and the code is what runs.
-    if (!visual) {
-      const runnable = runnableEntries(block);
-      if (runnable.length > 0) {
-        const trying = group("Running it");
-        for (const { entry, answering, route } of runnable) {
-          trying.append(entryBenchSection(entry, answering, route));
-        }
-        panel.append(trying);
+    const runnable = runnableEntries(block);
+    if (runnable.length > 0) {
+      const trying = group("Running it");
+      for (const { entry, answering, route } of runnable) {
+        trying.append(entryBenchSection(entry, answering, route));
       }
+      panel.append(trying);
     }
 
-    // In a visual project even a service points at real code, and reading it
-    // is the whole reason the diagram is there.
-    if (visual) {
+    // A block that is not called can still point at the module standing for
+    // it, and reading that is often why the diagram is there at all.
+    if (block.code !== null) {
       const code = group("Code");
       code.append(linkedCodeSection(block));
       panel.append(code);
@@ -669,12 +664,14 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
     );
     code.append(none);
   } else {
-    code.append(visual ? linkedCodeSection(block) : codeSection(block));
+    // Code held to a contract is Fragmentor's to offer for editing, beside the
+    // contract holding it. Code it only draws is shown as it is.
+    code.append(block.runnable ? codeSection(block) : linkedCodeSection(block));
   }
   panel.append(code);
-  // Nothing beneath this point applies to a block nobody has written: there
+  // Nothing beneath this point applies to a block Fragmentor cannot run: there
   // is nothing to run, and nothing a test could be run against.
-  if (visual || block.planned) return;
+  if (!block.runnable || block.planned) return;
 
   const testing = group("Testing");
   const [bench, cases] = benchSections(block);
@@ -757,7 +754,7 @@ export function renderInspector(): void {
   const head = el("div", "insp-head");
   head.append(el("h2", undefined, snapshot.name), el("div", "insp-id", snapshot.dir));
   const badges = el("div", "badges");
-  badges.append(el("span", "badge", `${snapshot.mode} mode`), el("span", "badge", `granularity ${snapshot.granularity.level}`));
+  badges.append(el("span", "badge", `granularity ${snapshot.granularity.level}`));
   if (snapshot.language) badges.append(el("span", "badge", snapshot.language));
   head.append(badges);
   panel.append(head);
@@ -783,9 +780,7 @@ export function renderInspector(): void {
     el(
       "p",
       "bench-note",
-      snapshot.mode === "visual"
-        ? "Visual mode: the diagram describes this project's code, which Fragmentor never runs or changes."
-        : "Systems in a project are separate programs. They are shown together but never connected, which is why each can be written in its own language.",
+      "Systems in a project are separate programs. They are shown together but never connected, which is why each can be written in its own language.",
     ),
   );
 }

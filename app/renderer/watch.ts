@@ -389,9 +389,9 @@ function renderRunBar(): void {
 /* Inspector                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/** Only TypeScript blocks in a structured project run, so only they can be watched or paused. */
+/** Only a block Fragmentor runs can be watched or paused. */
 export function canWatch(block: SnapshotBlock): boolean {
-  return ui.snapshot?.mode === "structured" && block.language === "typescript";
+  return block.runnable;
 }
 
 function json(value: unknown): string {

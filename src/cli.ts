@@ -24,8 +24,7 @@ import type { CaseResult } from "./run/run.js";
 const USAGE = `Usage: fragmentor <command> [--project <folder>]
 
 Commands:
-  init --mode <structured|visual> --granularity <1-5> [--language <language>]
-       [--existing-code] [--start <plan|build>]
+  init --granularity <1-5> [--language <language>] [--existing-code] [--start <plan|build>]
                          Start a project in a folder: writes fragmentor.json, FRAGMENTOR.md, AGENTS.md and CLAUDE.md.
                          --existing-code says the folder already holds code to work from.
                          --start plan draws the architecture as planned blocks before any of it is built.
@@ -67,18 +66,11 @@ async function findProject(start: string): Promise<string | null> {
 /* -------------------------------------------------------------------------- */
 
 function settingsFrom(options: Map<string, string>): NewProjectSettings | string {
-  const mode = options.get("mode");
   const granularity = Number(options.get("granularity"));
-  if (mode !== "structured" && mode !== "visual") {
-    return "fragmentor init needs --mode structured (Fragmentor generates, checks and runs the code) or --mode visual (Fragmentor only draws it).";
-  }
   if (![1, 2, 3, 4, 5].includes(granularity)) {
     return "fragmentor init needs --granularity, from 1 (a few large blocks) to 5 (many small ones).";
   }
   const language = options.get("language") ?? null;
-  if (mode === "structured" && language !== null && !isKnownLanguage(language)) {
-    return `Fragmentor cannot generate ${language} code. For a structured project use --language typescript or --language python, or leave it to the agent.`;
-  }
   const start = options.get("start") ?? "build";
   if (start !== "plan" && start !== "build") {
     return "fragmentor init needs --start plan (draw the architecture as planned blocks first) or --start build (build it as you go).";
@@ -87,7 +79,6 @@ function settingsFrom(options: Map<string, string>): NewProjectSettings | string
     return "Code that already exists is described or rebuilt, not planned, so --existing-code and --start plan cannot go together.";
   }
   return {
-    mode,
     granularity: granularity as NewProjectSettings["granularity"],
     language,
     existingCode: options.has("existing-code"),
@@ -113,7 +104,7 @@ async function init(dir: string, options: Map<string, string>): Promise<number> 
       return 1;
     }
     files = await startProject(dir, settings);
-    console.log(`Started a ${settings.mode} Fragmentor project in ${dir}.`);
+    console.log(`Started a Fragmentor project in ${dir}.`);
   }
 
   for (const file of files.written) console.log(`  wrote  ${file}`);
@@ -140,10 +131,9 @@ function problemLine(diagnostic: ProjectDiagnostic): string {
 }
 
 function formatReport(report: CheckReport): string {
-  const visual = report.mode === "visual";
   const lines: string[] = [];
   const systems = report.systems.map((system) => `${system.rootBlock} (${system.displayName})`).join(", ");
-  lines.push(`${report.name}  ${report.dir}  (${report.mode} mode)`);
+  lines.push(`${report.name}  ${report.dir}`);
   lines.push(
     report.systems.length === 0
       ? "No systems yet. Add them to fragmentor.json, as FRAGMENTOR.md describes."
@@ -165,13 +155,14 @@ function formatReport(report: CheckReport): string {
     lines.push("  everything was already up to date");
   }
   for (const file of report.generated.written) lines.push(`  wrote  ${file}`);
-  for (const file of report.generated.removed) lines.push(`  took away  ${file}, because the block it described has no code`);
+  for (const file of report.generated.removed) lines.push(`  took away  ${file}, because Fragmentor no longer writes it`);
 
   lines.push("", "Code");
-  if (visual) lines.push("  visual mode: Fragmentor draws the code but never checks, runs or changes it");
-  for (const system of visual ? [] : report.systems) {
+  for (const system of report.systems) {
     if (!system.codeChecked) {
-      lines.push(`  ${system.rootBlock}: ${system.displayName} code is not checked yet`);
+      lines.push(`  ${system.rootBlock}: ${system.displayName || "this system's language"} code is drawn, not checked or run`);
+    } else if (system.codeHeld === 0) {
+      lines.push(`  ${system.rootBlock}: no block's code imports its contract, so all of it is drawn rather than checked`);
     } else if (system.codeProblems.length === 0) {
       lines.push(`  ${system.rootBlock}: typechecks against its contracts, and imports only what it can run with`);
     }
@@ -179,6 +170,13 @@ function formatReport(report: CheckReport): string {
       const where = problem.file ? `${problem.file}:${problem.line}:${problem.column}` : system.rootBlock;
       lines.push(`  ERROR  ${where}  ${indent(problem.message, "         ")}`);
     }
+  }
+
+  // A block Fragmentor is quietly not checking is worse than one it says it
+  // cannot, so each of them says why here.
+  if (report.drawnOnly.length > 0) {
+    lines.push("", "Drawn, not checked");
+    for (const drawn of report.drawnOnly) lines.push(`  ${drawn.blockPath}: ${drawn.reason}`);
   }
 
   // Neither a plan nor a piece of the architecture is unfinished work, so
@@ -201,10 +199,10 @@ function formatReport(report: CheckReport): string {
   if (built === 0) {
     lines.push("  nothing here is Fragmentor's to build: every block is a plan or a piece of the architecture");
   } else if (report.unimplemented.length === 0 && report.untested.length === 0) {
-    lines.push(visual ? "  every block points at its code" : "  every block is implemented and has tests");
+    lines.push("  every block points at code that is there, and every block Fragmentor runs has tests");
   }
   if (report.unimplemented.length > 0) {
-    lines.push(`  ${visual ? "not linked to code yet" : "no implementation yet"} (${report.unimplemented.length} of ${built}):`);
+    lines.push(`  the code is not there (${report.unimplemented.length} of ${built}):`);
     lines.push(...report.unimplemented.map((blockPath) => `    ${blockPath}`));
   }
   if (report.untested.length > 0) {
@@ -213,7 +211,7 @@ function formatReport(report: CheckReport): string {
   }
 
   const warnings = report.problems.filter((d) => d.severity === "warning").length;
-  const next = visual ? "" : " Run `fragmentor test` to run the tests.";
+  const next = report.untested.length === report.blockCount ? "" : " Run `fragmentor test` to run the tests.";
   lines.push("");
   lines.push(
     report.errorCount > 0
@@ -275,11 +273,6 @@ async function test(dir: string, requested: string[]): Promise<number> {
     return 1;
   }
 
-  if (project.manifest.mode === "visual") {
-    console.log("This is a visual project: Fragmentor draws its code but never runs it, so there are no tests to run.");
-    return 0;
-  }
-
   const unknown = requested.filter((blockPath) => !project.byPath.has(blockPath));
   if (unknown.length > 0) {
     const example = [...project.byPath.keys()].at(-1) ?? "";
@@ -332,6 +325,10 @@ async function test(dir: string, requested: string[]): Promise<number> {
 
   const ran = counts.passed + counts.failed + counts.error + counts.unchecked + counts.skipped;
   console.log("");
+  if (ran === 0 && untested.length === 0 && inThePlan.length === 0) {
+    console.log("There is nothing to test yet: this project has no blocks Fragmentor can run.");
+    return 0;
+  }
   if (ran === 0 && untested.length > 0) {
     console.log("No block has saved tests yet. Add a cases.json beside a block.json; FRAGMENTOR.md describes the format.");
     return 0;
@@ -353,7 +350,7 @@ async function test(dir: string, requested: string[]): Promise<number> {
 /* Entry                                                                       */
 /* -------------------------------------------------------------------------- */
 
-const OPTIONS = new Set(["project", "mode", "granularity", "language", "start"]);
+const OPTIONS = new Set(["project", "granularity", "language", "start"]);
 /** Options that are simply there or not, and take no value. */
 const FLAGS = new Set(["existing-code"]);
 

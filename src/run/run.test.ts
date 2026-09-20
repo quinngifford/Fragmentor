@@ -18,6 +18,10 @@ const blockOf = (events: RunEvent[], id: number) => callsIn(events).find((call) 
  * files, one calling another for several items at once, one calling a block
  * beside it, one returning nothing, and a system in a language that cannot
  * run yet.
+ *
+ * Its code happens to sit in the blocks' own folders, which is allowed and is
+ * not required: what makes each block runnable is its code importing the
+ * contract Fragmentor wrote for it.
  */
 
 let projectDir: string;
@@ -26,7 +30,6 @@ const files: Record<string, unknown> = {
   "fragmentor.json": {
     name: "Files",
     goal: "",
-    mode: "structured",
     existingCode: false,
     start: "build",
     granularity: { level: 3, maxDepth: 4 },
@@ -38,11 +41,13 @@ const files: Record<string, unknown> = {
   "blocks/files/block.json": { role: "component", responsibility: "Reads and counts the lines of files." },
   "blocks/files/count-lines/block.json": {
     responsibility: "Count the lines of several files at once.",
+    code: "blocks/files/count-lines/impl.ts#countLines",
     inputs: { paths: "string[]" },
     outputs: { counts: "number[]" },
     capabilities: { files: "FileSystem" },
   },
-  "blocks/files/count-lines/impl.ts": `import { readLines } from "../read-lines/impl.js";
+  "blocks/files/count-lines/impl.ts": `import type { CountLinesCaps } from "./contract.js";
+import { readLines } from "../read-lines/impl.js";
 
 export async function countLines(input: { paths: string[] }, caps: any) {
   const read = await Promise.all(input.paths.map((path) => readLines({ path }, caps)));
@@ -51,11 +56,13 @@ export async function countLines(input: { paths: string[] }, caps: any) {
 `,
   "blocks/files/read-lines/block.json": {
     responsibility: "Read a file's lines, leaving out the blank ones.",
+    code: "blocks/files/read-lines/impl.ts#readLines",
     inputs: { path: "string" },
     outputs: { lines: "string[]" },
     capabilities: { files: "FileSystem" },
   },
-  "blocks/files/read-lines/impl.ts": `import { withoutBlanks } from "../without-blanks/impl.js";
+  "blocks/files/read-lines/impl.ts": `import type { ReadLinesCaps } from "./contract.js";
+import { withoutBlanks } from "../without-blanks/impl.js";
 
 export async function readLines(input: { path: string }, caps: any) {
   const text = await caps.files.readFile(input.path);
@@ -64,24 +71,38 @@ export async function readLines(input: { path: string }, caps: any) {
 `,
   "blocks/files/without-blanks/block.json": {
     responsibility: "Leave out lines with nothing on them.",
+    code: "blocks/files/without-blanks/impl.ts#withoutBlanks",
     inputs: { lines: "string[]" },
     outputs: { lines: "string[]" },
   },
-  "blocks/files/without-blanks/impl.ts": `export async function withoutBlanks(input: { lines: string[] }, caps: unknown) {
+  "blocks/files/without-blanks/impl.ts": `import type { WithoutBlanksCaps } from "./contract.js";
+
+export async function withoutBlanks(input: { lines: string[] }, caps: unknown) {
   return { lines: input.lines.filter((line) => line.trim() !== "") };
 }
 `,
   "blocks/files/write-note/block.json": {
     responsibility: "Write a note to a file. It returns nothing.",
+    code: "blocks/files/write-note/impl.ts#writeNote",
     inputs: { path: "string", text: "string" },
     capabilities: { files: "FileSystem" },
   },
-  "blocks/files/write-note/impl.ts": `export async function writeNote(input: { path: string; text: string }, caps: any) {
+  "blocks/files/write-note/impl.ts": `import type { WriteNoteCaps } from "./contract.js";
+
+export async function writeNote(input: { path: string; text: string }, caps: any) {
   await caps.files.writeFile(input.path, input.text);
 }
 `,
   "blocks/py/block.json": { role: "component", responsibility: "Python, which cannot run yet." },
-  "blocks/py/shout/block.json": { responsibility: "Shout.", inputs: { text: "string" }, outputs: { text: "string" } },
+  "blocks/py/shout/block.json": {
+    responsibility: "Shout.",
+    code: "blocks/py/shout/impl.py#shout",
+    inputs: { text: "string" },
+    outputs: { text: "string" },
+  },
+  "blocks/py/shout/impl.py": `async def shout(value, caps):
+    return {"text": value.text.upper()}
+`,
   "a.txt": "one\ntwo\n\nthree\n",
   "b.txt": "x\n",
   "c.txt": "",

@@ -1,4 +1,4 @@
-import type { RefundForInput, RefundForOutput, RefundForCaps } from "./contract.js";
+import type { RefundForInput, RefundForOutput, RefundForCaps } from "../../blocks/tickets/booking-api/pricing/refund-for/contract.js";
 
 /** What is kept back for each seat when a booking is cancelled. */
 const FEE_PER_SEAT = 2;

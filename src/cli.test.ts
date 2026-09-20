@@ -33,14 +33,13 @@ describe("the fragmentor command", () => {
   it("starts a project with the settings a person chose, then says what it still needs", async () => {
     const refused = fragmentor(["init"], dir);
     expect(refused.status).toBe(1);
-    expect(refused.output).toContain("--mode");
+    expect(refused.output).toContain("--granularity");
 
-    const init = fragmentor(["init", "--mode", "structured", "--granularity", "3", "--language", "typescript"], dir);
+    const init = fragmentor(["init", "--granularity", "3", "--language", "typescript"], dir);
     expect(init.status).toBe(0);
     expect(init.output).toContain("wrote  fragmentor.json");
     expect(init.output).toContain("wrote  FRAGMENTOR.md");
     expect(JSON.parse(await readFile(path.join(dir, "fragmentor.json"), "utf8"))).toMatchObject({
-      mode: "structured",
       language: "typescript",
       granularity: { level: 3 },
       systems: [],
@@ -52,7 +51,7 @@ describe("the fragmentor command", () => {
   }, 30_000);
 
   it("records where the project starts and whether it starts as a plan", async () => {
-    expect(fragmentor(["init", "--mode=structured", "--granularity=3", "--language=typescript", "--start=plan"], dir).status).toBe(0);
+    expect(fragmentor(["init", "--granularity=3", "--language=typescript", "--start=plan"], dir).status).toBe(0);
     expect(JSON.parse(await readFile(path.join(dir, "fragmentor.json"), "utf8"))).toMatchObject({
       existingCode: false,
       start: "plan",
@@ -61,17 +60,17 @@ describe("the fragmentor command", () => {
   }, 30_000);
 
   it("refuses to both rebuild existing code and plan it from nothing", () => {
-    const refused = fragmentor(["init", "--mode=structured", "--granularity=3", "--existing-code", "--start=plan"], dir);
+    const refused = fragmentor(["init", "--granularity=3", "--existing-code", "--start=plan"], dir);
     expect(refused.status).toBe(1);
     expect(refused.output).toContain("cannot go together");
   }, 30_000);
 
-  it("has nothing to test in a visual project", () => {
-    expect(fragmentor(["init", "--mode=visual", "--granularity=2"], dir).status).toBe(0);
+  it("has nothing to test in a project with no blocks yet", () => {
+    expect(fragmentor(["init", "--granularity=2"], dir).status).toBe(0);
 
     const result = fragmentor(["test"], dir);
     expect(result.status).toBe(0);
-    expect(result.output).toContain("visual project");
+    expect(result.output).toContain("nothing to test yet");
   }, 30_000);
 
   it("finds the project from inside a block's folder, and passes the example", async () => {

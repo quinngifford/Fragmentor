@@ -1,5 +1,6 @@
 {
   "responsibility": "Cancel one booking, put its seats back on sale, and say how much is refunded.",
+  "code": "src/booking/cancel-booking.ts#cancelBooking",
   "inputs": {
     "bookingId": "string"
   },

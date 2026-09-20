@@ -1,10 +1,9 @@
 {
   "name": "Messenger",
   "goal": "Let people sign in, send each other messages, and see a message arrive as soon as it is sent.",
-  "mode": "visual",
   "existingCode": true,
   "start": "build",
-  "language": "TypeScript",
+  "language": "typescript",
   "granularity": {
     "level": 3,
     "maxDepth": 5

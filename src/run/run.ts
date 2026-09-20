@@ -1,8 +1,8 @@
-import { getPack } from "../lang/index.js";
-import { isArchitecture } from "../model/roles.js";
 import { checkValue } from "../model/types.js";
 import type { PortType } from "../model/types.js";
 import { loadProject, systemOf } from "../project/project.js";
+import { packFor, readAllCode } from "../project/code.js";
+import type { BlockCode } from "../project/code.js";
 import { storesForRun } from "../project/stores.js";
 import type { LoadedBlock, LoadedSystem, Project } from "../project/project.js";
 import type { LanguagePack } from "../lang/pack.js";
@@ -117,14 +117,20 @@ interface Prepared {
   node: LoadedBlock;
   system: LoadedSystem;
   pack: LanguagePack;
+  /** Where every block's code is, and which of them are held to a contract. */
+  code: Map<string, BlockCode>;
 }
 
-/** Everything needed to run a block, or the reason it cannot be run. */
+/**
+ * Everything needed to run a block, or the reason it cannot be run.
+ *
+ * Fragmentor calls a block with a value and `caps` and holds what comes back to
+ * its contract, so the only code it can run is code written to be called that
+ * way — which is the code that imports its contract. Anything else is drawn and
+ * read, and says so here rather than failing inside the harness.
+ */
 async function prepare(projectDir: string, blockPath: string): Promise<Prepared | { error: string }> {
   const project = await loadProject(projectDir);
-  if (project.manifest.mode === "visual") {
-    return { error: "This is a visual project: Fragmentor draws its code but never runs it." };
-  }
 
   const node = project.byPath.get(blockPath);
   if (!node) return { error: `There is no block at ${blockPath}.` };
@@ -132,12 +138,26 @@ async function prepare(projectDir: string, blockPath: string): Promise<Prepared 
   const system = systemOf(project, blockPath);
   if (!system) return { error: `${blockPath} does not belong to any system in this project.` };
 
-  const pack = getPack(system.language);
+  const pack = packFor(project, blockPath);
+  if (pack === null) {
+    return {
+      error: `Fragmentor has no language pack for ${system.language || "this system's language"}, so it draws this code but cannot run it.`,
+    };
+  }
   if (!pack.canRun) {
     return { error: `Fragmentor cannot run ${pack.displayName} blocks yet, so this one can only be read.` };
   }
 
-  return { project, node, system, pack };
+  const code = await readAllCode(project);
+  const own = code.get(blockPath)!;
+  if (own.problem !== null) {
+    return { error: `"${node.block.name}" points at code that is not there: ${own.problem}` };
+  }
+  if (!own.bound) {
+    return { error: own.drawnBecause ?? `Fragmentor does not hold "${node.block.name}" to a contract, so it cannot run it.` };
+  }
+
+  return { project, node, system, pack, code };
 }
 
 interface Watching {
@@ -199,12 +219,14 @@ async function executeOnce(
   const run = startCompiledBlock({
     compiledDir: compiled.dir,
     blockPath,
-    functionName: pack.functionName(node.block.id),
-    // Every function in the system, not only those inside the block being
-    // run: code calls whatever block it needs, wherever that block sits.
-    blocks: [...project.byPath.values()]
-      .filter((each) => systemOf(project, each.path) === prepared.system && !each.block.planned && !isArchitecture(each.block.role))
-      .map((each) => ({ path: each.path, functionName: pack.functionName(each.block.id) })),
+    functionName: prepared.code.get(blockPath)!.functionName!,
+    // Every block of the system Fragmentor can run, not only those inside the
+    // one being run: code calls whatever block it needs, wherever it sits.
+    blocks: [...compiled.files].map(([each, file]) => ({
+      path: each,
+      functionName: prepared.code.get(each)!.functionName!,
+      file,
+    })),
     capabilities: Object.entries(node.block.capabilities).map(([name, cap]) => {
       const bound = stores.find((store) => store.port === name);
       return {
@@ -279,7 +301,7 @@ export function startRun(request: RunRequest): { control: RunControl; outcome: P
     const prepared = await prepare(request.projectDir, request.blockPath);
     if ("error" in prepared) return failure(prepared.error);
 
-    const compiled = await compileSystem(prepared.project, prepared.system.rootBlock);
+    const compiled = await compileSystem(prepared.project, prepared.system.rootBlock, prepared.code);
     try {
       if (stopped) return failure("The run was stopped before it started.", { stopped: true });
       return await executeOnce(prepared, compiled, request.blockPath, request.input, request.stores ?? {}, request.timeoutMs ?? 15_000, {
@@ -322,7 +344,7 @@ export async function runCases(projectDir: string, blockPath: string): Promise<C
     }));
   }
 
-  const compiled = await compileSystem(prepared.project, prepared.system.rootBlock);
+  const compiled = await compileSystem(prepared.project, prepared.system.rootBlock, prepared.code);
   try {
     const results: CaseResult[] = [];
     for (const testCase of cases) {

@@ -90,7 +90,7 @@ describe("the TypeScript pack", () => {
   it("names things the way TypeScript does", () => {
     expect(pack.functionName("score-posting")).toBe("scorePosting");
     expect(pack.typeName("score-posting", "Input")).toBe("ScorePostingInput");
-    expect(pack.implFile).toBe("impl.ts");
+    expect(pack.contractFile).toBe("contract.ts");
   });
 
   it("writes a contract that compiles", () => {
@@ -112,9 +112,11 @@ describe("the TypeScript pack", () => {
     expect(source).toContain("writeFile(path: string, contents: string): Promise<void>;");
   });
 
-  it("recognises its own untouched scaffold", () => {
-    expect(pack.isUnimplemented(pack.implScaffold(scorePosting))).toBe(true);
-    expect(pack.isUnimplemented("export async function scorePosting() { return { score: 1 }; }")).toBe(false);
+  it("says what a block's code imports to be held to its contract", () => {
+    // What is compiled and run is JavaScript, so that is what an import names.
+    expect(pack.contractSpecifier("../../blocks/rank-jobs/score-posting/contract.ts")).toBe(
+      "../../blocks/rank-jobs/score-posting/contract.js",
+    );
   });
 
   it("gives a block that returns nothing a result of void, not an empty object", () => {
@@ -123,7 +125,6 @@ describe("the TypeScript pack", () => {
     expect(typeScriptErrors(source)).toEqual([]);
     expect(source).toContain("export const clearCacheInput = z.object({});");
     expect(source).toContain("export const clearCacheOutput = z.void();");
-    expect(pack.implScaffold(clearCache)).toContain("Promise<ClearCacheOutput>");
   });
 });
 
@@ -133,7 +134,7 @@ describe("the Python pack", () => {
   it("names things the way Python does", () => {
     expect(pack.functionName("score-posting")).toBe("score_posting");
     expect(pack.typeName("score-posting", "Input")).toBe("ScorePostingInput");
-    expect(pack.implFile).toBe("impl.py");
+    expect(pack.contractFile).toBe("contract.py");
   });
 
   it("gives every anonymous object a named model, which TypeScript does not need", () => {
@@ -168,14 +169,14 @@ describe("the Python pack", () => {
 
   it.skipIf(!python)("writes Python that actually parses", () => {
     expect(pythonErrors(pack.contractSource({ block: scorePosting, blockPath: "rank-jobs/score-posting" }))).toBe("");
-    expect(pythonErrors(pack.implScaffold(scorePosting))).toBe("");
     expect(pythonErrors(pack.capabilitiesSource())).toBe("");
     expect(pythonErrors(pack.contractSource({ block: clearCache, blockPath: "app/clear-cache" }))).toBe("");
   });
 
-  it("recognises its own untouched scaffold", () => {
-    expect(pack.isUnimplemented(pack.implScaffold(scorePosting))).toBe(true);
-    expect(pack.isUnimplemented("async def score_posting(value, caps):\n    return {}")).toBe(false);
+  it("holds no Python block to its contract, because how one file reaches another is unsettled", () => {
+    expect(pack.contractSpecifier("../../blocks/rank-jobs/score-posting/contract.py")).toBeNull();
+    expect(pack.canCheck).toBe(false);
+    expect(pack.canRun).toBe(false);
   });
 });
 

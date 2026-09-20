@@ -72,20 +72,20 @@ function codeView(text: string, language: ReturnType<typeof languageOf>, startsA
 }
 
 /**
- * The code a block stands for. In a structured project that is the file
- * Fragmentor holds for it; in a visual one it is whatever the block points
- * at, read off disk so the window shows the whole of it rather than the few
- * lines the inspector has room for.
+ * The code a block stands for, whole: the file it points at, read off disk
+ * rather than from the snapshot, which carries only the few lines the
+ * inspector has room for. Code Fragmentor holds to a contract is already in
+ * hand, because that is the code it offers to edit.
  */
 export async function openCodeWindow(block: SnapshotBlock): Promise<void> {
   const snapshot = requireSnapshot();
   const body = el("div", "window-sections");
-  const language = languageOf(block.language, block.code?.file ?? block.files.impl);
+  const language = languageOf(block.language, block.code?.file ?? block.files.code);
 
-  const own = block.sources.impl;
+  const own = block.sources.code;
   if (own !== null && own !== undefined) {
-    body.append(codeView(own, language, null));
-    openWindow(block.name, `${block.path}/${block.files.impl}`, body);
+    body.append(codeView(own, language, block.code?.line ?? null));
+    openWindow(block.name, block.files.code, body);
     return;
   }
 
@@ -121,9 +121,7 @@ export async function openCodeWindow(block: SnapshotBlock): Promise<void> {
     void window.fragmentor.revealCode(snapshot.dir, result.value.file);
   });
   foot.append(reveal);
-  if (snapshot.mode === "visual") {
-    foot.append(el("p", "bench-note", "Visual mode: Fragmentor shows this code and never changes it."));
-  }
+  if (block.drawnBecause !== null) foot.append(el("p", "bench-note", block.drawnBecause));
   body.append(foot);
 }
 

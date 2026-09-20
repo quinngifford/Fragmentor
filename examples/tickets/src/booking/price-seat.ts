@@ -1,4 +1,4 @@
-import type { PriceSeatInput, PriceSeatOutput, PriceSeatCaps } from "./contract.js";
+import type { PriceSeatInput, PriceSeatOutput, PriceSeatCaps } from "../../blocks/tickets/booking-api/pricing/price-seat/contract.js";
 
 /** The seat from which a booking is cheaper, and by how much. */
 const DISCOUNT_FROM = 5;

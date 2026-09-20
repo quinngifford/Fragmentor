@@ -33,9 +33,8 @@ export interface LanguagePack {
   id: string;
   displayName: string;
 
-  /** File names inside a block's folder. */
+  /** The generated contract's file name, inside a block's folder. */
   contractFile: string;
-  implFile: string;
   /** The shared module of capability declarations, at the blocks root. */
   capabilitiesFile: string;
 
@@ -53,10 +52,15 @@ export interface LanguagePack {
    * object, so every block is called the same way: with a value and `caps`.
    */
   contractSource(request: ContractRequest): string;
-  /** The frame a block's implementation is written inside, created once. */
-  implScaffold(block: Block): string;
   /** The shared capability declarations for a project. */
   capabilitiesSource(): string;
+
+  /**
+   * How this language writes an import of a file `relativePath` away, which is
+   * how a block's code says it is held to its contract. Null where the
+   * language has no settled answer, and so no block of it is ever bound.
+   */
+  contractSpecifier(relativePath: string): string | null;
 
   /**
    * Whether Fragmentor can execute a block in this language yet. A pack is
@@ -66,12 +70,6 @@ export interface LanguagePack {
 
   /** Whether `fragmentor check` can typecheck code in this language yet. */
   canCheck: boolean;
-
-  /**
-   * A block whose implementation still looks like this has not been written.
-   * Used to report progress honestly rather than counting files.
-   */
-  isUnimplemented(implSource: string): boolean;
 }
 
 const packs = new Map<string, LanguagePack>();
@@ -94,4 +92,20 @@ export function knownLanguages(): { id: string; displayName: string }[] {
 
 export function isKnownLanguage(id: string): boolean {
   return packs.has(id);
+}
+
+/**
+ * A language named as a person writes it, as the packs know it: `TypeScript`
+ * is the `typescript` pack.
+ *
+ * Meaning the language Fragmentor can check and writing its name the ordinary
+ * way should not cost anyone the checks, and a name no pack answers to is left
+ * exactly as it was written, because it is theirs to say what their code is in.
+ */
+export function normaliseLanguage(name: string): string {
+  const wanted = name.trim().toLowerCase();
+  const found = [...packs.values()].find(
+    (pack) => pack.id === wanted || pack.displayName.toLowerCase() === wanted,
+  );
+  return found?.id ?? name.trim();
 }

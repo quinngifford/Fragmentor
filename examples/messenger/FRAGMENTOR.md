@@ -2,30 +2,35 @@
 
 # Working in this Fragmentor project
 
-The person you work with uses Fragmentor to see how this codebase is built, as a diagram of **blocks**: the parts of the program, each drawn inside the part it belongs to. Your job is to keep that diagram true to the code.
+The person you work with sees this project in Fragmentor as a diagram of **blocks**: the parts of the system, each drawn inside the part it belongs to. You design the blocks, write the code, and keep the two saying the same thing. Fragmentor draws the diagram, checks that it holds together, writes each function block's types, checks the code against them, and runs the block and its tests.
 
-**Never change the program's code for Fragmentor's sake.** The diagram describes the code; the code does not follow the diagram. Fragmentor never runs or changes the code either.
-
-**This folder already held code**, and the diagram describes it.
+**This folder already held code**, and the diagram describes it. Map what is there into blocks, each pointing at the code it stands for, and keep them true as the code changes. Never restructure the program to make the diagram tidier; the diagram follows the code, and the person will say when they want the code changed.
 
 ## How to work
 
-1. Read the code. Fill in `goal` and `systems` in `fragmentor.json`.
-2. Write a `block.json` for every block, top down: a system's top block is the whole program, the blocks inside it are the program's main parts, and so on, as finely as "Granularity" says.
-3. Run `fragmentor check` and fix everything it reports.
-4. Whenever you change the code later, update the blocks that describe it, and run `fragmentor check` again.
+1. Fill in `goal` and `systems` in `fragmentor.json`. Then write a `block.json` for every block, keeping any the person already wrote.
+2. Run `fragmentor check` and fix everything it reports.
+3. Carry straight on to the code. They can watch the diagram fill in as you work, and will say if they want the shape changed, so do not stop to ask for agreement.
+4. Write the code, and point each block at it. Where Fragmentor writes a contract, import it and write the block's tests.
+5. Write down what happens when something sets the system going, under `executions/`.
+6. Run `fragmentor check` and `fragmentor test` until it passes.
 
-If the `fragmentor` command is not found, ask the person to run `npm link` once in Fragmentor's folder.
+When the design changes, change the `block.json` files first, then the code. If the `fragmentor` command is not found, ask the person to run `npm link` once in Fragmentor's folder.
 
 ## Files
 
 ```text
-fragmentor.json           the project                    you fill in goal and systems
-blocks/<system>/          a system's top block           a block's parts are the folders inside it
-  block.json              the block                      you write
+fragmentor.json         the project                           you fill in goal and systems
+blocks/<system>/        a system's top block                  a block's parts are the folders inside it
+  block.json            the block                             you write
+  contract.ts           its types                             generated
+  cases.json            its tests                             you write, for a block Fragmentor runs
+blocks/capabilities.ts  the capability interfaces             generated
+src/…                   the code                              you write, wherever it belongs
+executions/<name>.json  one thing that sets the system going  you write
 ```
 
-A block's id is its folder name, in kebab-case.
+Everything Fragmentor writes is inside `blocks/`. **The code is yours, wherever it belongs in the codebase** — a block's folder says where the block sits in the architecture, never where its code sits on disk. A block's id is its folder name, in kebab-case. Never edit a generated file.
 
 ## fragmentor.json
 
@@ -33,51 +38,46 @@ A block's id is its folder name, in kebab-case.
 {
   "name": "Order Pricer",
   "goal": "Read a file of orders and report what each order costs and what they cost altogether.",
-  "mode": "visual",
   "existingCode": true,
   "start": "build",
-  "language": "TypeScript",
+  "language": "typescript",
   "granularity": { "level": 3, "maxDepth": 5 },
   "systems": [{ "rootBlock": "price-orders" }]
 }
 ```
 
-Each system is a separate program, such as a server and its command-line tool, and `rootBlock` is its folder under `blocks/`. The code is written in TypeScript. Leave `mode`, `existingCode`, `start` and `granularity` as the person set them.
+Each system is a separate program, and `rootBlock` is its folder under `blocks/`. The person chose TypeScript, so every system is written in it. Leave `existingCode`, `start` and `granularity` as the person set them.
 
 ## Blocks
 
-**The diagram is the architecture: what the program is made of, and what owns what.** A block's parts are the block folders inside its folder. Put a block inside another only when it is part of that block — not because one calls the other, and not only because their files sit in the same folder. A part used by several others goes beside them, inside the lowest block that holds all of them; one used by a single block may go inside that block. Nothing on the diagram says what calls what, or in what order.
+**The diagram is the architecture: what the system is made of, and what owns what.** A block's parts are the block folders inside its folder. Put a block inside another only when it is part of that block — not because one calls the other, and not only because their files sit in the same folder. A block used by several others goes beside them, inside the lowest block that holds all of them; one used by a single block may go inside that block. Nothing on the diagram says what calls what, or in what order: that is the code's business, and an execution's.
 
 A block that is a group of parts rather than something called, `price-orders`:
 
 ```json
-{
-  "role": "component",
-  "subtype": "module",
-  "responsibility": "Everything to do with pricing a file of orders.",
-  "code": "src/pricing.ts"
-}
+{ "role": "component", "responsibility": "Everything to do with pricing a file of orders." }
 ```
 
-A function, `report-totals`:
+A function block, `report-totals`:
 
 ```json
 {
   "responsibility": "Read a file of orders and report what each one costs and the grand total.",
-  "code": "src/pricing.ts#reportTotals",
-  "inputs": { "path": "string" },
+  "code": "src/pricing/report-totals.ts#reportTotals",
+  "inputs": { "path": { "type": "string", "description": "The JSON file holding the orders." } },
   "outputs": { "totals": "number[]", "grandTotal": "number" },
   "capabilities": { "files": "FileSystem" }
 }
 ```
 
-- `responsibility` is required. Say specifically what this part of the code does.
-- `code` says where the block is: a file or folder relative to the project folder, optionally followed by `#` and the name of a function, class or method. `fragmentor check` makes sure it exists. Leave it out only for a block that stands for no one place in the code.
-- `name` labels the block on the diagram. It defaults to the id in words.
-- A block is a function unless it has a `role`, described below.
-- `inputs` and `outputs` map a name to its type as the code writes it, such as `Order[]` or `Promise<User>`, or to `{ "type": ..., "description": ... }`. Leave either out when the function takes or returns nothing.
-- `capabilities` names what the block reaches outside the program, such as `"Database"`, `"FileSystem"` or `"Http"`.
-- `planned: true` marks a part of the program that does not exist yet. It is drawn greyed out and has no `code`. `fragmentor check` asks nothing of it.
+- `responsibility` is required. Say specifically what the block does.
+- `code` says where its implementation is: a file relative to the project folder, then `#` and the name of the function in it. **Every function block has one.** `fragmentor check` makes sure it is there.
+- `name` labels it on the diagram. It defaults to the id in words.
+- A block is a function unless it has a `role`, described below. A function block is one function, which other code calls.
+- `inputs` and `outputs` map a port name such as `grandTotal` to its type, or to `{ "type": ..., "description": ... }`. Leave either out when the function takes or returns nothing.
+- `capabilities` names the effects the block needs, described below.
+- `pinnedAsLeaf: true` means the person wants the block kept as one piece. Never put blocks inside it.
+- `planned: true` marks a block as part of the plan rather than of the program. It is drawn greyed out, has no `code`, its port types may be plain words such as `"the scored postings"`, and Fragmentor asks nothing of it. Everything inside a planned block is planned too. Take it off when you build the block, and give it real types then.
 
 ## The rest of the system
 
@@ -94,7 +94,7 @@ Not every block is a function. A database, a queue, another team's service, the 
 
 Say what it is exactly with `subtype`, in whatever words fit: `"subtype": "Dictionary"`, `"subtype": "REST API"`, `"subtype": "S3 bucket"`. It is only a label — the block is drawn the same as any other of its role — but a diagram reading `DATA STRUCTURE: Dictionary` says more than one reading `DATA STRUCTURE`.
 
-A block with a role has no `inputs` or `outputs`. It says what it offers with `exposes`, and blocks say what they reach with `access`. It may still have `code`, pointing at the module that wraps it, and may be left without one when it lives outside this codebase.
+A block with a role is not called, so it has no `inputs`, `outputs` or `capabilities`. It says what it offers with `exposes`, and blocks say what they reach with `access`. It may have `code`, pointing at the module that stands for it, and may be left without one when it lives outside this codebase.
 
 ```json
 {
@@ -111,6 +111,7 @@ A block with a role has no `inputs` or `outputs`. It says what it offers with `e
 ```json
 {
   "responsibility": "Read one owner's orders.",
+  "code": "src/orders/list.ts#listOrders",
   "inputs": { "owner": "string" },
   "outputs": { "orders": "{ id: string; total: number }[]" },
   "capabilities": { "orders": "Store" },
@@ -119,8 +120,8 @@ A block with a role has no `inputs` or `outputs`. It says what it offers with `e
 ```
 
 - A store's entry is written once, as the shape it holds. An operation writes its two directions apart, `{ "accepts": "{ orderId: string; amount: number }", "returns": "{ receipt: string }" }`, and may leave either out.
-- A shape written as an object, `{ code: string; url: string }`, is drawn column by column, which is what makes a database block worth looking at. Anything else is kept as the words you write.
-- A service's operation says which block inside it answers it with `"block"`. The two shapes need not match: an operation is what arrives at the edge of the service, and the framework between parses and fills in the rest.
+- Write a shape as a type wherever you can, so the block can be drawn column by column. Anything the type language cannot say, such as `timestamp`, is kept as the words you write.
+- A service's operation says which block inside it answers it with `"block"`. The block is handed what the operation accepts and returns what it returns, so give them the same shape, field for field; a block that needs nothing from the request may take no inputs. Where the outside world's shape genuinely differs, convert it in the code of the block that answers.
 
 ```json
 {
@@ -139,11 +140,76 @@ A block with a role has no `inputs` or `outputs`. It says what it offers with `e
 
 - Put the name of one of this block's own entries first, and the line joins those two rather than the two blocks: `"showOrders calls orders-api.listOrders"` runs from that button to that operation. A block with several buttons calling several operations needs this, or they would all leave it at the same point.
 - `reads` takes data out, `writes` puts data in, `calls` does both. Name the entry, as in `reads orders-db.orders`, or leave it off to mean the whole thing.
-- The block named is looked for among this block's own parts, then beside it, then above it, up to the top of the system, so a handler inside a service reaches a database the service keeps beside it. Name one inside a group by its path from there: `reads infrastructure/orders-db.orders`. Put the access on the block whose code really touches the resource; the diagrams above gather it up.
+- The block named is looked for among this block's own parts, then beside it, then above it, up to the top of the system, so a handler inside a service reaches a database the service keeps beside it. Name one inside a group by its path from there: `reads infrastructure/orders-db.orders`. Put the access on the block that really touches the resource; the diagrams above gather it up.
+- Code reaches a `database`, `storage` or `structure` through a `Store` port, and a `queue` through a `Queue` port. Put the port's name at the start of the access — `"orders reads orders-db.orders"` — and that port is a way into that entry and nothing else, so the line drawn is the line the code runs along. Always name the entry, and ask for a port each where a block reaches two.
+
+## Types
+
+`string`, `number`, `boolean`, `null` and `unknown`; literals such as `"remote"` or `42`; unions such as `"remote" | "onsite"`; arrays such as `string[]` or `(string | number)[]`; objects such as `{ title: string; salary?: number }`. There are no named types, generics, `any`, `Date` or `Record`, so write each shape out in full.
+
+A type Fragmentor cannot read, such as `Promise<Order[]>`, is kept as the words you wrote rather than refused. Write real types wherever the code lets you: a shape Fragmentor can read is drawn field by field.
+
+## Capabilities
+
+A block declares the effects its code needs as capabilities, which arrive in its `caps` argument. That is what says which stores and queues the code really touches, and what lets Fragmentor run a block on its own with substitutes in place of them.
+
+- **Store**: Reads and writes the rows of one table, file or structure. `read(key: string) → Row | null` (async), `list() → Row[]` (async), `write(key: string, row: Row)` (async), `remove(key: string)` (async)
+- **Queue**: Puts messages on one channel. Nothing waits for them to arrive. `send(message: Message)` (async)
+- **FileSystem**: Reads and writes files. `readFile(path: string) → string` (async), `writeFile(path: string, contents: string)` (async)
+- **Http**: Fetches over the network. `get(url: string) → string` (async)
+- **Clock**: Reads the current time. `now() → number`
+- **Random**: Produces random numbers. `next() → number`
+- **Logger**: Records what happened. `log(message: string)`
+
+A block that calls another passes it its own `caps`, so it declares every capability the blocks it calls need, under the same names. There is no `console`, so declare a `Logger`. Use `Clock` and `Random`, never the language's own clock or random numbers.
+
+## Contracts
+
+Where a function block's inputs and outputs are written as types, Fragmentor writes them into `blocks/<the block>/contract.ts`, beside its `block.json`, along with the capabilities it asks for. A block whose ports are words gets none, and is drawn rather than checked or run.
+
+**Importing that contract is what binds your code to it.** Code that imports it is typechecked against it, can be run from the window with values you type, and can have saved tests; code that does not is drawn and read. This is `report-totals`, in `src/pricing/report-totals.ts`:
+
+```typescript
+import type { ReportTotalsInput, ReportTotalsOutput, ReportTotalsCaps } from "../../blocks/price-orders/report-totals/contract.js";
+import { loadOrders } from "./load-orders.js";
+import { priceOrder } from "./price-order.js";
+
+/** Read a file of orders and report what each one costs and the grand total. */
+export async function reportTotals(input: ReportTotalsInput, caps: ReportTotalsCaps): Promise<ReportTotalsOutput> {
+  const { orders } = await loadOrders({ path: input.path }, caps);
+  if (orders.length === 0) return { totals: [], grandTotal: 0 };
+
+  const totals = await Promise.all(orders.map(async (order) => (await priceOrder({ order }, caps)).total));
+  return { totals, grandTotal: totals.reduce((sum, total) => sum + total, 0) };
+}
+```
+
+A block with no outputs returns nothing, and one with no inputs is still called with a value and `caps`. Its code may import its own contract's types with `import type`, the code of another block in the same system that is held to its contract, and packages installed in the project folder. Call another block with a value and your `caps`, only when you need it, and as many times as you need it. It may not import a shared helper file or one of Node's built-in modules such as `fs`: make the helper a block, or use a capability. `fragmentor check` reports any such import.
+
+### Tests
+
+Every block Fragmentor runs has tests, in a `cases.json` beside its `block.json`:
+
+```json
+[
+  {
+    "name": "adds quantity times price across the lines",
+    "input": { "order": { "id": "A-1", "lines": [{ "quantity": 2, "unitPrice": 3.5 }] } },
+    "expected": { "total": 7 }
+  },
+  {
+    "name": "an order with no lines costs nothing",
+    "input": { "order": { "id": "A-2", "lines": [] } },
+    "expected": { "total": 0 }
+  }
+]
+```
+
+Leave out `expected` to record what the block returns without checking it. A block's test runs everything it calls. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.
 
 ## Executions
 
-The blocks say what exists. Also write down what happens: for each thing that sets the program going — a button, a request, a scheduled job, a queue message, a webhook — a file under `executions/`, such as `executions/report-totals.json`, written from reading the code:
+The blocks say what exists. Also write down what happens: for each thing that sets the system going — a button, a request, a scheduled job, a queue message, a webhook — a file under `executions/`, such as `executions/report-totals.json`, written from reading the code:
 
 ```json
 {
@@ -151,8 +217,7 @@ The blocks say what exists. Also write down what happens: for each thing that se
   "trigger": {
     "at": "price-orders/report-totals",
     "kind": "action",
-    "description": "Someone asks for the totals of a file of orders.",
-    "code": "src/pricing.ts#reportTotals",
+    "code": "src/pricing/report-totals.ts#reportTotals",
     "payload": { "path": "orders.json" }
   },
   "trace": [
@@ -161,7 +226,7 @@ The blocks say what exists. Also write down what happens: for each thing that se
       "to": "price-orders/load-orders",
       "kind": "call",
       "description": "The orders are read off disk before anything can be priced.",
-      "code": "src/pricing.ts#reportTotals",
+      "code": "src/pricing/report-totals.ts#reportTotals",
       "payload": { "path": "orders.json" }
     },
     {
@@ -169,7 +234,7 @@ The blocks say what exists. Also write down what happens: for each thing that se
       "to": "price-orders/price-order",
       "kind": "call",
       "description": "Each order is priced in turn, and the totals added up.",
-      "code": "src/pricing.ts#reportTotals",
+      "code": "src/pricing/report-totals.ts#reportTotals",
       "payload": { "order": "A-1" },
       "response": { "total": 17 }
     },
@@ -177,7 +242,7 @@ The blocks say what exists. Also write down what happens: for each thing that se
       "effect": "response",
       "at": "price-orders/report-totals",
       "description": "The caller is given the total of every order in the file.",
-      "code": "src/pricing.ts#reportTotals"
+      "code": "src/pricing/report-totals.ts#reportTotals"
     }
   ]
 }
@@ -185,12 +250,12 @@ The blocks say what exists. Also write down what happens: for each thing that se
 
 - An address is a block's path under `blocks/`, optionally followed by `.` and one of its entries: `shop/api.checkout`. `trigger.at` is where it arrives, and `kind` is `action`, `request`, `schedule`, `message` or `webhook`.
 - `trace` lists what follows, in order. A step is an interaction — `from`, `to` and `kind` (`call`, `read`, `write`, `remove`, `send` or `deliver`), with `payload` for what it carried and `response` for what came back, where anything did — or an effect, `{ "effect": ..., "at": ... }`, such as `row-changed`, `row-removed`, `message-published`, `response` or `ui-changed`.
-- Every step says what it is with `description`, in a sentence a person reading it would want: why this happens, not a rewording of the blocks it joins. And every step says which function makes it with `code`, written as a block's is — `"src/api/router.ts#route"`. `fragmentor check` makes sure that function exists. An effect may have both as well, and should where the code that leaves it behind is somewhere in particular.
+- Every step says what it is with `description`, in a sentence a person reading it would want: why this happens, not a rewording of the blocks it joins. And every step says which function makes it with `code`, written as a block's is. `fragmentor check` makes sure that function exists. An effect may have both as well, and should where the code that leaves it behind is somewhere in particular.
 - Write each step between the finest blocks the code shows, even across distant parts of the system. A step follows from the latest step that arrived where it starts, so two calls one block makes in turn are two branches; where the list cannot say so, give a step an `id` and another `"cause": "<id>"`.
 - This is documentation: it is shown as written by you, never as something observed. Keep it true to the code, and change it when the code changes.
 
 ## Granularity: level 3
 
-Try for three to five parts per block, each with one clear job, down to functions of somewhere around 30 to 80 lines.
+Try for three to five parts per block, each with one clear responsibility, down to functions of somewhere around 30 to 80 lines. A step too small to be its own function is a line of code, not a block.
 
-These are aims rather than rules. Reach for that size, but a part of the program that has to be bigger or smaller to make sense is the right block: never split one job in two, or press two together, to hit a number. Fragmentor does not check any of it, except that the diagram may be at most 5 levels deep, counting a system's top block, which it warns about.
+These are aims rather than rules. Reach for that size, but a block that has to be bigger or smaller to make sense is the right block: never split one responsibility in two, or press two together, to hit a number. Fragmentor does not check any of it, except that the diagram may be at most 5 levels deep, counting a system's top block, which it warns about.

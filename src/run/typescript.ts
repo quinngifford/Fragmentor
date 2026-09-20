@@ -4,18 +4,22 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { blocksRoot } from "../project/project.js";
-import type { LoadedBlock, Project } from "../project/project.js";
+import type { BlockCode } from "../project/code.js";
+import type { Project } from "../project/project.js";
 
 /**
  * Running a TypeScript block.
  *
- * The implementations are compiled into a throwaway copy rather than run from
- * the project, so nothing is written into the user's folders and a half-built
- * project cannot leave stray files behind. Only implementations are compiled:
- * a block imports its contract with `import type`, which disappears when the
- * types are stripped, so the schema library never has to be resolved to run
- * anything.
+ * The code is compiled into a throwaway copy rather than run from the project,
+ * so nothing is written into the user's folders and a half-built project cannot
+ * leave stray files behind. The copy mirrors the project's own tree, so the
+ * relative imports between one block's code and another's resolve there exactly
+ * as they do in the project.
+ *
+ * Only the files whose blocks are held to a contract are compiled: they are the
+ * ones written to be called with a value and `caps`. A block imports its
+ * contract with `import type`, which disappears when the types are stripped, so
+ * the schema library never has to be resolved to run anything.
  */
 
 const HARNESS = "harness.cjs";
@@ -25,30 +29,41 @@ function harnessPath(): string {
 }
 
 export interface CompiledSystem {
-  /** Throwaway directory holding the compiled implementations. */
+  /** Throwaway directory holding the compiled code, laid out as the project is. */
   dir: string;
+  /** Where each block's code ended up, by block path. */
+  files: Map<string, string>;
   dispose(): Promise<void>;
 }
 
-/** Compiles every implementation in one system into a runnable copy. */
-export async function compileSystem(project: Project, systemRoot: string): Promise<CompiledSystem> {
+/** Compiles the code of every block in one system that is held to a contract. */
+export async function compileSystem(
+  project: Project,
+  systemRoot: string,
+  code: Map<string, BlockCode>,
+): Promise<CompiledSystem> {
   const dir = await mkdtemp(path.join(tmpdir(), "fragmentor-run-"));
 
   // Plain .js files in this tree are CommonJS, which is what the harness
   // requires and what the compiler is asked to emit.
   await writeFile(path.join(dir, "package.json"), JSON.stringify({ type: "commonjs" }), "utf8");
 
-  const root = blocksRoot(project.dir);
-  const blocks = [...project.byPath.values()].filter(
-    (node) => node.path === systemRoot || node.path.startsWith(`${systemRoot}/`),
-  );
+  const files = new Map<string, string>();
+  const written = new Set<string>();
 
-  for (const node of blocks) {
-    const source = await readSource(node);
-    if (source === null) continue;
+  for (const node of project.byPath.values()) {
+    if (node.path !== systemRoot && !node.path.startsWith(`${systemRoot}/`)) continue;
+    const found = code.get(node.path);
+    if (!found?.bound || found.location === null) continue;
 
-    const compiled = ts.transpileModule(source, {
-      fileName: path.join(node.dir, "impl.ts"),
+    const source = found.location.file;
+    const target = path.join(dir, ...source.replace(/\.ts$/, ".js").split("/"));
+    files.set(node.path, target);
+    if (written.has(source)) continue;
+    written.add(source);
+
+    const compiled = ts.transpileModule(await readFile(path.join(project.dir, ...source.split("/")), "utf8"), {
+      fileName: path.join(project.dir, ...source.split("/")),
       compilerOptions: {
         target: ts.ScriptTarget.ES2022,
         module: ts.ModuleKind.CommonJS,
@@ -56,24 +71,15 @@ export async function compileSystem(project: Project, systemRoot: string): Promi
       },
     });
 
-    const relative = path.relative(root, node.dir);
-    const target = path.join(dir, relative, "impl.js");
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, compiled.outputText, "utf8");
   }
 
   return {
     dir,
+    files,
     dispose: () => rm(dir, { recursive: true, force: true }),
   };
-}
-
-async function readSource(node: LoadedBlock): Promise<string | null> {
-  try {
-    return await readFile(path.join(node.dir, "impl.ts"), "utf8");
-  } catch {
-    return null;
-  }
 }
 
 /** What the harness reports about the block calls in a traced run, as they happen. */
@@ -105,8 +111,11 @@ export interface SpawnOptions {
   /** Path of the block within the blocks root, e.g. `rank-jobs/load-postings`. */
   blockPath: string;
   functionName: string;
-  /** Every function in the system, each wrapped so its calls can be seen, whoever makes them. */
-  blocks: { path: string; functionName: string }[];
+  /**
+   * Every block of the system Fragmentor can run, each wrapped so its calls can
+   * be seen whoever makes them, with the compiled file its code is in.
+   */
+  blocks: { path: string; functionName: string; file: string }[];
   /**
    * The ports to build substitutes for. A port that is a way into something
    * on the diagram carries the name the run keeps that thing under, and the
@@ -131,8 +140,6 @@ export interface CompiledRun {
 }
 
 export function startCompiledBlock(options: SpawnOptions): CompiledRun {
-  const file = (blockPath: string) => path.join(options.compiledDir, ...blockPath.split("/"), "impl.js");
-
   // Electron's binary is Node underneath; this makes it behave as Node so the
   // application does not need a separate runtime installed alongside it. The
   // harness reports over the IPC channel, so what a block prints is not read.
@@ -208,9 +215,9 @@ export function startCompiledBlock(options: SpawnOptions): CompiledRun {
   tell({
     type: "start",
     spec: {
-      file: file(options.blockPath),
+      file: options.blocks.find((block) => block.path === options.blockPath)?.file,
       functionName: options.functionName,
-      blocks: options.blocks.map((block) => ({ ...block, file: file(block.path) })),
+      blocks: options.blocks,
       trace: Boolean(options.onEvent),
       breakpoints: options.breakpoints ?? [],
       capabilities: options.capabilities,

@@ -7,6 +7,6 @@
 import "./typescript.js";
 import "./python.js";
 
-export { getPack, isKnownLanguage, knownLanguages, registerPack } from "./pack.js";
+export { getPack, isKnownLanguage, knownLanguages, normaliseLanguage, registerPack } from "./pack.js";
 export type { ContractRequest, LanguagePack } from "./pack.js";
 export { camelCase, pascalCase, snakeCase } from "./naming.js";

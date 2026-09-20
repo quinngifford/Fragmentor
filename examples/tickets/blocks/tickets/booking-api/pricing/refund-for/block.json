@@ -1,5 +1,6 @@
 {
   "responsibility": "Say how much of a cancelled booking comes back: all of it, less a fee for each seat.",
+  "code": "src/booking/refund-for.ts#refundFor",
   "inputs": {
     "total": "number",
     "seats": "number"

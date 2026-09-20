@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import type { Mode } from "../model/block.js";
 import { CAPABILITIES } from "../model/capabilities.js";
 import { ARCHITECTURE_ROLES, ROLES } from "../model/roles.js";
 import { getPack, isKnownLanguage, knownLanguages } from "../lang/index.js";
@@ -11,10 +10,16 @@ import type { Manifest } from "../project/project.js";
  *
  * Fragmentor does not call a model. An agent such as Claude Code or Codex
  * works in the project folder, and this is how it learns the rules. It is
- * written for the one project it sits in — its mode, its language and its
- * granularity — so it says only what applies there. It is kept apart from the
- * project's own architecture, which stays machine-readable in fragmentor.json
- * and the block.json files.
+ * written for the one project it sits in — where it starts from, its language
+ * and its granularity — so it says only what applies there. It is kept apart
+ * from the project's own architecture, which stays machine-readable in
+ * fragmentor.json and the block.json files.
+ *
+ * There is one guide, because there is one way to work: blocks say what the
+ * system is made of, each function block says where its code is, and
+ * Fragmentor writes a contract for, checks and runs whichever blocks it can.
+ * What differs between projects is how much of that last part applies, so it
+ * is one section that says when it does.
  *
  * It is regenerated like a contract, so it describes the rules the checks
  * actually enforce. The parts that could drift are built from the same
@@ -28,12 +33,17 @@ export const CLAUDE_FILE = "CLAUDE.md";
 
 const ORDER = "{ id: string; lines: { quantity: number; unitPrice: number }[] }";
 
-/** A small structured system, as the files an agent writes to build it. */
+/**
+ * A small system, as the files an agent writes to build it.
+ *
+ * Its code sits under `src/`, in a folder of its own, because that is the
+ * point the guide has to make: a block says where its code is, and nothing
+ * requires the codebase to mirror the diagram.
+ */
 export const workedExample = {
   manifest: {
     name: "Order Pricer",
     goal: "Read a file of orders and report what each order costs and what they cost altogether.",
-    mode: "structured",
     existingCode: false,
     start: "build",
     language: "typescript",
@@ -47,32 +57,33 @@ export const workedExample = {
     },
     "price-orders/report-totals": {
       responsibility: "Read a file of orders and report what each one costs and the grand total.",
+      code: "src/pricing/report-totals.ts#reportTotals",
       inputs: { path: { type: "string", description: "The JSON file holding the orders." } },
       outputs: { totals: "number[]", grandTotal: "number" },
       capabilities: { files: "FileSystem" },
     },
     "price-orders/load-orders": {
       responsibility: "Read the orders file and parse it into orders.",
+      code: "src/pricing/load-orders.ts#loadOrders",
       inputs: { path: "string" },
       outputs: { orders: `${ORDER}[]` },
       capabilities: { files: "FileSystem" },
     },
     "price-orders/price-order": {
       responsibility: "Add up one order: each line's quantity times its unit price.",
+      code: "src/pricing/price-order.ts#priceOrder",
       inputs: { order: ORDER },
       outputs: { total: "number" },
     },
   } as Record<string, Record<string, unknown>>,
   /**
-   * The code the guide shows written, in each language: in TypeScript, the
-   * block that calls two others, because calling another block is the thing
-   * to show; in Python, where how one block imports another is not settled,
-   * a block that calls nothing.
+   * The code the guide shows written: the block that calls two others, because
+   * importing a contract and calling another block are the two things a reader
+   * cannot guess.
    */
-  code: {
-    typescript: `import type { ReportTotalsInput, ReportTotalsOutput, ReportTotalsCaps } from "./contract.js";
-import { loadOrders } from "../load-orders/impl.js";
-import { priceOrder } from "../price-order/impl.js";
+  code: `import type { ReportTotalsInput, ReportTotalsOutput, ReportTotalsCaps } from "../../blocks/price-orders/report-totals/contract.js";
+import { loadOrders } from "./load-orders.js";
+import { priceOrder } from "./price-order.js";
 
 /** Read a file of orders and report what each one costs and the grand total. */
 export async function reportTotals(input: ReportTotalsInput, caps: ReportTotalsCaps): Promise<ReportTotalsOutput> {
@@ -83,23 +94,15 @@ export async function reportTotals(input: ReportTotalsInput, caps: ReportTotalsC
   return { totals, grandTotal: totals.reduce((sum, total) => sum + total, 0) };
 }
 `,
-    python: `from contract import PriceOrderInput, PriceOrderOutput, PriceOrderCaps
-
-
-async def price_order(value: PriceOrderInput, caps: PriceOrderCaps) -> PriceOrderOutput:
-    """Add up one order: each line's quantity times its unit price."""
-    total = sum(line.quantity * line.unit_price for line in value.order.lines)
-    return PriceOrderOutput(total=total)
-`,
-  } as Record<string, string>,
-  /** The block the code above is, in each language. */
-  codeBlock: { typescript: "price-orders/report-totals", python: "price-orders/price-order" } as Record<string, string>,
+  /** The block that code is, and the file it is in. */
+  codeBlock: "price-orders/report-totals",
+  codeFile: "src/pricing/report-totals.ts",
   cases: {
     "price-orders/price-order": [
       {
         name: "adds quantity times price across the lines",
-        input: { order: { id: "A-1", lines: [{ quantity: 2, unitPrice: 3.5 }, { quantity: 1, unitPrice: 10 }] } },
-        expected: { total: 17 },
+        input: { order: { id: "A-1", lines: [{ quantity: 2, unitPrice: 3.5 }] } },
+        expected: { total: 7 },
       },
       {
         name: "an order with no lines costs nothing",
@@ -141,6 +144,7 @@ export const architectureExample: Record<string, Record<string, unknown>> = {
   },
   "load-orders": {
     responsibility: "Read one owner's orders.",
+    code: "src/orders/list.ts#listOrders",
     inputs: { owner: "string" },
     outputs: { orders: "{ id: string; total: number }[]" },
     capabilities: { orders: "Store" },
@@ -155,27 +159,10 @@ export const architectureExample: Record<string, Record<string, unknown>> = {
   },
 };
 
-/** The same program in a visual project, drawn over code that already exists in `src/pricing.ts`. */
-export const visualExample: Record<string, Record<string, unknown>> = {
-  "price-orders": {
-    role: "component",
-    subtype: "module",
-    responsibility: "Everything to do with pricing a file of orders.",
-    code: "src/pricing.ts",
-  },
-  "price-orders/report-totals": {
-    responsibility: "Read a file of orders and report what each one costs and the grand total.",
-    code: "src/pricing.ts#reportTotals",
-    inputs: { path: "string" },
-    outputs: { totals: "number[]", grandTotal: "number" },
-    capabilities: { files: "FileSystem" },
-  },
-};
-
 /**
- * What happens when something sets the visual example going, written down the
+ * What happens when something sets the worked example going, written down the
  * way the guide asks an agent to. Held by test to read and check cleanly
- * against the visual example's blocks.
+ * against that example's blocks.
  */
 export const executionExample = {
   description: "Someone asks for the totals of a file of orders.",
@@ -183,7 +170,7 @@ export const executionExample = {
     at: "price-orders/report-totals",
     kind: "action",
     description: "Someone asks for the totals of a file of orders.",
-    code: "src/pricing.ts#reportTotals",
+    code: "src/pricing/report-totals.ts#reportTotals",
     payload: { path: "orders.json" },
   },
   trace: [
@@ -192,7 +179,7 @@ export const executionExample = {
       to: "price-orders/load-orders",
       kind: "call",
       description: "The orders are read off disk before anything can be priced.",
-      code: "src/pricing.ts#reportTotals",
+      code: "src/pricing/report-totals.ts#reportTotals",
       payload: { path: "orders.json" },
     },
     {
@@ -200,7 +187,7 @@ export const executionExample = {
       to: "price-orders/price-order",
       kind: "call",
       description: "Each order is priced in turn, and the totals added up.",
-      code: "src/pricing.ts#reportTotals",
+      code: "src/pricing/report-totals.ts#reportTotals",
       payload: { order: "A-1" },
       response: { total: 17 },
     },
@@ -208,7 +195,7 @@ export const executionExample = {
       effect: "response",
       at: "price-orders/report-totals",
       description: "The caller is given the total of every order in the file.",
-      code: "src/pricing.ts#reportTotals",
+      code: "src/pricing/report-totals.ts#reportTotals",
     },
   ],
 };
@@ -221,29 +208,18 @@ export const executionExample = {
  * it will either break quietly or contort the design around, and neither is
  * what the person choosing a granularity wanted. Nothing here is checked.
  */
-const GRANULARITY: Record<Mode, Record<number, string>> = {
-  structured: {
-    1: "Try to split the work only where it plainly holds separate responsibilities, into two or three substantial parts per block, with real work left inside each.",
-    2: "Try for two to four parts per block, each a substantial piece of work.",
-    3: "Try for three to five parts per block, and functions with one clear responsibility and somewhere around 30 to 80 lines of code.",
-    4: "Try for four to six fairly small parts per block, and functions of somewhere around 20 to 50 lines of code each.",
-    5: "Try to break the work into small single-purpose functions of somewhere around 10 to 30 lines, though never one that is a single expression.",
-  },
-  visual: {
-    1: "Try to show only the program's major parts: two or three parts per block.",
-    2: "Try for two to four parts per block, each a substantial part of the program.",
-    3: "Try for three to five parts per block, each with one clear job, down to functions of somewhere around 30 to 80 lines.",
-    4: "Try for four to six parts per block, down to functions of somewhere around 20 to 50 lines.",
-    5: "Try to show the code in fine detail, down to small single-purpose functions.",
-  },
+const GRANULARITY: Record<number, string> = {
+  1: "Try to divide the system only where it plainly holds separate responsibilities, into two or three substantial parts per block, with real work left inside each.",
+  2: "Try for two to four parts per block, each a substantial piece of work.",
+  3: "Try for three to five parts per block, each with one clear responsibility, down to functions of somewhere around 30 to 80 lines.",
+  4: "Try for four to six fairly small parts per block, down to functions of somewhere around 20 to 50 lines.",
+  5: "Try to divide the work into small single-purpose functions of somewhere around 10 to 30 lines, though never one that is a single expression.",
 };
 
-/** What a block may import, which differs by language. */
+/** What a block's code may import, which differs by language. */
 const IMPORT_RULES: Record<string, string> = {
   typescript:
-    "A block may import another function block's code from its `impl.js`, wherever that block is in the system, types with `import type`, and packages installed in the project folder. Call another block with a value and your `caps`, only when you need it, and as many times as you need it. A block may not import a shared helper file or one of Node's built-in modules such as `fs`: make the helper a block, or use a capability. `fragmentor check` reports any such import.",
-  python:
-    "A block may import its contract and packages installed for the project. How one Python block imports another is not settled yet, so keep each Python block's work inside it for now. It reaches files and the network only through its capabilities.",
+    "A block with no outputs returns nothing, and one with no inputs is still called with a value and `caps`. Its code may import its own contract's types with `import type`, the code of another block in the same system that is held to its contract, and packages installed in the project folder. Call another block with a value and your `caps`, only when you need it, and as many times as you need it. It may not import a shared helper file or one of Node's built-in modules such as `fs`: make the helper a block, or use a capability. `fragmentor check` reports any such import.",
 };
 
 const WIDTH = 100;
@@ -290,7 +266,12 @@ function rolesSection(): string {
   }).join("\n");
 }
 
-function capabilitiesSection(pack: LanguagePack): string {
+function capabilitiesSection(pack: LanguagePack | null): string {
+  if (pack === null) {
+    return Object.values(CAPABILITIES)
+      .map((capability) => `- **${capability.name}**: ${capability.description}`)
+      .join("\n");
+  }
   return Object.values(CAPABILITIES)
     .map((capability) => {
       const operations = capability.operations.map((operation) => {
@@ -307,11 +288,10 @@ function capabilitiesSection(pack: LanguagePack): string {
 
 /** The example project file, set up the way this project is. */
 function exampleManifest(manifest: Manifest): unknown {
-  const suggestLanguage = manifest.language === undefined && manifest.mode === "structured";
+  const suggestLanguage = manifest.language === undefined;
   return {
     name: workedExample.manifest.name,
     goal: workedExample.manifest.goal,
-    mode: manifest.mode,
     existingCode: manifest.existingCode,
     start: manifest.start,
     ...(manifest.language === undefined ? {} : { language: manifest.language }),
@@ -320,8 +300,96 @@ function exampleManifest(manifest: Manifest): unknown {
   };
 }
 
+/** The table of files, aligned however many rows this project's language adds. */
+function filesSection(pack: LanguagePack | null): string {
+  const rows: [string, string, string][] = [
+    ["fragmentor.json", "the project", "you fill in goal and systems"],
+    ["blocks/<system>/", "a system's top block", "a block's parts are the folders inside it"],
+    ["  block.json", "the block", "you write"],
+  ];
+  if (pack) rows.push([`  ${pack.contractFile}`, "its types", "generated"]);
+  if (pack?.canRun) rows.push(["  cases.json", "its tests", "you write, for a block Fragmentor runs"]);
+  if (pack) rows.push([`blocks/${pack.capabilitiesFile}`, "the capability interfaces", "generated"]);
+  rows.push(
+    ["src/…", "the code", "you write, wherever it belongs"],
+    ["executions/<name>.json", "one thing that sets the system going", "you write"],
+  );
+
+  const first = Math.max(...rows.map(([name]) => name.length)) + 2;
+  const second = Math.max(...rows.map(([, what]) => what.length)) + 2;
+  return rows.map(([name, what, who]) => `${name.padEnd(first)}${what.padEnd(second)}${who}`).join("\n");
+}
+
+/**
+ * What Fragmentor does with this project's code, in the opening paragraph.
+ *
+ * It is the first thing an agent reads, and the one thing that differs most
+ * between projects, so it is stated rather than left to be worked out from the
+ * sections below.
+ */
+function fragmentorRole(pack: LanguagePack | null, language: string | undefined): string {
+  if (pack === null) {
+    return language === undefined
+      ? "Fragmentor draws the diagram and checks that it holds together. Where a system says it is written in a language Fragmentor has a pack for — `typescript` or `python` — it also writes each block's types from the diagram."
+      : `Fragmentor draws the diagram and checks that it holds together. It has no language pack for ${language}, so it writes nothing, checks no code and runs nothing here.`;
+  }
+  if (!pack.canRun) {
+    return `Fragmentor draws the diagram, checks that it holds together, and writes each function block's types. It cannot check or run ${pack.displayName} code yet.`;
+  }
+  return "Fragmentor draws the diagram, checks that it holds together, writes each function block's types, checks the code against them, and runs the block and its tests.";
+}
+
+/**
+ * The one section that says when generation applies, and what to do about it.
+ *
+ * Everything here follows from the same fact: a contract is only worth writing
+ * where the ports are types and the language has a pack, and it only binds
+ * code that imports it. The rest of the guide is the same for every project.
+ */
+function contractsSection(pack: LanguagePack | null): string {
+  if (pack === null) return "";
+
+  const contractOf = (blockPath: string) => `blocks/${blockPath}/${pack.contractFile}`;
+  const lines: string[] = ["## Contracts", ""];
+
+  lines.push(
+    `Where a function block's inputs and outputs are written as types, Fragmentor writes them into \`${contractOf("<the block>")}\`, beside its \`block.json\`, along with the capabilities it asks for. A block whose ports are words gets none, and is drawn rather than checked or run.`,
+  );
+
+  if (!pack.canRun) {
+    lines.push(
+      "",
+      `Read it, and write each block as a function taking a value and \`caps\`, so the code says the same thing the diagram does. Fragmentor cannot hold ${pack.displayName} code to a contract, run a block or run tests yet, so every block here is drawn and read.`,
+    );
+    return lines.join("\n");
+  }
+
+  lines.push(
+    "",
+    `**Importing that contract is what binds your code to it.** Code that imports it is typechecked against it, can be run from the window with values you type, and can have saved tests; code that does not is drawn and read. This is \`${workedExample.codeBlock.split("/").at(-1)}\`, in \`${workedExample.codeFile}\`:`,
+    "",
+    "```typescript",
+    workedExample.code.trimEnd(),
+    "```",
+    "",
+    IMPORT_RULES[pack.id] ?? "",
+    "",
+    "### Tests",
+    "",
+    "Every block Fragmentor runs has tests, in a `cases.json` beside its `block.json`:",
+    "",
+    "```json",
+    compactJson(workedExample.cases["price-orders/price-order"]),
+    "```",
+    "",
+    "Leave out `expected` to record what the block returns without checking it. A block's test runs everything it calls. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.",
+  );
+
+  return lines.join("\n");
+}
+
 const ENTRY_POINTS =
-  "Entry points such as a `main` function, a server or framework setup stay outside `blocks/`: they create the real capabilities and call the blocks that answer them.";
+  "Entry points such as a `main` function, a server or framework setup stay outside the blocks: they create the real capabilities and call the blocks that answer them.";
 
 /**
  * Where this project starts, and whether it starts as a plan.
@@ -331,28 +399,17 @@ const ENTRY_POINTS =
  * follows an instruction better than a condition.
  */
 function startingPoint(manifest: Manifest): string {
-  const visual = manifest.mode === "visual";
   const parts: string[] = [];
 
-  if (visual) {
-    parts.push(
-      manifest.existingCode
-        ? "**This folder already held code**, and the diagram describes it."
-        : "**This folder started empty.** Write the program however suits it best, laid out however you like, and keep the diagram describing what you actually wrote.",
-    );
-  } else {
-    parts.push(
-      manifest.existingCode
-        ? `**This folder already held code**, and you are rebuilding it as blocks. First make sure it is committed to version control, and ask the person if it is not. Describe the program's existing structure as blocks, move its logic into them from the bottom up, and delete the old code once the blocks pass their tests. ${ENTRY_POINTS}`
-        : `**This folder started empty**, so the program is yours to write from nothing. ${ENTRY_POINTS}`,
-    );
-  }
+  parts.push(
+    manifest.existingCode
+      ? "**This folder already held code**, and the diagram describes it. Map what is there into blocks, each pointing at the code it stands for, and keep them true as the code changes. Never restructure the program to make the diagram tidier; the diagram follows the code, and the person will say when they want the code changed."
+      : `**This folder started empty**, so the program is yours to write. Lay the code out however suits it — a layout that echoes the architecture helps whoever reads both, but nothing requires it — and point each block at the code you wrote. ${ENTRY_POINTS}`,
+  );
 
   if (manifest.start === "plan") {
     parts.push(
-      visual
-        ? '**This project starts as a plan.** Draw the architecture you mean to write as blocks with `"planned": true`, and show the person before you write any of it. Take `"planned"` off a block once its code exists and the block points at it.'
-        : '**This project starts as a plan.** Give every block `"planned": true` to begin with, so the whole architecture can be seen and argued with before any of it is built. Once the person agrees, take `"planned"` off one block at a time and build that block, rather than starting all of them at once.',
+      '**This project starts as a plan.** Give every block `"planned": true` to begin with, so the whole architecture can be seen and argued with before any of it is built. Once the person agrees, take `"planned"` off one block at a time and build that block, rather than starting all of them at once.',
     );
   }
 
@@ -373,80 +430,64 @@ function reviewStep(manifest: Manifest): string {
     : "Carry straight on to the code. They can watch the diagram fill in as you work, and will say if they want the shape changed, so do not stop to ask for agreement.";
 }
 
-function structuredLanguageRule(manifest: Manifest, pack: LanguagePack): string {
+function languageRule(manifest: Manifest, pack: LanguagePack | null): string {
   if (manifest.language === undefined) {
     const choices = knownLanguages()
       .map(({ id, displayName }) => {
         const each = getPack(id);
-        return `\`"${id}"\` (${each.canRun ? "Fragmentor checks and runs it" : `Fragmentor generates its types but cannot run ${displayName} yet`})`;
+        return `\`"${id}"\` (${each.canRun ? "Fragmentor checks and runs it" : `Fragmentor writes its types but cannot check or run ${displayName} yet`})`;
       })
       .join(" or ");
-    return `The person left the language to you: give each system a \`"language"\`, ${choices}. The examples below are ${pack.displayName}; in another language the file names and naming conventions follow that language.`;
+    return `The person left the language to you: give each system a \`"language"\`, ${choices}, or the name of whatever else its code is written in, which Fragmentor will draw and nothing more.`;
   }
-  if (!isKnownLanguage(manifest.language)) {
-    return `The project is set to \`${manifest.language}\`, which Fragmentor cannot generate code for. Ask the person to choose one of ${knownLanguages().map(({ id }) => `\`${id}\``).join(" or ")}.`;
+  if (pack === null) {
+    return `The code is written in ${manifest.language}, which Fragmentor has no pack for, so it draws the diagram and checks nothing about the code.`;
   }
   return `The person chose ${pack.displayName}, so every system is written in it.`;
 }
 
 function fill(template: string, values: Record<string, string>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, name: string) => {
+  const filled = template.replace(/\{\{(\w+)\}\}/g, (_, name: string) => {
     const value = values[name];
     if (value === undefined) throw new Error(`The agent guide refers to {{${name}}}, which nothing fills in.`);
     return value;
   });
+  // A section that does not apply to this project leaves its blank lines behind.
+  return filled.replace(/\n{3,}/g, "\n\n");
 }
 
-function template(mode: Mode): string {
+function template(): string {
   // Read on each call, from beside this module, so the compiled application
   // finds its copy the same way the kernel finds the original.
-  return readFileSync(new URL(`./guide-${mode}.md`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  return readFileSync(new URL("./guide.md", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 }
 
 export function agentGuide(manifest: Manifest): string {
-  const common = {
+  const language = manifest.language;
+  const pack = language !== undefined && isKnownLanguage(language) ? getPack(language) : null;
+
+  return fill(template(), {
+    fragmentorRole: fragmentorRole(pack, language),
+    startingPoint: startingPoint(manifest),
+    reviewStep: reviewStep(manifest),
+    testStep: pack?.canRun ? " Where Fragmentor writes a contract, import it and write the block's tests." : "",
+    testCommand: pack?.canRun ? " and `fragmentor test`" : "",
+    files: filesSection(pack),
     manifest: compactJson(exampleManifest(manifest)),
-    level: String(manifest.granularity.level),
-    granularity: GRANULARITY[manifest.mode][manifest.granularity.level]!,
-    maxDepth: String(manifest.granularity.maxDepth),
+    languageRule: languageRule(manifest, pack),
+    componentBlock: compactJson(workedExample.blocks["price-orders"]),
+    functionBlock: compactJson(workedExample.blocks["price-orders/report-totals"]),
     roles: rolesSection(),
     architectureBlock: compactJson(architectureExample["orders-db"]),
     serviceBlock: compactJson(architectureExample["orders-api"]),
     operationEntry: compactJson((architectureExample.billing!.exposes as Record<string, unknown>).charge),
     accessBlock: compactJson(architectureExample["load-orders"]),
-  };
-
-  if (manifest.mode === "visual") {
-    return fill(template("visual"), {
-      ...common,
-      languageRule: manifest.language === undefined
-        ? " A system may say what its code is written in with `\"language\"`."
-        : ` The code is written in ${manifest.language}.`,
-      startingPoint: startingPoint(manifest),
-      componentBlock: compactJson(visualExample["price-orders"]),
-      functionBlock: compactJson(visualExample["price-orders/report-totals"]),
-      execution: compactJson(executionExample),
-    });
-  }
-
-  const pack = getPack(manifest.language !== undefined && isKnownLanguage(manifest.language) ? manifest.language : "typescript");
-  return fill(template("structured"), {
-    ...common,
-    languageRule: structuredLanguageRule(manifest, pack),
-    reviewStep: reviewStep(manifest),
-    startingPoint: startingPoint(manifest),
-    implFile: pack.implFile,
-    contractFile: pack.contractFile,
-    capabilitiesFile: pack.capabilitiesFile,
-    componentBlock: compactJson(workedExample.blocks["price-orders"]),
-    functionBlock: compactJson(workedExample.blocks["price-orders/report-totals"]),
     capabilities: capabilitiesSection(pack),
-    codeLanguage: pack.id,
-    codeBlock: (workedExample.codeBlock[pack.id] ?? "").split("/").at(-1)!,
-    code: (workedExample.code[pack.id] ?? "").trimEnd(),
-    importRule: IMPORT_RULES[pack.id] ?? "",
-    cases: compactJson(workedExample.cases["price-orders/price-order"]),
-    testNote: pack.canRun ? "" : ` Fragmentor cannot run ${pack.displayName} yet, so \`fragmentor test\` skips these blocks.`,
+    contracts: contractsSection(pack),
+    execution: compactJson(executionExample),
+    level: String(manifest.granularity.level),
+    granularity: GRANULARITY[manifest.granularity.level]!,
+    maxDepth: String(manifest.granularity.maxDepth),
   });
 }
 

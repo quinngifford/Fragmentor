@@ -1,5 +1,6 @@
 {
   "responsibility": "Book seats at one event for one person when there are enough left, and say what happened.",
+  "code": "src/booking/book-seats.ts#bookSeats",
   "inputs": {
     "eventId": "string",
     "seats": {

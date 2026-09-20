@@ -13,7 +13,6 @@ let dir: string;
 const manifest: Manifest = {
   name: "Doubler",
   goal: "Double a number.",
-  mode: "structured",
   existingCode: false,
   start: "build",
   granularity: { level: 3, maxDepth: 3 },
@@ -26,6 +25,7 @@ beforeEach(async () => {
   const root = makeBlock({
     id: "double-it",
     name: "Double It",
+    code: "src/double-it.ts#doubleIt",
     inputs: { value: { type: t.number, description: "The number to double." } },
     outputs: { doubled: { type: t.number } },
   });
@@ -33,12 +33,26 @@ beforeEach(async () => {
   const child = makeBlock({
     id: "add-to-self",
     name: "Add To Self",
+    code: "src/add-to-self.ts#addToSelf",
     inputs: { value: { type: t.number } },
     outputs: { sum: { type: t.number } },
   });
 
   await createProject(dir, manifest, [root]);
   await writeBlock(blockDir(dir, "double-it/add-to-self"), child);
+  await mkdir(path.join(dir, "src"), { recursive: true });
+  await writeFile(
+    path.join(dir, "src", "double-it.ts"),
+    [
+      'import type { DoubleItInput, DoubleItOutput, DoubleItCaps } from "../blocks/double-it/contract.js";',
+      "",
+      "export async function doubleIt(input: DoubleItInput, caps: DoubleItCaps): Promise<DoubleItOutput> {",
+      "  return { doubled: input.value * 2 };",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
 });
 
 afterEach(async () => {
@@ -50,7 +64,6 @@ describe("projectSnapshot", () => {
     const snapshot = await projectSnapshot(dir);
 
     expect(snapshot.name).toBe("Doubler");
-    expect(snapshot.mode).toBe("structured");
     expect(Object.keys(snapshot.blocks).sort()).toEqual(["double-it", "double-it/add-to-self"]);
 
     const root = snapshot.blocks["double-it"]!;
@@ -61,7 +74,21 @@ describe("projectSnapshot", () => {
       description: "The number to double.",
     });
     expect(root.functionName).toBe("doubleIt");
-    expect(root.code).toBeNull();
+    expect(root.code).toMatchObject({ pointer: "src/double-it.ts#doubleIt", file: "src/double-it.ts", line: 3 });
+    // Its code imports the contract, so Fragmentor holds it to it and can run it.
+    expect(root.runnable).toBe(true);
+    expect(root.drawnBecause).toBeNull();
+
+    // The block beside it points at code nobody has written yet.
+    const child = snapshot.blocks["double-it/add-to-self"]!;
+    expect(child.code).toBeNull();
+    expect(child.implemented).toBe(false);
+    expect(child.runnable).toBe(false);
+    expect(snapshot.diagnostics).toContainEqual({
+      severity: "warning",
+      blockPath: "double-it/add-to-self",
+      message: expect.stringContaining("points at code that is not there"),
+    });
   });
 
   it("lists the blocks each block is made of, and nothing about what calls what", async () => {
@@ -71,17 +98,17 @@ describe("projectSnapshot", () => {
     expect(snapshot.blocks["double-it/add-to-self"]!.children).toEqual([]);
   });
 
-  it("has no sources before anything is generated, and carries them afterwards", async () => {
-    expect((await projectSnapshot(dir)).blocks["double-it"]!.sources).toEqual({ impl: null, contract: null });
+  it("carries the code it holds to a contract, and the contract once it is written", async () => {
+    const before = (await projectSnapshot(dir)).blocks["double-it"]!;
+    expect(before.sources.code).toContain("export async function doubleIt");
+    expect(before.sources.contract).toBeNull();
 
     await emitProject(await loadProject(dir));
 
     const after = (await projectSnapshot(dir)).blocks["double-it"]!;
     expect(after.sources.contract).toContain("export const doubleItInput");
-    expect(after.sources.impl).toContain("export async function doubleIt");
-    // Its code is the agent's to write, whatever is inside it, and the
-    // starting point is not code anyone wrote.
-    expect(after.implemented).toBe(false);
+    expect(after.implemented).toBe(true);
+    expect(after.files).toEqual({ code: "src/double-it.ts", contract: "blocks/double-it/contract.ts" });
   });
 
   it("reports diagnostics rather than throwing, so a broken project still opens", async () => {
@@ -141,13 +168,13 @@ describe("executions in a snapshot", () => {
   });
 });
 
-describe("a visual project's snapshot", () => {
+describe("a snapshot of code Fragmentor only draws", () => {
   it("carries the code each block points at, and reports a pointer that leads nowhere", async () => {
     const other = await mkdtemp(path.join(tmpdir(), "fragmentor-snap-"));
     try {
       await writeFile(
         path.join(other, "fragmentor.json"),
-        JSON.stringify({ name: "Seen", mode: "visual", language: "Go", granularity: { level: 2 }, systems: [{ rootBlock: "serve" }] }),
+        JSON.stringify({ name: "Seen", language: "Go", granularity: { level: 2 }, systems: [{ rootBlock: "serve" }] }),
         "utf8",
       );
       await mkdir(path.join(other, "blocks", "serve", "handle"), { recursive: true });
@@ -164,23 +191,25 @@ describe("a visual project's snapshot", () => {
       await writeFile(path.join(other, "main.go"), "package main\n\nfunc main() {\n\tserve()\n}\n", "utf8");
 
       const snapshot = await projectSnapshot(other);
-      expect(snapshot.mode).toBe("visual");
       expect(snapshot.language).toBe("Go");
-      expect(snapshot.systems).toEqual([{ rootBlock: "serve", language: "Go", displayName: "Go", known: true }]);
+      // Nothing is generated or run in a language there is no pack for.
+      expect(snapshot.systems).toEqual([{ rootBlock: "serve", language: "Go", displayName: "Go", known: false }]);
 
       const serve = snapshot.blocks.serve!;
       expect(serve.code).toMatchObject({ pointer: "main.go#main", file: "main.go", line: 3, excerptStart: 1 });
       expect(serve.code!.excerpt).toContain("func main()");
       expect(serve.implemented).toBe(true);
-      expect(serve.sources).toEqual({ impl: null, contract: null });
+      expect(serve.runnable).toBe(false);
+      expect(serve.drawnBecause).toContain("no language pack for Go");
+      expect(serve.sources).toEqual({ code: null, contract: null });
 
       const handle = snapshot.blocks["serve/handle"]!;
       expect(handle.inputs[0]!.type).toBe("*http.Request");
       expect(handle.code).toBeNull();
       expect(snapshot.diagnostics).toContainEqual({
-        severity: "error",
+        severity: "warning",
         blockPath: "serve/handle",
-        message: '"Handle" points at code that is not there: "handler.go" does not exist.',
+        message: expect.stringContaining('"Handle" points at code that is not there: "handler.go" does not exist.'),
       });
     } finally {
       await rm(other, { recursive: true, force: true });
