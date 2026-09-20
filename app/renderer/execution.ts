@@ -2,7 +2,7 @@ import { addressesOf, nextStep, placeEvent } from "../../src/model/trace.js";
 import type { Address, InteractionKind, Trace, TraceEvent, View } from "../../src/model/trace.js";
 import type { SnapshotExecution } from "../../src/project/snapshot.js";
 import type { TriggerKind } from "../../src/project/executions.js";
-import { applyExecutionMark, keepInView, onFlowWanted, onStepChosen, setShownStep, treeInView } from "./canvas.js";
+import { applyExecutionMark, keepInView, onFlowWanted, onStepChosen, treeInView } from "./canvas.js";
 import type { ExecutionMark } from "./canvas.js";
 import { buildFlow } from "./flow.js";
 import { shownAt } from "./tree.js";
@@ -24,9 +24,14 @@ import { el } from "./dom.js";
 /** What `ui.selectedLink` holds while the inspector is showing the step on screen. */
 export const STEP_LINK = "step";
 
-let notify: () => void = () => {};
-/** Called when picking an execution, or stepping it, changes what the panels say. */
-export function onExecutionChange(callback: () => void): void {
+let notify: (options: { redraw: boolean }) => void = () => {};
+/**
+ * Called when picking an execution, or stepping it, changes what the panels
+ * say. `redraw` is set only when the drawing itself has to be built again —
+ * a different drawing, or blocks unfolded — because rebuilding it under the
+ * pointer loses a click, a double-click and whatever had the keyboard.
+ */
+export function onExecutionChange(callback: (options: { redraw: boolean }) => void): void {
   notify = callback;
 }
 
@@ -160,18 +165,30 @@ export function currentStep(): { execution: SnapshotExecution; trace: Trace; at:
   return event ? { execution: shown.execution, trace: shown.trace, at, event } : null;
 }
 
+let drawnMark: ExecutionMark | null = null;
+
+/** The step as it was last drawn, for anything that has to know where it landed. */
+function currentMark(): ExecutionMark | null {
+  return drawnMark;
+}
+
 /** Lays the step showing over the tree, and brings its controls up to date. */
 export function paintExecution(): void {
   const shown = picked();
-  // A project read again may have lost the execution it was showing.
-  if (ui.execution && !shown) ui.execution = null;
+  // A project read again may have lost the execution it was showing, and the
+  // flow is a drawing of one: without it there is nothing to draw and no bar
+  // to pick another from, so the tree comes back.
+  if (ui.execution && !shown) {
+    ui.execution = null;
+    ui.shows = "tree";
+  }
   const step = currentStep();
   if (step && ui.execution) ui.execution.at = step.at;
 
-  setShownStep(step?.at ?? -1);
   // The flow is a drawing of the execution itself, so the step is marked on
   // it rather than laid over it.
-  applyExecutionMark(step && ui.shows === "tree" ? markFor(step.event, step.execution.trigger.kind) : null);
+  drawnMark = step && ui.shows === "tree" ? markFor(step.event, step.execution.trigger.kind) : null;
+  applyExecutionMark(drawnMark);
   renderBar();
 }
 
@@ -205,8 +222,10 @@ function choose(id: string | null): void {
   // Nothing to draw a flow of without an execution.
   if (id === null) ui.shows = "tree";
   showStep();
+  // The flow is a drawing of the execution picked, so picking another is a
+  // different drawing.
+  notify({ redraw: ui.shows === "flow" });
   paintExecution();
-  notify();
 }
 
 /** Puts the step itself in the inspector, which is what someone stepping through is reading. */
@@ -233,17 +252,21 @@ function step(into: boolean): void {
 
   const event = shown.trace.events[next]!;
   showStep();
-  // Stepping in shows a step a fold has hidden, by unfolding what hides it.
+  // Stepping in shows a step a fold has hidden, by unfolding what hides it,
+  // which is the one thing about stepping that changes the drawing.
+  let unfolded = false;
   if (into) {
     for (const address of addressesOf(event)) {
       const segments = address.path.split("/");
-      for (let depth = 1; depth <= segments.length; depth += 1) ui.folded.delete(segments.slice(0, depth).join("/"));
+      for (let depth = 1; depth <= segments.length; depth += 1) {
+        if (ui.folded.delete(segments.slice(0, depth).join("/"))) unfolded = true;
+      }
     }
   }
 
-  notify();
+  notify({ redraw: unfolded || ui.shows === "flow" });
   paintExecution();
-  const mark = markFor(event, shown.execution.trigger.kind);
+  const mark = currentMark();
   if (mark) keepInView([mark.from, mark.to].filter((each): each is string => each !== null));
 }
 
@@ -272,8 +295,8 @@ function jump(at: number): void {
   if (!ui.execution) return;
   ui.execution.at = at;
   showStep();
+  notify({ redraw: ui.shows === "flow" });
   paintExecution();
-  notify();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -366,7 +389,8 @@ function buildBar(
     chip.addEventListener("click", () => {
       if (ui.shows === mode) return;
       ui.shows = mode;
-      notify();
+      // The other drawing has to be built.
+      notify({ redraw: true });
     });
     shows.append(chip);
   }

@@ -690,8 +690,9 @@ try {
   onBenchChange(render);
   // A run being watched moves on by itself; the panels follow it.
   onWatchChange(renderPanels);
-  // Picking an execution can change what the diagram draws.
-  onExecutionChange(render);
+  // Stepping changes what is laid over the drawing; only a different
+  // drawing, or blocks unfolded, is a reason to build it again.
+  onExecutionChange(({ redraw }) => (redraw ? render() : renderPanels()));
   // The agent works in the same folder; follow what it does.
   window.fragmentor.onProjectChanged((dir) => {
     if (dir === ui.dir) void reload();
@@ -707,7 +708,7 @@ try {
   // Clicking the step drawn on the tree asks about that step.
   onStepPicked(() => {
     showStep();
-    render();
+    renderPanels();
   });
   render();
   void renderWelcome();

@@ -25,7 +25,7 @@ blocks/<system>/          a system's top block           a block's parts are the
   block.json              the block                      you write
 ```
 
-A block's id is its folder name, in kebab-case. Never edit `layout.json`.
+A block's id is its folder name, in kebab-case.
 
 ## fragmentor.json
 
@@ -151,6 +151,8 @@ The blocks say what exists. Also write down what happens: for each thing that se
   "trigger": {
     "at": "price-orders/report-totals",
     "kind": "action",
+    "description": "Someone asks for the totals of a file of orders.",
+    "code": "src/pricing.ts#reportTotals",
     "payload": { "path": "orders.json" }
   },
   "trace": [

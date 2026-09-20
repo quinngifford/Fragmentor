@@ -56,8 +56,7 @@ export interface UiState {
    * execution being stepped through, from beginning to end.
    */
   shows: "tree" | "flow";
-  /**
-  /** Whether the lines saying what each block reaches are drawn. A preference, like the colours. */
+  /** Whether the arrows saying what each block reaches are drawn. A preference, like the colours. */
   showDependencies: boolean;
   setShowDependencies(value: boolean): void;
   /**

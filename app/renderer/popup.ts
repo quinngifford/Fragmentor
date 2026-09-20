@@ -14,12 +14,6 @@ import { codeLines, languageOf } from "./highlight.js";
  * enough to read it in.
  */
 
-let onClose: () => void = () => {};
-/** Called when a window closes, so whatever opened it can put its own state back. */
-export function onWindowClosed(callback: () => void): void {
-  onClose = callback;
-}
-
 function overlay(): HTMLElement {
   const found = document.getElementById("overlay");
   if (!found) throw new Error("The interface is missing #overlay.");
@@ -30,7 +24,6 @@ export function closeWindow(): void {
   const host = overlay();
   host.replaceChildren();
   host.hidden = true;
-  onClose();
 }
 
 /** The frame every window shares: what it is about, and a way out of it. */
@@ -53,11 +46,6 @@ function openWindow(title: string, subtitle: string, body: HTMLElement): void {
   scroll.append(body);
   pane.append(head, scroll);
   host.append(pane);
-
-  // Anywhere outside the window closes it, as does Escape.
-  host.addEventListener("pointerdown", (event) => {
-    if (event.target === host) closeWindow();
-  });
   close.focus();
 }
 
@@ -206,12 +194,15 @@ export function openBlockWindow(kind: "code" | "details", blockPath: string): vo
   else openDetailsWindow(block);
 }
 
-/** Called once, as the window starts: Escape closes whatever is open. */
+/** Called once, as the window starts: Escape, or anywhere outside a window, closes it. */
 export function setUpWindows(): void {
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && windowIsOpen()) {
       event.preventDefault();
       closeWindow();
     }
+  });
+  overlay().addEventListener("pointerdown", (event) => {
+    if (event.target === overlay()) closeWindow();
   });
 }

@@ -5,8 +5,7 @@ import { loadProject, validateProject } from "./project.js";
 import { boundStores } from "./stores.js";
 import { loadExecutions } from "./executions.js";
 import { projectSnapshot } from "./snapshot.js";
-import { project } from "../model/trace.js";
-import type { Trace } from "../model/trace.js";
+import { placeEvent } from "../model/trace.js";
 import { evaluate } from "../run/expect.js";
 import { runBlock } from "../run/run.js";
 import type { RunEvent } from "../run/run.js";
@@ -144,29 +143,42 @@ describe("the messenger example", () => {
     }
   });
 
-  it("draws sending a message at every level of detail from one trace", async () => {
-    const { executions } = await loadExecutions(messenger);
-    const trace = executions.find((execution) => execution.id === "send-a-message")!.declared as Trace;
-    const edges = (...expanded: string[]) =>
-      Object.fromEntries([...project(trace, { expanded: new Set(expanded) }).edges.values()].map((edge) => [edge.key, edge.interactions.length]));
-
-    // Zoomed out: the client asks the API, and the API reaches the infrastructure.
-    expect(edges("app")).toEqual({
-      "(outside)->app/client": 1,
-      "app/client->app/api": 1,
-      "app/api->app/infrastructure": 3,
+  it("places every step of every execution at a block that is showing, whatever is folded away", async () => {
+    const snapshot = await projectSnapshot(messenger);
+    const paths = Object.keys(snapshot.blocks);
+    /** What the canvas shows: everything except what has been folded away. */
+    const showing = (folded: string[]) => ({
+      expanded: new Set(["", ...paths.filter((path) => !folded.some((fold) => path === fold || path.startsWith(`${fold}/`)))]),
     });
 
-    // Inside the API: the router hands the message to messaging twice, and
-    // both reach the infrastructure, which stays closed.
-    const inside = edges("app", "app/api");
-    expect(inside["app/api/router->app/api/messaging"]).toBe(2);
-    expect(inside["app/api/messaging->app/infrastructure"]).toBe(2);
-    expect(inside["app/api/router->app/api/auth"]).toBe(1);
+    for (const folded of [[], ["app/client"], ["app/api", "app/infrastructure"], ["app"]]) {
+      const view = showing(folded);
+      for (const execution of snapshot.executions) {
+        for (const event of execution.declared!.events) {
+          const placed = placeEvent(event, view);
+          const where = placed.on === "edge" ? [placed.from, placed.to] : [placed.at];
+          for (const address of where) {
+            if (address === null) continue;
+            // A folded block is still drawn; only its parts are put away.
+            const hidden = folded.some((fold) => address.path.startsWith(`${fold}/`));
+            expect(hidden, `${execution.id}: ${address.path} is inside a folded block [${folded}]`).toBe(false);
+          }
+        }
+      }
+    }
+  });
 
-    // Inside messaging, with the infrastructure open as well.
-    const finer = edges("app", "app/api", "app/api/messaging", "app/infrastructure");
-    expect(finer["app/api/messaging/save-message->app/infrastructure/database"]).toBe(1);
-    expect(finer["app/api/messaging/notify-recipient->app/infrastructure/queue"]).toBe(1);
+  it("gathers a step onto the block standing for it once its parts are folded away", async () => {
+    const { executions } = await loadExecutions(messenger);
+    const trace = executions.find((execution) => execution.id === "send-a-message")!.declared!;
+    // The button handing the message to the page's state.
+    const inClient = trace.events[1]!;
+
+    const whole = { expanded: new Set(["", "app", "app/client", "app/client/ui"]) };
+    expect(placeEvent(inClient, whole)).toMatchObject({
+      on: "edge",
+      key: "app/client/ui/send-button->app/client/state",
+    });
+    expect(placeEvent(inClient, { expanded: new Set(["", "app"]) })).toMatchObject({ on: "inside", key: "app/client" });
   });
 });

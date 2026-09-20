@@ -68,3 +68,40 @@ describe("the whole system as a tree", () => {
     expect(shownAt(folded, "nothing/here")).toBeNull();
   });
 });
+
+describe("a block whose parts are listed, beside one whose parts run deeper", () => {
+  /** A system of whatever shape, built straight into a snapshot. */
+  function shaped(parts: Record<string, string[]>): void {
+    const snapshot = ui.snapshot!;
+    const blocks: Record<string, (typeof snapshot.blocks)[string]> = {};
+    const some = Object.values(snapshot.blocks)[0]!;
+    for (const [path, children] of Object.entries(parts)) {
+      blocks[path] = { ...some, path, id: path.split("/").at(-1)!, children };
+    }
+    ui.snapshot = { ...snapshot, blocks, systems: [{ ...snapshot.systems[0]!, rootBlock: "root" }] };
+  }
+
+  it("leaves room for the list, which is indented and would otherwise reach into the next column", () => {
+    // The shape that matters: one branch lists leaves, the one beside it goes
+    // deeper, so the two are drawn side by side at different depths.
+    shaped({
+      root: ["root/listed", "root/spread"],
+      "root/listed": ["root/listed/l1", "root/listed/l2"],
+      "root/listed/l1": [],
+      "root/listed/l2": [],
+      "root/spread": ["root/spread/c1"],
+      "root/spread/c1": ["root/spread/c1/deep"],
+      "root/spread/c1/deep": [],
+    });
+
+    const boxes = [...buildTree().nodes.values()];
+    expect(boxes).toHaveLength(7);
+    for (const a of boxes) {
+      for (const b of boxes) {
+        if (a.path >= b.path) continue;
+        const apart = a.x + BOX_W <= b.x || b.x + BOX_W <= a.x || a.y + BOX_H <= b.y || b.y + BOX_H <= a.y;
+        expect(apart, `${a.path} and ${b.path} overlap`).toBe(true);
+      }
+    }
+  });
+});

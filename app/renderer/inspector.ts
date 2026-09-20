@@ -423,12 +423,14 @@ function stepPanel(panel: HTMLElement): boolean {
 
   const where = section("Between");
   const list = el("div", "ports");
+  let missing = false;
   const place = (label: string, address: { path: string; entry: string | null } | null) => {
     const row = el("div", "port-row");
     row.append(el("div", "pname", label));
     if (address === null) {
       row.append(el("div", "ptype", "outside the system"));
     } else {
+      if (!snapshot.blocks[address.path]) missing = true;
       const block = snapshot.blocks[address.path];
       row.append(el("div", "ptype", address.entry === null ? (block?.name ?? address.path) : `${block?.name ?? address.path} · ${address.entry}`));
       const show = el("button", "btn quiet tiny", "Show");
@@ -449,6 +451,14 @@ function stepPanel(panel: HTMLElement): boolean {
   }
   where.append(list);
   panel.append(where);
+
+  // Nothing is drawn for a step whose block has been taken out of the
+  // project, and the tree saying nothing would be the only sign of it.
+  if (missing) {
+    panel.append(
+      el("p", "bench-note bad", "This step names a block that is not in the project, so there is nothing to draw it between. The problems list says which."),
+    );
+  }
 
   const carried =
     event.type === "effect" ? event.detail : event.type === "return" ? event.response : event.payload;

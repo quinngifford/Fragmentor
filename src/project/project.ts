@@ -22,7 +22,6 @@ import { resolveInside } from "./safePath.js";
  *
  *   <project>/
  *     fragmentor.json
- *     layout.json
  *     blocks/
  *       rank-jobs/          <- one system
  *         block.json

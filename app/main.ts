@@ -184,12 +184,8 @@ function resumeMode(raw: unknown): "continue" | "step" | "block" {
 /** One watcher per window, on whichever project that window has open. */
 const watchers = new Map<number, FSWatcher>();
 
-/**
- * Changes that are nobody's business: the canvas layout, which this
- * application writes itself, and the folders tools keep inside a project.
- */
+/** Changes that are nobody's business: the folders tools keep inside a project. */
 function ignored(filename: string): boolean {
-  if (filename === "layout.json") return true;
   return filename.split(/[\\/]/).some((part) => part === "node_modules" || part === "__pycache__" || part.startsWith("."));
 }
 
@@ -652,27 +648,6 @@ const INTERACTIONS = `
     return summary ? summary.textContent : "no summary";
   });
 
-  const dragged = await attempt(async () => {
-    const target = nodeOf("price-seat");
-    if (!target) return "no block to drag";
-    const before = target.getAttribute("transform");
-    const at = (type, x, y) =>
-      new PointerEvent(type, { bubbles: true, pointerId: 7, clientX: x, clientY: y, isPrimary: true });
-    target.dispatchEvent(at("pointerdown", 400, 400));
-    window.dispatchEvent(at("pointermove", 480, 460));
-    window.dispatchEvent(at("pointerup", 480, 460));
-    await wait(400);
-    const moved = before !== target.getAttribute("transform");
-
-    target.dispatchEvent(at("pointerdown", 480, 460));
-    window.dispatchEvent(at("pointermove", 400, 400));
-    window.dispatchEvent(at("pointerup", 400, 400));
-    await wait(400);
-
-    const restored = before === target.getAttribute("transform");
-    return moved ? (restored ? "moved" : "moved but not restored") : "DID NOT MOVE";
-  });
-
   // A block with parts folds them away and brings them back, which is the
   // one thing that takes a block off the tree.
   const foldedAway = await attempt(async () => {
@@ -726,7 +701,6 @@ const INTERACTIONS = `
     ...drawn,
     ran,
     tests,
-    dragged,
     foldedAway,
     shown,
     savedToDisk: /Saved .*impl\\.ts/.test(afterSave),

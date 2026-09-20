@@ -58,11 +58,6 @@ export function onBlockWindow(callback: (kind: "code" | "details", blockPath: st
 let currentTree: Tree | null = null;
 let currentFlow: Flow | null = null;
 
-/** What the canvas is drawing now: the architecture, or one execution end to end. */
-export function flowInView(): Flow | null {
-  return currentFlow;
-}
-
 /** The execution to draw as a flow, and how to word each of its steps. Set by whoever holds the trace. */
 let flowSource: () => { flow: Flow; at: number; name: (path: string | null) => string } | null = () => null;
 export function onFlowWanted(source: () => { flow: Flow; at: number; name: (path: string | null) => string } | null): void {
@@ -188,11 +183,6 @@ export interface ExecutionMark {
 }
 
 let currentMark: ExecutionMark | null = null;
-/** The step being shown, so the flow can mark it. */
-let shownStep = -1;
-export function setShownStep(at: number): void {
-  shownStep = at;
-}
 
 export function applyExecutionMark(mark: ExecutionMark | null): void {
   currentMark = mark;
@@ -470,7 +460,6 @@ function moveToPoint(cx: number, cy: number): void {
   const id = ++moves;
   const start = currentCamera();
   const target = { cx, cy, scale: start.scale };
-  ui.userAdjusted = true;
   if (lessMotion()) setCamera(target);
   else tween(300, (t) => setCamera(between(start, target, t)), () => id === moves);
 }
@@ -626,7 +615,7 @@ function renderFlow(): void {
   shown.flow.boxes.forEach((box, at) => {
     const before = at > 0 ? shown.flow.boxes[at - 1]! : null;
     if (box.arrow && before) drawFlowArrow(before, box, box === current, lines);
-    drawFlowBox(box, shown.name(box.path), box === current, layer);
+    drawFlowBox(box, shown.name(box.path), box === current, shown.at, layer);
   });
 
   applyViewport();
@@ -634,7 +623,7 @@ function renderFlow(): void {
 }
 
 /** One box of the flow: where the run was, at that moment. */
-function drawFlowBox(box: FlowBox, name: string, current: boolean, layer: Element): void {
+function drawFlowBox(box: FlowBox, name: string, current: boolean, at: number, layer: Element): void {
   const block = (box.path === null ? null : ui.snapshot?.blocks[box.path]) ?? null;
   const group = svgEl("g", {
     class: "block-box flow-box",
@@ -657,10 +646,10 @@ function drawFlowBox(box: FlowBox, name: string, current: boolean, layer: Elemen
   svgEl("text", { x: 12, y: 30, class: "block-kind" }, body).textContent = block?.roleLabel ?? "OUTSIDE THE SYSTEM";
 
   // What the run left while it was here, under the box it left it at.
-  box.effects.forEach((effect, at) => {
+  box.effects.forEach((effect, row) => {
     const width = chipWidth(effect.label);
-    const chip = svgEl("g", { class: "exec-effect", "data-current": String(shownStep === effect.at) }, group);
-    const y = BOX_H + 8 + at * (CHIP_H + 4);
+    const chip = svgEl("g", { class: "exec-effect", "data-current": String(effect.at === at) }, group);
+    const y = BOX_H + 8 + row * (CHIP_H + 4);
     svgEl("rect", { x: 0, y, width, height: CHIP_H, rx: CHIP_H / 2, class: "exec-effect-chip" }, chip);
     svgEl("text", { x: width / 2, y: y + 10.5, class: "exec-effect-text", "text-anchor": "middle" }, chip).textContent =
       effect.label;

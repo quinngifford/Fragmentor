@@ -105,10 +105,11 @@ export function buildTree(folded: ReadonlySet<string> = new Set()): Tree {
     nodes.set(path, node);
 
     if (listed) {
-      // Its own column, with its parts listed down it. They are in that
-      // column too, so the columns they took as leaves are given back.
+      // Its own column, with its parts listed down it, indented. They are in
+      // that column too, so the columns they took as leaves are given back,
+      // and the column is widened by however far they are indented.
       node.x = cursor;
-      cursor += BOX_W + COL_GAP;
+      cursor += BOX_W + STACK_INDENT + COL_GAP;
       const beside = cursor;
       parts.forEach((part, at) => {
         const child = place(part, depth + 1, node.y + BOX_H + STACK_TOP + at * (BOX_H + STACK_GAP));

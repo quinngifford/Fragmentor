@@ -171,9 +171,9 @@ function pace(event: RunEvent): number {
 function follow(watch: Watch, id: number): void {
   const call = watch.calls.get(id);
   if (!call) return;
+  // Bringing it into view tells the panels itself.
   revealBlock(call.block);
   paint();
-  notify();
 }
 
 /** Plays the next event, and any after it that cannot be seen from here and so need no time. */
