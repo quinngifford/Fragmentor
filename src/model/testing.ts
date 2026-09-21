@@ -31,7 +31,7 @@ export function makeBlock(partial: Partial<Block> & { id: string }): Block {
 
 export const t = {
   string: { kind: "string" } as PortType,
-  /** A type written as words, as a planned or visual block writes one. */
+  /** A type written as words, as a planned block or one describing existing code writes one. */
   text: (text: string): PortType => ({ kind: "text", text }),
   number: { kind: "number" } as PortType,
   boolean: { kind: "boolean" } as PortType,

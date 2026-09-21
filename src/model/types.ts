@@ -21,9 +21,10 @@ export type PortType =
   | { kind: "object"; fields: Record<string, ObjectField> }
   | { kind: "union"; of: PortType[] }
   /**
-   * A type written as free text, as in visual mode, where the diagram
-   * describes code Fragmentor never checks. It is shown, never enforced, and
-   * the parser never produces it.
+   * A type written as words, because the parser did not recognise them:
+   * `Promise<Order[]>` from code that already exists, or `"the scored
+   * postings"` from a block nobody has built. It is shown, never enforced, and
+   * a block with one gets no contract.
    */
   | { kind: "text"; text: string };
 

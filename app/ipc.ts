@@ -97,7 +97,7 @@ export interface FragmentorApi {
   emitCode(dir: string): Promise<Result<EmitResult>>;
   /** Shows a block's folder in the system file manager. */
   revealBlock(dir: string, blockPath: string): Promise<Result<null>>;
-  /** Shows a file a visual block points at, given relative to the project. */
+  /** Shows the file a block points at, given relative to the project. */
   revealCode(dir: string, file: string): Promise<Result<null>>;
   /** The whole of the file a block points at, for reading in a window of its own. */
   readCode(dir: string, pointer: string): Promise<Result<{ file: string; line: number | null; text: string | null }>>;
