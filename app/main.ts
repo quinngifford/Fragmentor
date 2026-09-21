@@ -583,7 +583,7 @@ const INTERACTIONS = `
   saveButton().click();
   await wait(900);
   // Measured here, before anything navigates away and swaps the editor out.
-  const restoredCleanly = editor().value === original && /Saved .*impl\\.ts/.test(statusText());
+  const restoredCleanly = editor().value === original && /Saved src\\/booking/.test(statusText());
 
   // Running a block is what makes this an application rather than a viewer.
   let ran = "no run button";
@@ -682,7 +682,7 @@ const INTERACTIONS = `
     tests,
     foldedAway,
     shown,
-    savedToDisk: /Saved .*impl\\.ts/.test(afterSave),
+    savedToDisk: /Saved src\\/booking/.test(afterSave),
     saveMessage: afterSave.slice(-70),
     restoredCleanly,
     startsSaved,
@@ -700,17 +700,19 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       "a new project asks its questions in order, and will not go on until each that applies is answered",
       value("dialog", "blockedAtFirst") === true &&
         value("dialog", "roleUnasked") === true &&
-        value("dialog", "roleAsked") === true &&
+        value("dialog", "levelUnasked") === true &&
         value("dialog", "blockedWithoutStart") === true &&
         value("dialog", "blockedWithoutLevel") === true &&
         value("dialog", "ready") === true &&
+        value("dialog", "languageIsFree") === true &&
         value("dialogClosed", "closed") === true,
     ],
     [
-      "changing an answer clears the ones below it, and they can be given again",
+      "a question that stops applying is put away, and its answer still stands when it applies again",
       value("dialog", "startNotAskedOfExistingCode") === true &&
-        value("dialog", "clearedBelow") === true &&
-        value("dialog", "answerableAgain") === true,
+        value("dialog", "readyWithoutStart") === true &&
+        value("dialog", "keptBelow") === true &&
+        value("dialog", "readyAgain") === true,
     ],
     [
       "a whole application is one tree: every block of it on screen, each under what it is part of",
@@ -920,8 +922,14 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       value("problems", "listed") === true && value("problems", "counted") === true,
     ],
     [
-      "a visual project hides what only generated code has, and shows the code a block points at",
-      value("visual", "generateHidden") === true && value("visual", "linked") === true && value("visual", "noBench") === true,
+      "code that does not import its contract is drawn, read-only, with nothing to run and the reason on show",
+      /^src\/booking\/cancel-booking\.ts/.test(String(value("drawnOnly", "where"))) &&
+        /does not import/.test(String(value("drawnOnly", "reason"))) &&
+        value("drawnOnly", "noEditor") === true &&
+        value("drawnOnly", "noBench") === true &&
+        value("drawnOnly", "drawn") === true &&
+        // And it is held to its contract again as soon as the import is back.
+        value("boundAgain", "held") === true,
     ],
     ["a block with parts folds them away and brings them back", value("interface", "foldedAway") === "folded and unfolded"],
     [
@@ -1058,42 +1066,43 @@ function attachSelfCheck(
           if (!dialog) return { opened: false };
           const create = [...dialog.querySelectorAll(".dialog-actions .btn")].find((b) => b.textContent.startsWith("Choose folder"));
           const blockedAtFirst = create.disabled;
+          // Nothing is asked about Fragmentor's role over the code: it does
+          // what it can with whatever each block turns out to point at.
           const roleUnasked = dialog.querySelectorAll('input[name="mode"]').length === 0;
+          const levelUnasked = dialog.querySelector('input[name="granularity"]').closest("fieldset").hidden;
           dialog.querySelector('input[name="starting-point"][value="false"]').click();
-          const roleAsked = dialog.querySelectorAll('input[name="mode"]').length === 2;
-          dialog.querySelector('input[name="mode"][value="visual"]').click();
           const blockedWithoutStart = create.disabled;
           dialog.querySelector('input[name="start"][value="plan"]').click();
           const blockedWithoutLevel = create.disabled;
           dialog.querySelector('input[name="granularity"][value="3"]').click();
           const ready = !create.disabled;
 
-          // Code that already exists is described or rebuilt, never planned,
-          // so that question is not asked of it at all.
+          // Code that already exists is described, never planned, so that
+          // question is not asked of it at all.
           dialog.querySelector('input[name="starting-point"][value="true"]').click();
-          dialog.querySelector('input[name="mode"][value="structured"]').click();
           const startNotAskedOfExistingCode = dialog.querySelector('input[name="start"]').closest("fieldset").hidden;
+          const readyWithoutStart = !create.disabled;
 
-          // Going back clears the answers below, and they can be given again.
+          // Going back asks it again, with the answer already given still
+          // standing, so the form can be finished without answering it twice.
           // A radio left checked for a cleared answer could not be re-chosen:
           // clicking the one already checked raises no event at all.
           dialog.querySelector('input[name="starting-point"][value="false"]').click();
-          const clearedBelow = ![...dialog.querySelectorAll('input[name="start"]')].some((i) => i.checked);
-          dialog.querySelector('input[name="mode"][value="visual"]').click();
-          dialog.querySelector('input[name="start"][value="plan"]').click();
+          const keptBelow = [...dialog.querySelectorAll('input[name="start"]')].some((i) => i.checked);
 
           return {
             opened: true,
             blockedAtFirst,
             roleUnasked,
-            roleAsked,
+            levelUnasked,
             blockedWithoutStart,
             blockedWithoutLevel,
             ready,
             startNotAskedOfExistingCode,
-            clearedBelow,
-            answerableAgain: !create.disabled,
-            languageIsFree: Boolean(dialog.querySelector(".language-slot input[list]")),
+            readyWithoutStart,
+            keptBelow,
+            readyAgain: !create.disabled,
+            languageIsFree: Boolean(dialog.querySelector('input[list="project-languages"]')),
             levelText: text("dialog.new-project .dialog-note"),
           };
         `);
@@ -1108,7 +1117,6 @@ function attachSelfCheck(
         // have defined yet. It is started as a plan, because the first thing
         // the empty canvas says is supposed to follow the answers given.
         await startProject(check.projectDir, {
-          mode: "structured",
           granularity: 3,
           language: "typescript",
           existingCode: false,
@@ -1478,7 +1486,7 @@ function attachSelfCheck(
           box.dispatchEvent(new Event("input", { bubbles: true }));
           return { typed: true };
         `);
-        const impl = inProject("blocks", "tickets", "booking-api", "pricing", "refund-for", "impl.ts");
+        const impl = inProject("src", "booking", "refund-for.ts");
         await writeFile(impl, `${await readFile(impl, "utf8")}\n// changed by the agent\n`, "utf8");
         await run("conflict", `
           const warned = await until(() => /changed on disk/.test(text(".code-foot .bench-note")));
@@ -1505,29 +1513,45 @@ function attachSelfCheck(
         `);
         await capture(window, "self-check-problems");
 
-        // The project becomes a visual one, and a block is pointed at a file.
-        const manifestFile = inProject("fragmentor.json");
-        await writeFile(manifestFile, JSON.stringify({ ...JSON.parse(await readFile(manifestFile, "utf8")), mode: "visual" }, null, 2), "utf8");
+        // One block's code stops importing its contract, so nothing holds the
+        // two together any more: Fragmentor draws that code and runs nothing.
+        // Nothing else calls this one, so the rest of the system is unaffected.
+        const cancelFile = inProject("src", "booking", "cancel-booking.ts");
+        const cancelWhole = await readFile(cancelFile, "utf8");
         await writeFile(
-          findEvent,
-          JSON.stringify({ ...JSON.parse(await readFile(findEvent, "utf8")), code: "blocks/tickets/booking-api/find-event/impl.ts" }, null, 2),
+          cancelFile,
+          `export async function cancelBooking(input: { bookingId: string }) {
+  return { cancelled: false, message: "no such booking", refund: 0 };
+}
+`,
           "utf8",
         );
-        await run("visual", `
-          const generateHidden = Boolean(await until(() => document.getElementById("generate-code").hidden));
-          const block = await until(() => document.querySelector('.block-box[data-id="find-event"]'));
-          if (!block) return { generateHidden, linked: false };
-          block.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 9, clientX: 5, clientY: 5, isPrimary: true }));
-          window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 9, clientX: 5, clientY: 5 }));
+        await run("drawnOnly", `
+          const node = await until(() =>
+            [...document.querySelectorAll(".tree .node")].find((n) => n.textContent.includes("cancel-booking")),
+          );
+          if (!node) return { found: false };
+          node.click();
           const where = await until(() => text(".code-where"));
+          const reason = await until(() => {
+            const note = [...document.querySelectorAll(".code-foot .bench-note")].find((p) => /does not import/.test(p.textContent));
+            return note ? note.textContent : null;
+          });
           return {
-            generateHidden,
-            linked: /find-event\\/impl\\.ts/.test(where),
+            found: true,
+            where,
+            reason: reason || "",
+            noEditor: !document.querySelector(".code-edit-input"),
             noBench: !document.querySelector(".bench"),
-            mode: text(".status .mode-tag"),
+            drawn: /drawn/.test(text("#inspector .badge.state")),
           };
         `);
-        await capture(window, "self-check-visual");
+        await capture(window, "self-check-drawn-only");
+        await writeFile(cancelFile, cancelWhole, "utf8");
+        await run("boundAgain", `
+          const held = await until(() => (text("#inspector .badge.state") === "checked and runnable" ? true : null));
+          return { held: held === true };
+        `);
 
         // The agent draws more of the system: the venues the events are held
         // at become a store of their own, kept beside the block that reads

@@ -145,7 +145,6 @@ export function askForProjectSettings(): Promise<NewProjectSettings | null> {
 
     const startingPoint = question<boolean>("starting-point", (value) => {
       existingCode = value;
-      start = null;
     });
     startingPoint.draw("Where are you starting from?", STARTING_POINTS);
 
