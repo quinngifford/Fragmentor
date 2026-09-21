@@ -1,6 +1,6 @@
 import type { SnapshotBlock } from "../../src/project/snapshot.js";
 import { ROLES } from "../../src/model/roles.js";
-import { accessSection, exposedSection, portSection } from "./detail.js";
+import { interfaceSection, reachesSection } from "./detail.js";
 import { requireSnapshot, ui } from "./state.js";
 import { benchWindowIsOpen } from "./benchpanel.js";
 import { el, section } from "./dom.js";
@@ -151,19 +151,18 @@ export async function openCodeAt(pointer: string, title: string): Promise<void> 
 /* What a block holds                                                          */
 /* -------------------------------------------------------------------------- */
 
-/** A block's shape: what it takes and gives back, or what it offers, and what it reaches. */
+/**
+ * A block's interface, what it reaches and what it is made of — the same
+ * sections, under the same headings, as the inspector's own panel. The window
+ * is where there is room to read them; the panel is where they sit beside
+ * everything else about the block.
+ */
 export function openDetailsWindow(block: SnapshotBlock): void {
   const body = el("div", "window-sections");
 
-  if (block.architecture) {
-    body.append(exposedSection(block));
-  } else {
-    body.append(portSection("Takes", block.inputs));
-    body.append(portSection("Gives back", block.outputs));
-    if (block.capabilities.length > 0) body.append(portSection("Reaches outside the program", block.capabilities, true));
-  }
+  body.append(interfaceSection(block));
 
-  const reaches = accessSection(block);
+  const reaches = reachesSection(block);
   if (reaches) body.append(reaches);
 
   const parts = requireSnapshot().blocks[block.path]?.children ?? [];

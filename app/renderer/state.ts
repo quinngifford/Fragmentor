@@ -82,10 +82,20 @@ export interface UiState {
   codeTab: "code" | "contract";
   /**
    * The bench that is open in a window of its own: which block it is for, which
-   * of that block's entries if it was opened from one, and where it has been
-   * dragged to. Null when none is open.
+   * of that block's entries if it was opened from one, where it has been
+   * dragged to, how big it has been pulled and whether it is rolled up to its
+   * title bar. Null when none is open.
    */
-  bench: { blockPath: string; entry: string | null; route?: string; x: number; y: number } | null;
+  bench: {
+    blockPath: string;
+    entry: string | null;
+    route?: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    minimised: boolean;
+  } | null;
   /** Once the view has been moved by hand, stop refitting it automatically. */
   userAdjusted: boolean;
   /**
@@ -142,6 +152,36 @@ export function rememberInspectorWidth(width: number): void {
     localStorage.setItem(WIDTH_KEY, String(Math.round(width)));
   } catch {
     // Storage can be unavailable; the width simply starts from the default next time.
+  }
+}
+
+const BENCH_SIZE_KEY = "fragmentor.benchSize";
+
+/**
+ * How big the bench window may be pulled. It starts wide enough to lay the
+ * form out in columns rather than a single thin strip, which is what made it
+ * a window instead of a panel in the first place.
+ */
+export const BENCH_SIZE = { leastW: 420, leastH: 220, standardW: 780, standardH: 580 };
+
+export function readBenchSize(): { w: number; h: number } {
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(BENCH_SIZE_KEY) ?? "");
+    if (stored === null || typeof stored !== "object") throw new Error("no size");
+    const { w, h } = stored as { w?: unknown; h?: unknown };
+    if (typeof w !== "number" || typeof h !== "number") throw new Error("no size");
+    return { w: Math.max(BENCH_SIZE.leastW, w), h: Math.max(BENCH_SIZE.leastH, h) };
+  } catch {
+    return { w: BENCH_SIZE.standardW, h: BENCH_SIZE.standardH };
+  }
+}
+
+/** Remembered like the inspector's width, and for the same reason. */
+export function rememberBenchSize(w: number, h: number): void {
+  try {
+    localStorage.setItem(BENCH_SIZE_KEY, JSON.stringify({ w: Math.round(w), h: Math.round(h) }));
+  } catch {
+    // Storage can be unavailable; the window simply opens at its usual size next time.
   }
 }
 

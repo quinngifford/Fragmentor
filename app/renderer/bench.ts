@@ -3,9 +3,9 @@ import type { SnapshotBlock, SnapshotStore } from "../../src/project/snapshot.js
 import type { TestCase } from "../../src/run/cases.js";
 import type { CaseResult, RunOutcome, StoreEffect, StoreSeeds } from "../../src/run/run.js";
 import { requireSnapshot, ui } from "./state.js";
-import { runWatched } from "./watch.js";
+import { runWatched, watchSection } from "./watch.js";
 import { el, section, subsection } from "./dom.js";
-import { codeBlock } from "./highlight.js";
+import { codeBlock, typeLine } from "./highlight.js";
 
 /**
  * The test bench: enter values, run the block, see what came back.
@@ -210,7 +210,11 @@ function storesForm(block: SnapshotBlock): HTMLElement | null {
     });
 
     const wrap = labelled(`${store.resourceName} · ${store.entry}`, area);
-    if (store.shape) wrap.append(el("div", "pdesc", `each row: ${store.shape}`));
+    if (store.shape) {
+      const shape = el("div", "pdesc pshape");
+      shape.append(el("span", "pshape-label", "each row"), typeLine(store.shape, "ptype"));
+      wrap.append(shape);
+    }
     wrap.append(problem);
     node.append(wrap);
   }
@@ -513,23 +517,28 @@ function casesSection(block: SnapshotBlock): HTMLElement {
  * and the result are the same, so the only difference is what it is called.
  */
 interface BenchLook {
-  title: string;
   /** What running it means here, when "run this block" is not what the person is doing. */
   note: string;
   runLabel: string;
 }
 
 export function benchSection(block: SnapshotBlock, look?: BenchLook): HTMLElement {
-  const node = section(look?.title ?? "Test bench", "bench");
+  // The window's own head already says what is being tried, so the section
+  // says what it is instead of saying that again.
+  const node = section("Input", "bench");
 
   const draft = draftFor(block);
 
   if (block.inputs.length === 0) {
     node.append(el("p", "bench-note", "This block takes no input."));
   } else {
+    // Side by side while the window is wide enough for it: a form of six
+    // short values down one thin column was most of why the bench scrolled.
+    const fields = el("div", "bench-fields");
     for (const port of block.inputs) {
-      node.append(controlFor(port.typeIr, port.name, [port.name], draft));
+      fields.append(controlFor(port.typeIr, port.name, [port.name], draft));
     }
+    node.append(fields);
   }
 
   const stores = storesForm(block);
@@ -556,32 +565,47 @@ export function benchSection(block: SnapshotBlock, look?: BenchLook): HTMLElemen
   });
 
   node.append(run, note);
-
-  const result = resultPanel(block);
-  if (result) node.append(result);
-
   return node;
 }
 
-/** The bench and the block's saved tests, which the inspector shows with the run between them. */
-export function benchSections(block: SnapshotBlock): [bench: HTMLElement, cases: HTMLElement] {
-  return [benchSection(block), casesSection(block)];
+/** What the last run gave back, in a section of its own so a wide window can put it beside the form. */
+function resultSection(block: SnapshotBlock): HTMLElement | null {
+  const result = resultPanel(block);
+  if (!result) return null;
+  const node = section("Result");
+  node.append(result);
+  return node;
 }
 
 /**
- * The bench for what one entry sets going, shown where the entry is rather
- * than where the code is.
+ * Everything the bench window holds for one block, in the order it is read.
  *
- * This is what makes a diagram runnable from the top: an agent presses
- * `raiseTicket` on a console, and the blocks that answer it run and are
- * watched, without having to know which of them it lands in. The form is the
- * answering block's, which is the operation's too — `check` holds the two to
- * the same shape, so there is nothing to convert between them.
+ * Each is a section of its own rather than one long strip, so a window pulled
+ * wide lays them side by side and there is little left to scroll.
+ *
+ * The same bench serves two places: a block itself, and the entry of a client
+ * or service that leads to it. The second is the point of the first — pressing
+ * a button is what the system is for — and the values, the stores and the
+ * result are the same, so the only difference is what it is called. That is
+ * what makes a diagram runnable from the top: an agent presses `bookSeats` on
+ * a box office and whatever answers it runs, watched, without anyone having to
+ * know which block it lands in. The form is the answering block's, which is the
+ * operation's too — `check` holds the two to the same shape.
  */
-export function entryBenchSection(entry: string, answering: SnapshotBlock, route: string): HTMLElement {
-  return benchSection(answering, {
-    title: `Try ${entry}`,
-    note: `Runs what answers this: ${route}. The blocks light up as they go, and any breakpoint still stops it.`,
-    runLabel: `Run ${entry}`,
-  });
+export function benchParts(block: SnapshotBlock, entry: string | null, route: string): HTMLElement[] {
+  const look: BenchLook | undefined =
+    entry === null
+      ? undefined
+      : {
+          note: `Runs what answers this: ${route}. The blocks light up as they go, and any breakpoint still stops it.`,
+          runLabel: `Run ${entry}`,
+        };
+
+  const parts = [benchSection(block, look)];
+  const result = resultSection(block);
+  if (result) parts.push(result);
+  const watching = watchSection(block);
+  if (watching) parts.push(watching);
+  parts.push(casesSection(block));
+  return parts;
 }

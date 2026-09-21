@@ -2,13 +2,14 @@ import type { SnapshotBlock, SnapshotCode } from "../../src/project/snapshot.js"
 import type { ProjectDiagnostic } from "../../src/project/project.js";
 import { blockColours, requireSnapshot, selectedBlock, ui, viewSettings } from "./state.js";
 import { ROLES } from "../../src/model/roles.js";
-import { accessSection, exposedSection, portSection } from "./detail.js";
-import { accessArrows, blockColour, hasCode, hasDetails, revealBlock, toggleFold, treeInView } from "./canvas.js";
+import { interfaceSection, reachesSection } from "./detail.js";
+import type { EntryRoute } from "./detail.js";
+import { accessArrows, blockColour, hasCode, hasDetails, revealBlock, treeInView } from "./canvas.js";
 import { openBlockWindow, openCodeAt } from "./popup.js";
 import { STEP_LINK, currentStep, describeStep } from "./execution.js";
 import type { AccessArrow } from "./canvas.js";
 import { openBenchWindow } from "./benchpanel.js";
-import { el, group, section } from "./dom.js";
+import { el, section } from "./dom.js";
 import { codeBlock, codeFragment, codeLines, languageOf } from "./highlight.js";
 
 let notify: () => void = () => {};
@@ -82,7 +83,7 @@ function editableCode(value: string, language: ReturnType<typeof languageOf>): {
 }
 
 function codeSection(block: SnapshotBlock): HTMLElement {
-  const node = section("Source");
+  const node = section("Code");
   const language = languageOf(block.language, block.files[ui.codeTab]);
 
   const tabs = el("div", "code-tabs");
@@ -215,7 +216,7 @@ function excerptOf(code: SnapshotCode, language: ReturnType<typeof languageOf>):
 
 /** Code Fragmentor only draws: shown, never edited from here. */
 function linkedCodeSection(block: SnapshotBlock): HTMLElement {
-  const node = section("Source");
+  const node = section("Code");
   const code = block.code;
 
   if (!code) {
@@ -335,72 +336,49 @@ function whatHappens(block: SnapshotBlock, entry: string): Step[] {
   return route;
 }
 
+/** One of this block's entries, and what the walk above found at the end of it. */
+interface Leads {
+  entry: string;
+  /** The way there in words, for the entry's own row. */
+  route: string;
+  /** Where it ends up. */
+  last: SnapshotBlock;
+}
+
 /**
- * The entries of this block that can actually be set going: those whose route
- * ends at code that has been written.
+ * Where each of this block's entries leads.
  *
- * It is the same walk the panel already shows, asked a different question, so
- * a button that leads somewhere and a button that can be pressed can never
- * disagree about where it leads.
+ * One walk answers two questions — where does this button go, and can it be
+ * pressed — so the row saying where it leads and the button that runs it can
+ * never disagree about the route.
  */
-function runnableEntries(block: SnapshotBlock): { entry: string; answering: SnapshotBlock; route: string }[] {
+function entryLeads(block: SnapshotBlock): Leads[] {
+  if (!block.architecture) return [];
+
   return block.exposes.flatMap((entry) => {
-    const route = whatHappens(block, entry.name);
-    const last = route.at(-1);
-    if (route.length < 2 || !last || last.block.architecture) return [];
-    if (!last.block.runnable || block.planned) return [];
+    const rest = whatHappens(block, entry.name).slice(1);
+    const last = rest.at(-1);
+    if (!last) return [];
 
     return [
       {
         entry: entry.name,
-        answering: last.block,
-        route: route
-          .slice(1)
-          .map((step) => (step.entry ? `${step.block.name} · ${step.entry}` : step.block.name))
-          .join(" → "),
+        route: rest.map((step) => (step.entry ? `${step.block.name} · ${step.entry}` : step.block.name)).join("  →  "),
+        last: last.block,
       },
     ];
   });
 }
 
-/**
- * Where an entry leads, and a way to get there.
- *
- * Shown on an architecture block, which has no bench of its own: the bench
- * belongs to whatever code answers it, and this is how you reach it.
- */
-function whatHappensSection(block: SnapshotBlock): HTMLElement | null {
-  const routes = block.exposes
-    .map((entry) => ({ entry, route: whatHappens(block, entry.name) }))
-    .filter(({ route }) => route.length > 1);
-  if (routes.length === 0) return null;
-
-  const node = section("When this happens");
-  const list = el("div", "ports");
-
-  for (const { entry, route } of routes) {
-    const row = el("div", "port-row cap");
-    row.append(el("div", "pname", entry.name));
-
-    const rest = route.slice(1);
-    row.append(el("div", "ptype", rest.map((step) => (step.entry ? `${step.block.name} · ${step.entry}` : step.block.name)).join("  →  ")));
-
-    // Only worth offering where the chain ends at code that can be run.
-    const last = rest.at(-1)!;
-    if (!last.block.architecture) {
-      const open = el("button", "btn quiet tiny", "Go there");
-      open.title = `Show ${last.block.name}, where this is answered`;
-      open.addEventListener("click", () => revealBlock(last.block.path));
-      row.append(open);
-    }
-    list.append(row);
-  }
-
-  node.append(list);
-  return node;
+/** The same routes, as the entries' own rows want them. */
+function routesOf(leads: Leads[]): EntryRoute[] {
+  return leads.map(({ entry, route, last }) => ({
+    entry,
+    route,
+    endsAt: last.architecture ? null : last.path,
+  }));
 }
 
-/** What an architecture block offers, in place of the contract it has none of. */
 /**
  * One step of an execution: what it is, which blocks it joins, what it
  * carried, and the code that makes it happen.
@@ -427,7 +405,9 @@ function stepPanel(panel: HTMLElement): boolean {
   panel.append(el("p", "responsibility", said ?? describeStep(event, trigger, 400)));
   if (said) panel.append(el("p", "bench-note", describeStep(event, trigger, 400)));
 
-  const where = section("Between");
+  // "Where", not "between": an effect happens at one block rather than
+  // between two, and this is the section that says so for both.
+  const where = section("Where");
   const list = el("div", "ports");
   let missing = false;
   const place = (label: string, address: { path: string; entry: string | null } | null) => {
@@ -438,10 +418,14 @@ function stepPanel(panel: HTMLElement): boolean {
     } else {
       if (!snapshot.blocks[address.path]) missing = true;
       const block = snapshot.blocks[address.path];
-      row.append(el("div", "ptype", address.entry === null ? (block?.name ?? address.path) : `${block?.name ?? address.path} · ${address.entry}`));
+      const where = el("div", "pwhere");
+      where.append(
+        el("span", "ptype", address.entry === null ? (block?.name ?? address.path) : `${block?.name ?? address.path} · ${address.entry}`),
+      );
       const show = el("button", "btn quiet tiny", "Show");
       show.addEventListener("click", () => revealBlock(address.path));
-      row.append(show);
+      where.append(show);
+      row.append(where);
     }
     list.append(row);
   };
@@ -478,11 +462,14 @@ function stepPanel(panel: HTMLElement): boolean {
   // is the one it returns from.
   const answers = event.type === "return" ? step.trace.events.find((each) => each.id === event.of) : undefined;
   const pointer = event.type === "return" ? (answers?.type === "interaction" ? answers.code : undefined) : event.code;
-  const code = section(event.type === "return" ? "The code it comes back from" : "The code that does it");
+  const code = section("Code");
   if (pointer === undefined) {
     code.append(el("p", "bench-note", "This step does not say which function makes it."));
   } else {
     code.append(el("div", "code-where", pointer));
+    code.append(
+      el("p", "bench-note", event.type === "return" ? "The function this answer comes back from." : "The function that makes this step."),
+    );
     const open = el("button", "btn", "Open the code");
     open.addEventListener("click", () => void openCodeAt(pointer, `Step ${step.at + 1}: ${execution.name}`));
     code.append(open);
@@ -516,7 +503,9 @@ function accessPanel(panel: HTMLElement, arrow: AccessArrow): void {
     ),
   );
 
-  const what = group("Access");
+  // The same two headings a block's own panel uses: what this reaches, and the
+  // interface it reaches it through.
+  const reaches = section("Reaches");
   const list = el("div", "ports");
   for (const access of arrow.entries) {
     const row = el("div", "port-row cap");
@@ -524,15 +513,13 @@ function accessPanel(panel: HTMLElement, arrow: AccessArrow): void {
     row.append(el("div", "ptype", access.entry === null ? "the whole thing" : access.entry));
     list.append(row);
   }
-  const entries = section("What it touches");
-  entries.append(list);
-  what.append(entries);
-  panel.append(what);
+  reaches.append(list);
+  panel.append(reaches);
 
   if (target?.architecture) {
-    const offered = group(target.name);
-    offered.append(exposedSection(target));
-    panel.append(offered);
+    const shape = interfaceSection(target);
+    shape.append(el("p", "bench-note", `What ${target.name} offers, whoever reaches it.`));
+    panel.append(shape);
   }
 }
 
@@ -567,22 +554,20 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   if (colour) head.append(colour);
 
   // The same windows the block's own buttons open, for whoever is reading
-  // the panel rather than the tree.
+  // the panel rather than the tree. They are named after the sections they
+  // hold, so the button and the heading it leads to are the same word.
   const windows = el("div", "insp-windows");
   if (hasDetails(block)) {
-    const details = el("button", "btn quiet tiny", "What it holds");
+    const details = el("button", "btn quiet tiny", "Interface");
+    details.title = `What ${block.name} can be used through, and what it reaches`;
     details.addEventListener("click", () => openBlockWindow("details", block.path));
     windows.append(details);
   }
   if (hasCode(block)) {
     const code = el("button", "btn quiet tiny", "Code");
+    code.title = `The code behind ${block.name}`;
     code.addEventListener("click", () => openBlockWindow("code", block.path));
     windows.append(code);
-  }
-  if (block.children.length > 0) {
-    const fold = el("button", "btn quiet tiny", ui.folded.has(block.path) ? "Show its parts" : "Fold its parts");
-    fold.addEventListener("click", () => toggleFold(block.path));
-    windows.append(fold);
   }
   if (windows.childElementCount > 0) head.append(windows);
   panel.append(head);
@@ -602,106 +587,92 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   const problems = problemsSection(requireSnapshot().diagnostics.filter((d) => d.blockPath === block.path), false);
   if (problems) panel.append(problems);
 
-  // A block that is not code has no contract to be called through. What it
-  // offers, and what reaches it, take the contract's place.
+  // A block that is not code says what kind of thing it is. It is a quiet
+  // line rather than the dashed box a planned block gets: a database is not a
+  // warning about anything, and what Fragmentor does not do with it is
+  // already said by the sections it has none of.
+  if (block.architecture) panel.append(el("p", "role-note", ROLES[block.role].description));
+
+  // The same four sections, in the same order, whatever kind of block this is:
+  // what it can be used through, what it reaches, where its code is, and how to
+  // set it going. A block simply may not have one of them.
+  const leads = entryLeads(block);
+  panel.append(interfaceSection(block, routesOf(leads)));
+
+  const reaches = reachesSection(block);
+  if (reaches) panel.append(reaches);
+
   if (block.architecture) {
-    panel.append(
-      el(
-        "p",
-        "planned-note",
-        `${ROLES[block.role].description} Fragmentor draws it and checks that the diagram holds together, and generates, checks and runs nothing for it.`,
-      ),
-    );
-
-    const offers = group("Offers");
-    // A group of parts offers what the parts inside it do, so an empty list
-    // of entries says nothing about it worth saying.
-    if (block.role !== "component" || block.exposes.length > 0) offers.append(exposedSection(block));
-    const happens = whatHappensSection(block);
-    if (happens) offers.append(happens);
-    const reached = accessSection(block);
-    if (reached) offers.append(reached);
-    // Its heading alone would promise something the block does not have.
-    if (offers.childElementCount > 1) panel.append(offers);
-
-    // Pressing the button, rather than only following where it leads. The
-    // route ends at code, and the code is what runs.
-    const runnable = runnableEntries(block);
-    if (runnable.length > 0) {
-      const trying = group("Running it");
-      for (const { entry, answering, route } of runnable) {
-        trying.append(benchButton(answering, entry, `Try ${entry}`, `Runs what answers it: ${route}`, entry, route));
-      }
-      panel.append(trying);
-    }
-
     // A block that is not called can still point at the module standing for
-    // it, and reading that is often why the diagram is there at all.
-    if (block.code !== null) {
-      const code = group("Code");
-      code.append(linkedCodeSection(block));
-      panel.append(code);
-    }
-    return;
-  }
-
-  const contract = group("Contract");
-  contract.append(portSection("Inputs", block.inputs));
-  contract.append(portSection("Outputs", block.outputs));
-  contract.append(portSection("Capabilities", block.capabilities, true));
-  const reaches = accessSection(block);
-  if (reaches) contract.append(reaches);
-  panel.append(contract);
-
-  const code = group("Code");
-  if (block.planned) {
-    const none = section("None yet");
+    // it, and reading that is often why the diagram is there at all. It never
+    // has code of its own, so there is nothing to say when it points nowhere.
+    if (block.code !== null) panel.append(linkedCodeSection(block));
+  } else if (block.planned) {
+    const none = section("Code");
     none.append(
       el(
         "p",
         "bench-note",
-        "There is no code for a planned block. When it is built, its \"planned\" flag comes off and its code appears here.",
+        "There is none: this block is planned. When it is built, its \"planned\" flag comes off and its code appears here.",
       ),
     );
-    code.append(none);
+    panel.append(none);
   } else {
     // Code held to a contract is Fragmentor's to offer for editing, beside the
     // contract holding it. Code it only draws is shown as it is.
-    code.append(block.runnable ? codeSection(block) : linkedCodeSection(block));
+    panel.append(block.runnable ? codeSection(block) : linkedCodeSection(block));
   }
-  panel.append(code);
-  // Nothing beneath this point applies to a block Fragmentor cannot run: there
-  // is nothing to run, and nothing a test could be run against.
-  if (!block.runnable || block.planned) return;
 
-  // Trying a block out is a window of its own: a form, the rows a store starts
-  // with, what came back and the saved tests are more than a panel beside the
-  // diagram can hold, and what a run does to the rest of the system is worth
-  // watching while it happens.
-  const testing = group("Testing");
-  testing.append(
-    benchButton(
-      block,
-      "Test bench",
-      "Open the test bench",
-      `Type values in, run ${block.name} on its own, and see what it left behind. Its saved tests and breakpoints are there too.`,
-      null,
-      null,
-    ),
-  );
-  panel.append(testing);
+  panel.append(...runSections(block, leads));
+}
+
+/**
+ * The ways into the bench: this block itself, or whichever of its entries end
+ * at code that can be run.
+ *
+ * Trying something out is a window of its own — a form, the rows a store starts
+ * with, what came back and the saved tests are more than a panel beside the
+ * diagram can hold — so the section keeps one button per way in and nothing
+ * else. Pressing an entry is the point of the diagram being runnable at all:
+ * the bench that opens is the answering block's, and the person pressing it
+ * never has to know which block that is.
+ */
+function runSections(block: SnapshotBlock, leads: Leads[]): HTMLElement[] {
+  if (block.planned) return [];
+
+  if (!block.architecture) {
+    if (!block.runnable) return [];
+    const node = section("Run");
+    node.append(
+      benchButton(
+        block,
+        `Try ${block.name}`,
+        `Type values in, run ${block.name} on its own, and see what it left behind. Its saved tests and breakpoints are there too.`,
+        null,
+        null,
+      ),
+    );
+    return [node];
+  }
+
+  const runnable = leads.filter(({ last }) => !last.architecture && last.runnable);
+  if (runnable.length === 0) return [];
+  const node = section("Run");
+  for (const { entry, route, last } of runnable) {
+    node.append(benchButton(last, `Try ${entry}`, `Runs what answers it: ${route}`, entry, route));
+  }
+  return [node];
 }
 
 /** The one thing the inspector keeps of the bench: the way into it. */
 function benchButton(
   block: SnapshotBlock,
-  title: string,
   label: string,
   note: string,
   entry: string | null,
   route: string | null,
 ): HTMLElement {
-  const node = section(title);
+  const node = el("div", "run-way");
   const open = el("button", "btn", label);
   open.type = "button";
   open.addEventListener("click", () => {
@@ -725,7 +696,7 @@ function multiPanel(panel: HTMLElement): void {
     ? [...accessArrows(tree).values()].filter((arrow) => ui.selection.has(arrow.source) && ui.selection.has(arrow.target))
     : [];
   if (between.length > 0) {
-    const node = section("What one reaches in another");
+    const node = section("Reaches");
     const list = el("div", "ports");
     for (const arrow of between) {
       const row = el("div", "port-row");

@@ -523,14 +523,16 @@ const STEP_HELPERS = `
    * that — which is the point of it. A window already open for something else
    * therefore has to be told to follow, rather than taken as the one wanted.
    */
-  const openBench = async (label = "Open the test bench") => {
-    const wanted = label === "Open the test bench" ? "Try " + text("#inspector h2") : label;
+  const openBench = async (label) => {
+    // Every way into the bench is "Try <something>", and the window that opens
+    // says the same words back, so one name covers the button and the window.
+    const wanted = label || "Try " + text("#inspector h2");
     const showing = () => {
       const open = document.querySelector(".bench-window");
       return open && text(".bench-window h2") === wanted && open.querySelector(".bench") ? open : null;
     };
     if (showing()) return showing();
-    const button = [...document.querySelectorAll("#inspector .btn")].find((each) => each.textContent === label);
+    const button = [...document.querySelectorAll("#inspector .btn")].find((each) => each.textContent === wanted);
     if (!button) return null;
     button.click();
     return await until(showing);
@@ -647,6 +649,46 @@ const INTERACTIONS = `
     return summary ? summary.textContent : "no summary";
   });
 
+  // The bench is a window: it is pulled to whatever size the work wants, and
+  // rolled up to its title when the drawing underneath matters more. Both are
+  // kept in ui.bench, because every redraw rebuilds the window from it.
+  const benchWindow = await attempt(async () => {
+    const open = await openBench();
+    if (!open) return "no bench";
+    const was = open.getBoundingClientRect();
+
+    const grip = open.querySelector('.bench-grip[data-edge="se"]');
+    if (!grip) return "no corner to pull";
+    const at = grip.getBoundingClientRect();
+    const from = { clientX: at.left + 4, clientY: at.top + 4, pointerId: 31, bubbles: true, isPrimary: true };
+    grip.dispatchEvent(new PointerEvent("pointerdown", from));
+    window.dispatchEvent(new PointerEvent("pointermove", { ...from, clientX: from.clientX + 140, clientY: from.clientY + 90 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { ...from, clientX: from.clientX + 140, clientY: from.clientY + 90 }));
+    await wait(200);
+
+    const pulled = document.querySelector(".bench-window").getBoundingClientRect();
+    const grew = pulled.width > was.width + 100 && pulled.height > was.height + 60;
+
+    // A redraw must not undo it, which is the whole reason the size is in ui.
+    document.getElementById("reload-project").click();
+    await wait(900);
+    const after = document.querySelector(".bench-window");
+    const kept = after && Math.abs(after.getBoundingClientRect().width - pulled.width) < 2;
+
+    const roll = [...after.querySelectorAll(".window-close")].find((b) => b.textContent === "—");
+    if (!roll) return "no way to roll it up";
+    roll.click();
+    await wait(300);
+    const rolled = document.querySelector('.bench-window[data-minimised="true"]');
+    const bodyGone = Boolean(rolled) && !rolled.querySelector(".bench-window-body");
+
+    [...rolled.querySelectorAll(".window-close")].find((b) => b.textContent === "▢").click();
+    await wait(300);
+    const back = Boolean(document.querySelector(".bench-window .bench-window-body"));
+
+    return "grew: " + grew + " / kept: " + Boolean(kept) + " / rolled: " + bodyGone + " / back: " + back;
+  });
+
   // A block with parts folds them away and brings them back, which is the
   // one thing that takes a block off the tree.
   const foldedAway = await attempt(async () => {
@@ -699,6 +741,7 @@ const INTERACTIONS = `
     ...drawn,
     ran,
     tests,
+    benchWindow,
     foldedAway,
     shown,
     savedToDisk: /Saved src\\/booking/.test(afterSave),
@@ -951,6 +994,10 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("boundAgain", "held") === true,
     ],
     ["a block with parts folds them away and brings them back", value("interface", "foldedAway") === "folded and unfolded"],
+    [
+      "the bench window is pulled to size by its corner, keeps that size through a redraw, and rolls up to its title",
+      value("interface", "benchWindow") === "grew: true / kept: true / rolled: true / back: true",
+    ],
     [
       "a run stops at a breakpoint, then runs on to the end",
       value("paused", "breakpointSet") === true &&
@@ -1484,7 +1531,7 @@ function attachSelfCheck(
             label: text('.block-box[data-id="audit-log"] .block-kind'),
             noBreakpoint: Boolean(box) && !box.querySelector(".breakpoint"),
             explained: /generates, checks and runs nothing/.test(text(".planned-note")),
-            noTesting: ![...document.querySelectorAll(".group-title")].some((h) => h.textContent === "Testing"),
+            noTesting: ![...document.querySelectorAll("#inspector .section h4")].some((h) => h.textContent === "Run"),
           };
         `);
         await capture(window, "self-check-planned");
@@ -1580,7 +1627,7 @@ function attachSelfCheck(
             where,
             reason: reason || "",
             noEditor: !document.querySelector(".code-edit-input"),
-            noBench: ![...document.querySelectorAll("#inspector .btn")].some((each) => each.textContent === "Open the test bench"),
+            noBench: ![...document.querySelectorAll("#inspector .section h4")].some((h) => h.textContent === "Run"),
             drawn: /drawn/.test(text("#inspector .badge.state")),
           };
         `);
@@ -1668,7 +1715,10 @@ function attachSelfCheck(
             ...drawn,
             badges: [...document.querySelectorAll(".badge")].map((b) => b.textContent).join(" "),
             offers: [...document.querySelectorAll(".insp-body .pname, .ports .pname")].map((n) => n.textContent).join(" "),
-            noPorts: ![...document.querySelectorAll(".section h4")].some((h) => h.textContent === "Inputs"),
+            // A database has an interface like everything else, but it is made
+            // of tables rather than of the ports a function is called through.
+            shows: [...document.querySelectorAll("#inspector .section h4")].map((h) => h.textContent).join(" "),
+            noPorts: ![...document.querySelectorAll("#inspector .subsection h5")].some((h) => h.textContent === "Inputs"),
           };
         `);
         await capture(window, "self-check-architecture");
@@ -1854,13 +1904,13 @@ function attachSelfCheck(
             .join(" ");
           node("box-office").click();
           await wait(500);
-          const happens = [...document.querySelectorAll(".section")].find((each) => /When this happens/.test(each.textContent));
-          // Read from inside that section, or the first shape on the panel
-          // would answer instead.
-          top.route = happens ? (happens.querySelector(".ptype") || {}).textContent : "";
-          top.canGo = Boolean(happens && [...happens.querySelectorAll(".btn")].find((b) => b.textContent === "Go there"));
+          // Where an action leads is written on the action's own row, inside
+          // the interface, rather than in a list that repeats every name.
+          const leads = document.querySelector("#inspector .proute");
+          top.route = leads ? (leads.querySelector(".proute-text") || {}).textContent : "";
+          top.canGo = Boolean(leads && [...leads.querySelectorAll(".btn")].find((b) => b.textContent === "Go there"));
           if (top.canGo) {
-            [...happens.querySelectorAll(".btn")].find((b) => b.textContent === "Go there").click();
+            [...leads.querySelectorAll(".btn")].find((b) => b.textContent === "Go there").click();
             await wait(900);
             top.wentTo = text(".insp-id");
             top.benchThere = Boolean(await openBench());

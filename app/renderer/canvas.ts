@@ -977,7 +977,7 @@ function drawNode(node: TreeNode, layer: Element, arrivalDelay: number | null): 
 function drawBlockButtons(group: SVGGElement, block: SnapshotBlock): void {
   const wanted: Array<{ kind: "code" | "details"; label: string; title: string }> = [];
   if (hasDetails(block)) {
-    wanted.push({ kind: "details", label: "▤", title: `What ${block.name} holds, and what it reaches` });
+    wanted.push({ kind: "details", label: "▤", title: `${block.name}: its interface, and what it reaches` });
   }
   if (hasCode(block)) wanted.push({ kind: "code", label: "</>", title: `The code behind ${block.name}` });
 

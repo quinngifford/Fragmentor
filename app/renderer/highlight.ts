@@ -7,7 +7,7 @@
  * nothing, so nothing here is worth a dependency or a grammar.
  */
 
-export type Language = "typescript" | "python" | "json" | "plain";
+export type Language = "typescript" | "python" | "json" | "type" | "plain";
 
 type Kind = "comment" | "string" | "number" | "keyword" | "type" | "name" | "punct" | "key";
 
@@ -250,8 +250,78 @@ function scanJson(text: string): Token[] {
   return found.done();
 }
 
+/** The words a type is built from, whichever language wrote it. */
+const PRIMITIVES = new Set([
+  "string", "number", "boolean", "null", "undefined", "unknown", "void", "any", "never",
+  "object", "true", "false", "int", "float", "str", "bool", "bytes", "None",
+]);
+
+/**
+ * A type as it is written down: `{ eventId: string; seats: number }`,
+ * `Store<{ id: string }>`, `"paid" | "refunded"`, `Order[]`.
+ *
+ * Scanned apart from code so a field's name can be told from the type it
+ * carries, which is the whole reason for colouring these at all: a shape read
+ * in one flat colour is a wall of words, and the names and the types down a
+ * contract are what the eye is actually looking for.
+ *
+ * A type may also be written in words rather than in the type language, and
+ * those words fall through as plain text, which is what they are.
+ */
+function scanType(text: string): Token[] {
+  const found = collector();
+  const push = (piece: string, kind: Kind) => found.push(piece, kind);
+  let i = 0;
+
+  while (i < text.length) {
+    const char = text[i]!;
+
+    if (char === '"' || char === "'") {
+      let end = i + 1;
+      while (end < text.length && text[end] !== char) end += text[end] === "\\" ? 2 : 1;
+      push(text.slice(i, Math.min(end + 1, text.length)), "string");
+      i = Math.min(end + 1, text.length);
+      continue;
+    }
+
+    if (DIGIT.test(char)) {
+      let end = i;
+      while (end < text.length && /[0-9._]/.test(text[end]!)) end += 1;
+      push(text.slice(i, end), "number");
+      i = end;
+      continue;
+    }
+
+    if (LETTER.test(char)) {
+      let end = i;
+      while (end < text.length && WORD.test(text[end]!)) end += 1;
+      const word = text.slice(i, end);
+      // A name followed by a colon — with `?` in between when the field is
+      // optional — is what the shape calls that part, not a type.
+      if (/^\??:/.test(text.slice(end))) push(word, "key");
+      else if (PRIMITIVES.has(word)) push(word, "keyword");
+      else if (/^[A-Z]/.test(word)) push(word, "type");
+      else found.plain(word);
+      i = end;
+      continue;
+    }
+
+    if (PUNCTUATION.test(char)) {
+      push(char, "punct");
+      i += 1;
+      continue;
+    }
+
+    found.plain(char);
+    i += 1;
+  }
+
+  return found.done();
+}
+
 function tokenize(code: string, language: Language): Token[] {
   if (language === "json") return scanJson(code);
+  if (language === "type") return scanType(code);
   if (language === "typescript") return scanCode(code, TYPESCRIPT);
   if (language === "python") return scanCode(code, PYTHON);
   return [{ text: code, kind: null }];
@@ -297,6 +367,19 @@ export function codeFragment(code: string, language: Language): DocumentFragment
     fragment.append(line);
   });
   return fragment;
+}
+
+/**
+ * A type as written, coloured, for a row in a panel rather than a box of code.
+ *
+ * The same shapes are read down a contract, beside a table's name and above a
+ * store's rows, so they are built once here and never assembled by hand.
+ */
+export function typeLine(type: string, className = "ptype"): HTMLDivElement {
+  const node = document.createElement("div");
+  node.className = className;
+  node.append(codeFragment(type, "type"));
+  return node;
 }
 
 /** A `pre` of coloured code, ready to put in a panel. */
