@@ -90,7 +90,7 @@ const syntaxErrorsIn = (source: string) =>
 const there = async (file: string) => access(file).then(() => true, () => false);
 
 describe("emitProject", () => {
-  it("writes the contract of each block whose code imports one, the shared capabilities, and the guide", async () => {
+  it("writes the contract of each block one can be written for, the shared capabilities, and the guide", async () => {
     const result = await emitProject(await loadProject(dir));
 
     expect(result.problems).toEqual([]);
@@ -138,22 +138,40 @@ describe("emitProject", () => {
     expect(await readFile(contractPath, "utf8")).toContain("export const addToSelfInput");
   });
 
-  it("writes no contract for code that does not import one, and takes back one it wrote before", async () => {
-    await emitProject(await loadProject(dir));
-    const contract = path.join(blockDir(dir, "double-it/add-to-self"), "contract.ts");
-    expect(await there(contract)).toBe(true);
-
+  it("writes a contract before the code imports it, which is how the code comes to import it", async () => {
     // The same code, describing its own shapes instead of being held to the
-    // block's. Nothing then binds the two, so there is no contract to write.
+    // block's. The contract is still written: an agent cannot import a file
+    // that is not there, and the import is what binds the two afterwards.
     await writeFile(
       path.join(dir, "src", "add-to-self.ts"),
-      `export async function addToSelf(input: { value: number }) {\n  return { sum: input.value + input.value };\n}\n`,
+      `export async function addToSelf(input: { value: number }) {
+  return { sum: input.value + input.value };
+}
+`,
       "utf8",
     );
 
     const result = await emitProject(await loadProject(dir));
-    expect(result.removed).toEqual(["blocks/double-it/add-to-self/contract.ts"]);
-    expect(await there(contract)).toBe(false);
+    expect(result.removed).toEqual([]);
+    expect(result.written).toContain("blocks/double-it/add-to-self/contract.ts");
+  });
+
+  it("takes the shared capabilities away once there is no contract left to import it", async () => {
+    await emitProject(await loadProject(dir));
+    const capabilities = path.join(dir, "blocks", "capabilities.ts");
+    expect(await there(capabilities)).toBe(true);
+
+    // Every block becomes a piece of the architecture, so nothing is generated.
+    for (const [blockPath, id] of [["double-it", "double-it"], ["double-it/add-to-self", "add-to-self"]] as const) {
+      await writeBlock(
+        blockDir(dir, blockPath),
+        makeBlock({ id, role: "storage", exposes: { rows: { accepts: parseType("{ value: number }"), returns: parseType("{ value: number }") } } }),
+      );
+    }
+
+    const result = await emitProject(await loadProject(dir));
+    expect(result.removed).toContain("blocks/capabilities.ts");
+    expect(await there(capabilities)).toBe(false);
   });
 
   it("writes a contract for each block sharing one file, because a file may hold several", async () => {

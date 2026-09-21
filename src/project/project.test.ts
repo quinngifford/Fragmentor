@@ -336,6 +336,20 @@ describe("a block inside a plan", () => {
   });
 });
 
+describe("two blocks pointing at one function", () => {
+  it("is refused, because one function cannot be two blocks", async () => {
+    await writeSmallProject();
+    await writeBlock(
+      blockDir(dir, "rank-jobs/score-again"),
+      makeBlock({ id: "score-again", code: "src/score-posting.ts#scorePosting" }),
+    );
+
+    const found = validateProject(await loadProject(dir)).filter((each) => /points at the same code/.test(each.message));
+    expect(found).toHaveLength(2);
+    expect(found[0]!.severity).toBe("error");
+  });
+});
+
 describe("a project file written before the questions were asked", () => {
   it("reads as one started from nothing and built as it went", async () => {
     await writeManifestJson({

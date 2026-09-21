@@ -387,6 +387,28 @@ export function validateProject(project: Project): ProjectDiagnostic[] {
     }
     diagnostics.push(...storePortDiagnostics(node, loose));
 
+    // Two blocks pointing at one function would be one function standing for
+    // two things, and a watched run would wrap it twice and report a call that
+    // never happened.
+    if (!node.block.planned && !isArchitecture(node.block.role) && node.block.code !== undefined) {
+      const same = [...project.byPath.values()].filter(
+        (other) =>
+          other.path !== node.path &&
+          !other.block.planned &&
+          !isArchitecture(other.block.role) &&
+          other.block.code === node.block.code,
+      );
+      if (same.length > 0) {
+        diagnostics.push({
+          severity: "error",
+          blockPath: node.path,
+          message: `"${node.block.name}" points at the same code as ${same
+            .map((other) => `"${other.block.name}"`)
+            .join(", ")}: ${node.block.code}. Two blocks cannot be the same function, so give each its own, naming it after the \`#\` if they share a file.`,
+        });
+      }
+    }
+
     const depth = node.path.split("/").length;
     if (depth > maxDepth) {
       diagnostics.push({
@@ -738,6 +760,27 @@ const escapeForPattern = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "
 /** Words that introduce a declaration, in the languages a project is likely to be written in. */
 const DECLARING = "function|def|class|fn|func|interface|type|const|let|var|struct|enum|trait|module|object|val|sub";
 
+/** How a name looks where it is declared, near enough for any language. */
+function declarationPatterns(name: string): RegExp[] {
+  return [
+    new RegExp(`\\b(${DECLARING})\\s+\\*?\\s*${name}($|[^A-Za-z0-9_$])`),
+    new RegExp(`^\\s*((async|static|public|private|protected|export|default|override|readonly)\\s+)*\\*?${name}\\s*[(=:<]`),
+  ];
+}
+
+/**
+ * Whether a file really declares this name, rather than only mentioning it.
+ *
+ * Finding a name is deliberately forgiving, because a pointer into a language
+ * Fragmentor cannot parse should still open the code somewhere useful. Calling
+ * one is not: a block whose file only mentions the name — in the path of an
+ * import, say — is a block the runner would refuse, so nothing offers to run it.
+ */
+export function declaresSymbol(text: string, symbol: string): boolean {
+  const patterns = declarationPatterns(escapeForPattern(symbol));
+  return text.split("\n").some((line) => patterns.some((pattern) => pattern.test(line)));
+}
+
 /**
  * The line a name is declared on, near enough for any language: `function
  * priceOrder` or `priceOrder(order) {` beats a line that merely calls it. A
@@ -750,15 +793,14 @@ function findSymbol(text: string, symbol: string): number | null {
   for (const part of symbol.split(".").filter(Boolean)) {
     const name = escapeForPattern(part);
     const word = new RegExp(`(^|[^A-Za-z0-9_$])${name}($|[^A-Za-z0-9_$])`);
-    const declared = new RegExp(`\\b(${DECLARING})\\s+\\*?\\s*${name}($|[^A-Za-z0-9_$])`);
-    const defined = new RegExp(`^\\s*((async|static|public|private|protected|export|default|override|readonly)\\s+)*\\*?${name}\\s*[(=:<]`);
+    const patterns = declarationPatterns(name);
 
     const candidates: number[] = [];
     lines.forEach((line, i) => {
       if (i >= Math.max(found, 0) && word.test(line)) candidates.push(i);
     });
     if (candidates.length === 0) return null;
-    found = candidates.find((i) => declared.test(lines[i]!) || defined.test(lines[i]!)) ?? candidates[0]!;
+    found = candidates.find((i) => patterns.some((pattern) => pattern.test(lines[i]!))) ?? candidates[0]!;
   }
 
   return found === -1 ? null : found + 1;

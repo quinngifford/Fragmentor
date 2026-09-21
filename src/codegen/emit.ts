@@ -1,7 +1,7 @@
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CAPABILITIES, isKnownCapability } from "../model/capabilities.js";
-import { getPack, normaliseLanguage } from "../lang/index.js";
+import { getPack, knownLanguages, normaliseLanguage } from "../lang/index.js";
 import { blocksRoot, manifestPath, writeManifest } from "../project/project.js";
 import { packFor, readAllCode } from "../project/code.js";
 import type { BlockCode } from "../project/code.js";
@@ -25,11 +25,11 @@ import { AGENTS_FILE, AGENTS_SCAFFOLD, CLAUDE_FILE, CLAUDE_SCAFFOLD, GUIDE_FILE,
  * rewrote identical files would redraw the window under the person using it
  * every time the agent ran one.
  *
- * A contract is written for a block whose code imports it, and for no other:
- * the import is what binds the two, so a contract nobody imports would be a
- * file nobody reads. Whatever was written for a block before is taken away once
- * that stops being true, so a contract cannot outlive what it described.
- * `code.ts` says how a block comes to be bound.
+ * A contract is written for every block one can be written for — a function,
+ * not planned, with typed ports, in a language there is a pack for — and taken
+ * away as soon as that stops being true, so a contract cannot outlive what it
+ * described. Whether the code is then held to it is the code's own business:
+ * `code.ts` says how importing it is what binds the two.
  */
 
 export interface EmitResult {
@@ -190,15 +190,14 @@ export async function emitProject(project: Project, known?: Map<string, BlockCod
   const written_for = new Set<string>();
 
   for (const node of project.byPath.values()) {
-    const pack = packFor(project, node.path);
-    if (pack === null) continue;
     const found = code.get(node.path);
+    const pack = found?.contract === null || found === undefined ? null : packFor(project, node.path);
 
-    if (!found?.bound || found.contract === null) {
-      // Not a function, planned, written in words, or code that says nothing
-      // about a contract: anything written for it before describes something
-      // that is no longer there.
-      await discard(path.join(node.dir, pack.contractFile));
+    if (pack === null || found?.contract === undefined || found.contract === null) {
+      // Not a function, planned, written in words, or in a language there is no
+      // pack for. Anything written for it before — in any language, since a
+      // system's may have changed — describes something that is no longer there.
+      for (const each of knownLanguages()) await discard(path.join(node.dir, getPack(each.id).contractFile));
       continue;
     }
 
@@ -207,13 +206,20 @@ export async function emitProject(project: Project, known?: Map<string, BlockCod
       pack.contractSource({ block: node.block, blockPath: node.path, bound: boundShapes(project, node) }),
     );
     written_for.add(pack.id);
+    // A contract in the language this system used to be written in describes
+    // the same block in words that no longer apply to it.
+    for (const each of knownLanguages()) {
+      if (each.id !== pack.id) await discard(path.join(node.dir, getPack(each.id).contractFile));
+    }
   }
 
-  // The shared capabilities module, for each language something was written in.
-  // A project nothing is generated for has none, rather than one nobody imports.
-  for (const language of written_for) {
-    const pack = getPack(language);
-    await write(path.join(blocksRoot(project.dir), pack.capabilitiesFile), pack.capabilitiesSource());
+  // The shared capabilities module, for each language something was written in,
+  // and no other: one nobody can import is a file nobody reads.
+  for (const each of knownLanguages()) {
+    const pack = getPack(each.id);
+    const file = path.join(blocksRoot(project.dir), pack.capabilitiesFile);
+    if (written_for.has(pack.id)) await write(file, pack.capabilitiesSource());
+    else await discard(file);
   }
 
   written.sort();

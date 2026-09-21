@@ -6,6 +6,7 @@ import { startProject, writeAgentFiles } from "./codegen/emit.js";
 import type { NewProjectSettings } from "./codegen/emit.js";
 import { CLAUDE_FILE, GUIDE_FILE } from "./codegen/guide.js";
 import { getPack, isKnownLanguage } from "./lang/index.js";
+import { readAllCode } from "./project/code.js";
 import { isArchitecture } from "./model/roles.js";
 import { loadProject, manifestPath, readManifest, systemOf } from "./project/project.js";
 import type { Project, ProjectDiagnostic } from "./project/project.js";
@@ -282,10 +283,13 @@ async function test(dir: string, requested: string[]): Promise<number> {
 
   console.log(`${project.manifest.name}  ${dir}`);
 
+  const code = await readAllCode(project);
   const counts = { passed: 0, failed: 0, error: 0, unchecked: 0, skipped: 0 };
   const untested: string[] = [];
   /** Blocks with no code to run: a plan, or a block that is not called. */
   const inThePlan: string[] = [];
+  /** Blocks Fragmentor draws rather than runs, with the reason. */
+  const drawn: string[] = [];
 
   for (const blockPath of requested.length > 0 ? requested : [...project.byPath.keys()]) {
     // A planned block has no code to run, and neither has a block that is not
@@ -294,6 +298,14 @@ async function test(dir: string, requested: string[]): Promise<number> {
     const node = project.byPath.get(blockPath);
     if (node && (node.block.planned || isArchitecture(node.block.role))) {
       inThePlan.push(blockPath);
+      continue;
+    }
+
+    // Code Fragmentor is only drawing cannot be run, so its saved tests are
+    // not run either, and saying so beats reporting each of them as an error.
+    const found = code.get(blockPath);
+    if (found && !found.bound) {
+      drawn.push(`${blockPath}: ${found.problem ?? found.drawnBecause ?? "Fragmentor does not run this block."}`);
       continue;
     }
 
@@ -342,6 +354,7 @@ async function test(dir: string, requested: string[]): Promise<number> {
   // Said plainly, because a block with saved tests that quietly never runs
   // reads as a test runner that lost them.
   if (inThePlan.length > 0) console.log(`Not run, because they have no code: ${inThePlan.join(", ")}`);
+  for (const each of drawn) console.log(`Not run, because Fragmentor only draws this code: ${each}`);
 
   return counts.failed + counts.error > 0 ? 1 : 0;
 }

@@ -15,10 +15,8 @@ import type {
   WriteImplRequest,
 } from "./ipc.js";
 import { projectSnapshot } from "../src/project/snapshot.js";
-import { blockDir, loadProject, locateCode, manifestPath, systemOf } from "../src/project/project.js";
+import { blockDir, loadProject, locateCode, manifestPath } from "../src/project/project.js";
 import { readBlockCode } from "../src/project/code.js";
-import { getPack, isKnownLanguage } from "../src/lang/index.js";
-import { isArchitecture } from "../src/model/roles.js";
 import { emitProject, startProject } from "../src/codegen/emit.js";
 import type { EmitResult, NewProjectSettings } from "../src/codegen/emit.js";
 import { GUIDE_FILE } from "../src/codegen/guide.js";

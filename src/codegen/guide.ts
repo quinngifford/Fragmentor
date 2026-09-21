@@ -219,7 +219,7 @@ const GRANULARITY: Record<number, string> = {
 /** What a block's code may import, which differs by language. */
 const IMPORT_RULES: Record<string, string> = {
   typescript:
-    "A block with no outputs returns nothing, and one with no inputs is still called with a value and `caps`. Its code may import its own contract's types with `import type`, the code of another block in the same system that is held to its contract, and packages installed in the project folder. Call another block with a value and your `caps`, only when you need it, and as many times as you need it. It may not import a shared helper file or one of Node's built-in modules such as `fs`: make the helper a block, or use a capability. `fragmentor check` reports any such import.",
+    "A block with no outputs returns nothing, and one with no inputs is still called with a value and `caps`. Its code may import its own contract's types with `import type`, the code of another block in the same system that is held to its contract, and packages installed in the project folder. Call another block with a value and your `caps`, only when you need it, and as many times as you need it. It may not import a shared helper file or one of Node's built-in modules such as `fs`: make the helper a block, or use a capability. `fragmentor check` reports any such import, of the whole file — a file holding one block's code is held to these rules throughout, so keep anything else out of it.",
 };
 
 const WIDTH = 100;
@@ -328,17 +328,24 @@ function filesSection(pack: LanguagePack | null): string {
  * for TypeScript and says the choice is the agent's: a guide with no contracts
  * in it would leave an agent that then chose TypeScript with nothing to follow.
  */
-function guideLanguage(manifest: Manifest): { pack: LanguagePack | null; unnamed: boolean; named: string | null } {
+function guideLanguage(manifest: Manifest): {
+  pack: LanguagePack | null;
+  unnamed: boolean;
+  named: string | null;
+  /** True where the systems name more than one language, so the guide can only be written for one. */
+  mixed: boolean;
+} {
   const named = [manifest.language, ...manifest.systems.map((system) => system.language)].filter(
     (each): each is string => each !== undefined,
   );
-  if (named.length === 0) return { pack: getPack("typescript"), unnamed: true, named: null };
+  if (named.length === 0) return { pack: getPack("typescript"), unnamed: true, named: null, mixed: false };
 
   const known = named.find((each) => isKnownLanguage(each));
   return {
     pack: known === undefined ? null : getPack(known),
     unnamed: false,
     named: known ?? named[0]!,
+    mixed: new Set(named).size > 1,
   };
 }
 
@@ -463,9 +470,10 @@ function languageRule(manifest: Manifest, chosen: ReturnType<typeof guideLanguag
   if (chosen.pack === null) {
     return `The code is written in ${chosen.named}, which Fragmentor has no pack for, so it draws the diagram and checks nothing about the code.`;
   }
-  return manifest.language === undefined
-    ? `This project's code is written in ${chosen.pack.displayName}, which each system says for itself.`
-    : `The person chose ${chosen.pack.displayName}, so every system is written in it.`;
+  if (manifest.language !== undefined) return `The person chose ${chosen.pack.displayName}, so every system is written in it.`;
+  return chosen.mixed
+    ? `Each system says what it is written in, and this project's are not all the same. The rest of this guide is written for ${chosen.pack.displayName}; a system in another language follows that language's own file names and conventions, and one in a language Fragmentor has no pack for is drawn and nothing more.`
+    : `This project's code is written in ${chosen.pack.displayName}, which each system says for itself.`;
 }
 
 function fill(template: string, values: Record<string, string>): string {

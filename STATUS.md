@@ -78,7 +78,7 @@ What is still open, for whoever picks this up:
 - **An exposed type that will not parse is kept as words**, so a typo in a schema is shown rather than reported.
 - **Running an entry runs the code, not the hop to it.** The route from a client to a service is shown on the panel, not animated.
 - **Packages can reach the outside world** without a capability. Only Node's built-in modules are refused.
-- **A block's code is found by name, not by parsing**, and whether its code imports its contract is decided by looking for the import's text. Both are scans, like the colouring.
+- **A block's code is found by name, not by parsing.** Whether its code imports its contract, and whether the file really declares the function rather than only mentioning it, are decided by scanning the text. A file that imports its contract and never uses the types it imported counts as held to it, and only the run-time check on its inputs and outputs then holds it to anything.
 - **A block Fragmentor runs can only call other blocks it runs**, because the compiled copy holds those files and nothing else.
 - **Watching has limits.** A run records its first 2000 calls, and a value larger than about 200 KB is described rather than shown. Breakpoints are not saved with the project.
 - **Held calls take turns.** Several calls held at once are let go one at a time by Continue, all together by Continue all. Step goes into the call it lets go.

@@ -2,7 +2,7 @@
 
 # Working in this Fragmentor project
 
-The person you work with sees this project in Fragmentor as a diagram of **blocks**: the parts of the system, each drawn inside the part it belongs to. You design the blocks, write the code, and keep the two saying the same thing. Fragmentor draws the diagram and checks that it holds together. Where a system says it is written in a language Fragmentor has a pack for — `typescript` or `python` — it also writes each block's types from the diagram.
+The person you work with sees this project in Fragmentor as a diagram of **blocks**: the parts of the system, each drawn inside the part it belongs to. You design the blocks, write the code, and keep the two saying the same thing. Fragmentor draws the diagram, checks that it holds together, writes each function block's types, checks the code against them, and runs the block and its tests.
 
 **This folder started empty**, so the program is yours to write. Lay the code out however suits it — a layout that echoes the architecture helps whoever reads both, but nothing requires it — and point each block at the code you wrote. Entry points such as a `main` function, a server or framework setup stay outside the blocks: they create the real capabilities and call the blocks that answer them.
 
@@ -11,9 +11,9 @@ The person you work with sees this project in Fragmentor as a diagram of **block
 1. Fill in `goal` and `systems` in `fragmentor.json`. Then write a `block.json` for every block, keeping any the person already wrote.
 2. Run `fragmentor check` and fix everything it reports.
 3. Carry straight on to the code. They can watch the diagram fill in as you work, and will say if they want the shape changed, so do not stop to ask for agreement.
-4. Write the code, and point each block at it.
+4. Point each block at its code, writing whatever is not there yet. Where Fragmentor writes a contract, import it and write the block's tests.
 5. Write down what happens when something sets the system going, under `executions/`.
-6. Run `fragmentor check` until it passes.
+6. Run `fragmentor check` and `fragmentor test` until it passes.
 
 When the design changes, change the `block.json` files first, then the code. If the `fragmentor` command is not found, ask the person to run `npm link` once in Fragmentor's folder.
 
@@ -23,6 +23,9 @@ When the design changes, change the `block.json` files first, then the code. If 
 fragmentor.json         the project                           you fill in goal and systems
 blocks/<system>/        a system's top block                  a block's parts are the folders inside it
   block.json            the block                             you write
+  contract.ts           its types                             generated
+  cases.json            its tests                             you write, for a block Fragmentor runs
+blocks/capabilities.ts  the capability interfaces             generated
 src/…                   the code                              you write, wherever it belongs
 executions/<name>.json  one thing that sets the system going  you write
 ```
@@ -42,7 +45,7 @@ Everything Fragmentor writes is inside `blocks/`. **The code is yours, wherever 
 }
 ```
 
-Each system is a separate program, and `rootBlock` is its folder under `blocks/`. The person left the language to you: give each system a `"language"`, `"typescript"` (Fragmentor checks and runs it) or `"python"` (Fragmentor writes its types but cannot check or run Python yet), or the name of whatever else its code is written in, which Fragmentor will draw and nothing more. Leave `existingCode`, `start` and `granularity` as the person set them.
+Each system is a separate program, and `rootBlock` is its folder under `blocks/`. This project's code is written in TypeScript, which each system says for itself. Leave `existingCode`, `start` and `granularity` as the person set them.
 
 ## Blocks
 
@@ -149,15 +152,59 @@ A type Fragmentor cannot read, such as `Promise<Order[]>`, is kept as the words 
 
 A block declares the effects its code needs as capabilities, which arrive in its `caps` argument. That is what says which stores and queues the code really touches, and what lets Fragmentor run a block on its own with substitutes in place of them.
 
-- **Store**: Reads and writes the rows of one table, file or structure.
-- **Queue**: Puts messages on one channel. Nothing waits for them to arrive.
-- **FileSystem**: Reads and writes files.
-- **Http**: Fetches over the network.
-- **Clock**: Reads the current time.
-- **Random**: Produces random numbers.
-- **Logger**: Records what happened.
+- **Store**: Reads and writes the rows of one table, file or structure. `read(key: string) → Row | null` (async), `list() → Row[]` (async), `write(key: string, row: Row)` (async), `remove(key: string)` (async)
+- **Queue**: Puts messages on one channel. Nothing waits for them to arrive. `send(message: Message)` (async)
+- **FileSystem**: Reads and writes files. `readFile(path: string) → string` (async), `writeFile(path: string, contents: string)` (async)
+- **Http**: Fetches over the network. `get(url: string) → string` (async)
+- **Clock**: Reads the current time. `now() → number`
+- **Random**: Produces random numbers. `next() → number`
+- **Logger**: Records what happened. `log(message: string)`
 
 A block that calls another passes it its own `caps`, so it declares every capability the blocks it calls need, under the same names. There is no `console`, so declare a `Logger`. Use `Clock` and `Random`, never the language's own clock or random numbers.
+
+## Contracts
+
+Where a function block's inputs and outputs are written as types, Fragmentor writes them into `blocks/<the block>/contract.ts`, beside its `block.json`, along with the capabilities it asks for. A block whose ports are words gets none, and is drawn rather than checked or run.
+
+**Importing that contract is what binds your code to it.** Code that imports it is typechecked against it, can be run from the window with values you type, and can have saved tests; code that does not is drawn and read. This is `report-totals`, in `src/pricing/report-totals.ts`:
+
+```typescript
+import type { ReportTotalsInput, ReportTotalsOutput, ReportTotalsCaps } from "../../blocks/price-orders/report-totals/contract.js";
+import { loadOrders } from "./load-orders.js";
+import { priceOrder } from "./price-order.js";
+
+/** Read a file of orders and report what each one costs and the grand total. */
+export async function reportTotals(input: ReportTotalsInput, caps: ReportTotalsCaps): Promise<ReportTotalsOutput> {
+  const { orders } = await loadOrders({ path: input.path }, caps);
+  if (orders.length === 0) return { totals: [], grandTotal: 0 };
+
+  const totals = await Promise.all(orders.map(async (order) => (await priceOrder({ order }, caps)).total));
+  return { totals, grandTotal: totals.reduce((sum, total) => sum + total, 0) };
+}
+```
+
+A block with no outputs returns nothing, and one with no inputs is still called with a value and `caps`. Its code may import its own contract's types with `import type`, the code of another block in the same system that is held to its contract, and packages installed in the project folder. Call another block with a value and your `caps`, only when you need it, and as many times as you need it. It may not import a shared helper file or one of Node's built-in modules such as `fs`: make the helper a block, or use a capability. `fragmentor check` reports any such import, of the whole file — a file holding one block's code is held to these rules throughout, so keep anything else out of it.
+
+### Tests
+
+Every block Fragmentor runs has tests, in a `cases.json` beside its `block.json`:
+
+```json
+[
+  {
+    "name": "adds quantity times price across the lines",
+    "input": { "order": { "id": "A-1", "lines": [{ "quantity": 2, "unitPrice": 3.5 }] } },
+    "expected": { "total": 7 }
+  },
+  {
+    "name": "an order with no lines costs nothing",
+    "input": { "order": { "id": "A-2", "lines": [] } },
+    "expected": { "total": 0 }
+  }
+]
+```
+
+Leave out `expected` to record what the block returns without checking it. A block's test runs everything it calls. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.
 
 ## Executions
 
@@ -169,6 +216,7 @@ The blocks say what exists. Also write down what happens: for each thing that se
   "trigger": {
     "at": "price-orders/report-totals",
     "kind": "action",
+    "description": "Someone asks for the totals of a file of orders.",
     "code": "src/pricing/report-totals.ts#reportTotals",
     "payload": { "path": "orders.json" }
   },

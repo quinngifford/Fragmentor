@@ -11,7 +11,7 @@ The person you work with sees this project in Fragmentor as a diagram of **block
 1. Fill in `goal` and `systems` in `fragmentor.json`. Then write a `block.json` for every block, keeping any the person already wrote.
 2. Run `fragmentor check` and fix everything it reports.
 3. Carry straight on to the code. They can watch the diagram fill in as you work, and will say if they want the shape changed, so do not stop to ask for agreement.
-4. Write the code, and point each block at it. Where Fragmentor writes a contract, import it and write the block's tests.
+4. Point each block at its code, writing whatever is not there yet. Where Fragmentor writes a contract, import it and write the block's tests.
 5. Write down what happens when something sets the system going, under `executions/`.
 6. Run `fragmentor check` and `fragmentor test` until it passes.
 
@@ -184,7 +184,7 @@ export async function reportTotals(input: ReportTotalsInput, caps: ReportTotalsC
 }
 ```
 
-A block with no outputs returns nothing, and one with no inputs is still called with a value and `caps`. Its code may import its own contract's types with `import type`, the code of another block in the same system that is held to its contract, and packages installed in the project folder. Call another block with a value and your `caps`, only when you need it, and as many times as you need it. It may not import a shared helper file or one of Node's built-in modules such as `fs`: make the helper a block, or use a capability. `fragmentor check` reports any such import.
+A block with no outputs returns nothing, and one with no inputs is still called with a value and `caps`. Its code may import its own contract's types with `import type`, the code of another block in the same system that is held to its contract, and packages installed in the project folder. Call another block with a value and your `caps`, only when you need it, and as many times as you need it. It may not import a shared helper file or one of Node's built-in modules such as `fs`: make the helper a block, or use a capability. `fragmentor check` reports any such import, of the whole file — a file holding one block's code is held to these rules throughout, so keep anything else out of it.
 
 ### Tests
 
@@ -217,6 +217,7 @@ The blocks say what exists. Also write down what happens: for each thing that se
   "trigger": {
     "at": "price-orders/report-totals",
     "kind": "action",
+    "description": "Someone asks for the totals of a file of orders.",
     "code": "src/pricing/report-totals.ts#reportTotals",
     "payload": { "path": "orders.json" }
   },

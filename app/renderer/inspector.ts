@@ -187,9 +187,11 @@ function codeSection(block: SnapshotBlock): HTMLElement {
     notify();
   });
 
-  const reveal = el("button", "btn quiet", "Show folder");
+  // The file being edited, which is wherever the codebase keeps it, rather
+  // than the block's own folder, which holds what the block is.
+  const reveal = el("button", "btn quiet", "Show in folder");
   reveal.addEventListener("click", () => {
-    void window.fragmentor.revealBlock(requireSnapshot().dir, block.path);
+    void window.fragmentor.revealCode(requireSnapshot().dir, block.files.code);
   });
 
   const conflict = value !== onDisk && changedUnderneath();
