@@ -33,6 +33,7 @@ import { askForProjectSettings } from "./newproject.js";
 import { onWatchChange, resetWatching, setUpWatching } from "./watch.js";
 import { onExecutionChange, paintExecution, resetExecutions, setUpExecutions, showStep } from "./execution.js";
 import { closeWindow, openBlockWindow, setUpWindows } from "./popup.js";
+import { benchWindowIsOpen, closeBenchWindow, onBenchWindowChange, renderBenchWindow } from "./benchpanel.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
 
@@ -82,6 +83,7 @@ function forgetProject(): void {
   // So does the execution being stepped through, and anything folded away.
   resetExecutions();
   closeWindow();
+  closeBenchWindow();
 }
 
 /**
@@ -570,6 +572,7 @@ function renderPanels(): void {
   renderCrumbs();
   renderTree();
   renderInspector();
+  renderBenchWindow();
   renderStatus();
 }
 
@@ -676,6 +679,7 @@ try {
   onCanvasChange(({ redraw }) => (redraw ? render() : renderPanels()));
   onInspectorChange(render);
   onBenchChange(render);
+  onBenchWindowChange(render);
   // A run being watched moves on by itself; the panels follow it.
   onWatchChange(renderPanels);
   // Stepping changes what is laid over the drawing; only a different
@@ -690,7 +694,10 @@ try {
   setUpCanvasGestures();
   watchCanvasSize();
   setUpWatching();
-  setUpWindows();
+  setUpWindows(() => {
+    closeBenchWindow();
+    render();
+  });
   setUpExecutions();
   onBlockWindow(openBlockWindow);
   // Clicking the step drawn on the tree asks about that step.

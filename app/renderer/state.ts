@@ -80,6 +80,12 @@ export interface UiState {
   /** How wide the inspector is, in pixels. Dragged by hand and kept between sessions. */
   inspectorWidth: number;
   codeTab: "code" | "contract";
+  /**
+   * The bench that is open in a window of its own: which block it is for, which
+   * of that block's entries if it was opened from one, and where it has been
+   * dragged to. Null when none is open.
+   */
+  bench: { blockPath: string; entry: string | null; route?: string; x: number; y: number } | null;
   /** Once the view has been moved by hand, stop refitting it automatically. */
   userAdjusted: boolean;
   /**
@@ -192,6 +198,7 @@ export const ui: UiState = {
   },
   inspectorWidth: readWidth(),
   codeTab: "code",
+  bench: null,
   userAdjusted: false,
   edits: new Map(),
   benchInputs: new Map(),

@@ -1348,6 +1348,58 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
 }
 .exec-reveal:hover { color: var(--ink); }
 
+/* ---- the test bench, in a window that can be moved off the drawing ---- */
+
+/* The host covers the canvas and lets every pointer through, so what is behind
+   a bench window can still be dragged, zoomed and clicked. */
+.panels {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.panels[hidden] { display: none; }
+
+.bench-window {
+  position: absolute;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  max-height: min(72%, 680px);
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+/* Dragged by its head, which says so by the cursor it shows. */
+.bench-window-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px 9px 13px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--panel-high);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.bench-window.dragging { box-shadow: 0 22px 52px rgba(0, 0, 0, 0.66); }
+.bench-window.dragging .bench-window-head { cursor: grabbing; }
+.bench-window-head h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+
+.bench-window-body {
+  overflow: auto;
+  padding: 12px 13px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 /* ---- a window over the drawing ---- */
 
 /* A block on the tree says what it is; everything else about it is read here,

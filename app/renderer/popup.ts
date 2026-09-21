@@ -2,6 +2,7 @@ import type { SnapshotBlock } from "../../src/project/snapshot.js";
 import { ROLES } from "../../src/model/roles.js";
 import { accessSection, exposedSection, portSection } from "./detail.js";
 import { requireSnapshot, ui } from "./state.js";
+import { benchWindowIsOpen } from "./benchpanel.js";
 import { el, section } from "./dom.js";
 import { codeLines, languageOf } from "./highlight.js";
 
@@ -193,11 +194,17 @@ export function openBlockWindow(kind: "code" | "details", blockPath: string): vo
 }
 
 /** Called once, as the window starts: Escape, or anywhere outside a window, closes it. */
-export function setUpWindows(): void {
+export function setUpWindows(onBenchEscape: () => void): void {
   window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && windowIsOpen()) {
+    if (event.key !== "Escape") return;
+    // The window over the drawing first, then the bench beside it: Escape
+    // closes what is most in the way.
+    if (windowIsOpen()) {
       event.preventDefault();
       closeWindow();
+    } else if (benchWindowIsOpen()) {
+      event.preventDefault();
+      onBenchEscape();
     }
   });
   overlay().addEventListener("pointerdown", (event) => {

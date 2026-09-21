@@ -515,6 +515,26 @@ const STEP_HELPERS = `
     }
   };
   const text = (selector) => (document.querySelector(selector) || {}).textContent || "";
+  /**
+   * Opens the selected block's test bench and gives back that window.
+   *
+   * The bench is a window over the drawing, not part of the inspector, so it
+   * stays on the block it was opened for however the selection moves after
+   * that — which is the point of it. A window already open for something else
+   * therefore has to be told to follow, rather than taken as the one wanted.
+   */
+  const openBench = async (label = "Open the test bench") => {
+    const wanted = label === "Open the test bench" ? "Try " + text("#inspector h2") : label;
+    const showing = () => {
+      const open = document.querySelector(".bench-window");
+      return open && text(".bench-window h2") === wanted && open.querySelector(".bench") ? open : null;
+    };
+    if (showing()) return showing();
+    const button = [...document.querySelectorAll("#inspector .btn")].find((each) => each.textContent === label);
+    if (!button) return null;
+    button.click();
+    return await until(showing);
+  };
 `;
 
 const step = (body: string) => `(async () => {${STEP_HELPERS}\n${body}\n})()`;
@@ -585,11 +605,12 @@ const INTERACTIONS = `
 
   // Running a block is what makes this an application rather than a viewer.
   let ran = "no run button";
-  const runButton = [...document.querySelectorAll(".bench .btn")].find((button) => button.textContent === "Run block");
+  await openBench();
+  const runButton = [...document.querySelectorAll(".bench-window .bench .btn")].find((button) => button.textContent === "Run block");
   if (runButton && runButton.disabled) ran = "run button disabled";
   else if (runButton) {
     const set = (label, value) => {
-      const field = [...document.querySelectorAll(".bench .field")].find((f) => (f.querySelector("label") || {}).textContent === label);
+      const field = [...document.querySelectorAll(".bench-window .field")].find((f) => (f.querySelector("label") || {}).textContent === label);
       if (!field) return;
       field.querySelector("input").value = value;
       field.querySelector("input").dispatchEvent(new Event("input", { bubbles: true }));
@@ -615,7 +636,8 @@ const INTERACTIONS = `
   const nodeOf = (key) => document.querySelector('.block-box[data-id="' + key + '"]');
 
   const tests = await attempt(async () => {
-    const runAll = [...document.querySelectorAll(".section .btn")]
+    await openBench();
+    const runAll = [...document.querySelectorAll(".bench-window .btn")]
       .find((button) => button.textContent === "Run all tests");
     if (!runAll) return "no run-all button";
     if (runAll.disabled) return "run-all disabled";
@@ -648,20 +670,19 @@ const INTERACTIONS = `
     withTests().click();
     await wait(400);
 
-    const runAll = [...document.querySelectorAll(".section .btn")]
+    await openBench();
+    const runAll = [...document.querySelectorAll(".bench-window .btn")]
       .find((button) => button.textContent === "Run all tests");
     if (runAll && !runAll.disabled) {
       runAll.click();
       await wait(6000);
     }
 
-    // Re-select after the run, since finishing redraws the panels, then
-    // scroll so the captured screenshot shows the tests.
-    withTests().click();
+    // The bench window keeps its place across the redraw a run causes, so the
+    // screenshot this check captures shows the tests where they were left.
     await wait(400);
-
-    const panel = document.getElementById("inspector-pane");
-    panel.scrollTop = panel.scrollHeight;
+    const body = document.querySelector(".bench-window-body");
+    if (body) body.scrollTop = body.scrollHeight;
     await wait(400);
 
     const name = document.querySelector(".case-row .case-name");
@@ -1224,11 +1245,21 @@ function attachSelfCheck(
           const breakpointSet = document.querySelector('.block-box[data-id="price-seat"]').dataset.breakpoint === "true";
 
           node("book-seats").click();
-          const bench = await until(() => text(".insp-id") === "tickets/booking-api/book-seats" && document.querySelector(".bench"), 5000);
+          if (!(await until(() => text(".insp-id") === "tickets/booking-api/book-seats", 5000))) {
+            return { breakpointSet, paused: false, stage: "panel stayed on " + text(".insp-id") };
+          }
+          const bench = await openBench();
           if (!bench) return { breakpointSet, paused: false, stage: "no bench for book-seats" };
+          // A field that is not there says which one, rather than throwing: a
+          // crash in here tells whoever reads the check nothing at all.
+          const missing = [];
           const set = (label, value) => {
             const field = [...bench.querySelectorAll(".field")].find((f) => (f.querySelector("label") || {}).textContent === label);
-            const control = field.querySelector("input, textarea");
+            const control = field ? field.querySelector("input, textarea") : null;
+            if (!control) {
+              missing.push(label);
+              return;
+            }
             control.value = value;
             control.dispatchEvent(new Event("input", { bubbles: true }));
           };
@@ -1236,9 +1267,17 @@ function attachSelfCheck(
           set("seats", "5");
           set("email", "ada@example.com");
           set("Tickets Database · events", JSON.stringify({ gig: { id: "gig", name: "Night Gig", seatsLeft: 10, price: 25 } }));
+          if (missing.length > 0) {
+            return {
+              breakpointSet,
+              paused: false,
+              stage: "bench is missing " + missing.join(", "),
+              labels: [...bench.querySelectorAll(".field label")].map((each) => each.textContent).join(" | "),
+            };
+          }
 
           const runButton = [...bench.querySelectorAll(".btn")].find((button) => button.textContent === "Run block" && !button.disabled);
-          if (!runButton) return { breakpointSet, paused: false, stage: "no run button" };
+          if (!runButton) return { breakpointSet, paused: false, stage: "no run button", buttons: [...bench.querySelectorAll(".btn")].map((b) => b.textContent).join(" | ") };
           runButton.click();
 
           const paused = Boolean(await until(() => /Paused before Price Seat/.test(text("#run-bar")), 20000));
@@ -1339,7 +1378,8 @@ function attachSelfCheck(
           const onBlock = Boolean(await until(() => text(".insp-id") === "tickets/booking-api/book-seats", 10000));
           if (!onBlock) return { paused: false, stage: "panel stayed on " + text(".insp-id") };
 
-          const runButton = await until(() => [...document.querySelectorAll(".bench .btn")]
+          await openBench();
+          const runButton = await until(() => [...document.querySelectorAll(".bench-window .btn")]
             .find((button) => button.textContent === "Run block" && !button.disabled));
           if (!runButton) return { paused: false, stage: "no run button" };
           runButton.click();
@@ -1540,7 +1580,7 @@ function attachSelfCheck(
             where,
             reason: reason || "",
             noEditor: !document.querySelector(".code-edit-input"),
-            noBench: !document.querySelector(".bench"),
+            noBench: ![...document.querySelectorAll("#inspector .btn")].some((each) => each.textContent === "Open the test bench"),
             drawn: /drawn/.test(text("#inspector .badge.state")),
           };
         `);
@@ -1823,7 +1863,7 @@ function attachSelfCheck(
             [...happens.querySelectorAll(".btn")].find((b) => b.textContent === "Go there").click();
             await wait(900);
             top.wentTo = text(".insp-id");
-            top.benchThere = Boolean(document.querySelector(".bench"));
+            top.benchThere = Boolean(await openBench());
           }
 
           // The service and everything inside it are on the one tree.
@@ -1844,7 +1884,7 @@ function attachSelfCheck(
           // And on into the handler, which is a function with a part of its own.
           node("book-seats").click();
           await wait(900);
-          const bench = Boolean(await until(() => document.querySelector(".bench")));
+          const bench = Boolean(await openBench());
           return {
             opened: true,
             subtype: top.subtype,
@@ -1867,7 +1907,8 @@ function attachSelfCheck(
         // Seeding a store and running through it. The bench is on book-seats
         // from the step above, which reads the events through a Store port.
         await run("store", `
-          const bench = document.querySelector(".bench");
+          const bench = (await openBench()) || document.querySelector(".bench-window");
+          if (!bench) return { offered: false };
           const boxes = [...bench.querySelectorAll("textarea")];
           const rows = boxes.find((area) => (area.closest(".field").querySelector("label") || {}).textContent === "Tickets Database · events");
           if (!rows) return { offered: false };
@@ -1905,7 +1946,8 @@ function attachSelfCheck(
           office.click();
           await wait(500);
 
-          const trying = [...document.querySelectorAll(".section")].find((each) => /Try bookSeats/.test(each.textContent));
+          // The inspector offers the way in; the bench itself is a window.
+          const trying = await openBench("Try bookSeats");
           if (!trying) return { offered: false };
 
           const rows = [...trying.querySelectorAll("textarea")].find((area) => /events/.test((area.closest(".field").querySelector("label") || {}).textContent || ""));

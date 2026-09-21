@@ -7,8 +7,7 @@ import { accessArrows, blockColour, hasCode, hasDetails, revealBlock, toggleFold
 import { openBlockWindow, openCodeAt } from "./popup.js";
 import { STEP_LINK, currentStep, describeStep } from "./execution.js";
 import type { AccessArrow } from "./canvas.js";
-import { benchSections, entryBenchSection } from "./bench.js";
-import { watchSection } from "./watch.js";
+import { openBenchWindow } from "./benchpanel.js";
 import { el, group, section } from "./dom.js";
 import { codeBlock, codeFragment, codeLines, languageOf } from "./highlight.js";
 
@@ -631,7 +630,7 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
     if (runnable.length > 0) {
       const trying = group("Running it");
       for (const { entry, answering, route } of runnable) {
-        trying.append(entryBenchSection(entry, answering, route));
+        trying.append(benchButton(answering, entry, `Try ${entry}`, `Runs what answers it: ${route}`, entry, route));
       }
       panel.append(trying);
     }
@@ -675,13 +674,43 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   // is nothing to run, and nothing a test could be run against.
   if (!block.runnable || block.planned) return;
 
+  // Trying a block out is a window of its own: a form, the rows a store starts
+  // with, what came back and the saved tests are more than a panel beside the
+  // diagram can hold, and what a run does to the rest of the system is worth
+  // watching while it happens.
   const testing = group("Testing");
-  const [bench, cases] = benchSections(block);
-  testing.append(bench);
-  const watching = watchSection(block);
-  if (watching) testing.append(watching);
-  testing.append(cases);
+  testing.append(
+    benchButton(
+      block,
+      "Test bench",
+      "Open the test bench",
+      `Type values in, run ${block.name} on its own, and see what it left behind. Its saved tests and breakpoints are there too.`,
+      null,
+      null,
+    ),
+  );
   panel.append(testing);
+}
+
+/** The one thing the inspector keeps of the bench: the way into it. */
+function benchButton(
+  block: SnapshotBlock,
+  title: string,
+  label: string,
+  note: string,
+  entry: string | null,
+  route: string | null,
+): HTMLElement {
+  const node = section(title);
+  const open = el("button", "btn", label);
+  open.type = "button";
+  open.addEventListener("click", () => {
+    openBenchWindow(block.path, entry);
+    if (ui.bench && route !== null) ui.bench.route = route;
+    notify();
+  });
+  node.append(open, el("p", "bench-note", note));
+  return node;
 }
 
 function multiPanel(panel: HTMLElement): void {
