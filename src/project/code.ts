@@ -125,9 +125,11 @@ export async function readBlockCode(project: Project, node: LoadedBlock): Promis
         ? noPack
         : contract === null
           ? words
-          : bound
-            ? null
-            : `${location.file} does not import ${specifier ?? "its contract"}, so Fragmentor draws this code rather than checking or running it`,
+          : specifier === null
+            ? `Fragmentor cannot hold ${pack.displayName} code to a contract yet, so it draws this code`
+            : bound
+              ? null
+              : `${location.file} does not import ${specifier}, so Fragmentor draws this code rather than checking or running it`,
     ),
     functionName: location.symbol ?? pack?.functionName(node.block.id) ?? null,
   };

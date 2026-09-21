@@ -211,7 +211,7 @@ function formatReport(report: CheckReport): string {
   }
 
   const warnings = report.problems.filter((d) => d.severity === "warning").length;
-  const next = report.untested.length === report.blockCount ? "" : " Run `fragmentor test` to run the tests.";
+  const next = report.systems.some((system) => system.codeHeld > 0) ? " Run `fragmentor test` to run the tests." : "";
   lines.push("");
   lines.push(
     report.errorCount > 0
