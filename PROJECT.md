@@ -42,14 +42,17 @@ Tests are assertions over a trace: that the run crossed into a part, that an int
 
 This replaces an earlier model borrowed from Simulink, in which every block was a function whose children were steps wired output to input, and whose code Fragmentor generated from the wires. That model is gone. Executions an agent writes down are drawn over the architecture; recording them by running the code, and tests and breakpoints over them, are being built now. `STATUS.md` says how far that has got.
 
-## Two modes
+## Where the code is, and what Fragmentor does with it
 
-When a project is created the person is asked a short series of questions, each following from the last: whether they are starting from nothing or from code they already have, what Fragmentor's role should be over that code, whether to plan the architecture before building it, how finely to divide the work, and optionally the language. These are the person's decisions rather than the agent's, so Fragmentor asks for them and writes them into `fragmentor.json` before any agent starts. The answers are what the agent's guide is written from, so the guide states what applies to this one project instead of listing the cases it might be in.
+**Every function block says where its implementation is**, with a `code` pointer: a file relative to the project and the name of the function in it. Nothing requires the codebase to mirror the diagram. A block's folder says where the block sits in the architecture; where its code sits on disk is the codebase's own business, and a layout that echoes the architecture is a good idea rather than a rule. Fragmentor never writes code and never moves any.
 
-- **Structured.** The diagram is the specification. The agent builds the program as blocks, or rebuilds existing code that way; Fragmentor generates each function's types, checks the code against them and against the diagram, and runs the tests. Everything below about contracts, generated types and verification is structured mode.
-- **Visual.** The diagram is a picture of code that exists anyway. The agent maps the codebase into blocks, each pointing at the file or function it stands for, and keeps the diagram current as the code changes. Fragmentor never generates, runs or changes the code. Types are free text as the code writes them, and testing is unavailable. What is checked is that the diagram holds together and that every block points at code that exists.
+**What Fragmentor does with a block's code is a fact about that block, not a setting on the project.** Where a function block's inputs and outputs are written in the type language and its system is in a language there is a pack for, Fragmentor writes its contract — into the block's own folder, because everything generated stays inside `blocks/`. The contract on its own changes nothing. What binds the two is **the code importing it**: code that imports its contract is typechecked against it, can be run and benched from the window, and can have saved tests; code that does not is drawn and read. The import is the only honest binding there is, because nothing else could hold a function to a shape it never mentions.
 
-Rebuilding an existing codebase in structured mode is destructive by design, so the application asks for confirmation and the agent is told to make sure the code is committed first.
+So one codebase can have a part described exactly as it stands and another built under Fragmentor's eye, and `fragmentor check` says which blocks are which and why. A block Fragmentor is quietly not checking would be worse than one it says it cannot.
+
+This replaces two modes a project had to choose between — structured, where the diagram was the specification and Fragmentor generated and ran everything, and visual, where it only drew code it never touched. Both are what the one model does at either end of it.
+
+When a project is created the person is asked a short series of questions, each following from the last: whether they are starting from nothing or from code they already have, whether to plan the architecture before building it, how finely to divide the work, and optionally the language. These are the person's decisions rather than the agent's, so Fragmentor asks for them and writes them into `fragmentor.json` before any agent starts. The answers are what the agent's guide is written from, so the guide states what applies to this one project instead of listing the cases it might be in.
 
 ## What a block is
 
@@ -69,9 +72,9 @@ Capabilities are described in the same port type language as everything else, so
 
 ### Every function block is a function
 
-In structured mode every block whose role is `function` corresponds to a real, callable function in the code.
+Every block whose role is `function` corresponds to a real, callable function in the code, and says which one.
 
-The user must be able to open any block, enter input values, run it, and see the outputs. That requirement forces callability, so there is no separate, cheaper representation for small blocks.
+The user must be able to open any block whose code is held to a contract, enter input values, run it, and see the outputs. That requirement forces callability, so there is no separate, cheaper representation for small blocks.
 
 A conceptual step too small to justify its own function is not a block; it is a line inside a function. Granularity control, not a second block representation, is what keeps the codebase from filling with trivial one-line functions.
 
@@ -103,7 +106,7 @@ A store is drawn on the diagram it belongs to and nowhere else, so where a store
 
 An arrangement is a default, not a rule. A person can move any block, and where they left it is remembered. So is a colour: which colour a kind or a single block takes is the person's, and stays in their browser rather than in the files everyone shares.
 
-Nothing is generated, checked or run for a block that is not a function. The code that receives real requests and opens real connections is the framework's, and lives outside `blocks/`. The functions **inside** a service are ordinary blocks, checked, run and tested as usual, which is what lets a project hold an honest end-to-end architecture and a fully verified set of functions inside it.
+Nothing is generated, checked or run for a block that is not a function. The code that receives real requests and opens real connections is the framework's, and no block stands for it. The functions **inside** a service are ordinary blocks, checked, run and tested as usual, which is what lets a project hold an honest end-to-end architecture and a fully verified set of functions inside it.
 
 Code reaches a store through a capability port, and the access naming that port says which entry it is a way into — so the line drawn and the path the code takes are the same line.
 
@@ -121,7 +124,7 @@ This is what lets an architecture be argued with before it is built. A project c
 
 The diagram is the specification of what exists. The agent writes every function; Fragmentor writes each function's types from its contract. Code can still disagree with the diagram, so conformance is checked rather than assumed:
 
-- each function block is one exported function at a path determined by its place in the hierarchy, so block identity is structural rather than annotated
+- each function block is one exported function, named by the block's `code` pointer, wherever in the codebase that is
 - a function's contract is expressed as runtime schemas for its inputs and outputs, which also drive the test bench forms
 - its code is typechecked against its contract, calls to other functions are typechecked against theirs, and its imports are checked so that it can run: types, other functions in its system, and packages installed in the project
 
@@ -131,19 +134,19 @@ Conditions, loops and error handling are the code's. The diagram does not descri
 
 Fragmentor does not contain an AI and never calls a model. The AI is an external coding agent — Claude Code, Codex, or anything like them — working in the same project folder. The agent does the work; Fragmentor supplies the structure, the visibility, and the verification.
 
-The workflow in structured mode is:
+The workflow is:
 
 1. The user starts a project and gives the agent a goal.
-2. The agent defines the architecture as blocks, following Fragmentor's rules.
+2. The agent defines the architecture as blocks, following Fragmentor's rules, each function block saying where its code is or will be.
 3. Fragmentor reads that structure from disk and draws it, redrawing whenever the agent changes a file.
-4. The agent writes the code and the tests; Fragmentor generates the types.
-5. Fragmentor validates the diagram, checks the code against it, and runs the tests.
+4. The agent writes the code and the tests; Fragmentor writes the types of every block whose code imports them.
+5. Fragmentor validates the diagram, checks that code against it, and runs the tests.
 6. The agent fixes whatever is reported, and the loop repeats.
 
 A project keeps two things apart:
 
 - **The architecture**, which is specific to the project and machine-readable: `fragmentor.json` and a `block.json` for each block. It is the single source of truth for the diagram.
-- **The rules for working on it**: `FRAGMENTOR.md`, which Fragmentor writes into the project and keeps current. It is written for that one project — its mode, its language and its granularity — so it says only what applies there, and it is kept short, because an agent follows a short guide better than a complete one. `AGENTS.md` and `CLAUDE.md` point agents at it, and are otherwise the user's, for instructions specific to the project.
+- **The rules for working on it**: `FRAGMENTOR.md`, which Fragmentor writes into the project and keeps current. There is one guide, because there is one way to work; it is written for the one project it sits in — where it starts from, its language and its granularity — so it says only what applies there, and it is kept short, because an agent follows a short guide better than a complete one. `AGENTS.md` and `CLAUDE.md` point agents at it, and are otherwise the user's, for instructions specific to the project.
 
 The agent checks its work with the `fragmentor` command, which runs the same checks the application relies on and reports them as text and an exit status.
 
@@ -175,7 +178,7 @@ If projects are ever shared, that happens through an ordinary repository holding
 
 A project holds one or more systems. A system is a block hierarchy with a single target language. Systems in the same project are never connected to each other — they are separate programs, shown together because they are worked on together.
 
-The target language is a choice, not an assumption. The block model, the validator and the project format know nothing about any language; that knowledge lives in a language pack, which owns naming conventions, file names, how a port type is written, and the source of the generated contract. Adding a language means adding a pack, not editing the kernel. A visual project needs no pack: its code can be in any language.
+The target language is a choice, not an assumption. The block model, the validator and the project format know nothing about any language; that knowledge lives in a language pack, which owns naming conventions, file names, how a port type is written, and the source of the generated contract. Adding a language means adding a pack, not editing the kernel. A system in a language there is no pack for is drawn and nothing more, which Fragmentor says plainly rather than refusing the project.
 
 Port contracts are defined with runtime schemas so a single definition yields both static types and the schema the test bench needs. Which library provides that is the pack's business — zod in TypeScript, pydantic in Python.
 

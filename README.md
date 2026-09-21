@@ -16,12 +16,12 @@ npm link
 ## Use
 
 1. Start Fragmentor with `npm run app`.
-2. Choose **New project…** and answer its questions: where you are starting from, what Fragmentor should do with the code, whether to plan the architecture before building it, and how finely to divide the work. Then pick a folder: an empty one, or one that already holds code.
+2. Choose **New project…** and answer its questions: where you are starting from, whether to plan the architecture before building it, and how finely to divide the work. Then pick a folder: an empty one, or one that already holds code.
 3. Open your coding agent in that folder and tell it what you want.
 
-In **structured** mode the agent reads `FRAGMENTOR.md`, defines the blocks, writes the code and the tests, and runs `fragmentor check` and `fragmentor test` until both pass. Fragmentor writes each function's types and checks the code against them; a function calls the others it needs directly. In a folder that already holds code, the agent rebuilds that code as blocks.
+The agent reads `FRAGMENTOR.md`, defines the blocks, writes the code wherever it belongs in the codebase, points each block at it, and runs `fragmentor check` and `fragmentor test` until both pass. Nothing requires the code to sit anywhere in particular: a block's folder says where the block is in the architecture, not where its code is on disk.
 
-In **visual** mode the agent maps the code already in the folder into a diagram, and never changes it.
+Fragmentor writes each block's types, as a contract in the block's own folder, wherever it can. Code that imports its contract is checked against it, can be run from the window with values you type, and has tests; code that does not — code that was there before Fragmentor, or is written in a language it has no pack for — is drawn and read instead. `fragmentor check` says which blocks are which and why, so nothing is quietly unchecked.
 
 A diagram is not only functions. A block can stand for a group of parts, a database, a queue, a store, a service of yours, someone else's API, or the browser that starts a request. Those carry what they offer rather than ports — a database shows its tables and their columns — and the blocks that read or write them are joined to them, so the diagram says where data is kept and who can reach it. Colour says which world each thing belongs to. Fragmentor generates, checks and runs nothing for these blocks; the functions inside a service are ordinary blocks and are checked and tested as usual. `examples/tickets` is a whole application drawn this way, and it runs.
 
