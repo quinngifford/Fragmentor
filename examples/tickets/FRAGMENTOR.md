@@ -244,17 +244,35 @@ The blocks say what exists. Also write down what happens: for each thing that se
       "description": "The caller is given the total of every order in the file.",
       "code": "src/pricing/report-totals.ts#reportTotals"
     }
-  ]
+  ],
+  "expect": {
+    "entered": ["price-orders/price-order"],
+    "interactions": [
+      {
+        "from": "price-orders/report-totals",
+        "to": "price-orders/load-orders",
+        "kind": "call",
+        "payload": { "path": "orders.json" }
+      }
+    ],
+    "effects": [{ "kind": "response", "at": "price-orders/report-totals" }]
+  }
 }
 ```
 
 - An address is a block's path under `blocks/`, optionally followed by `.` and one of its entries: `shop/api.checkout`. `trigger.at` is where it arrives, and `kind` is `action`, `request`, `schedule`, `message` or `webhook`.
-- `given` says what the stores held before any of it happened, by entry and then by key. Write it whenever the run depends on something being there, because a trace whose premise is nowhere stated cannot be read or checked.
+- `name` labels it where an execution is picked; `description` is the one sentence saying what the run is. A file holds only these: `name`, `description`, `given`, `trigger`, `trace`, `expect`.
+- `given` says what the stores held before any of it happened, keyed by a store entry's whole address and then by row: `"given": { "shop/orders-db.orders": { "A-1": { "id": "A-1", "owner": "ada" } } }`. Write it whenever the run depends on something being there, because a trace whose premise is nowhere stated can be neither read nor checked.
 - `trace` lists what follows, in order. A step is an interaction — `from`, `to` and `kind` (`call`, `read`, `write`, `remove`, `send` or `deliver`), with `payload` for what it carried and `response` for what came back, where anything did — or an effect, `{ "effect": ..., "at": ... }`, such as `row-changed`, `row-removed`, `message-published`, `response` or `ui-changed`, with `detail` for what it left behind.
+- A step reaching a store carries the row it wrote, or names the row by its key where it read or removed one, and a read that found nothing has `"response": null`. A `response` effect goes at the entry that answered, not the block inside it, because that is where whoever asked is waiting.
 - Every step says what it is with `description`, in a sentence a person reading it would want: why this happens, not a rewording of the blocks it joins. Every step also says which function makes it with `code` — the function the step leaves, not the one it arrives at — written as a block's is. `fragmentor check` makes sure that function exists. Where the code that makes a step is an entry point outside the blocks, name that: it is a real function in this codebase, and a step pointing at what receives it instead says something untrue.
 - Write each step between the finest blocks the code shows, even across distant parts of the system. A call the code makes many times over is one step, whose description says so and whose payload is one of them: how many there were depends on what arrived, which is not something you can read off the code. A service's operation handing a request to the block that answers it is a step of its own, because the code that does the handing is real and is not either block.
-- A step follows from the latest step that arrived where it starts, so two calls one block makes in turn are two branches; where the list cannot say so, give a step an `id` and another `"cause": "<id>"`.
-- `expect` is what makes an execution a test rather than a drawing, and is where most of its worth is. All five parts are optional: `entered` names parts the run must cross into; `interactions` names steps that must happen, each matched by whichever of `from`, `to`, `kind`, `payload` and `response` you give, with payloads compared field by field so you name only what matters; `effects` the same, by `at`, `kind` and `detail`; and `never` names parts in which nothing at all may happen. Write a `never` no wider than the code justifies — one that passes for a reason you did not mean is worse than none. There is also `state`, for what the stores hold at the end, and it belongs only to a run Fragmentor recorded: a trace you wrote down never saw the stores, so `fragmentor check` reports it here. Say what was written instead, in the step that wrote it.
+- A step follows from the latest step that arrived where it starts, so two calls one block makes in turn are two branches; where the list cannot say so, give a step an `id` — starting with a letter, then letters, digits, `-` or `_` — and another `"cause": "<id>"`, or `"cause": "trigger"` for one that follows from what set the whole thing going.
+- `expect` is what makes an execution a test rather than a drawing, and is where most of its worth is. All of it is optional: `entered` names parts the run must cross into; `interactions` names steps that must happen, each matched by whichever of `from`, `to`, `kind`, `payload` and `response` you give; `effects` the same, by `at`, `kind` and `detail`; `never` names parts in which nothing at all may happen.
+- Three things decide whether an expectation means what you meant. An address without an entry matches that part and everything inside it, and one with an entry matches only that entry. An object — a payload, a response, a detail — is compared field by field, so you name only what matters, but a list is compared whole, length included. And each expectation is matched to a different event, so two that describe the same step fail for want of a second one.
+- **Pin the values, not only the shape.** An expectation that says a row was written, without saying what was in it, passes for code that wrote the wrong thing; that is most of what a test like this is for. And write a `never` no wider than the code justifies — one that can only ever pass, such as a part nobody has built, says nothing about this run.
+- `state`, for what the stores hold at the end, belongs only to a run Fragmentor recorded: a trace you wrote down never saw the stores, so `fragmentor check` reports it here. Say what was written in the step that wrote it instead.
+- `fragmentor test` holds each execution to its own expectations, which catches a file that contradicts itself and cannot catch one that is wrong about the code, since both halves are your reading of it.
 - This is documentation: it is shown as written by you, never as something observed. Keep it true to the code, and change it when the code changes.
 
 ## Granularity: level 3

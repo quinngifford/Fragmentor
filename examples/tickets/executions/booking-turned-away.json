@@ -1,17 +1,35 @@
 {
   "name": "A booking turned away",
-  "description": "Ada asks for three seats at an event with two left. The request is refused before anything is priced, written or sent.",
+  "description": "Ada asks for six seats at an event with five left. The request is refused before anything is priced, written or sent.",
   "given": {
     "tickets/tickets-db.events": {
-      "gig": { "id": "gig", "name": "Night Gig", "seatsLeft": 2, "price": 25 }
+      "gig": {
+        "id": "gig",
+        "name": "Night Gig",
+        "seatsLeft": 5,
+        "price": 25
+      }
+    },
+    "tickets/tickets-db.bookings": {
+      "gig-10": {
+        "id": "gig-10",
+        "eventId": "gig",
+        "email": "ada@example.com",
+        "seats": 5,
+        "total": 122.5
+      }
     }
   },
   "trigger": {
     "at": "tickets/box-office.bookSeats",
     "kind": "action",
-    "description": "Ada confirms three seats for the Night Gig.",
+    "description": "Ada confirms six seats for the Night Gig.",
     "code": "src/box-office.ts#onBookPressed",
-    "payload": { "eventId": "gig", "seats": 3, "email": "ada@example.com" }
+    "payload": {
+      "eventId": "gig",
+      "seats": 6,
+      "email": "ada@example.com"
+    }
   },
   "trace": [
     {
@@ -20,8 +38,16 @@
       "kind": "call",
       "description": "The page asks for the seats the same way it would if they were there.",
       "code": "src/box-office.ts#onBookPressed",
-      "payload": { "eventId": "gig", "seats": 3, "email": "ada@example.com" },
-      "response": { "booked": false, "message": "Sorry, only 2 left for Night Gig.", "total": 0 }
+      "payload": {
+        "eventId": "gig",
+        "seats": 6,
+        "email": "ada@example.com"
+      },
+      "response": {
+        "booked": false,
+        "message": "Sorry, only 5 left for Night Gig.",
+        "total": 0
+      }
     },
     {
       "from": "tickets/booking-api.bookSeats",
@@ -29,50 +55,96 @@
       "kind": "call",
       "description": "The server that takes the request is not a block; all it does is hand it to the block that answers this operation.",
       "code": "src/server.ts#handle",
-      "payload": { "eventId": "gig", "seats": 3, "email": "ada@example.com" }
+      "payload": {
+        "eventId": "gig",
+        "seats": 6,
+        "email": "ada@example.com"
+      }
     },
     {
       "from": "tickets/booking-api/book-seats",
       "to": "tickets/booking-api/find-event",
       "kind": "call",
-      "description": "How many seats are left is only known from the event, so this much happens whatever the answer turns out to be.",
+      "description": "How many seats are left is only known from the event, so the lookup happens before it can be known whether the seats are hers.",
       "code": "src/booking/book-seats.ts#bookSeats",
-      "payload": { "eventId": "gig" }
+      "payload": {
+        "eventId": "gig"
+      },
+      "response": {
+        "event": {
+          "id": "gig",
+          "name": "Night Gig",
+          "seatsLeft": 5,
+          "price": 25
+        }
+      }
     },
     {
       "from": "tickets/booking-api/find-event",
       "to": "tickets/tickets-db.events",
       "kind": "read",
-      "description": "The event is there, with two seats left of the three Ada asked for.",
+      "description": "The event is there, with five seats left of the six Ada asked for.",
       "code": "src/booking/find-event.ts#findEvent",
-      "payload": { "id": "gig" },
-      "response": { "id": "gig", "name": "Night Gig", "seatsLeft": 2, "price": 25 }
+      "payload": {
+        "id": "gig"
+      },
+      "response": {
+        "id": "gig",
+        "name": "Night Gig",
+        "seatsLeft": 5,
+        "price": 25
+      }
     },
     {
       "effect": "response",
       "at": "tickets/booking-api.bookSeats",
-      "description": "The request is turned away with the number that is really left, and this is where the run ends: nothing is priced, nothing is written, nothing is queued.",
+      "description": "The request is turned away with the number that is really left: nothing is priced, nothing is written, nothing is queued.",
       "code": "src/server.ts#handle",
-      "detail": { "booked": false, "message": "Sorry, only 2 left for Night Gig.", "total": 0 }
+      "detail": {
+        "booked": false,
+        "message": "Sorry, only 5 left for Night Gig.",
+        "total": 0
+      }
     },
     {
       "effect": "ui-changed",
       "at": "tickets/box-office.bookSeats",
       "description": "Ada is told why, with the number she could still have.",
       "code": "src/box-office.ts#onBookPressed",
-      "detail": { "showing": "Sorry, only 2 left for Night Gig." }
+      "detail": {
+        "showing": "Sorry, only 5 left for Night Gig."
+      }
     }
   ],
   "expect": {
-    "entered": ["tickets/booking-api/find-event"],
-    "interactions": [{ "to": "tickets/tickets-db.events", "kind": "read" }],
-    "effects": [{ "kind": "response", "at": "tickets/booking-api.bookSeats", "detail": { "booked": false } }],
+    "entered": [
+      "tickets/booking-api/find-event"
+    ],
+    "interactions": [
+      {
+        "to": "tickets/tickets-db.events",
+        "kind": "read",
+        "response": {
+          "seatsLeft": 5
+        }
+      }
+    ],
+    "effects": [
+      {
+        "kind": "response",
+        "at": "tickets/booking-api.bookSeats",
+        "detail": {
+          "booked": false,
+          "message": "Sorry, only 5 left for Night Gig.",
+          "total": 0
+        }
+      }
+    ],
     "never": [
       "tickets/booking-api/pricing",
       "tickets/booking-api/book-seats/reserve",
       "tickets/tickets-db.bookings",
-      "tickets/outbox",
-      "tickets/reminders"
+      "tickets/outbox"
     ]
   }
 }

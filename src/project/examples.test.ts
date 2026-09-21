@@ -120,7 +120,14 @@ describe("the tickets example", () => {
   it("writes down what happens when something sets it going, and its traces meet their own expectations", async () => {
     const { executions, problems } = await loadExecutions(tickets);
     expect(problems).toEqual([]);
-    expect(executions.map((execution) => execution.id)).toEqual(["book-seats", "booking-turned-away", "cancel-booking"]);
+    expect(executions.map((execution) => execution.id)).toEqual([
+      "book-seats",
+      "booking-turned-away",
+      "cancel-booking",
+      // The one run where an effect a reader would expect is deliberately
+      // absent: no event to put the seats back on.
+      "cancel-without-the-event",
+    ]);
 
     for (const execution of executions) {
       expect(execution.declared?.source, execution.id).toBe("declared");

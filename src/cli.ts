@@ -7,6 +7,8 @@ import type { NewProjectSettings } from "./codegen/emit.js";
 import { CLAUDE_FILE, GUIDE_FILE } from "./codegen/guide.js";
 import { getPack, isKnownLanguage } from "./lang/index.js";
 import { readAllCode } from "./project/code.js";
+import { loadExecutions } from "./project/executions.js";
+import { evaluate } from "./run/expect.js";
 import { isArchitecture } from "./model/roles.js";
 import { loadProject, manifestPath, readManifest, systemOf } from "./project/project.js";
 import type { Project, ProjectDiagnostic } from "./project/project.js";
@@ -31,7 +33,8 @@ Commands:
                          --start plan draws the architecture as planned blocks before any of it is built.
                          In a folder that is already a project, brings FRAGMENTOR.md up to date.
   check                  Check the diagram, regenerate generated code, check the code, and list unfinished work.
-  test [block-path ...]  Run the saved tests of every block, or of the named blocks only.
+  test [block-path ...]  Run the saved tests of every block, or of the named blocks only, and hold each
+                         execution to its own expectations.
 
 check and test use the nearest folder, from here upwards, that holds fragmentor.json.
 init uses the current folder. --project names a folder instead.`;
@@ -356,7 +359,54 @@ async function test(dir: string, requested: string[]): Promise<number> {
   if (inThePlan.length > 0) console.log(`Not run, because they have no code: ${inThePlan.join(", ")}`);
   for (const each of drawn) console.log(`Not run, because Fragmentor only draws this code: ${each}`);
 
-  return counts.failed + counts.error > 0 ? 1 : 0;
+  // Naming blocks asks about those blocks, so the executions are left alone.
+  const executionFailures = requested.length > 0 ? 0 : await testExecutions(dir);
+  return counts.failed + counts.error + executionFailures > 0 ? 1 : 0;
+}
+
+/**
+ * Holds each execution to the expectations written beside it.
+ *
+ * What this proves is worth being exact about. A trace an agent wrote down is
+ * its reading of the code, so evaluating it against its own expectations says
+ * the two agree with each other — it catches a file that contradicts itself,
+ * and it cannot catch a file that is wrong about the code. Once Fragmentor
+ * records a run, the same expectations run against what really happened, and
+ * the same failures mean something much stronger.
+ */
+async function testExecutions(dir: string): Promise<number> {
+  const { executions, problems } = await loadExecutions(dir);
+  if (problems.length > 0) {
+    console.log(`\nExecutions\n  ERROR  ${problems.join("\n  ERROR  ")}`);
+    return problems.length;
+  }
+  if (executions.length === 0) return 0;
+
+  const withExpectations = executions.filter((execution) => execution.expect !== null && execution.declared !== null);
+  console.log("\nExecutions");
+  if (withExpectations.length === 0) {
+    console.log(`  ${plural(executions.length, "execution")}, none of which says what must happen. Add an "expect" to make one a test.`);
+    return 0;
+  }
+
+  let failed = 0;
+  for (const execution of executions) {
+    if (execution.expect === null || execution.declared === null) {
+      console.log(`  ${execution.id}: nothing to check`);
+      continue;
+    }
+    const { failures } = evaluate(execution.declared, execution.expect);
+    console.log(`  ${failures.length === 0 ? "MET  " : "FAILED"} ${execution.id}`);
+    for (const failure of failures) console.log(`           ${indent(failure, "           ")}`);
+    if (failures.length > 0) failed += 1;
+  }
+
+  console.log(
+    failed === 0
+      ? "  Each of these holds a trace written down from reading the code to what that same file says must happen, so it catches a file that contradicts itself, not one that is wrong about the code."
+      : `  ${plural(failed, "execution")} does not do what its own file says must happen.`,
+  );
+  return failed;
 }
 
 /* -------------------------------------------------------------------------- */

@@ -3,7 +3,12 @@
   "description": "Ada books five seats for the Night Gig: they come off the event, the booking is written down, and a confirmation is queued.",
   "given": {
     "tickets/tickets-db.events": {
-      "gig": { "id": "gig", "name": "Night Gig", "seatsLeft": 10, "price": 25 }
+      "gig": {
+        "id": "gig",
+        "name": "Night Gig",
+        "seatsLeft": 10,
+        "price": 25
+      }
     }
   },
   "trigger": {
@@ -11,7 +16,11 @@
     "kind": "action",
     "description": "Ada confirms five seats for the Night Gig.",
     "code": "src/box-office.ts#onBookPressed",
-    "payload": { "eventId": "gig", "seats": 5, "email": "ada@example.com" }
+    "payload": {
+      "eventId": "gig",
+      "seats": 5,
+      "email": "ada@example.com"
+    }
   },
   "trace": [
     {
@@ -20,8 +29,16 @@
       "kind": "call",
       "description": "The page has nothing to show until the API says whether the seats were hers.",
       "code": "src/box-office.ts#onBookPressed",
-      "payload": { "eventId": "gig", "seats": 5, "email": "ada@example.com" },
-      "response": { "booked": true, "message": "Booked 5 for Night Gig: booking gig-10.", "total": 122.5 }
+      "payload": {
+        "eventId": "gig",
+        "seats": 5,
+        "email": "ada@example.com"
+      },
+      "response": {
+        "booked": true,
+        "message": "Booked 5 for Night Gig: booking gig-10.",
+        "total": 122.5
+      }
     },
     {
       "from": "tickets/booking-api.bookSeats",
@@ -29,7 +46,11 @@
       "kind": "call",
       "description": "The server that takes the request is not a block; all it does is hand it to the block that answers this operation.",
       "code": "src/server.ts#handle",
-      "payload": { "eventId": "gig", "seats": 5, "email": "ada@example.com" }
+      "payload": {
+        "eventId": "gig",
+        "seats": 5,
+        "email": "ada@example.com"
+      }
     },
     {
       "from": "tickets/booking-api/book-seats",
@@ -37,7 +58,17 @@
       "kind": "call",
       "description": "Nothing is priced, written or sent until the event is known to be on sale.",
       "code": "src/booking/book-seats.ts#bookSeats",
-      "payload": { "eventId": "gig" }
+      "payload": {
+        "eventId": "gig"
+      },
+      "response": {
+        "event": {
+          "id": "gig",
+          "name": "Night Gig",
+          "seatsLeft": 10,
+          "price": 25
+        }
+      }
     },
     {
       "from": "tickets/booking-api/find-event",
@@ -45,17 +76,29 @@
       "kind": "read",
       "description": "The event is looked up by the id the request named.",
       "code": "src/booking/find-event.ts#findEvent",
-      "payload": { "id": "gig" },
-      "response": { "id": "gig", "name": "Night Gig", "seatsLeft": 10, "price": 25 }
+      "payload": {
+        "id": "gig"
+      },
+      "response": {
+        "id": "gig",
+        "name": "Night Gig",
+        "seatsLeft": 10,
+        "price": 25
+      }
     },
     {
       "from": "tickets/booking-api/book-seats",
       "to": "tickets/booking-api/pricing/price-seat",
       "kind": "call",
-      "description": "Each of the five seats is priced on its own, all at once, because from the fifth seat a booking pays a tenth less for the rest.",
+      "description": "Each of the five seats is priced on its own, all at once. The first four come back at 25, and from the fifth a booking pays a tenth less, which is the only reason the total is not 125.",
       "code": "src/booking/book-seats.ts#bookSeats",
-      "payload": { "fullPrice": 25, "seat": 1 },
-      "response": { "price": 25 }
+      "payload": {
+        "fullPrice": 25,
+        "seat": 5
+      },
+      "response": {
+        "price": 22.5
+      }
     },
     {
       "from": "tickets/booking-api/book-seats",
@@ -64,12 +107,19 @@
       "description": "Every price is back and the five seats come to 122.5, so the booking can be made.",
       "code": "src/booking/book-seats.ts#bookSeats",
       "payload": {
-        "event": { "id": "gig", "name": "Night Gig", "seatsLeft": 10, "price": 25 },
+        "event": {
+          "id": "gig",
+          "name": "Night Gig",
+          "seatsLeft": 10,
+          "price": 25
+        },
         "seats": 5,
         "email": "ada@example.com",
         "total": 122.5
       },
-      "response": { "bookingId": "gig-10" }
+      "response": {
+        "bookingId": "gig-10"
+      }
     },
     {
       "from": "tickets/booking-api/book-seats/reserve",
@@ -77,14 +127,22 @@
       "kind": "write",
       "description": "The seats come off the event first, so the next person to ask sees what is really left.",
       "code": "src/booking/reserve.ts#reserve",
-      "payload": { "id": "gig", "name": "Night Gig", "seatsLeft": 5, "price": 25 }
+      "payload": {
+        "id": "gig",
+        "name": "Night Gig",
+        "seatsLeft": 5,
+        "price": 25
+      }
     },
     {
       "effect": "row-changed",
       "at": "tickets/tickets-db.events",
       "description": "Five seats are left for whoever asks next.",
       "code": "src/booking/reserve.ts#reserve",
-      "detail": { "id": "gig", "seatsLeft": 5 }
+      "detail": {
+        "id": "gig",
+        "seatsLeft": 5
+      }
     },
     {
       "from": "tickets/booking-api/book-seats/reserve",
@@ -92,14 +150,22 @@
       "kind": "write",
       "description": "The booking is written down, numbered by the seats that were left when it was made.",
       "code": "src/booking/reserve.ts#reserve",
-      "payload": { "id": "gig-10", "eventId": "gig", "email": "ada@example.com", "seats": 5, "total": 122.5 }
+      "payload": {
+        "id": "gig-10",
+        "eventId": "gig",
+        "email": "ada@example.com",
+        "seats": 5,
+        "total": 122.5
+      }
     },
     {
       "effect": "row-changed",
       "at": "tickets/tickets-db.bookings",
       "description": "The booking can be found again, which is what giving it back later needs.",
       "code": "src/booking/reserve.ts#reserve",
-      "detail": { "id": "gig-10" }
+      "detail": {
+        "id": "gig-10"
+      }
     },
     {
       "from": "tickets/booking-api/book-seats/reserve",
@@ -107,45 +173,103 @@
       "kind": "send",
       "description": "The confirmation goes on the queue, so nobody waits for an email to send before seeing their booking.",
       "code": "src/booking/reserve.ts#reserve",
-      "payload": { "email": "ada@example.com", "event": "Night Gig", "seats": 5, "total": 122.5 }
+      "payload": {
+        "email": "ada@example.com",
+        "event": "Night Gig",
+        "seats": 5,
+        "total": 122.5
+      }
     },
     {
       "effect": "message-published",
       "at": "tickets/outbox.confirmations",
       "description": "Whatever sends the emails will find it there.",
       "code": "src/booking/reserve.ts#reserve",
-      "detail": { "email": "ada@example.com" }
+      "detail": {
+        "email": "ada@example.com"
+      }
     },
     {
       "effect": "response",
       "at": "tickets/booking-api.bookSeats",
       "description": "The API answers with what was booked and what it cost.",
       "code": "src/server.ts#handle",
-      "detail": { "booked": true, "message": "Booked 5 for Night Gig: booking gig-10.", "total": 122.5 }
+      "detail": {
+        "booked": true,
+        "message": "Booked 5 for Night Gig: booking gig-10.",
+        "total": 122.5
+      }
     },
     {
       "effect": "ui-changed",
       "at": "tickets/box-office.bookSeats",
       "description": "The page shows what happened, which is the last thing Ada sees.",
       "code": "src/box-office.ts#onBookPressed",
-      "detail": { "showing": "Booked 5 for Night Gig: booking gig-10." }
+      "detail": {
+        "showing": "Booked 5 for Night Gig: booking gig-10."
+      }
     }
   ],
   "expect": {
-    "entered": ["tickets/booking-api/pricing", "tickets/booking-api/book-seats/reserve"],
+    "entered": [
+      "tickets/booking-api/pricing",
+      "tickets/booking-api/book-seats/reserve"
+    ],
     "interactions": [
-      { "from": "tickets/booking-api/book-seats/reserve", "to": "tickets/tickets-db.bookings", "kind": "write" },
-      { "from": "tickets/booking-api/book-seats/reserve", "to": "tickets/outbox.confirmations", "kind": "send" }
+      {
+        "from": "tickets/booking-api/book-seats/reserve",
+        "to": "tickets/tickets-db.events",
+        "kind": "write",
+        "payload": {
+          "id": "gig",
+          "seatsLeft": 5
+        }
+      },
+      {
+        "from": "tickets/booking-api/book-seats/reserve",
+        "to": "tickets/tickets-db.bookings",
+        "kind": "write",
+        "payload": {
+          "id": "gig-10",
+          "seats": 5,
+          "total": 122.5
+        }
+      },
+      {
+        "from": "tickets/booking-api/book-seats/reserve",
+        "to": "tickets/outbox.confirmations",
+        "kind": "send",
+        "payload": {
+          "email": "ada@example.com",
+          "total": 122.5
+        }
+      }
     ],
     "effects": [
-      { "kind": "message-published", "at": "tickets/outbox.confirmations" },
-      { "kind": "response", "at": "tickets/booking-api.bookSeats", "detail": { "booked": true } }
+      {
+        "kind": "row-changed",
+        "at": "tickets/tickets-db.events",
+        "detail": {
+          "seatsLeft": 5
+        }
+      },
+      {
+        "kind": "message-published",
+        "at": "tickets/outbox.confirmations"
+      },
+      {
+        "kind": "response",
+        "at": "tickets/booking-api.bookSeats",
+        "detail": {
+          "booked": true,
+          "total": 122.5
+        }
+      }
     ],
     "never": [
       "tickets/booking-api/cancel-booking",
       "tickets/booking-api/pricing/refund-for",
-      "tickets/outbox.reminders",
-      "tickets/reminders"
+      "tickets/outbox.reminders"
     ]
   }
 }

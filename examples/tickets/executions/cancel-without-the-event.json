@@ -1,0 +1,191 @@
+{
+  "name": "Cancel without the event",
+  "description": "Ada cancels her booking for an event that has since been taken off sale. She is still refunded and the booking still goes, but the seats are never put back: cancel-booking writes the event row only when there is an event, and nothing on the diagram says that write is conditional.",
+  "given": {
+    "tickets/tickets-db.events": {},
+    "tickets/tickets-db.bookings": {
+      "gig-10": {
+        "id": "gig-10",
+        "eventId": "gig",
+        "email": "ada@example.com",
+        "seats": 5,
+        "total": 122.5
+      }
+    }
+  },
+  "trigger": {
+    "at": "tickets/box-office.cancelBooking",
+    "kind": "action",
+    "description": "Ada presses cancel on a booking for an event that is no longer on sale.",
+    "code": "src/box-office.ts#onCancelPressed",
+    "payload": {
+      "bookingId": "gig-10"
+    }
+  },
+  "trace": [
+    {
+      "from": "tickets/box-office.cancelBooking",
+      "to": "tickets/booking-api.cancelBooking",
+      "kind": "call",
+      "description": "The page itself knows nothing about refunds, so the press becomes a request and the page waits for the sentence it will show.",
+      "code": "src/box-office.ts#onCancelPressed",
+      "payload": {
+        "bookingId": "gig-10"
+      },
+      "response": {
+        "refunded": 112.5,
+        "message": "Cancelled booking gig-10: 112.5 is on its way back."
+      }
+    },
+    {
+      "from": "tickets/booking-api.cancelBooking",
+      "to": "tickets/booking-api/cancel-booking",
+      "kind": "call",
+      "description": "The server hands the request straight to the block that answers it, which is the seam between the code Fragmentor checks and the code that receives real requests.",
+      "code": "src/server.ts#handle",
+      "payload": {
+        "bookingId": "gig-10"
+      },
+      "response": {
+        "refunded": 112.5,
+        "message": "Cancelled booking gig-10: 112.5 is on its way back."
+      }
+    },
+    {
+      "from": "tickets/booking-api/cancel-booking",
+      "to": "tickets/tickets-db.bookings",
+      "kind": "read",
+      "description": "Nothing can be refunded until the booking is found, and a missing booking would end the run here with a refund of nothing.",
+      "code": "src/booking/cancel-booking.ts#cancelBooking",
+      "payload": {
+        "id": "gig-10"
+      },
+      "response": {
+        "id": "gig-10",
+        "eventId": "gig",
+        "email": "ada@example.com",
+        "seats": 5,
+        "total": 122.5
+      }
+    },
+    {
+      "from": "tickets/booking-api/cancel-booking",
+      "to": "tickets/booking-api/find-event",
+      "kind": "call",
+      "description": "The event is looked up because its seat count is what a cancellation would give back. This is the run where that lookup finds nothing.",
+      "code": "src/booking/cancel-booking.ts#cancelBooking",
+      "payload": {
+        "eventId": "gig"
+      },
+      "response": {
+        "event": null
+      }
+    },
+    {
+      "from": "tickets/booking-api/find-event",
+      "to": "tickets/tickets-db.events",
+      "kind": "read",
+      "description": "The event row is asked for by id, and the table no longer has one: the event was removed while this booking was still outstanding.",
+      "code": "src/booking/find-event.ts#findEvent",
+      "payload": {
+        "id": "gig"
+      },
+      "response": null
+    },
+    {
+      "from": "tickets/booking-api/cancel-booking",
+      "to": "tickets/booking-api/pricing/refund-for",
+      "kind": "call",
+      "description": "The refund is worked out from the booking alone, so a missing event takes nothing away from what the person gets back: 50 paid, less 2 for each of the 2 seats.",
+      "code": "src/booking/cancel-booking.ts#cancelBooking",
+      "payload": {
+        "total": 122.5,
+        "seats": 5
+      },
+      "response": {
+        "refund": 112.5
+      }
+    },
+    {
+      "from": "tickets/booking-api/cancel-booking",
+      "to": "tickets/tickets-db.bookings",
+      "kind": "remove",
+      "description": "The booking goes whether or not the event is still there. What a reader should notice is the step that is not here: on the run where the event exists, the event row is written back with the seats on sale again, and nothing on the diagram says that write was conditional.",
+      "code": "src/booking/cancel-booking.ts#cancelBooking",
+      "payload": {
+        "id": "gig-10"
+      }
+    },
+    {
+      "effect": "row-removed",
+      "at": "tickets/tickets-db.bookings",
+      "description": "The booking is gone from the table, and no event row changed anywhere in this run.",
+      "code": "src/booking/cancel-booking.ts#cancelBooking",
+      "detail": {
+        "id": "gig-10"
+      }
+    },
+    {
+      "effect": "response",
+      "at": "tickets/booking-api.cancelBooking",
+      "description": "The caller is told the booking is cancelled and what is coming back. Nothing in the answer says the event had vanished, so the person sees the ordinary cancellation message.",
+      "code": "src/server.ts#handle",
+      "detail": {
+        "refunded": 112.5,
+        "message": "Cancelled booking gig-10: 112.5 is on its way back."
+      }
+    },
+    {
+      "effect": "ui-changed",
+      "at": "tickets/box-office.cancelBooking",
+      "description": "The page shows the message it was given, which is all the state it keeps.",
+      "code": "src/box-office.ts#onCancelPressed",
+      "detail": {
+        "showing": "Cancelled booking gig-10: 112.5 is on its way back."
+      }
+    }
+  ],
+  "expect": {
+    "entered": [
+      "tickets/booking-api/find-event",
+      "tickets/booking-api/pricing/refund-for"
+    ],
+    "interactions": [
+      {
+        "to": "tickets/booking-api/find-event",
+        "kind": "call",
+        "response": {
+          "event": null
+        }
+      },
+      {
+        "from": "tickets/booking-api/cancel-booking",
+        "to": "tickets/tickets-db.bookings",
+        "kind": "remove",
+        "payload": {
+          "id": "gig-10"
+        }
+      }
+    ],
+    "effects": [
+      {
+        "kind": "row-removed",
+        "at": "tickets/tickets-db.bookings",
+        "detail": {
+          "id": "gig-10"
+        }
+      },
+      {
+        "kind": "response",
+        "at": "tickets/booking-api.cancelBooking",
+        "detail": {
+          "refunded": 112.5
+        }
+      }
+    ],
+    "never": [
+      "tickets/outbox",
+      "tickets/booking-api/book-seats"
+    ]
+  }
+}

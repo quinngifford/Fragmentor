@@ -198,6 +198,13 @@ export const executionExample = {
       code: "src/pricing/report-totals.ts#reportTotals",
     },
   ],
+  expect: {
+    entered: ["price-orders/price-order"],
+    interactions: [
+      { from: "price-orders/report-totals", to: "price-orders/load-orders", kind: "call", payload: { path: "orders.json" } },
+    ],
+    effects: [{ kind: "response", at: "price-orders/report-totals" }],
+  },
 };
 
 /**
@@ -501,7 +508,7 @@ export function agentGuide(manifest: Manifest): string {
     startingPoint: startingPoint(manifest),
     reviewStep: reviewStep(manifest),
     testStep: pack?.canRun ? " Where Fragmentor writes a contract, import it and write the block's tests." : "",
-    testCommand: pack?.canRun ? " and `fragmentor test`" : "",
+    testCommand: " and `fragmentor test`",
     files: filesSection(pack),
     manifest: compactJson(exampleManifest(manifest)),
     languageRule: languageRule(manifest, chosen),

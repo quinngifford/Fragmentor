@@ -10,6 +10,8 @@ import { CAPABILITIES } from "../model/capabilities.js";
 import { ARCHITECTURE_ROLES } from "../model/roles.js";
 import { blockDir, manifestPath, manifestSchema } from "../project/project.js";
 import type { Manifest } from "../project/project.js";
+import { loadExecutions } from "../project/executions.js";
+import { evaluate } from "../run/expect.js";
 import { casesSchema } from "../run/cases.js";
 import { runCases } from "../run/run.js";
 import { checkProject } from "../check/check.js";
@@ -125,12 +127,14 @@ describe("the guide", () => {
     // project now gets one that also teaches executions, which the structured
     // one never did. That section, saying where each block's code is, and what
     // an execution expects — the half of one that makes it a test, which three
-    // agents writing executions each reported missing — is the whole of what
-    // has been allowed to add to these numbers.
-    expect(guides.TypeScript!.split("\n").length).toBeLessThan(275);
-    // Nothing is generated or run without a pack, so the whole of contracts,
-    // running and testing falls away.
-    expect(guides["in a language there is no pack for"]!.split("\n").length).toBeLessThan(220);
+    // agents writing executions each reported missing, along with the three
+    // matching rules that decide whether an expectation means what it says —
+    // is the whole of what has been allowed to add to these numbers.
+    expect(guides.TypeScript!.split("\n").length).toBeLessThan(290);
+    // Nothing is generated or run without a pack, so contracts and block
+    // testing fall away. What is left still teaches executions, which is why
+    // this is not much smaller than it was.
+    expect(guides["in a language there is no pack for"]!.split("\n").length).toBeLessThan(245);
   });
 
   it("tells an agent about every capability, and how to check and test its work", () => {
@@ -161,9 +165,10 @@ describe("the guide", () => {
     expect(guide).toContain("read_file(path: str) → str");
     expect(guide).toContain("cannot hold Python code to a contract");
     expect(guide).not.toContain("contract.ts");
-    // Nothing is run, so nothing is tested either.
-    expect(guide).not.toContain("fragmentor test");
+    // No block of it is run, so none has saved tests. `fragmentor test` is
+    // still there, because an execution is JSON whatever the code is in.
     expect(guide).not.toContain("cases.json");
+    expect(guide).toContain("holds each execution to its own expectations");
   });
 
   it("leaves the language to the agent when the person did, and still teaches contracts", () => {
@@ -186,7 +191,7 @@ describe("the guide", () => {
     const guide = guides["in a language there is no pack for"]!;
     expect(guide).toContain("It has no language pack for Go");
     expect(guide).not.toContain("## Contracts");
-    expect(guide).not.toContain("fragmentor test");
+    expect(guide).not.toContain("cases.json");
   });
 
   it("teaches executions in every project, because what happens is half of what a diagram shows", () => {
@@ -278,9 +283,14 @@ export async function loadOrders(input: LoadOrdersInput, caps: LoadOrdersCaps): 
       JSON.stringify([{ name: "prices a file of orders", input: { path: "orders.json" }, expected: { totals: [17, 0], grandTotal: 17 } }]),
       "utf8",
     );
-    // And what happens when it is set going, exactly as the guide shows it.
+    // And what happens when it is set going, exactly as the guide shows it,
+    // including the expectations it shows: a trace that did not meet the ones
+    // printed beside it would teach an agent to write a file that fails.
     await mkdir(path.join(dir, "executions"));
     await writeFile(path.join(dir, "executions", "report-totals.json"), JSON.stringify(executionExample), "utf8");
+    const { executions, problems } = await loadExecutions(dir);
+    expect(problems).toEqual([]);
+    expect(evaluate(executions[0]!.declared!, executions[0]!.expect!).failures).toEqual([]);
 
     const implemented = await checkProject(dir);
     expect(implemented.systems[0]!.codeProblems).toEqual([]);
