@@ -295,7 +295,10 @@ describe("checkProject", () => {
   }, 30_000);
 
   it("passes a project whose blocks say where their code will be, before any of it is written", async () => {
+    // The executions go with it: every step of one names a function, so a
+    // project with no code yet has nothing written down about it either.
     await rm(path.join(dir, "src"), { recursive: true });
+    await rm(path.join(dir, "executions"), { recursive: true });
 
     const report = await checkProject(dir);
     expect(report.errorCount).toBe(0);

@@ -1,0 +1,134 @@
+{
+  "name": "Cancel a booking",
+  "description": "Ada gives back the five seats she booked: the seats go on sale again, the booking is taken away, and she is refunded all but a fee for each seat.",
+  "given": {
+    "tickets/tickets-db.events": {
+      "gig": { "id": "gig", "name": "Night Gig", "seatsLeft": 5, "price": 25 }
+    },
+    "tickets/tickets-db.bookings": {
+      "gig-10": { "id": "gig-10", "eventId": "gig", "email": "ada@example.com", "seats": 5, "total": 122.5 }
+    }
+  },
+  "trigger": {
+    "at": "tickets/box-office.cancelBooking",
+    "kind": "action",
+    "description": "Ada presses cancel on the booking she made.",
+    "code": "src/box-office.ts#onCancelPressed",
+    "payload": { "bookingId": "gig-10" }
+  },
+  "trace": [
+    {
+      "from": "tickets/box-office.cancelBooking",
+      "to": "tickets/booking-api.cancelBooking",
+      "kind": "call",
+      "description": "The page knows the booking by the number it was given when it was made.",
+      "code": "src/box-office.ts#onCancelPressed",
+      "payload": { "bookingId": "gig-10" },
+      "response": { "refunded": 112.5, "message": "Cancelled booking gig-10: 112.5 is on its way back." }
+    },
+    {
+      "from": "tickets/booking-api.cancelBooking",
+      "to": "tickets/booking-api/cancel-booking",
+      "kind": "call",
+      "description": "The server that takes the request is not a block; all it does is hand it to the block that answers this operation.",
+      "code": "src/server.ts#handle",
+      "payload": { "bookingId": "gig-10" }
+    },
+    {
+      "from": "tickets/booking-api/cancel-booking",
+      "to": "tickets/tickets-db.bookings",
+      "kind": "read",
+      "description": "The booking has to be there to be given back, and it is what says how many seats and how much money are involved.",
+      "code": "src/booking/cancel-booking.ts#cancelBooking",
+      "payload": { "id": "gig-10" },
+      "response": { "id": "gig-10", "eventId": "gig", "email": "ada@example.com", "seats": 5, "total": 122.5 }
+    },
+    {
+      "from": "tickets/booking-api/cancel-booking",
+      "to": "tickets/booking-api/find-event",
+      "kind": "call",
+      "description": "The event the booking was for is looked up, because the seats can only go back on sale if it is still there.",
+      "code": "src/booking/cancel-booking.ts#cancelBooking",
+      "payload": { "eventId": "gig" }
+    },
+    {
+      "from": "tickets/booking-api/find-event",
+      "to": "tickets/tickets-db.events",
+      "kind": "read",
+      "description": "The event is still on sale, with the five seats Ada left it.",
+      "code": "src/booking/find-event.ts#findEvent",
+      "payload": { "id": "gig" },
+      "response": { "id": "gig", "name": "Night Gig", "seatsLeft": 5, "price": 25 }
+    },
+    {
+      "from": "tickets/booking-api/cancel-booking",
+      "to": "tickets/booking-api/pricing/refund-for",
+      "kind": "call",
+      "description": "What comes back is the whole booking less a fee for each seat, which is the box office's to keep.",
+      "code": "src/booking/cancel-booking.ts#cancelBooking",
+      "payload": { "total": 122.5, "seats": 5 },
+      "response": { "refund": 112.5 }
+    },
+    {
+      "from": "tickets/booking-api/cancel-booking",
+      "to": "tickets/tickets-db.events",
+      "kind": "write",
+      "description": "The five seats go back on sale, which is only done because the event turned out to still be there.",
+      "code": "src/booking/cancel-booking.ts#cancelBooking",
+      "payload": { "id": "gig", "name": "Night Gig", "seatsLeft": 10, "price": 25 }
+    },
+    {
+      "effect": "row-changed",
+      "at": "tickets/tickets-db.events",
+      "description": "The Night Gig is back to the ten seats it started with.",
+      "code": "src/booking/cancel-booking.ts#cancelBooking",
+      "detail": { "id": "gig", "seatsLeft": 10 }
+    },
+    {
+      "from": "tickets/booking-api/cancel-booking",
+      "to": "tickets/tickets-db.bookings",
+      "kind": "remove",
+      "description": "The booking is taken away once its seats are back, so it cannot be given back twice.",
+      "code": "src/booking/cancel-booking.ts#cancelBooking",
+      "payload": { "id": "gig-10" }
+    },
+    {
+      "effect": "row-removed",
+      "at": "tickets/tickets-db.bookings",
+      "description": "Nothing is left of the booking but the refund on its way.",
+      "code": "src/booking/cancel-booking.ts#cancelBooking",
+      "detail": { "id": "gig-10" }
+    },
+    {
+      "effect": "response",
+      "at": "tickets/booking-api.cancelBooking",
+      "description": "The API answers with what is coming back to her.",
+      "code": "src/server.ts#handle",
+      "detail": { "refunded": 112.5, "message": "Cancelled booking gig-10: 112.5 is on its way back." }
+    },
+    {
+      "effect": "ui-changed",
+      "at": "tickets/box-office.cancelBooking",
+      "description": "The page says the booking is gone and how much is refunded.",
+      "code": "src/box-office.ts#onCancelPressed",
+      "detail": { "showing": "Cancelled booking gig-10: 112.5 is on its way back." }
+    }
+  ],
+  "expect": {
+    "entered": ["tickets/booking-api/find-event", "tickets/booking-api/pricing/refund-for"],
+    "interactions": [
+      { "to": "tickets/tickets-db.bookings", "kind": "remove" },
+      { "from": "tickets/booking-api/cancel-booking", "to": "tickets/tickets-db.events", "kind": "write" }
+    ],
+    "effects": [
+      { "kind": "row-removed", "at": "tickets/tickets-db.bookings" },
+      { "kind": "response", "at": "tickets/booking-api.cancelBooking", "detail": { "refunded": 112.5 } }
+    ],
+    "never": [
+      "tickets/booking-api/book-seats",
+      "tickets/booking-api/pricing/price-seat",
+      "tickets/outbox",
+      "tickets/reminders"
+    ]
+  }
+}

@@ -286,6 +286,9 @@ describe("checking an execution against the architecture", () => {
       'trace step #1: say what this step is, with "description".',
       'trace step #1: name the code that makes it, with "code", as in "src/api/router.ts#handleSend".',
       'expect.never.0: there is no block at "app/payments".',
+      // What the stores held at the end is not something a written-down trace
+      // can be checked against, whatever target it names.
+      'expect.state: what the stores hold at the end is only known to a run Fragmentor recorded, and this trace was written down. Say what was written in the step that wrote it instead.',
     ]);
   });
 

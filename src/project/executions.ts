@@ -506,6 +506,15 @@ export function checkExecution(execution: Execution, architecture: Architecture)
     });
     expected.never.forEach((address, i) => check(address, `expect.never.${i}`));
     for (const target of Object.keys(expected.state)) checkTarget(target, `expect.state.${target}`);
+    // What the stores held at the end is something only a run that happened
+    // knows. A trace written down from reading the code never saw them, so an
+    // expectation about them could never be met, and saying so beats leaving
+    // a test that quietly cannot pass.
+    if (Object.keys(expected.state).length > 0 && execution.declared?.source === "declared") {
+      problems.push(
+        'expect.state: what the stores hold at the end is only known to a run Fragmentor recorded, and this trace was written down. Say what was written in the step that wrote it instead.',
+      );
+    }
   }
 
   return problems;

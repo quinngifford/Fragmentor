@@ -3,6 +3,7 @@
   "role": "client",
   "subtype": "web page",
   "responsibility": "Where someone picks an event, books seats or cancels a booking, and reads what happened.",
+  "code": "src/box-office.ts",
   "exposes": {
     "bookSeats": {
       "accepts": "{ eventId: string; seats: number; email: string }",

@@ -116,6 +116,24 @@ describe("the tickets example", () => {
       ["tickets/booking-api/book-seats/reserve", "tickets/booking-api/book-seats"],
     ]);
   });
+
+  it("writes down what happens when something sets it going, and its traces meet their own expectations", async () => {
+    const { executions, problems } = await loadExecutions(tickets);
+    expect(problems).toEqual([]);
+    expect(executions.map((execution) => execution.id)).toEqual(["book-seats", "booking-turned-away", "cancel-booking"]);
+
+    for (const execution of executions) {
+      expect(execution.declared?.source, execution.id).toBe("declared");
+      expect(evaluate(execution.declared!, execution.expect!).failures, execution.id).toEqual([]);
+    }
+  });
+
+  it("says nothing about what the stores hold at the end, which only a recorded run knows", async () => {
+    const { executions } = await loadExecutions(tickets);
+    // The one expectation a written-down trace cannot meet, so none of them
+    // claims it; `fragmentor check` reports one that does.
+    for (const execution of executions) expect(execution.expect?.state, execution.id).toEqual({});
+  });
 });
 
 describe("the messenger example", () => {

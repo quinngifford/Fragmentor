@@ -123,9 +123,11 @@ describe("the guide", () => {
   it("is short enough for an agent to take in at once", () => {
     // The two guides these replaced ran to 213 and 197 lines, and every
     // project now gets one that also teaches executions, which the structured
-    // one never did. That section, and saying where each block's code is, is
-    // the whole of what has been allowed to add to these numbers.
-    expect(guides.TypeScript!.split("\n").length).toBeLessThan(265);
+    // one never did. That section, saying where each block's code is, and what
+    // an execution expects — the half of one that makes it a test, which three
+    // agents writing executions each reported missing — is the whole of what
+    // has been allowed to add to these numbers.
+    expect(guides.TypeScript!.split("\n").length).toBeLessThan(275);
     // Nothing is generated or run without a pack, so the whole of contracts,
     // running and testing falls away.
     expect(guides["in a language there is no pack for"]!.split("\n").length).toBeLessThan(220);
