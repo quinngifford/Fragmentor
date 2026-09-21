@@ -164,10 +164,20 @@ describe("the guide", () => {
     expect(guide).not.toContain("cases.json");
   });
 
-  it("leaves the language to the agent when the person did", () => {
+  it("leaves the language to the agent when the person did, and still teaches contracts", () => {
     const guide = guides["with the language left open"]!;
     expect(guide).toContain('`"typescript"`');
     expect(guide).toContain('`"python"`');
+    // An agent about to choose TypeScript would otherwise be given nothing to
+    // follow about contracts, running or testing.
+    expect(guide).toContain("## Contracts");
+    expect(guide).toContain("The rest of this guide is written for TypeScript");
+  });
+
+  it("is written for the language the systems name, where the project names none", () => {
+    const guide = agentGuide(project({ language: undefined, systems: [{ rootBlock: "price-orders", language: "typescript" }] }));
+    expect(guide).toContain("## Contracts");
+    expect(guide).toContain("which each system says for itself");
   });
 
   it("says plainly when it can do nothing with the code but draw it", () => {

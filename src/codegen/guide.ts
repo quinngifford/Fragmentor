@@ -321,17 +321,37 @@ function filesSection(pack: LanguagePack | null): string {
 }
 
 /**
+ * The language the guide is written for.
+ *
+ * The person may name it on the project, or leave each system to name its own,
+ * so both are looked at. Where nothing names one at all, the guide is written
+ * for TypeScript and says the choice is the agent's: a guide with no contracts
+ * in it would leave an agent that then chose TypeScript with nothing to follow.
+ */
+function guideLanguage(manifest: Manifest): { pack: LanguagePack | null; unnamed: boolean; named: string | null } {
+  const named = [manifest.language, ...manifest.systems.map((system) => system.language)].filter(
+    (each): each is string => each !== undefined,
+  );
+  if (named.length === 0) return { pack: getPack("typescript"), unnamed: true, named: null };
+
+  const known = named.find((each) => isKnownLanguage(each));
+  return {
+    pack: known === undefined ? null : getPack(known),
+    unnamed: false,
+    named: known ?? named[0]!,
+  };
+}
+
+/**
  * What Fragmentor does with this project's code, in the opening paragraph.
  *
  * It is the first thing an agent reads, and the one thing that differs most
  * between projects, so it is stated rather than left to be worked out from the
  * sections below.
  */
-function fragmentorRole(pack: LanguagePack | null, language: string | undefined): string {
+function fragmentorRole(pack: LanguagePack | null, named: string | null): string {
   if (pack === null) {
-    return language === undefined
-      ? "Fragmentor draws the diagram and checks that it holds together. Where a system says it is written in a language Fragmentor has a pack for — `typescript` or `python` — it also writes each block's types from the diagram."
-      : `Fragmentor draws the diagram and checks that it holds together. It has no language pack for ${language}, so it writes nothing, checks no code and runs nothing here.`;
+    return `Fragmentor draws the diagram and checks that it holds together. It has no language pack for ${named ?? "this project's language"}, so it writes nothing, checks no code and runs nothing here.`;
   }
   if (!pack.canRun) {
     return `Fragmentor draws the diagram, checks that it holds together, and writes each function block's types. It cannot check or run ${pack.displayName} code yet.`;
@@ -430,20 +450,22 @@ function reviewStep(manifest: Manifest): string {
     : "Carry straight on to the code. They can watch the diagram fill in as you work, and will say if they want the shape changed, so do not stop to ask for agreement.";
 }
 
-function languageRule(manifest: Manifest, pack: LanguagePack | null): string {
-  if (manifest.language === undefined) {
+function languageRule(manifest: Manifest, chosen: ReturnType<typeof guideLanguage>): string {
+  if (chosen.unnamed) {
     const choices = knownLanguages()
       .map(({ id, displayName }) => {
         const each = getPack(id);
         return `\`"${id}"\` (${each.canRun ? "Fragmentor checks and runs it" : `Fragmentor writes its types but cannot check or run ${displayName} yet`})`;
       })
       .join(" or ");
-    return `The person left the language to you: give each system a \`"language"\`, ${choices}, or the name of whatever else its code is written in, which Fragmentor will draw and nothing more.`;
+    return `The person left the language to you: give each system a \`"language"\`, ${choices}, or the name of whatever else its code is written in, which Fragmentor will draw and nothing more. The rest of this guide is written for TypeScript; in another language the file names and naming conventions follow that language.`;
   }
-  if (pack === null) {
-    return `The code is written in ${manifest.language}, which Fragmentor has no pack for, so it draws the diagram and checks nothing about the code.`;
+  if (chosen.pack === null) {
+    return `The code is written in ${chosen.named}, which Fragmentor has no pack for, so it draws the diagram and checks nothing about the code.`;
   }
-  return `The person chose ${pack.displayName}, so every system is written in it.`;
+  return manifest.language === undefined
+    ? `This project's code is written in ${chosen.pack.displayName}, which each system says for itself.`
+    : `The person chose ${chosen.pack.displayName}, so every system is written in it.`;
 }
 
 function fill(template: string, values: Record<string, string>): string {
@@ -463,18 +485,18 @@ function template(): string {
 }
 
 export function agentGuide(manifest: Manifest): string {
-  const language = manifest.language;
-  const pack = language !== undefined && isKnownLanguage(language) ? getPack(language) : null;
+  const chosen = guideLanguage(manifest);
+  const pack = chosen.pack;
 
   return fill(template(), {
-    fragmentorRole: fragmentorRole(pack, language),
+    fragmentorRole: fragmentorRole(pack, chosen.named),
     startingPoint: startingPoint(manifest),
     reviewStep: reviewStep(manifest),
     testStep: pack?.canRun ? " Where Fragmentor writes a contract, import it and write the block's tests." : "",
     testCommand: pack?.canRun ? " and `fragmentor test`" : "",
     files: filesSection(pack),
     manifest: compactJson(exampleManifest(manifest)),
-    languageRule: languageRule(manifest, pack),
+    languageRule: languageRule(manifest, chosen),
     componentBlock: compactJson(workedExample.blocks["price-orders"]),
     functionBlock: compactJson(workedExample.blocks["price-orders/report-totals"]),
     roles: rolesSection(),

@@ -11,7 +11,7 @@ The person you work with sees this project in Fragmentor as a diagram of **block
 1. Fill in `goal` and `systems` in `fragmentor.json`. Then write a `block.json` for every block, keeping any the person already wrote.
 2. Run `fragmentor check` and fix everything it reports.
 3. {{reviewStep}}
-4. Write the code, and point each block at it.{{testStep}}
+4. Point each block at its code, writing whatever is not there yet.{{testStep}}
 5. Write down what happens when something sets the system going, under `executions/`.
 6. Run `fragmentor check`{{testCommand}} until it passes.
 
