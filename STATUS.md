@@ -80,6 +80,7 @@ What is still open, for whoever picks this up:
 - **Packages can reach the outside world** without a capability. Only Node's built-in modules are refused.
 - **A block's code is found by name, not by parsing.** Whether its code imports its contract, and whether the file really declares the function rather than only mentioning it, are decided by scanning the text. A file that imports its contract and never uses the types it imported counts as held to it, and only the run-time check on its inputs and outputs then holds it to anything.
 - **A block Fragmentor runs can only call other blocks it runs**, because the compiled copy holds those files and nothing else.
+- **A file may hold several blocks, with two costs.** Editing it from the window saves the whole file, so unsaved edits made through one block can overwrite those made through another until the redraw warns about it; and binding one of its functions holds the whole file to Fragmentor's import rules, which the guide says but the file itself does not.
 - **Watching has limits.** A run records its first 2000 calls, and a value larger than about 200 KB is described rather than shown. Breakpoints are not saved with the project.
 - **Held calls take turns.** Several calls held at once are let go one at a time by Continue, all together by Continue all. Step goes into the call it lets go.
 - **Declared traces guess what caused each step** when the agent does not say. After a callback into the caller the list is genuinely ambiguous; the guess is documented, and a step can name its cause.
