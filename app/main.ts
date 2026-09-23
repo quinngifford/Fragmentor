@@ -863,6 +863,25 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("backToBlock", "label") === "Colour: by block",
     ],
     [
+      "an arrow between two blocks with no room between them comes round the side of both",
+      (() => {
+        type Tight = { count?: string; reach?: string; tail?: string; head?: string };
+        const into = value("tight", "into") as Tight;
+        const back = value("tight", "back") as Tight;
+        return (
+          into?.count === "10 of 20" &&
+          into?.reach === "beside" &&
+          into?.tail === "book-seats" &&
+          into?.head === "reserve" &&
+          // And the answer comes back round the same side, the other way.
+          back?.count === "17 of 20" &&
+          back?.reach === "beside" &&
+          back?.tail === "reserve" &&
+          back?.head === "book-seats"
+        );
+      })(),
+    ],
+    [
       "an execution is stepped through on the tree, one arrow at a time, and read end to end as its own drawing",
       value("execution", "opened") === true &&
         value("execution", "offered") === "clean-up-sessions deliver-a-notification log-in log-out send-a-message" &&
@@ -872,22 +891,42 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         /Someone uses Send Button/.test(String(value("execution", "caption"))) &&
         Number(value("execution", "arrows")) === 1 &&
         value("execution", "fromOutside") === "outside" &&
+        // And the mark for it lands on no block, whichever run it is.
+        value("execution", "outside") === "clear" &&
         value("execution", "lit") === "send-button" &&
         value("execution", "page") === "Step 1 of 19" &&
         /Ada presses send/.test(String(value("execution", "said"))) &&
         value("execution", "code") === "src/client/ui/sendButton.ts#onSendPressed" &&
         (() => {
-          const stepped = value("stepping", "stepped") as { count?: string; lit?: string; label?: string };
-          const back = value("stepping", "back") as { count?: string; way?: string; caption?: string };
-          const hidden = value("stepping", "hidden") as { partsGone?: boolean; count?: string; caption?: string };
-          const opened = value("stepping", "opened") as { partsBack?: boolean; count?: string; lit?: string; caption?: string };
+          type Step = { count?: string; lit?: string; label?: string; tail?: string; head?: string };
+          const reaches = value("stepping", "reaches") as { crossed?: string; fold?: string; word?: string };
+          const page = value("stepping", "page");
+          const stepped = value("stepping", "stepped") as Step;
+          const back = value("stepping", "back") as Step & { way?: string; caption?: string };
+          const hidden = value("folded", "hidden") as { partsGone?: boolean; count?: string; caption?: string };
+          const opened = value("folded", "opened") as { partsBack?: boolean; count?: string; lit?: string; caption?: string };
           return (
             stepped?.count === "2 of 19" &&
             stepped?.lit === "send-button state" &&
             stepped?.label === "call" &&
-            // The answer out of the database runs the other way along its arrow.
+            // The arrow is over the blocks and still does not take their
+            // clicks: where it runs across the UI, and over that block's own
+            // fold, the block is what is on top. Only the arrow's word takes
+            // a click, which is how the step is opened.
+            reaches?.crossed === "block ui" &&
+            reaches?.fold === "block ui" &&
+            reaches?.word === "exec-label-plate" &&
+            // The step's page says its ends the way the arrow points.
+            page === "from Database · sessions | to Check Session | kind gives back" &&
+            // A call points at whoever was called.
+            stepped?.tail === "send-button" &&
+            stepped?.head === "state" &&
+            // And an answer points back at whoever asked, not at whoever
+            // answered: the arrow is drawn the way the step runs.
             back?.count === "7 of 19" &&
             back?.way === "back" &&
+            back?.tail === "database" &&
+            back?.head === "check-session" &&
             /gives back/.test(String(back?.caption)) &&
             // Folded away, the step between two of the client's parts is
             // passed over: stepping lands on what it can show instead.
@@ -2038,6 +2077,67 @@ function attachSelfCheck(
           return { label: document.getElementById("colour-by").textContent };
         `);
 
+        // A step between two blocks with nothing between them. Reserve is the
+        // one part of Book Seats, listed twenty-two pixels under it, which is
+        // no room at all for an arrow: it has to come round the side of both.
+        await run("tight", `
+          const shut = [...document.querySelectorAll(".bench-window .window-close")].find((b) => b.textContent === "\u2715");
+          if (shut) shut.click();
+          await wait(300);
+          document.getElementById("zoom-fit").click();
+          await wait(500);
+
+          const button = (label) => [...document.querySelectorAll("#exec-bar .run-btn")].find((b) => b.textContent === label);
+          const select = document.querySelector("#exec-bar .exec-select");
+          select.value = "book-seats";
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+          await until(() => document.querySelector("#exec-layer .exec-line-group"));
+
+          // How far the arrow reaches past the two blocks it joins. Squeezed
+          // into the gap it would stay within them, and be a squiggle.
+          const reach = () => {
+            const line = document.querySelector("#exec-layer .exec-line");
+            if (!line) return "no arrow";
+            const lit = [...document.querySelectorAll('.block-box[data-current="true"]')].map((box) => box.getBoundingClientRect());
+            if (lit.length !== 2) return "lit " + lit.length;
+            const past = line.getBoundingClientRect().right - Math.max(...lit.map((box) => box.right));
+            return past > 8 ? "beside" : "squeezed";
+          };
+          const nearest = (line, length) => {
+            const point = line.getPointAtLength(length).matrixTransform(line.getScreenCTM());
+            let best = "";
+            let near = Infinity;
+            for (const box of document.querySelectorAll("#node-layer .block-box")) {
+              const rect = box.getBoundingClientRect();
+              const away = Math.hypot(
+                Math.max(rect.left - point.x, 0, point.x - rect.right),
+                Math.max(rect.top - point.y, 0, point.y - rect.bottom),
+              );
+              if (away < near) { near = away; best = box.dataset.id; }
+            }
+            return best;
+          };
+          const endsOf = () => {
+            const line = document.querySelector("#exec-layer .exec-line");
+            return line ? { tail: nearest(line, 0), head: nearest(line, line.getTotalLength()) } : {};
+          };
+          const stepTo = async (times) => {
+            for (let i = 0; i < times; i += 1) {
+              button("Step").click();
+              await wait(160);
+            }
+            await wait(200);
+          };
+
+          // Book Seats reserving the seats, and the answer coming back.
+          await stepTo(9);
+          const into = { count: text(".exec-count"), reach: reach(), ...endsOf() };
+          await stepTo(7);
+          const back = { count: text(".exec-count"), reach: reach(), ...endsOf() };
+          return { into, back };
+        `);
+        await capture(window, "self-check-tight");
+
         // An execution written down in the messenger: picked, drawn over the
         // whole application, stepped through, and followed inside.
         // An execution written down in the messenger, stepped through on the
@@ -2060,9 +2160,38 @@ function attachSelfCheck(
           await wait(400);
 
           const lit = () => [...document.querySelectorAll('.block-box[data-current="true"]')].map((box) => box.dataset.id).sort().join(" ");
+
+          // Outside the system is marked beside the block a run starts at,
+          // and must land on no block: nothing on the tree stands for
+          // outside, so a mark on a block would read as that block being it.
+          // The clean-up job starts beside the database, which is where the
+          // room beside it runs out.
+          const outsideOn = () => {
+            const dot = document.querySelector("#exec-layer .exec-outside-dot");
+            if (!dot) return "no mark";
+            const at = dot.getBoundingClientRect();
+            const x = at.left + at.width / 2;
+            const y = at.top + at.height / 2;
+            const over = [...document.querySelectorAll("#node-layer .block-box")].find((box) => {
+              const rect = box.getBoundingClientRect();
+              return x > rect.left && x < rect.right && y > rect.top && y < rect.bottom;
+            });
+            return over ? "block " + over.dataset.id : "clear";
+          };
+          const pick = async (id) => {
+            select.value = id;
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            await until(() => document.querySelector("#exec-layer .exec-line-group"));
+            await wait(300);
+          };
+          await pick("clean-up-sessions");
+          const outside = outsideOn();
+          await pick("send-a-message");
+
           return {
             opened: true,
             offered,
+            outside,
             source: text(".exec-source"),
             count: text(".exec-count"),
             caption: text(".exec-caption-text"),
@@ -2084,17 +2213,100 @@ function attachSelfCheck(
           const arrow = () => document.querySelector("#exec-layer .exec-line-group");
           const lit = () => [...document.querySelectorAll('.block-box[data-current="true"]')].map((box) => box.dataset.id).sort().join(" ");
 
+          // Which block each end of the arrow is at, which is the only way to
+          // tell which way it points. The head is the end the marker is on.
+          const endsOf = () => {
+            const line = document.querySelector("#exec-layer .exec-line");
+            if (!line) return {};
+            const nearest = (length) => {
+              const point = line.getPointAtLength(length).matrixTransform(line.getScreenCTM());
+              let best = "";
+              let near = Infinity;
+              for (const box of document.querySelectorAll("#node-layer .block-box")) {
+                const rect = box.getBoundingClientRect();
+                const away = Math.hypot(
+                  Math.max(rect.left - point.x, 0, point.x - rect.right),
+                  Math.max(rect.top - point.y, 0, point.y - rect.bottom),
+                );
+                if (away < near) { near = away; best = box.dataset.id; }
+              }
+              return best;
+            };
+            return { tail: nearest(0), head: nearest(line.getTotalLength()) };
+          };
+
+          // The arrow goes over the blocks, so the one thing it must not do is
+          // take their clicks. Every other interaction in this check is
+          // dispatched straight at an element, which skips hit-testing
+          // altogether, so these two ask the page what is really on top.
+          const onTop = (x, y) => {
+            const hit = document.elementFromPoint(x, y);
+            if (!hit) return "nothing";
+            const box = hit.closest(".block-box");
+            return box ? "block " + box.dataset.id : hit.getAttribute("class") || hit.tagName;
+          };
+          const middleOf = (selector) => {
+            const found = document.querySelector(selector);
+            if (!found) return null;
+            const rect = found.getBoundingClientRect();
+            return [rect.left + rect.width / 2, rect.top + rect.height / 2];
+          };
+          const onTopOf = (selector) => {
+            const point = middleOf(selector);
+            return point ? onTop(point[0], point[1]) : "missing";
+          };
+          // The first place the arrow runs across a block: what is on top
+          // there has to be the block, not the arrow.
+          const whereItCrosses = () => {
+            const line = document.querySelector("#exec-layer .exec-line");
+            if (!line) return "no arrow";
+            const boxes = [...document.querySelectorAll("#node-layer .block-box")];
+            for (let at = 0; at <= line.getTotalLength(); at += 2) {
+              const point = line.getPointAtLength(at).matrixTransform(line.getScreenCTM());
+              const over = boxes.find((box) => {
+                const rect = box.getBoundingClientRect();
+                return point.x > rect.left + 3 && point.x < rect.right - 3 && point.y > rect.top + 3 && point.y < rect.bottom - 3;
+              });
+              if (over) return onTop(point.x, point.y);
+            }
+            return "crosses no block";
+          };
+
           button("Step").click();
           await wait(300);
-          const stepped = { count: text(".exec-count"), lit: lit(), label: text(".exec-label") };
+          const stepped = { count: text(".exec-count"), lit: lit(), label: text(".exec-label"), ...endsOf() };
 
-          // On to the answer coming back out of the database, which runs the
-          // other way along its arrow.
+          // On to the answer coming back out of the database, which is drawn
+          // out of the database and into whoever asked.
           for (let i = 0; i < 5; i += 1) {
             button("Step").click();
             await wait(200);
           }
-          const back = { count: text(".exec-count"), way: arrow() ? arrow().dataset.current : "", caption: text(".exec-caption-text") };
+          const back = {
+            count: text(".exec-count"),
+            way: arrow() ? arrow().dataset.current : "",
+            caption: text(".exec-caption-text"),
+            ...endsOf(),
+          };
+          // This answer runs the width of the drawing, across the client's UI
+          // and over its fold. Both have to stay the thing on top.
+          const reaches = {
+            crossed: whereItCrosses(),
+            fold: onTopOf('.block-box[data-id="ui"] .fold-hit'),
+            word: onTopOf("#exec-layer .exec-label-plate"),
+          };
+          // And the step's own page says its ends the same way round as the
+          // arrow does: out of whoever was called, into whoever asked.
+          const page = [...document.querySelectorAll("#inspector .port-row")]
+            .map((row) => [...row.children].map((cell) => cell.textContent.replace(/Show$/, "").trim()).join(" "))
+            .join(" | ");
+          return { reaches, page, stepped, back };
+        `);
+        await capture(window, "self-check-giving-back");
+
+        await run("folded", `
+          const button = (label) => [...document.querySelectorAll("#exec-bar .run-btn")].find((b) => b.textContent === label);
+          const lit = () => [...document.querySelectorAll('.block-box[data-current="true"]')].map((box) => box.dataset.id).sort().join(" ");
 
           // Folded away, the client's parts are off the tree, so stepping
           // passes over what happens between them.
@@ -2121,7 +2333,7 @@ function attachSelfCheck(
             lit: lit(),
             caption: text(".exec-caption-text"),
           };
-          return { stepped, back, hidden, opened };
+          return { hidden, opened };
         `);
         await capture(window, "self-check-stepping");
 

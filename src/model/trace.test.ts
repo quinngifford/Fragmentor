@@ -6,6 +6,7 @@ import {
   nextStep,
   place,
   placeEvent,
+  travelOf,
 } from "./trace.js";
 import { parseAddress } from "../project/executions.js";
 import type { Address, Effect, Interaction, InteractionKind, Return, Trace, View } from "./trace.js";
@@ -103,6 +104,29 @@ describe("addresses", () => {
     expect(isInside(a("app/infrastructure/queue.publish"), a("app/infrastructure"))).toBe(true);
     expect(isInside(a("app/infrastructure/queue.publish"), a("app/infrastructure/queue.publish"))).toBe(true);
     expect(isInside(a("app/infrastructure/queue"), a("app/infrastructure/queue.publish"))).toBe(false);
+  });
+});
+
+describe("which way a step runs", () => {
+  it("runs an interaction the way it was made", () => {
+    expect(travelOf(write)).toEqual({ from: a("app/api/messaging/save-message"), to: a("app/infrastructure/database.messages") });
+  });
+
+  it("runs an answer back out of whoever was called, into whoever asked", () => {
+    // The return repeats the ends of the call it completes, so its two ends
+    // and its direction are not the same thing: everything that draws one has
+    // to ask, and this is what it asks.
+    expect(saved.from).toEqual(save.from);
+    expect(saved.to).toEqual(save.to);
+    expect(travelOf(saved)).toEqual({ from: a("app/api/messaging/save-message"), to: a("app/api/router") });
+  });
+
+  it("runs a trigger in from outside the system", () => {
+    expect(travelOf(click)).toEqual({ from: null, to: a("app/client/ui/button") });
+  });
+
+  it("says an effect runs nowhere: it is left at one place", () => {
+    expect(travelOf(rowChanged)).toBeNull();
   });
 });
 

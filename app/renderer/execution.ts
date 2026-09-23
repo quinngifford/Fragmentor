@@ -1,4 +1,4 @@
-import { addressesOf, nextStep, placeEvent } from "../../src/model/trace.js";
+import { addressesOf, nextStep, placeEvent, travelOf } from "../../src/model/trace.js";
 import type { Address, InteractionKind, Trace, TraceEvent, View } from "../../src/model/trace.js";
 import type { SnapshotExecution } from "../../src/project/snapshot.js";
 import type { TriggerKind } from "../../src/project/executions.js";
@@ -109,33 +109,38 @@ export function shownView(): View {
 export function markFor(event: TraceEvent, trigger: TriggerKind): ExecutionMark | null {
   const tree = treeInView();
   if (!tree) return null;
-  const placement = placeEvent(event, shownView());
+  const view = shownView();
+  const placement = placeEvent(event, view);
   const label = stepWord(event, trigger);
   // What it is in the agent's words, over what it does in Fragmentor's.
   const said = event.type === "return" ? undefined : event.description;
   const title = [said, describeStep(event, trigger, 400)].filter(Boolean).join("\n\n");
 
-  if (placement.on === "effect") {
+  // Something the run left behind, or a step whose two ends are both folded
+  // away into one block: a mark at that block is all there is to show.
+  if (placement.on !== "edge") {
     const at = shownAt(tree, placement.at.path);
-    return at ? { from: null, to: at.path, label, title, data: false, back: false, effect: label } : null;
+    if (!at) return null;
+    const effect = placement.on === "effect" ? label : `${label}, inside`;
+    return { from: null, to: at.path, label, title, data: false, back: false, effect };
   }
 
-  if (placement.on === "inside") {
-    // Both ends are folded away into one block, which is all there is to show.
-    const at = shownAt(tree, placement.at.path);
-    return at ? { from: null, to: at.path, label, title, data: false, back: false, effect: `${label}, inside` } : null;
-  }
-
-  const to = shownAt(tree, placement.to.path);
-  const from = placement.from === null ? null : shownAt(tree, placement.from.path);
-  if (!to || (placement.from !== null && !from)) return null;
+  // The arrow runs the way the step does, so the block it points at is the one
+  // the step arrives at. For an answer that is whoever asked, not whoever was
+  // called, and `travelOf` is the one place that says so.
+  const runs = travelOf(event);
+  if (!runs) return null;
+  const at = (address: Address | null) => (address === null ? null : shownAt(tree, address.path));
+  const from = at(runs.from);
+  const to = at(runs.to);
+  if ((runs.from !== null && !from) || (runs.to !== null && !to)) return null;
   const carriedSomething =
     (event.type === "interaction" && event.payload !== undefined) ||
     (event.type === "return" && event.response !== undefined);
 
   return {
     from: from?.path ?? null,
-    to: to.path,
+    to: to?.path ?? null,
     label,
     title,
     data: carriedSomething,

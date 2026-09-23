@@ -154,6 +154,21 @@ export interface Trace {
   state?: Record<string, unknown>;
 }
 
+/**
+ * Which way a step runs: what it leaves, and what it arrives at. Null for an
+ * effect, which is left at one place and goes nowhere.
+ *
+ * An interaction runs the way it was made. A response runs back along it, out
+ * of whoever was called and into whoever asked — the one place where an
+ * event's two ends and its direction are not the same thing. Every drawing of
+ * a trace asks this rather than working it out again, so no two of them can
+ * disagree about which way an arrow points.
+ */
+export function travelOf(event: TraceEvent): { from: Address | null; to: Address | null } | null {
+  if (event.type === "effect") return null;
+  return event.type === "return" ? { from: event.to, to: event.from } : { from: event.from, to: event.to };
+}
+
 /** Where in the architecture an event happened: both ends of an interaction, or where an effect landed. */
 export function addressesOf(event: TraceEvent): Address[] {
   if (event.type === "effect") return [event.at];

@@ -1,3 +1,4 @@
+import { travelOf } from "../../src/model/trace.js";
 import type { Trace, TraceEvent } from "../../src/model/trace.js";
 import { BOX_H, BOX_W } from "./tree.js";
 
@@ -52,11 +53,10 @@ export interface Flow {
 
 const words = (kind: string) => kind.replace(/-/g, " ");
 
-/** Which way a step runs on the drawing: an answer travels back to whoever asked. */
+/** Which way a step runs, as blocks: an answer travels back to whoever asked. */
 function ends(event: TraceEvent): { from: string | null; to: string | null } | null {
-  if (event.type === "effect") return null;
-  if (event.type === "return") return { from: event.to.path, to: event.from?.path ?? null };
-  return { from: event.from?.path ?? null, to: event.to.path };
+  const runs = travelOf(event);
+  return runs === null ? null : { from: runs.from?.path ?? null, to: runs.to?.path ?? null };
 }
 
 /**

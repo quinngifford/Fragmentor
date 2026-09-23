@@ -1286,7 +1286,10 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
 
 .exec-line { fill: none; stroke: var(--exec-trigger); stroke-width: 1.8; opacity: 0.8; }
 .exec-arrow { fill: context-stroke; }
-/* Something travelled along it: it flows, the way the data went. */
+/* Something travelled along it: it flows, the way the data went — which is
+   the way the arrow points, on either drawing, because an answer coming back
+   is an arrow out of whoever was called rather than the call it answers run
+   backwards. */
 .exec-line-group[data-data="true"] .exec-line {
   stroke: var(--signal);
   stroke-dasharray: 7 5;
@@ -1295,8 +1298,6 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
 /* Nothing did: it lights up. */
 .exec-line-group[data-data="false"] .exec-line { filter: drop-shadow(0 0 3px var(--exec-trigger)); }
 .exec-line-group .exec-line { opacity: 1; stroke-width: 2.6; }
-/* An answer coming back runs the other way along the same line. */
-.exec-line-group[data-current="back"] .exec-line { animation-direction: reverse; }
 
 @keyframes exec-flow {
   to { stroke-dashoffset: -12; }
@@ -1311,6 +1312,19 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
   stroke-width: 3px;
   pointer-events: none;
 }
+
+/* The word on an arrow carries its own plate, because the arrow is drawn over
+   the blocks and the word can land on one. The halo on .exec-label above is
+   for the flow, whose words have no plate; under a plate it paints nothing. */
+.exec-label-plate { fill: var(--ground); stroke: var(--rule-bright); stroke-width: 1; }
+
+/* The step is drawn over the blocks so it is never hidden, which means it must
+   not take their clicks: an arrow meets a block exactly where that block's
+   fold dot and breakpoint sit. So the whole layer is see-through to the
+   pointer, and the step is opened from its own word, which is put where no
+   block is. */
+#exec-layer { pointer-events: none; }
+#exec-layer .exec-label-plate { pointer-events: auto; cursor: pointer; }
 
 .exec-outside-dot { fill: var(--ground); stroke: var(--exec-trigger); stroke-width: 1.8; }
 .exec-outside-label { font-family: var(--mono); font-size: 9px; fill: var(--exec-trigger); pointer-events: none; }

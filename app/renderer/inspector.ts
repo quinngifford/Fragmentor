@@ -7,6 +7,7 @@ import type { EntryRoute } from "./detail.js";
 import { accessArrows, blockColour, hasCode, hasDetails, revealBlock, treeInView } from "./canvas.js";
 import { openBlockWindow, openCodeAt } from "./popup.js";
 import { STEP_LINK, currentStep, describeStep } from "./execution.js";
+import { travelOf } from "../../src/model/trace.js";
 import type { AccessArrow } from "./canvas.js";
 import { openBenchWindow } from "./benchpanel.js";
 import { el, section } from "./dom.js";
@@ -433,8 +434,11 @@ function stepPanel(panel: HTMLElement): boolean {
   if (event.type === "effect") {
     place("at", event.at);
   } else {
-    place("from", event.from);
-    place("to", event.to);
+    // The same way round as the arrow on the drawing and the words under it:
+    // an answer leaves whoever was called and arrives at whoever asked.
+    const runs = travelOf(event) ?? event;
+    place("from", runs.from);
+    place("to", runs.to);
     const kind = el("div", "port-row");
     kind.append(el("div", "pname", "kind"), el("div", "ptype", event.type === "return" ? "gives back" : event.kind));
     list.append(kind);

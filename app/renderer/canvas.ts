@@ -165,21 +165,31 @@ export function applyRunOverlay(overlay: RunOverlay | null): void {
  * The step on screen: one arrow between two blocks, or one thing a run left
  * at a block. Only ever one at a time — the whole of an execution is a
  * drawing of its own, not a web over the architecture.
+ *
+ * An arrow runs the way the step does, so its head is always where the step
+ * arrives. An answer coming back out of whoever was called is therefore drawn
+ * out of that block and into whoever asked, rather than along the call it
+ * answers the other way round.
  */
 export interface ExecutionMark {
-  /** Where it came from: a block, or null for outside the system. */
+  /** Where the step leaves: a block, or null for outside the system. */
   from: string | null;
-  /** The block it arrived at, or where the effect landed. */
-  to: string;
+  /** Where it arrives: a block, or null where it goes back outside. Where an effect is marked. */
+  to: string | null;
   label: string;
   /** The whole step in words, for hovering over the arrow. */
   title: string;
   /** Whether anything travelled, which is drawn as flow rather than as a line lighting up. */
   data: boolean;
-  /** An answer coming back, which runs the other way. */
+  /** An answer coming back, which the arrow is already drawn the way of. */
   back: boolean;
   /** Set when the step is something the run left behind rather than a move between blocks. */
   effect: string | null;
+}
+
+interface Point {
+  x: number;
+  y: number;
 }
 
 let currentMark: ExecutionMark | null = null;
@@ -192,19 +202,91 @@ export function applyExecutionMark(mark: ExecutionMark | null): void {
   drawExecutionMark();
 }
 
-/** Where an arrow between two blocks leaves and arrives, and whether it has to go over them. */
-function arrowEnds(a: TreeNode, b: TreeNode): { start: { x: number; y: number }; end: { x: number; y: number }; over: boolean } {
-  const gap = Math.max(a.x, b.x) - Math.min(a.x + BOX_W, b.x + BOX_W);
+/**
+ * Which way an arrow has to go round the two blocks it joins, where there is
+ * no room between them to draw it: over the top of both, or out to one side.
+ */
+type Round = "above" | "beside" | null;
+
+/** Where an arrow between two blocks leaves and arrives, and how it goes round them. */
+function arrowEnds(a: TreeNode, b: TreeNode): { start: Point; end: Point; round: Round } {
+  const across = Math.max(a.x, b.x) - Math.min(a.x + BOX_W, b.x + BOX_W);
+  const down = Math.max(a.y, b.y) - Math.min(a.y + BOX_H, b.y + BOX_H);
   const sameRow = Math.abs(a.y - b.y) < BOX_H * 1.2;
-  if (sameRow && gap < 90) {
-    return { start: { x: a.x + BOX_W / 2, y: a.y }, end: { x: b.x + BOX_W / 2, y: b.y }, over: true };
+  const sameColumn = Math.abs(a.x - b.x) < BOX_W * 0.9;
+
+  // Two blocks with next to nothing between them leave an arrow nowhere to be
+  // drawn: squeezed into the gap it is a squiggle with its head cut off, and
+  // its word does not fit there at all. So it goes round the outside of both
+  // instead — over the top of two standing side by side, and out to the side
+  // of one sitting on top of another.
+  if (sameRow && across < 90) {
+    return { start: { x: a.x + BOX_W / 2, y: a.y }, end: { x: b.x + BOX_W / 2, y: b.y }, round: "above" };
   }
+  // Parts listed under a block stand ten pixels apart, and the first of them
+  // twenty-two under the block itself, which is what this is for. Always out
+  // to the right: what is on their left is the line down from the block they
+  // are part of, and an arrow crossing that reads as if it meant something.
+  if (sameColumn && down < 2 * (LABEL_H + LABEL_CLEAR)) {
+    return {
+      start: { x: a.x + BOX_W, y: a.y + BOX_H / 2 },
+      end: { x: b.x + BOX_W, y: b.y + BOX_H / 2 },
+      round: "beside",
+    };
+  }
+
   const start = sideOf({ x: b.x + BOX_W / 2, y: b.y + BOX_H / 2 }, a);
-  return { start, end: sideOf(start, b), over: false };
+  return { start, end: sideOf(start, b), round: null };
+}
+
+/**
+ * Where the whole arrow runs: between two blocks, or between a block and
+ * outside the system, which is a place off to that block's left rather than a
+ * box of its own. Either end can be the outside one: a trigger arrives from
+ * there, and an answer to one would go back there, although nothing writes
+ * such an answer down yet.
+ */
+function markEnds(
+  from: TreeNode | null,
+  to: TreeNode | null,
+): { start: Point; end: Point; round: Round; outside: Point | null } | null {
+  if (from && to) return { ...arrowEnds(from, to), outside: null };
+  const block = from ?? to;
+  if (!block) return null;
+  const outside = outsideAt(block);
+  const edge = sideOf(outside, block);
+  return from ? { start: edge, end: outside, round: null, outside } : { start: outside, end: edge, round: null, outside };
+}
+
+/** How much room the mark for outside the system takes: a dot with its word over it. */
+const OUTSIDE_W = 50;
+const OUTSIDE_H = 26;
+
+/**
+ * Where outside the system is marked for a block: to its left at its own
+ * height, and failing that wherever nearby is clear — further out, past it,
+ * or a row up or down.
+ *
+ * Nothing on the tree stands for outside, so the mark landing on a block
+ * would read as that block being outside the system, and it is drawn over the
+ * blocks now, so it can no longer hide behind one. A block deep in a crowded
+ * row can have nothing beside it at all: a run starting at the last of a
+ * block's parts has its own siblings above and below it and whatever the
+ * system keeps to its left.
+ */
+function outsideAt(block: TreeNode): Point {
+  const middle = block.y + BOX_H / 2;
+  const columns = [block.x - 74, block.x - 150, block.x + BOX_W + 74];
+  for (const y of [middle, block.y - 24, block.y + BOX_H + 24]) {
+    for (const x of columns) {
+      if (clearOf(x - OUTSIDE_W / 2, y - OUTSIDE_H + 7, OUTSIDE_W, OUTSIDE_H)) return { x, y };
+    }
+  }
+  return { x: block.x - 74, y: middle };
 }
 
 /** Where an arrow meets a block: on the side it comes from, or on the edge it comes over. */
-function sideOf(from: { x: number; y: number }, node: TreeNode): { x: number; y: number } {
+function sideOf(from: Point, node: TreeNode): Point {
   const middle = { x: node.x + BOX_W / 2, y: node.y + BOX_H / 2 };
   if (Math.abs(from.x - middle.x) > BOX_W / 2) {
     return { x: from.x < middle.x ? node.x : node.x + BOX_W, y: middle.y };
@@ -213,20 +295,23 @@ function sideOf(from: { x: number; y: number }, node: TreeNode): { x: number; y:
 }
 
 /**
- * An arc between two points, bowed clear of whatever it runs between.
+ * An arc between two points, bowed clear of whatever it runs between, with
+ * `at` giving any point along it.
  *
  * Always an arc, never a straight line: the tree's own lines are straight, and
  * an arrow must never be taken for one. Two blocks side by side are only a
  * gap apart, so the bow is what gives the arrow, and its word, room to be
  * seen at all.
  */
-function arrowPath(start: { x: number; y: number }, end: { x: number; y: number }, over = false) {
+function arrowPath(start: Point, end: Point, round: Round = null): { d: string; at: (t: number) => Point } {
   const span = Math.hypot(end.x - start.x, end.y - start.y) || 1;
   const bow = Math.max(26, Math.min(70, span * 0.22));
   // Two blocks all but touching leave no room between them, so the arrow goes
-  // up and over them, where it and its word can be read.
-  const control = over
+  // round the outside of them, where it and its word can be read.
+  const control = round === "above"
     ? { x: (start.x + end.x) / 2, y: Math.min(start.y, end.y) - 34 - span * 0.06 }
+    : round === "beside"
+    ? { x: Math.max(start.x, end.x) + 40 + span * 0.06, y: (start.y + end.y) / 2 }
     : (() => {
         // Otherwise bowed upwards across the drawing, and sideways up or down
         // it, so the two ends never hide behind each other.
@@ -242,61 +327,97 @@ function arrowPath(start: { x: number; y: number }, end: { x: number; y: number 
   const stop = { x: end.x - (toward.x / length) * 9, y: end.y - (toward.y / length) * 9 };
   return {
     d: `M ${start.x} ${start.y} Q ${control.x} ${control.y}, ${stop.x} ${stop.y}`,
-    middle: { x: (start.x + 2 * control.x + end.x) / 4, y: (start.y + 2 * control.y + end.y) / 4 },
+    at: (t: number) => ({
+      x: (1 - t) * (1 - t) * start.x + 2 * (1 - t) * t * control.x + t * t * stop.x,
+      y: (1 - t) * (1 - t) * start.y + 2 * (1 - t) * t * control.y + t * t * stop.y,
+    }),
   };
 }
 
 /** How wide a chip is for its words, which are set in a monospaced 9px. */
 const chipWidth = (text: string) => text.length * 5.6 + 14;
 const CHIP_H = 15;
+/** And the word on an arrow, set a little larger. */
+const labelWidth = (text: string) => text.length * 5.9 + 12;
+const LABEL_H = 14;
+/** How far the word stands off the arrow, so the line still reads under it. */
+const LABEL_CLEAR = 7;
 
-/** Whether a chip put here would land on a block: parts listed under a block sit close under it. */
-function clearOf(x: number, y: number, width: number): boolean {
+/** Whether a box put here would land on a block: parts listed under a block sit close under it. */
+function clearOf(x: number, y: number, width: number, height: number): boolean {
   for (const node of currentTree?.nodes.values() ?? []) {
-    if (x < node.x + BOX_W && node.x < x + width && y < node.y + BOX_H && node.y < y + CHIP_H) return false;
+    if (x < node.x + BOX_W && node.x < x + width && y < node.y + BOX_H && node.y < y + height) return false;
   }
   return true;
 }
 
+/**
+ * Where the word on an arrow goes: along the arrow, at the first place clear
+ * of every block, above the line where there is room for it and below where
+ * there is not.
+ *
+ * The arrow is drawn over the blocks rather than under them, so it is never
+ * hidden; its word is one short word on a crowded drawing, and putting it
+ * where nothing else is written is what keeps it readable. Given nowhere
+ * clear it stays in the middle, where its own plate carries it.
+ */
+function labelSpot(at: (t: number) => Point, width: number): Point {
+  const beside = LABEL_CLEAR + width / 2;
+  for (const t of [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74]) {
+    const point = at(t);
+    // Over the arrow, under it, or out to either side of it, which is where
+    // the room is when the arrow is the one that went round a block.
+    for (const spot of [
+      { x: point.x, y: point.y - LABEL_CLEAR - LABEL_H },
+      { x: point.x, y: point.y + LABEL_CLEAR },
+      { x: point.x + beside, y: point.y - LABEL_H / 2 },
+      { x: point.x - beside, y: point.y - LABEL_H / 2 },
+    ]) {
+      if (clearOf(spot.x - width / 2, spot.y, width, LABEL_H)) return spot;
+    }
+  }
+  const middle = at(0.5);
+  return { x: middle.x, y: middle.y - LABEL_CLEAR - LABEL_H };
+}
+
 function drawExecutionMark(): void {
   const layer = element("exec-layer");
-  const marks = element("exec-marks");
   layer.replaceChildren();
-  marks.replaceChildren();
   const mark = currentMark;
   if (!mark || !currentTree) return;
-
-  const to = currentTree.nodes.get(mark.to);
-  if (!to) return;
 
   // Something the run left behind: a chip over the block responsible, or
   // under it where the block above leaves no room.
   if (mark.effect !== null) {
+    const at = mark.to === null ? null : currentTree.nodes.get(mark.to);
+    if (!at) return;
     const width = chipWidth(mark.effect);
-    const group = svgEl("g", { class: "exec-effect", "data-current": "true" }, marks);
-    const x = to.x + BOX_W / 2 - width / 2;
-    const y = clearOf(x, to.y - 22, width) ? to.y - 22 : to.y + BOX_H + 7;
+    const group = svgEl("g", { class: "exec-effect", "data-current": "true" }, layer);
+    const x = at.x + BOX_W / 2 - width / 2;
+    const y = clearOf(x, at.y - 22, width, CHIP_H) ? at.y - 22 : at.y + BOX_H + 7;
     svgEl("rect", { x, y, width, height: CHIP_H, rx: CHIP_H / 2, class: "exec-effect-chip" }, group);
     svgEl("text", { x: x + width / 2, y: y + 10.5, class: "exec-effect-text", "text-anchor": "middle" }, group).textContent =
       mark.effect;
     return;
   }
 
-  const from = mark.from === null ? null : currentTree.nodes.get(mark.from);
-  if (mark.from !== null && !from) return;
+  const from = mark.from === null ? null : (currentTree.nodes.get(mark.from) ?? null);
+  const to = mark.to === null ? null : (currentTree.nodes.get(mark.to) ?? null);
+  // A block the drawing has lost leaves nothing to draw the step between.
+  if ((mark.from !== null && !from) || (mark.to !== null && !to)) return;
+  const between = markEnds(from, to);
+  if (!between) return;
+  const geometry = arrowPath(between.start, between.end, between.round);
 
-  // From outside the system: a mark off to the left of where it arrives.
-  const between = from
-    ? arrowEnds(from, to)
-    : { start: { x: to.x - 74, y: to.y + BOX_H / 2 }, end: sideOf({ x: to.x - 74, y: to.y + BOX_H / 2 }, to), over: false };
-  const { start, end } = between;
-  const geometry = arrowPath(start, end, between.over);
-
-  if (!from) {
+  if (between.outside) {
     const outside = svgEl("g", { class: "exec-outside" }, layer);
-    svgEl("circle", { cx: start.x, cy: start.y, r: 4.5, class: "exec-outside-dot" }, outside);
-    svgEl("text", { x: start.x, y: start.y - 9, class: "exec-outside-label", "text-anchor": "middle" }, outside).textContent =
-      "outside";
+    svgEl("circle", { cx: between.outside.x, cy: between.outside.y, r: 4.5, class: "exec-outside-dot" }, outside);
+    svgEl("text", {
+      x: between.outside.x,
+      y: between.outside.y - 9,
+      class: "exec-outside-label",
+      "text-anchor": "middle",
+    }, outside).textContent = "outside";
   }
 
   const group = svgEl("g", {
@@ -305,16 +426,16 @@ function drawExecutionMark(): void {
     "data-current": mark.back ? "back" : "out",
   }, layer);
   svgEl("path", { d: geometry.d, class: "exec-line", "marker-end": "url(#exec-arrow)" }, group);
-  svgEl("path", { d: geometry.d, class: "line-hit" }, group);
   svgEl("title", {}, group).textContent = mark.title;
-  svgEl("text", {
-    x: geometry.middle.x,
-    y: geometry.middle.y - 6,
-    class: "exec-label",
-    "text-anchor": "middle",
-  }, group).textContent = mark.label;
 
-  // The step is a thing in its own right, with its own page.
+  const width = labelWidth(mark.label);
+  const spot = labelSpot(geometry.at, width);
+  svgEl("rect", { x: spot.x - width / 2, y: spot.y, width, height: LABEL_H, rx: 3, class: "exec-label-plate" }, group);
+  svgEl("text", { x: spot.x, y: spot.y + 10.5, class: "exec-label", "text-anchor": "middle" }, group).textContent = mark.label;
+
+  // The step is a thing in its own right, with its own page, opened from its
+  // word: the only part of the arrow that takes a click, because it is the
+  // only part put somewhere no block is.
   group.addEventListener("pointerdown", (event) => {
     event.stopPropagation();
     stepPicked();
@@ -528,7 +649,7 @@ export function resetArrivals(projectIsEmpty: boolean): void {
 }
 
 export function clearCanvas(): void {
-  for (const id of ["branch-layer", "access-layer", "exec-layer", "node-layer", "exec-marks"]) {
+  for (const id of ["branch-layer", "access-layer", "node-layer", "exec-layer"]) {
     element(id).replaceChildren();
   }
   nodeElements.clear();
@@ -809,7 +930,8 @@ function drawAccesses(tree: Tree, layer: Element): void {
     }
 
     const between = arrowEnds(source, target);
-    const geometry = arrowPath(between.start, between.end, between.over);
+    const geometry = arrowPath(between.start, between.end, between.round);
+    const middle = geometry.at(0.5);
 
     svgEl("path", { d: geometry.d, class: "access", "marker-end": "url(#access-arrow)" }, group);
     svgEl("path", { d: geometry.d, class: "line-hit" }, group);
@@ -821,8 +943,8 @@ function drawAccesses(tree: Tree, layer: Element): void {
       .filter(Boolean)
       .join("\n");
     svgEl("text", {
-      x: geometry.middle.x,
-      y: geometry.middle.y - 5,
+      x: middle.x,
+      y: middle.y - 5,
       class: "access-label",
       "text-anchor": "middle",
     }, group).textContent = accessLabel(arrow, target.block);
