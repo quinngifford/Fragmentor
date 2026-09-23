@@ -119,6 +119,20 @@ interface Prepared {
   pack: LanguagePack;
   /** Where every block's code is, and which of them are held to a contract. */
   code: Map<string, BlockCode>;
+  /** The project this folder is a copy of, whose files a run reads when the copy does not hold them, and whose packages it uses. */
+  copyOf?: string;
+}
+
+/** A project, and where every block's code is. */
+interface Loaded {
+  project: Project;
+  code: Map<string, BlockCode>;
+}
+
+/** Reads a project once, however many of its blocks are then run. */
+async function load(projectDir: string): Promise<Loaded> {
+  const project = await loadProject(projectDir);
+  return { project, code: await readAllCode(project) };
 }
 
 /**
@@ -129,9 +143,7 @@ interface Prepared {
  * way — which is the code that imports its contract. Anything else is drawn and
  * read, and says so here rather than failing inside the harness.
  */
-async function prepare(projectDir: string, blockPath: string): Promise<Prepared | { error: string }> {
-  const project = await loadProject(projectDir);
-
+function prepare({ project, code }: Loaded, blockPath: string): Prepared | { error: string } {
   const node = project.byPath.get(blockPath);
   if (!node) return { error: `There is no block at ${blockPath}.` };
 
@@ -148,7 +160,6 @@ async function prepare(projectDir: string, blockPath: string): Promise<Prepared 
     return { error: `Fragmentor cannot run ${pack.displayName} blocks yet, so this one can only be read.` };
   }
 
-  const code = await readAllCode(project);
   const own = code.get(blockPath)!;
   if (own.problem !== null) {
     return { error: `"${node.block.name}" points at code that is not there: ${own.problem}` };
@@ -236,6 +247,7 @@ async function executeOnce(
       };
     }),
     projectDir: project.dir,
+    copyOf: prepared.copyOf,
     input,
     timeoutMs,
     onEvent,
@@ -298,7 +310,7 @@ export function startRun(request: RunRequest): { control: RunControl; outcome: P
   };
 
   const outcome = (async (): Promise<RunOutcome> => {
-    const prepared = await prepare(request.projectDir, request.blockPath);
+    const prepared = prepare(await load(request.projectDir), request.blockPath);
     if ("error" in prepared) return failure(prepared.error);
 
     const compiled = await compileSystem(prepared.project, prepared.system.rootBlock, prepared.code);
@@ -326,33 +338,72 @@ export async function runBlock(request: RunRequest): Promise<RunOutcome> {
 /**
  * Runs every saved test for a block. The system is compiled once and reused,
  * so running twenty cases costs one compilation rather than twenty.
+ *
+ * Given `cases`, it runs those instead of what is saved, which is how one list
+ * of tests is run against two versions of a block. `copyOf` is as runManyCases
+ * takes it.
  */
-export async function runCases(projectDir: string, blockPath: string): Promise<CaseResult[]> {
-  const cases = await loadCases(projectDir, blockPath);
+export async function runCases(
+  projectDir: string,
+  blockPath: string,
+  options: { cases?: TestCase[]; copyOf?: string } = {},
+): Promise<CaseResult[]> {
+  const cases = options.cases ?? (await loadCases(projectDir, blockPath));
   if (cases.length === 0) return [];
+  return (await runManyCases(projectDir, new Map([[blockPath, cases]]), { copyOf: options.copyOf })).get(blockPath)!;
+}
 
-  const prepared = await prepare(projectDir, blockPath);
-  if ("error" in prepared) {
-    return cases.map((testCase) => ({
-      name: testCase.name,
-      status: "error" as const,
-      differences: [],
-      inputProblems: [],
-      error: prepared.error,
-      logs: [],
-      durationMs: 0,
-    }));
-  }
-
-  const compiled = await compileSystem(prepared.project, prepared.system.rootBlock, prepared.code);
+/**
+ * Runs several blocks' tests, by block path, reading the project once and
+ * compiling each system once, however many of its blocks are run. A block
+ * that cannot be run gets each of its tests back as an error saying why.
+ *
+ * Given `copyOf`, this folder is a copy of that project. What the tests write
+ * stays in the copy; a file the copy does not hold is read from that project,
+ * and never written there; and its installed packages are used.
+ */
+export async function runManyCases(
+  projectDir: string,
+  lists: Map<string, TestCase[]>,
+  options: { copyOf?: string } = {},
+): Promise<Map<string, CaseResult[]>> {
+  const loaded = await load(projectDir);
+  const compiled = new Map<string, CompiledSystem>();
+  const results = new Map<string, CaseResult[]>();
   try {
-    const results: CaseResult[] = [];
-    for (const testCase of cases) {
-      results.push(await runOneCase(prepared, compiled, blockPath, testCase));
+    for (const [blockPath, cases] of lists) {
+      if (cases.length === 0) {
+        results.set(blockPath, []);
+        continue;
+      }
+      const prepared = prepare(loaded, blockPath);
+      if ("error" in prepared) {
+        results.set(
+          blockPath,
+          cases.map((testCase) => ({
+            name: testCase.name,
+            status: "error" as const,
+            differences: [],
+            inputProblems: [],
+            error: prepared.error,
+            logs: [],
+            durationMs: 0,
+          })),
+        );
+        continue;
+      }
+
+      const root = prepared.system.rootBlock;
+      if (!compiled.has(root)) compiled.set(root, await compileSystem(prepared.project, root, prepared.code));
+      const ran: CaseResult[] = [];
+      for (const testCase of cases) {
+        ran.push(await runOneCase({ ...prepared, copyOf: options.copyOf }, compiled.get(root)!, blockPath, testCase));
+      }
+      results.set(blockPath, ran);
     }
     return results;
   } finally {
-    await compiled.dispose();
+    for (const each of compiled.values()) await each.dispose();
   }
 }
 

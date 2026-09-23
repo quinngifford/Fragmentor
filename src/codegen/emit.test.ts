@@ -5,6 +5,7 @@ import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { emitProject, startProject } from "./emit.js";
 import { blockDir, createProject, loadProject, readManifest, writeBlock } from "../project/project.js";
+import { gitIn } from "../project/exampleHistory.js";
 import type { Manifest } from "../project/project.js";
 import { makeBlock } from "../model/testing.js";
 import { parseType } from "../model/typeExpression.js";
@@ -234,8 +235,10 @@ describe("emitProject", () => {
 });
 
 describe("startProject", () => {
+  const settings = { granularity: 3, language: "typescript", existingCode: false, start: "build" } as const;
+
   it("writes what the person chose and the files an agent reads first, and will not start twice", async () => {
-    const fresh = await mkdtemp(path.join(tmpdir(), "fragmentor-start-"));
+    const fresh = await mkdtemp(path.join(tmpdir(), "fragmentor start "));
     try {
       const started = await startProject(fresh, {
         granularity: 2,
@@ -243,7 +246,12 @@ describe("startProject", () => {
         existingCode: true,
         start: "build",
       });
-      expect(started.written).toEqual(["fragmentor.json", "FRAGMENTOR.md", "AGENTS.md", "CLAUDE.md"]);
+      expect(started.written).toEqual(["fragmentor.json", "FRAGMENTOR.md", "AGENTS.md", "CLAUDE.md", ".gitignore"]);
+      // Its blocks' versions will be the commits of the repository it starts,
+      // which ignores what the watcher ignores and holds nothing yet.
+      expect(await there(path.join(fresh, ".git"))).toBe(true);
+      expect(await readFile(path.join(fresh, ".gitignore"), "utf8")).toBe("node_modules/\n__pycache__/\n");
+      expect(started.history).toBe("Started a git repository here. Each commit of a block is a version of it; nothing is committed yet.");
 
       expect(await readManifest(fresh)).toEqual({
         name: path.basename(fresh),
@@ -264,12 +272,60 @@ describe("startProject", () => {
   });
 
   it("takes a language named the way a person writes it", async () => {
-    const fresh = await mkdtemp(path.join(tmpdir(), "fragmentor-start-"));
+    const fresh = await mkdtemp(path.join(tmpdir(), "fragmentor start "));
     try {
       await startProject(fresh, { granularity: 3, language: "TypeScript", existingCode: false, start: "build" });
       expect((await readManifest(fresh)).language).toBe("typescript");
     } finally {
       await rm(fresh, { recursive: true, force: true });
+    }
+  });
+
+  it("starts no repository inside one, and says which one holds it", async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), "fragmentor start "));
+    try {
+      await gitIn(repo)("init", "--quiet");
+      const inside = path.join(repo, "my project");
+
+      const started = await startProject(inside, settings);
+      expect(started.written).not.toContain(".gitignore");
+      expect(await there(path.join(inside, ".git"))).toBe(false);
+      expect(await there(path.join(inside, ".gitignore"))).toBe(false);
+      expect(started.history).toMatch(/^Its history is kept in the git repository at .+\.$/);
+      expect(started.history).toContain(path.basename(repo));
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a .gitignore that was already there, byte for byte", async () => {
+    const fresh = await mkdtemp(path.join(tmpdir(), "fragmentor start "));
+    try {
+      await writeFile(path.join(fresh, ".gitignore"), "dist/\r\n", "utf8");
+
+      const started = await startProject(fresh, settings);
+      expect(await there(path.join(fresh, ".git"))).toBe(true);
+      expect(started.written).not.toContain(".gitignore");
+      expect(await readFile(path.join(fresh, ".gitignore"), "utf8")).toBe("dist/\r\n");
+    } finally {
+      await rm(fresh, { recursive: true, force: true });
+    }
+  });
+
+  it("still starts the project where git is not installed, and says so", async () => {
+    const fresh = await mkdtemp(path.join(tmpdir(), "fragmentor start "));
+    const nowhere = await mkdtemp(path.join(tmpdir(), "fragmentor no git "));
+    const searched = process.env.PATH;
+    process.env.PATH = nowhere;
+    try {
+      const started = await startProject(fresh, settings);
+      expect(started.written).toEqual(["fragmentor.json", "FRAGMENTOR.md", "AGENTS.md", "CLAUDE.md"]);
+      expect(started.history).toContain("Git is not installed");
+      expect(await there(path.join(fresh, ".git"))).toBe(false);
+    } finally {
+      process.env.PATH = searched;
+      await rm(fresh, { recursive: true, force: true });
+      await rm(nowhere, { recursive: true, force: true });
     }
   });
 });

@@ -44,7 +44,7 @@ This replaces an earlier model borrowed from Simulink, in which every block was 
 
 ## Where the code is, and what Fragmentor does with it
 
-**Every function block says where its implementation is**, with a `code` pointer: a file relative to the project and the name of the function in it. Nothing requires the codebase to mirror the diagram. A block's folder says where the block sits in the architecture; where its code sits on disk is the codebase's own business, and a layout that echoes the architecture is a good idea rather than a rule. Fragmentor never writes code and never moves any.
+**Every function block says where its implementation is**, with a `code` pointer: a file relative to the project and the name of the function in it. Nothing requires the codebase to mirror the diagram. A block's folder says where the block sits in the architecture; where its code sits on disk is the codebase's own business, and a layout that echoes the architecture is a good idea rather than a rule. Fragmentor never writes code of its own and never moves any; the one time it writes code files is when the person swaps a block back to one of its versions.
 
 **What Fragmentor does with a block's code is a fact about that block, not a setting on the project.** Where a function block's inputs and outputs are written in the type language and its system is in a language there is a pack for, Fragmentor writes its contract — into the block's own folder, because everything generated stays inside `blocks/`. The contract on its own changes nothing. What binds the two is **the code importing it**: code that imports its contract is typechecked against it, can be run and benched from the window, and can have saved tests; code that does not is drawn and read. The import is the only honest binding there is, because nothing else could hold a function to a shape it never mentions.
 
@@ -129,6 +129,14 @@ The diagram is the specification of what exists. The agent writes every function
 - its code is typechecked against its contract, calls to other functions are typechecked against theirs, and its imports are checked so that it can run: types, other functions in its system, and packages installed in the project
 
 Conditions, loops and error handling are the code's. The diagram does not describe control flow; an execution shows the path one run took.
+
+## Versions
+
+A block's earlier versions come from the git history of whatever repository holds the project; Fragmentor keeps no history of its own. A version is the block with all its parts — their folders, saved tests and the code they point at — as they stood at one commit, because a block without its parts or its code is not the block as it was. What it uses beside it is not part of it: a version is put back into today's system, and runs against today's versions of whatever it calls.
+
+The person can compare a version with the block as it is, which runs the saved tests of both, and every other saved test in its system, against both; swap the block back to it; and undo the swap. Nothing a swap replaces is lost. A swap is refused where it would change code belonging to a function outside the block, because one file can hold more than one block's code.
+
+Starting a project starts a git repository when the folder is in none, and the agent commits each block as it finishes it, so every finished block is a version.
 
 ## Where the AI fits
 

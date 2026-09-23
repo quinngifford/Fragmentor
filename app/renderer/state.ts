@@ -253,6 +253,21 @@ export const ui: UiState = {
   status: null,
 };
 
+/**
+ * Forgets what the window holds about some blocks' code, benches and results:
+ * `root` and every block inside it, or every block when `root` is null. What
+ * was typed or run against files that have since been replaced describes code
+ * that is no longer there. These are all the maps kept by block path, listed
+ * once, so a project being put away and a block being swapped forget the same.
+ */
+export function forgetBlocks(root: string | null): void {
+  for (const byPath of [ui.edits, ui.benchInputs, ui.benchStores, ui.runs, ui.caseResults, ui.caseNames]) {
+    for (const path of [...byPath.keys()]) {
+      if (root === null || path === root || path.startsWith(`${root}/`)) byPath.delete(path);
+    }
+  }
+}
+
 /** The execution drawn over the diagram, while it is still in the project. */
 export function selectedExecution(): SnapshotExecution | null {
   const id = ui.execution?.id;

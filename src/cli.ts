@@ -91,7 +91,7 @@ function settingsFrom(options: Map<string, string>): NewProjectSettings | string
 }
 
 async function init(dir: string, options: Map<string, string>): Promise<number> {
-  let files: { written: string[]; kept: string[]; withoutGuide: string[] };
+  let files: { written: string[]; kept: string[]; withoutGuide: string[]; history?: string };
 
   if (await exists(manifestPath(dir))) {
     try {
@@ -113,6 +113,8 @@ async function init(dir: string, options: Map<string, string>): Promise<number> 
 
   for (const file of files.written) console.log(`  wrote  ${file}`);
   for (const file of files.kept) console.log(`  kept   ${file}, which already existed`);
+  // Only a new project starts a repository, so only a new project says so.
+  if (files.history !== undefined) console.log(`\n${files.history}`);
 
   // Those files are the person's and are never changed, but an agent reading
   // one that never mentions the guide would not know the guide is there.

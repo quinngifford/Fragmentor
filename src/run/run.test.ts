@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runBlock, startRun } from "./run.js";
+import { runBlock, runCases, startRun } from "./run.js";
 import type { RunEvent } from "./run.js";
+import type { TestCase } from "./cases.js";
 
 type Call = Extract<RunEvent, { type: "call" }>;
 const callsIn = (events: RunEvent[]) => events.filter((event): event is Call => event.type === "call");
@@ -171,6 +172,73 @@ describe("checking the contract on both sides", () => {
     const result = await runBlock({ projectDir, blockPath: "files/read-lines", input: {} });
     expect(result.inputProblems).toEqual(["input.path is missing."]);
   });
+});
+
+describe("running a list of tests", () => {
+  const reads: TestCase = { name: "reads a file of the project", input: { path: "a.txt" }, expected: { lines: ["one", "two", "three"] } };
+
+  it("runs exactly the tests it is given, whatever is saved", async () => {
+    await writeFile(
+      path.join(projectDir, "blocks", "files", "read-lines", "cases.json"),
+      JSON.stringify([{ name: "saved, and not asked for", input: { path: "b.txt" } }]),
+      "utf8",
+    );
+    try {
+      const given: TestCase[] = [reads, { name: "does not fit", input: { file: "a.txt" } }];
+      const results = await runCases(projectDir, "files/read-lines", { cases: given });
+
+      expect(results.map((result) => [result.name, result.status])).toEqual([
+        ["reads a file of the project", "passed"],
+        ["does not fit", "error"],
+      ]);
+      expect(results[1]!.inputProblems).toEqual(["input.path is missing.", "input.file is not part of this type."]);
+    } finally {
+      await rm(path.join(projectDir, "blocks", "files", "read-lines", "cases.json"));
+    }
+  }, 30_000);
+
+  it("reads the files of the project a copy stands in for", async () => {
+    // A copy holding the blocks and their code, but none of the files they read.
+    const copy = await mkdtemp(path.join(tmpdir(), "fragmentor run copy "));
+    try {
+      await cp(path.join(projectDir, "fragmentor.json"), path.join(copy, "fragmentor.json"));
+      await cp(path.join(projectDir, "blocks"), path.join(copy, "blocks"), { recursive: true });
+
+      const [asCopy] = await runCases(copy, "files/read-lines", { cases: [reads], copyOf: projectDir });
+      expect(asCopy).toMatchObject({ status: "passed" });
+
+      const [alone] = await runCases(copy, "files/read-lines", { cases: [reads] });
+      expect(alone).toMatchObject({ status: "error" });
+    } finally {
+      await rm(copy, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("keeps what a copy's tests write in the copy, and reads it back from there", async () => {
+    const copy = await mkdtemp(path.join(tmpdir(), "fragmentor run copy "));
+    try {
+      await cp(path.join(projectDir, "fragmentor.json"), path.join(copy, "fragmentor.json"));
+      await cp(path.join(projectDir, "blocks"), path.join(copy, "blocks"), { recursive: true });
+
+      const writes = [
+        { name: "over a file of the project", input: { path: "a.txt", text: "only\nin the copy\n" } },
+        { name: "into a folder nothing has yet", input: { path: "notes/today.txt", text: "hello" } },
+      ];
+      const wrote = await runCases(copy, "files/write-note", { cases: writes, copyOf: projectDir });
+      expect(wrote.map((result) => result.status)).toEqual(["unchecked", "unchecked"]);
+      expect(await readFile(path.join(copy, "notes", "today.txt"), "utf8")).toBe("hello");
+      expect(await readFile(path.join(projectDir, "a.txt"), "utf8")).toBe("one\ntwo\n\nthree\n");
+      expect(await readFile(path.join(projectDir, "notes", "today.txt"), "utf8").catch((error) => error.code)).toBe("ENOENT");
+
+      const [read] = await runCases(copy, "files/read-lines", {
+        cases: [{ name: "reads what the copy wrote", input: { path: "a.txt" }, expected: { lines: ["only", "in the copy"] } }],
+        copyOf: projectDir,
+      });
+      expect(read).toMatchObject({ status: "passed" });
+    } finally {
+      await rm(copy, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
 
 describe("a language that cannot run yet", () => {

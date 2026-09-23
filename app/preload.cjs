@@ -26,6 +26,10 @@ const CHANNELS = {
   runEvent: "run:event",
   saveCases: "block:save-cases",
   runCases: "block:run-cases",
+  blockVersions: "block:versions",
+  compareVersion: "block:compare-version",
+  swapVersion: "block:swap-version",
+  undoSwap: "block:undo-swap",
 };
 
 contextBridge.exposeInMainWorld("fragmentor", {
@@ -52,4 +56,8 @@ contextBridge.exposeInMainWorld("fragmentor", {
   },
   saveCases: (request) => ipcRenderer.invoke(CHANNELS.saveCases, request),
   runCases: (dir, blockPath) => ipcRenderer.invoke(CHANNELS.runCases, dir, blockPath),
+  blockVersions: (dir, blockPath) => ipcRenderer.invoke(CHANNELS.blockVersions, dir, blockPath),
+  compareVersion: (dir, blockPath, commit) => ipcRenderer.invoke(CHANNELS.compareVersion, dir, blockPath, commit),
+  swapVersion: (dir, blockPath, commit) => ipcRenderer.invoke(CHANNELS.swapVersion, dir, blockPath, commit),
+  undoSwap: (dir, blockPath) => ipcRenderer.invoke(CHANNELS.undoSwap, dir, blockPath),
 });

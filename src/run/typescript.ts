@@ -123,6 +123,12 @@ export interface SpawnOptions {
    */
   capabilities: { name: string; capability: string; target?: string; seed?: Record<string, unknown> }[];
   projectDir: string;
+  /**
+   * The project `projectDir` is a copy of, if it is one. A file the copy does
+   * not hold is read from there, and never written there; its installed
+   * packages are the ones used.
+   */
+  copyOf?: string;
   input: unknown;
   timeoutMs: number;
   /** Hears each block call as it happens. Without it the run is not traced. */
@@ -148,8 +154,9 @@ export function startCompiledBlock(options: SpawnOptions): CompiledRun {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
       // The compiled copy sits in a temporary folder, so the packages a
-      // block imports are looked for where the project installed them.
-      NODE_PATH: [path.join(options.projectDir, "node_modules"), process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
+      // block imports are looked for where the project installed them: the
+      // project a copy stands in for, when it is run from one.
+      NODE_PATH: [path.join(options.copyOf ?? options.projectDir, "node_modules"), process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
     },
     stdio: ["ignore", "ignore", "pipe", "ipc"],
   });
@@ -222,6 +229,7 @@ export function startCompiledBlock(options: SpawnOptions): CompiledRun {
       breakpoints: options.breakpoints ?? [],
       capabilities: options.capabilities,
       projectDir: options.projectDir,
+      copyOf: options.copyOf ?? null,
       input: options.input ?? {},
     },
   });

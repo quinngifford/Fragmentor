@@ -10,6 +10,7 @@ import { STEP_LINK, currentStep, describeStep } from "./execution.js";
 import { travelOf } from "../../src/model/trace.js";
 import type { AccessArrow } from "./canvas.js";
 import { openBenchWindow } from "./benchpanel.js";
+import { openVersionsWindow } from "./versions.js";
 import { el, section } from "./dom.js";
 import { codeBlock, codeFragment, codeLines, languageOf } from "./highlight.js";
 
@@ -573,7 +574,13 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
     code.addEventListener("click", () => openBlockWindow("code", block.path));
     windows.append(code);
   }
-  if (windows.childElementCount > 0) head.append(windows);
+  // Every block has versions, or a window saying why it has none, so this
+  // one is always there.
+  const versions = el("button", "btn quiet tiny", "Versions");
+  versions.title = `Earlier versions of ${block.name}${block.children.length > 0 ? " and its parts" : ""}, from the project's git history`;
+  versions.addEventListener("click", () => void openVersionsWindow(block.path));
+  windows.append(versions);
+  head.append(windows);
   panel.append(head);
 
   panel.append(el("p", "responsibility", block.responsibility));

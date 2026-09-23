@@ -2,6 +2,8 @@ import type { ProjectSnapshot } from "../src/project/snapshot.js";
 import type { EmitResult, NewProjectSettings } from "../src/codegen/emit.js";
 import type { CaseResult, RunEvent, RunOutcome, StoreSeeds } from "../src/run/run.js";
 import type { TestCase } from "../src/run/cases.js";
+import type { BlockVersions, SwapDone } from "../src/project/history.js";
+import type { VersionComparison } from "../src/run/versions.js";
 
 /**
  * The whole surface between the interface and the kernel.
@@ -30,6 +32,10 @@ export const CHANNELS = {
   runEvent: "run:event",
   saveCases: "block:save-cases",
   runCases: "block:run-cases",
+  blockVersions: "block:versions",
+  compareVersion: "block:compare-version",
+  swapVersion: "block:swap-version",
+  undoSwap: "block:undo-swap",
 } as const;
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -111,6 +117,14 @@ export interface FragmentorApi {
   saveCases(request: SaveCasesRequest): Promise<Result<null>>;
   /** Runs every saved test for a block. */
   runCases(dir: string, blockPath: string): Promise<Result<CaseResult[]>>;
+  /** A block's versions from the git history holding the project, newest first, and the swap Undo swap would reverse. */
+  blockVersions(dir: string, blockPath: string): Promise<Result<BlockVersions>>;
+  /** Runs the saved tests of both versions of a block, and every other saved test in its system, against the block as it is and as it was at one commit. */
+  compareVersion(dir: string, blockPath: string, commit: string): Promise<Result<VersionComparison>>;
+  /** Puts a block and its parts back as they were at one commit, keeping what was there so it can be undone. */
+  swapVersion(dir: string, blockPath: string, commit: string): Promise<Result<SwapDone>>;
+  /** Puts back what the last swap of this block replaced. */
+  undoSwap(dir: string, blockPath: string): Promise<Result<SwapDone>>;
 }
 
 declare global {

@@ -774,6 +774,7 @@ pre.code-view { max-height: 420px; overflow: auto; }
 .swatch-btn[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset: 2px; }
 
 .bench-note { font-size: 11.5px; color: var(--ink-dim); margin: 0; }
+.bench-note.bad { color: var(--bad); }
 
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field > label { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
@@ -1026,7 +1027,8 @@ pre.code-view { max-height: 420px; overflow: auto; }
   cursor: pointer;
 }
 
-.case-actions button:hover { color: var(--ink); background: var(--panel-high); }
+.case-actions button:hover:not(:disabled) { color: var(--ink); background: var(--panel-high); }
+.case-actions button:disabled { opacity: 0.45; cursor: default; }
 
 /* A box rather than an indent: this one is something to fill in, not another
    named part of what is above it, so its heading sits inside the box. */
@@ -1124,8 +1126,6 @@ button.problem:hover .problem-where { color: var(--signal); }
 .problem.error .problem-level { color: var(--bad); }
 .problem-where { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; }
 .problem-text { font-size: 12px; }
-
-.code-foot .bench-note.bad { color: var(--bad); }
 
 /* ---- new project ---- */
 
@@ -1578,6 +1578,18 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
 
 /* A button beside what it acts on, rather than stretched across the row. */
 .port-row .btn { width: fit-content; }
+
+/* ---- a block's versions ---- */
+
+/* A version is a saved test's row: its subject on a line of its own, and when
+   and by whom underneath, where a test says how it went. A comparison is the
+   same rows again, with the other version's result where the buttons go. */
+.version-row .version-meta { grid-column: 1; font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+.version-row > .bench-note, .version-compare { grid-column: 1 / -1; }
+.version-compare { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.compare-row .case-status.compare-then { grid-column: 2; justify-self: end; }
+.compare-row[data-differs="true"] { border-color: var(--rule-bright); }
+.case-saved { color: var(--ink-faint); }
 
 /* ---- one execution, end to end ---- */
 

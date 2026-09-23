@@ -337,7 +337,7 @@ async function writeCases(block: SnapshotBlock, cases: TestCase[]): Promise<void
   notify();
 }
 
-function statusWord(status: CaseResult["status"]): string {
+export function statusWord(status: CaseResult["status"]): string {
   return status === "unchecked" ? "no expectation" : status;
 }
 

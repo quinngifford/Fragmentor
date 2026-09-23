@@ -24,6 +24,11 @@ import { resolveInside } from "../src/project/safePath.js";
 import { runCases, startRun } from "../src/run/run.js";
 import type { CaseResult, RunControl, RunOutcome } from "../src/run/run.js";
 import { saveCases } from "../src/run/cases.js";
+import { blockVersions, noise, swapToVersion, undoLastSwap } from "../src/project/history.js";
+import type { BlockVersions, SwapDone } from "../src/project/history.js";
+import { compareWithVersion } from "../src/run/versions.js";
+import type { VersionComparison } from "../src/run/versions.js";
+import { commitExampleHistory, filesOf, gitIn } from "../src/project/exampleHistory.js";
 
 /**
  * The main process owns everything with side effects: the window, the disk,
@@ -176,11 +181,6 @@ function resumeMode(raw: unknown): "continue" | "step" | "block" {
 /** One watcher per window, on whichever project that window has open. */
 const watchers = new Map<number, FSWatcher>();
 
-/** Changes that are nobody's business: the folders tools keep inside a project. */
-function ignored(filename: string): boolean {
-  return filename.split(/[\\/]/).some((part) => part === "node_modules" || part === "__pycache__" || part.startsWith("."));
-}
-
 function stopWatching(id: number): void {
   watchers.get(id)?.close();
   watchers.delete(id);
@@ -202,7 +202,9 @@ function watchProject(contents: Electron.WebContents, dir: string): void {
   let watcher: FSWatcher;
   try {
     watcher = watch(dir, { recursive: true }, (_event, filename) => {
-      if (filename && ignored(filename)) return;
+      // The folders tools keep inside a project are nobody's business, by the
+      // same rule that keeps them out of a block's versions.
+      if (filename && noise(filename)) return;
       clearTimeout(timer);
       timer = setTimeout(notify, 300);
     });
@@ -455,6 +457,57 @@ function registerHandlers(): void {
   ipcMain.handle(CHANNELS.runCases, async (_event, dir: string, blockPath: string): Promise<Result<CaseResult[]>> => {
     try {
       return ok(await runCases(dir, blockPath));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  ipcMain.handle(CHANNELS.blockVersions, async (_event, dir: string, blockPath: string): Promise<Result<BlockVersions>> => {
+    try {
+      return ok(await blockVersions(dir, blockPath));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  /**
+   * A swap rewrites files, and a comparison is planned from them: two at once
+   * could each back up, or compare, what the other half wrote. Here rather
+   * than in the window, which can be closed and opened again while one runs.
+   */
+  let busy = false;
+  async function oneAtATime<T>(work: () => Promise<T>): Promise<T> {
+    if (busy) throw new Error("Something is still being compared or swapped. Try again once it has finished.");
+    busy = true;
+    try {
+      return await work();
+    } finally {
+      busy = false;
+    }
+  }
+
+  ipcMain.handle(
+    CHANNELS.compareVersion,
+    async (_event, dir: string, blockPath: string, commit: string): Promise<Result<VersionComparison>> => {
+      try {
+        return ok(await oneAtATime(() => compareWithVersion(dir, blockPath, commit)));
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  ipcMain.handle(CHANNELS.swapVersion, async (_event, dir: string, blockPath: string, commit: string): Promise<Result<SwapDone>> => {
+    try {
+      return ok(await oneAtATime(() => swapToVersion(dir, blockPath, commit)));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  ipcMain.handle(CHANNELS.undoSwap, async (_event, dir: string, blockPath: string): Promise<Result<SwapDone>> => {
+    try {
+      return ok(await oneAtATime(() => undoLastSwap(dir, blockPath)));
     } catch (error) {
       return failed(error);
     }
@@ -881,6 +934,65 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         );
       })(),
     ],
+    ["a new project starts a git repository, so its blocks have versions from the start", value("newRepo", "started") === true],
+    [
+      "every block offers its versions in a window of its own, newest first, without adding a section to its panel",
+      value("history", "built") === true &&
+        value("versions", "title") === "Pricing" &&
+        !/Versions/.test(String(value("versions", "sections"))) &&
+        value("versions", "listed") === 2 &&
+        value("versions", "subjects") === "Take ten percent off from the fifth seat | Price seats with a discount from the third seat" &&
+        value("versions", "latest") === true &&
+        value("versions", "now") === "The same as the latest version." &&
+        value("versions", "offers") === "Compare | Swap to this" &&
+        value("versions", "undo") === false,
+    ],
+    [
+      "comparing a version runs the saved tests of both versions against both, and shows what that would change elsewhere",
+      // Pricing's own seven tests, and the one of book-seats' that its older
+      // version changes the outcome of.
+      value("compared", "count") === 8 &&
+        value("compared", "summary") === "4 of 7 saved tests of Pricing and its parts come out differently." &&
+        value("compared", "others") === "1 of 9 other saved tests in Tickets comes out differently:" &&
+        value("compared", "changed") === "now · passed / then · failed" &&
+        value("compared", "noLonger") === "now · failed / then · passed" &&
+        value("compared", "same") === "now · passed / then · passed" &&
+        value("compared", "gone") === "now · not in this version / then · passed" &&
+        value("compared", "outside") === "now · passed / then · failed" &&
+        value("compared", "newSince") === 2 &&
+        value("compared", "notSaved") === 3,
+    ],
+    [
+      "a swap waits while the code it would replace has unsaved changes",
+      /unsaved changes to Price Seat's code/.test(String(value("guarded", "said"))) &&
+        value("guarded", "untouched") === true &&
+        value("guardedOnDisk", "untouched") === true &&
+        value("guarded", "reverted") === true,
+    ],
+    [
+      "swapping puts a block back as it was, parts and code included, forgets what was shown about it, and changes nothing outside it",
+      value("swapped", "arrived") === true &&
+        value("swapped", "status") ===
+          "Swapped Pricing to the version “Price seats with a discount from the third seat”. Undo swap is in its Versions window." &&
+        /^Swapped to the version “Price seats with a discount from the third seat”, of /.test(String(value("swapped", "now"))) &&
+        value("swapped", "marked") === true &&
+        value("swapped", "undo") === true &&
+        value("guarded", "ran") === "2 of 2 passed." &&
+        value("swapped", "benchTests") === "the first two seats are full price | the third is a fifth off" &&
+        value("swapped", "benchResults") === false &&
+        ["partCode", "partContract", "callsPart", "nothingElse", "keptAside", "notForCommitting"].every(
+          (key) => value("swappedOnDisk", key) === true,
+        ),
+    ],
+    [
+      "undoing a swap puts back exactly what was there",
+      value("undone", "gone") === true &&
+        value("undone", "now") === "The same as the latest version." &&
+        value("undone", "status") === "Put Pricing back as it was before the swap." &&
+        value("undone", "undo") === false &&
+        value("undone", "benchTests") === "the first four seats are full price | the fifth is ten percent off" &&
+        value("undoneOnDisk", "exactly") === true,
+    ],
     [
       "an execution is stepped through on the tree, one arrow at a time, and read end to end as its own drawing",
       value("execution", "opened") === true &&
@@ -1161,6 +1273,19 @@ function attachSelfCheck(
       const inProject = (...parts: string[]) => path.join(check.projectDir, ...parts);
 
       try {
+        // The tickets copy is given a history first, while nothing has it open
+        // to hear the commits: an older version of its pricing, with a part
+        // the example no longer has, then the example as it ships.
+        report.history = await (async () => {
+          try {
+            await gitIn(check.application)("init", "--quiet");
+            await commitExampleHistory(check.application);
+            return { built: true };
+          } catch (error) {
+            return { built: false, error: messageOf(error) };
+          }
+        })();
+
         // The person asks for a new project. The questions are asked as a
         // tree: each answer reveals the next, and the form will not go on
         // until every question that applies has one. It is cancelled before
@@ -1227,6 +1352,8 @@ function attachSelfCheck(
           existingCode: false,
           start: "plan",
         });
+        // Its folder is in no repository, so it gets one of its own.
+        report.newRepo = { started: await exists(inProject(".git")) };
         await run("waiting", `
           await wait(400);
           const link = [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.projectDir)});
@@ -2137,6 +2264,181 @@ function attachSelfCheck(
           return { into, back };
         `);
         await capture(window, "self-check-tight");
+
+        // A block's versions, from the history the tickets copy was given at
+        // the start: pricing as it ships, and an older pricing with a part of
+        // its own that took a fifth off from the third seat.
+        const versionsWindow = `
+          const node = (label) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === label);
+          const heading = (label) => until(() => text("#inspector h2") === label, 5000);
+          const button = (within, label) => (within ? [...within.querySelectorAll("button")].find((b) => b.textContent === label) : undefined);
+          // The older version's row in the window.
+          const older = () => [...document.querySelectorAll("#overlay .version-row")]
+            .find((row) => (row.querySelector(".case-name") || {}).textContent === "Price seats with a discount from the third seat");
+          // How one saved test came out in the two versions, as its row says.
+          const cells = (name) => {
+            const row = older() && [...older().querySelectorAll(".compare-row")].find((each) => each.querySelector(".case-name").textContent.startsWith(name));
+            return row ? [...row.querySelectorAll(".case-status")].map((cell) => cell.textContent).join(" / ") : "";
+          };
+        `;
+
+        await run("versions", `${versionsWindow}
+          node("pricing").click();
+          if (!(await heading("Pricing"))) return { opened: false, inspector: text("#inspector h2") };
+          const open = [...document.querySelectorAll("#inspector .insp-windows .btn")].find((b) => b.textContent === "Versions");
+          if (!open) return { opened: false, stage: "no Versions button" };
+          open.click();
+          const rows = await until(() => {
+            const found = [...document.querySelectorAll("#overlay .version-row")];
+            return found.length >= 3 ? found : null;
+          }, 10000);
+          if (!rows) return { opened: false, window: text("#overlay .window-body") };
+
+          const meta = (row) => (row.querySelector(".version-meta") || {}).textContent || "";
+          return {
+            opened: true,
+            title: text("#overlay .window-names h2"),
+            // A window of its own, not another section of the panel.
+            sections: [...document.querySelectorAll("#inspector .section h4")].map((h) => h.textContent).join(" "),
+            listed: rows.length - 1,
+            now: meta(rows[0]),
+            subjects: rows.slice(1).map((row) => row.querySelector(".case-name").textContent).join(" | "),
+            latest: /latest/.test(meta(rows[1])),
+            offers: older() ? [...older().querySelectorAll(".case-actions button")].map((b) => b.textContent).join(" | ") : "",
+            undo: Boolean(button(rows[0], "Undo swap")),
+          };
+        `);
+
+        // Both versions' saved tests, run against both, and the rest of the
+        // system's too: the older pricing changes what booking five seats costs.
+        await run("compared", `${versionsWindow}
+          const compare = button(older(), "Compare");
+          if (!compare) return { compared: false };
+          compare.click();
+          const summary = await until(() => {
+            const found = older() && older().querySelector(".version-compare .case-summary");
+            return found ? found.textContent : null;
+          }, 30000);
+          if (!summary) return { compared: false, note: older() ? (older().querySelector(".bench-note") || {}).textContent : "no row" };
+
+          const saved = [...older().querySelectorAll(".case-saved")].map((each) => each.textContent);
+          return {
+            count: older().querySelectorAll(".compare-row").length,
+            summary,
+            others: (older().querySelector(".compare-others") || {}).textContent || "",
+            changed: cells("the fifth is ten percent off"),
+            noLonger: cells("the third is a fifth off"),
+            same: cells("keeps a fee for each seat"),
+            gone: cells("the third seat is a fifth off"),
+            outside: cells("the fifth seat onwards"),
+            newSince: saved.filter((each) => /new since then/.test(each)).length,
+            notSaved: saved.filter((each) => /no longer saved/.test(each)).length,
+          };
+        `);
+        await capture(window, "self-check-versions");
+
+        // Code typed into a file the swap would replace, and not saved: the
+        // swap waits, and says which block's code to save or revert first.
+        await run("guarded", `${versionsWindow}
+          node("price-seat").click();
+          if (!(await heading("Price Seat"))) return { stage: "panel stayed on " + text("#inspector h2") };
+          const bench = await openBench();
+          if (!bench) return { stage: "no bench for price-seat" };
+          const runAll = button(bench, "Run all tests");
+          if (!runAll) return { stage: "no run-all button" };
+          runAll.click();
+          const ran = await until(() => text(".bench-window .case-summary"), 20000);
+
+          const box = document.querySelector("#inspector .code-edit-input");
+          if (!box) return { ran, stage: "no code to type in" };
+          box.value += "// not saved yet\\n";
+          box.dispatchEvent(new Event("input", { bubbles: true }));
+
+          node("pricing").click();
+          await heading("Pricing");
+          const swap = button(older(), "Swap to this");
+          if (!swap) return { ran, stage: "no Swap to this" };
+          swap.click();
+          const said = await until(() => {
+            const note = older() && older().querySelector(".bench-note.bad");
+            return note ? note.textContent : null;
+          }, 5000);
+          await wait(900);
+          const untouched = !document.querySelector('.block-box[data-id="seat-discount"]');
+
+          // Reverted, so the swap after this has nothing in its way.
+          node("price-seat").click();
+          await heading("Price Seat");
+          const revert = [...document.querySelectorAll("#inspector .code-foot .btn")].find((b) => b.textContent === "Revert");
+          if (revert) revert.click();
+          await wait(300);
+          const reverted = text("#inspector .code-foot .bench-note") === "Saved.";
+          node("pricing").click();
+          await heading("Pricing");
+          return { ran, said, untouched, reverted };
+        `);
+        report.guardedOnDisk = { untouched: !(await exists(path.join(check.application, "src", "booking", "seat-discount.ts"))) };
+        const beforeSwap = await filesOf(check.application);
+
+        // The swap: the older pricing's part arrives on the tree, and the
+        // bench still open on Price Seat shows that version's tests, with
+        // nothing left from the run before.
+        await run("swapped", `${versionsWindow}
+          const swap = button(older(), "Swap to this");
+          if (!swap) return { arrived: false, stage: "no Swap to this" };
+          swap.click();
+          const arrived = Boolean(await until(() => document.querySelector('.block-box[data-id="seat-discount"]'), 15000));
+          const undo = Boolean(await until(() => button(document.querySelector("#overlay .version-row"), "Undo swap"), 10000));
+          await wait(400);
+          return {
+            arrived,
+            status: text("#status .message"),
+            now: text("#overlay .version-row .version-meta"),
+            // The version in place says so on its own row too.
+            marked: /swapped in$/.test(older()?.querySelector(".version-meta")?.textContent ?? ""),
+            undo,
+            benchTests: [...document.querySelectorAll(".bench-window .case-row .case-name")].map((each) => each.textContent).join(" | "),
+            benchResults: Boolean(document.querySelector(".bench-window .case-summary")),
+          };
+        `);
+        await capture(window, "self-check-swapped");
+        const afterSwap = await filesOf(check.application);
+        // Everything a swap of pricing may write: its folder, and the code it
+        // and its parts point at, now or in that version.
+        const plan = /^(blocks\/tickets\/booking-api\/pricing\/|src\/booking\/(price-seat|refund-for|seat-discount)\.ts$)/;
+        const porcelain = await gitIn(check.application)("status", "--porcelain", "--untracked-files=all");
+        report.swappedOnDisk = {
+          partCode: afterSwap.has("src/booking/seat-discount.ts"),
+          partContract: afterSwap.has("blocks/tickets/booking-api/pricing/seat-discount/contract.ts"),
+          callsPart: Buffer.from(afterSwap.get("src/booking/price-seat.ts") ?? "", "base64").toString("utf8").includes("seatDiscount"),
+          nothingElse: [...new Set([...beforeSwap.keys(), ...afterSwap.keys()])]
+            .filter((file) => !plan.test(file))
+            .every((file) => beforeSwap.get(file) === afterSwap.get(file)),
+          keptAside: await exists(path.join(check.application, ".fragmentor")),
+          notForCommitting: !porcelain.includes(".fragmentor"),
+        };
+
+        await run("undone", `${versionsWindow}
+          const undo = button(document.querySelector("#overlay .version-row"), "Undo swap");
+          if (!undo) return { gone: false, stage: "no Undo swap" };
+          undo.click();
+          const gone = Boolean(await until(() => !document.querySelector('.block-box[data-id="seat-discount"]'), 15000));
+          const now = await until(() => {
+            const meta = document.querySelector("#overlay .version-row .version-meta");
+            return meta && !/^Swapped/.test(meta.textContent) ? meta.textContent : null;
+          }, 10000);
+          return {
+            gone,
+            now,
+            status: text("#status .message"),
+            undo: Boolean(button(document.querySelector("#overlay .version-row"), "Undo swap")),
+            benchTests: [...document.querySelectorAll(".bench-window .case-row .case-name")].map((each) => each.textContent).join(" | "),
+          };
+        `);
+        const afterUndo = await filesOf(check.application);
+        report.undoneOnDisk = {
+          exactly: afterUndo.size === beforeSwap.size && [...beforeSwap].every(([file, bytes]) => afterUndo.get(file) === bytes),
+        };
 
         // An execution written down in the messenger: picked, drawn over the
         // whole application, stepped through, and followed inside.

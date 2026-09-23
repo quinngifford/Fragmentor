@@ -23,10 +23,12 @@ const { AsyncLocalStorage } = require("node:async_hooks");
 
 const logs = [];
 let projectDir = "";
+/** The project `projectDir` is a copy of, when it is one, or null. */
+let copyOf = null;
 
 /** Nothing a block does may touch a file outside the project it belongs to. */
-function insideProject(target) {
-  const root = path.resolve(projectDir);
+function insideProject(target, project = projectDir) {
+  const root = path.resolve(project);
   const resolved = path.resolve(root, target);
   const relative = path.relative(root, resolved);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
@@ -88,12 +90,24 @@ const CAPABILITIES = {
       },
     };
   },
+  // A copy holds only the blocks and their code, so a file it does not hold
+  // is read from the project it copies. What a run writes stays in the copy,
+  // in a folder made for it where the copy has none, and is what it reads
+  // back.
   FileSystem: () => ({
     async readFile(target) {
-      return fs.readFile(insideProject(target), "utf8");
+      const file = insideProject(target);
+      try {
+        return await fs.readFile(file, "utf8");
+      } catch (error) {
+        if (copyOf === null || error.code !== "ENOENT") throw error;
+        return fs.readFile(insideProject(target, copyOf), "utf8");
+      }
     },
     async writeFile(target, contents) {
-      await fs.writeFile(insideProject(target), contents, "utf8");
+      const file = insideProject(target);
+      if (copyOf !== null) await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, contents, "utf8");
     },
   }),
   Logger: () => ({
@@ -254,6 +268,7 @@ function traced(blockPath, fn) {
 
 async function run(spec) {
   projectDir = spec.projectDir;
+  copyOf = spec.copyOf ?? null;
   breakpoints = new Set(spec.breakpoints || []);
   const caps = buildCapabilities(spec.capabilities);
 

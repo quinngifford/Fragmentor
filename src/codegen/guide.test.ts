@@ -129,7 +129,9 @@ describe("the guide", () => {
     // an execution expects — the half of one that makes it a test, which three
     // agents writing executions each reported missing, along with the three
     // matching rules that decide whether an expectation means what it says —
-    // is the whole of what has been allowed to add to these numbers.
+    // and the one line asking for a commit each time a block is finished,
+    // because those commits are its versions, is the whole of what has been
+    // allowed to add to these numbers.
     expect(guides.TypeScript!.split("\n").length).toBeLessThan(290);
     // Nothing is generated or run without a pack, so contracts and block
     // testing fall away. What is left still teaches executions, which is why
@@ -143,6 +145,10 @@ describe("the guide", () => {
     expect(guide).toContain("`fragmentor check`");
     expect(guide).toContain("`fragmentor test`");
     expect(guide).toContain("readFile(path: string) → string");
+  });
+
+  it("asks for a commit each time a block is finished, because those commits are its versions", () => {
+    for (const guide of Object.values(guides)) expect(guide).toContain("Commit each time a block is finished and passes");
   });
 
   it("says that every function block points at its code, and that the layout is the codebase's own", () => {

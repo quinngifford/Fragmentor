@@ -2,6 +2,7 @@ import type { ProjectLoad } from "../ipc.js";
 import {
   COLOUR_BY,
   INSPECTOR_WIDTH,
+  forgetBlocks,
   rememberInspectorWidth,
   requireSnapshot,
   roleColours,
@@ -34,6 +35,7 @@ import { onWatchChange, resetWatching, setUpWatching } from "./watch.js";
 import { onExecutionChange, paintExecution, resetExecutions, setUpExecutions, showStep } from "./execution.js";
 import { closeWindow, openBlockWindow, setUpWindows } from "./popup.js";
 import { benchWindowIsOpen, closeBenchWindow, onBenchWindowChange, renderBenchWindow } from "./benchpanel.js";
+import { onVersionsChange, refreshVersionsWindow } from "./versions.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
 
@@ -70,11 +72,7 @@ let treeBefore: Set<string> | null = null;
  * different project takes its place, and when one is put away.
  */
 function forgetProject(): void {
-  ui.edits.clear();
-  ui.benchInputs.clear();
-  ui.runs.clear();
-  ui.caseResults.clear();
-  ui.caseNames.clear();
+  forgetBlocks(null);
   ui.status = null;
   ui.selection.clear();
   ui.selectedLink = null;
@@ -220,13 +218,14 @@ async function closeProject(): Promise<void> {
 /** Changes arrive in bursts, so only the most recent read may update the screen. */
 let latestRead = 0;
 
-async function reload(): Promise<void> {
+/** Reads the project again. False when it showed nothing: no project is open, or a later read or another project took its place. */
+async function reload(): Promise<boolean> {
   const dir = ui.dir;
-  if (!dir) return;
+  if (!dir) return false;
 
   const ticket = ++latestRead;
   const result = await window.fragmentor.readProject(dir);
-  if (ticket !== latestRead || ui.dir !== dir) return;
+  if (ticket !== latestRead || ui.dir !== dir) return false;
 
   if (!result.ok) {
     // The folder itself could not be read, which is not the same as waiting
@@ -234,9 +233,10 @@ async function reload(): Promise<void> {
     ui.waiting = false;
     ui.loadError = result.error;
     render();
-    return;
+    return true;
   }
   show(result.value, false);
+  return true;
 }
 
 async function generateCode(): Promise<void> {
@@ -685,10 +685,20 @@ try {
   // Stepping changes what is laid over the drawing; only a different
   // drawing, or blocks unfolded, is a reason to build it again.
   onExecutionChange(({ redraw }) => (redraw ? render() : renderPanels()));
+  // A swap rewrites the project; show it now rather than when the watcher next hears.
+  // A read overtaken by a later one is not drawn: what is on screen may still
+  // be from before the swap, and drawing it would fill the bench again with
+  // what forgetBlocks just took away. The later read shows what is there.
+  onVersionsChange(async () => {
+    if (await reload()) render();
+  });
   // The agent works in the same folder; follow what it does.
   window.fragmentor.onProjectChanged((dir) => {
-    if (dir === ui.dir) void reload();
+    if (dir === ui.dir) void reload().then(refreshVersionsWindow);
   });
+  // An agent's commit touches only .git, which nothing watches, so a list of
+  // versions left open is read again whenever the person comes back to it.
+  window.addEventListener("focus", () => void refreshVersionsWindow());
   wireToolbar();
   setUpSplitter();
   setUpCanvasGestures();

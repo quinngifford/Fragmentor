@@ -14,6 +14,7 @@ The person you work with sees this project in Fragmentor as a diagram of **block
 4. Point each block at its code, writing whatever is not there yet.{{testStep}}
 5. Write down what happens when something sets the system going, under `executions/`.
 6. Run `fragmentor check`{{testCommand}} until it passes.
+7. Commit each time a block is finished and passes: its folder under `blocks/` and the code it points at, together, with a message saying what the block does now. Each commit is a version of the block that the person can compare with today's and go back to; going back rewrites the block's folder and the code it points at as they were then.
 
 When the design changes, change the `block.json` files first, then the code. If the `fragmentor` command is not found, ask the person to run `npm link` once in Fragmentor's folder.
 

@@ -5,6 +5,7 @@ import { getPack, knownLanguages, normaliseLanguage } from "../lang/index.js";
 import { blocksRoot, manifestPath, writeManifest } from "../project/project.js";
 import { packFor, readAllCode } from "../project/code.js";
 import type { BlockCode } from "../project/code.js";
+import { startHistory } from "../project/history.js";
 import { boundStores } from "../project/stores.js";
 import type { LoadedBlock, Manifest, Project, Start } from "../project/project.js";
 import type { PortType } from "../model/types.js";
@@ -15,9 +16,11 @@ import { AGENTS_FILE, AGENTS_SCAFFOLD, CLAUDE_FILE, CLAUDE_SCAFFOLD, GUIDE_FILE,
  *
  * That half is small, and all of it sits inside `blocks/`: each function
  * block's contract, the shared capability interfaces, and the agent's guide.
- * Fragmentor writes no code at all. Every implementation is the agent's, at
- * whatever path its block points at, and nothing of Fragmentor's is ever
- * written into the codebase's own tree.
+ * Fragmentor writes no code of its own. Every implementation is the agent's,
+ * at whatever path its block points at, and nothing of Fragmentor's is ever
+ * written into the codebase's own tree. The one time it writes code files is
+ * a swap the person asks for (project/history.ts), which puts back what the
+ * project's git history holds.
  *
  * What is generated is regenerated every time, because it is derived from the
  * diagram and must never drift from it. A file is only written when its
@@ -119,11 +122,15 @@ export interface NewProjectSettings {
  * Starts a project in a folder, empty or already holding code: fragmentor.json
  * with what the person chose, and the files an agent reads first. The agent
  * fills in the rest.
+ *
+ * A block's earlier versions are the commits of the repository holding the
+ * project, so a folder that is in none gets one here, and `history` says what
+ * was found or done.
  */
 export async function startProject(
   dir: string,
   settings: NewProjectSettings,
-): Promise<{ written: string[]; kept: string[]; withoutGuide: string[] }> {
+): Promise<{ written: string[]; kept: string[]; withoutGuide: string[]; history: string }> {
   if (await exists(manifestPath(dir))) throw new Error(`${dir} is already a Fragmentor project.`);
 
   const manifest: Manifest = {
@@ -138,7 +145,8 @@ export async function startProject(
   await writeManifest(dir, manifest);
 
   const files = await writeAgentFiles(dir, manifest);
-  return { ...files, written: ["fragmentor.json", ...files.written] };
+  const history = await startHistory(dir);
+  return { ...files, written: ["fragmentor.json", ...files.written, ...history.written], history: history.note };
 }
 
 /**
