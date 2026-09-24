@@ -28,7 +28,7 @@ export function closeWindow(): void {
 }
 
 /** The frame every window shares: what it is about, and a way out of it. */
-export function openWindow(title: string, subtitle: string, body: HTMLElement): void {
+function openWindow(title: string, subtitle: string, body: HTMLElement): void {
   const host = overlay();
   host.replaceChildren();
   host.hidden = false;

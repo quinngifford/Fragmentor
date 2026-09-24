@@ -10,7 +10,7 @@ import { STEP_LINK, currentStep, describeStep } from "./execution.js";
 import { travelOf } from "../../src/model/trace.js";
 import type { AccessArrow } from "./canvas.js";
 import { openBenchWindow } from "./benchpanel.js";
-import { openVersionsWindow } from "./versions.js";
+import { versionsSection } from "./versions.js";
 import { el, section } from "./dom.js";
 import { codeBlock, codeFragment, codeLines, languageOf } from "./highlight.js";
 
@@ -574,13 +574,7 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
     code.addEventListener("click", () => openBlockWindow("code", block.path));
     windows.append(code);
   }
-  // Every block has versions, or a window saying why it has none, so this
-  // one is always there.
-  const versions = el("button", "btn quiet tiny", "Versions");
-  versions.title = `Earlier versions of ${block.name}${block.children.length > 0 ? " and its parts" : ""}, from the project's git history`;
-  versions.addEventListener("click", () => void openVersionsWindow(block.path));
-  windows.append(versions);
-  head.append(windows);
+  if (windows.childElementCount > 0) head.append(windows);
   panel.append(head);
 
   panel.append(el("p", "responsibility", block.responsibility));
@@ -604,9 +598,10 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   // already said by the sections it has none of.
   if (block.architecture) panel.append(el("p", "role-note", ROLES[block.role].description));
 
-  // The same four sections, in the same order, whatever kind of block this is:
-  // what it can be used through, what it reaches, where its code is, and how to
-  // set it going. A block simply may not have one of them.
+  // The same sections, in the same order, whatever kind of block this is: what
+  // it can be used through, what it reaches, where its code is, how to set it
+  // going, and last, its earlier versions. A block simply may not have one of
+  // the middle ones; every block has versions, or a sentence saying why not.
   const leads = entryLeads(block);
   panel.append(interfaceSection(block, routesOf(leads)));
 
@@ -635,6 +630,7 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   }
 
   panel.append(...runSections(block, leads));
+  panel.append(versionsSection(block));
 }
 
 /**

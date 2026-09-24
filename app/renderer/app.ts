@@ -35,7 +35,7 @@ import { onWatchChange, resetWatching, setUpWatching } from "./watch.js";
 import { onExecutionChange, paintExecution, resetExecutions, setUpExecutions, showStep } from "./execution.js";
 import { closeWindow, openBlockWindow, setUpWindows } from "./popup.js";
 import { benchWindowIsOpen, closeBenchWindow, onBenchWindowChange, renderBenchWindow } from "./benchpanel.js";
-import { onVersionsChange, refreshVersionsWindow } from "./versions.js";
+import { forgetVersions, onVersionsChange, refreshVersions } from "./versions.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
 
@@ -73,6 +73,7 @@ let treeBefore: Set<string> | null = null;
  */
 function forgetProject(): void {
   forgetBlocks(null);
+  forgetVersions();
   ui.status = null;
   ui.selection.clear();
   ui.selectedLink = null;
@@ -689,16 +690,20 @@ try {
   // A read overtaken by a later one is not drawn: what is on screen may still
   // be from before the swap, and drawing it would fill the bench again with
   // what forgetBlocks just took away. The later read shows what is there.
-  onVersionsChange(async () => {
-    if (await reload()) render();
+  onVersionsChange({
+    panel: renderInspector,
+    all: render,
+    reload: async () => {
+      if (await reload()) render();
+    },
   });
   // The agent works in the same folder; follow what it does.
   window.fragmentor.onProjectChanged((dir) => {
-    if (dir === ui.dir) void reload().then(refreshVersionsWindow);
+    if (dir === ui.dir) void reload().then(refreshVersions);
   });
-  // An agent's commit touches only .git, which nothing watches, so a list of
-  // versions left open is read again whenever the person comes back to it.
-  window.addEventListener("focus", () => void refreshVersionsWindow());
+  // An agent's commit touches only .git, which nothing watches, so the list of
+  // versions on screen is read again whenever the person comes back to it.
+  window.addEventListener("focus", () => void refreshVersions());
   wireToolbar();
   setUpSplitter();
   setUpCanvasGestures();

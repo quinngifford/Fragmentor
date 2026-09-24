@@ -1,43 +1,60 @@
 import type { BlockVersion, BlockVersions } from "../../src/project/history.js";
+import type { SnapshotBlock } from "../../src/project/snapshot.js";
 import type { CaseResult } from "../../src/run/run.js";
 import type { ComparedBlock, ComparedTest, VersionComparison } from "../../src/run/versions.js";
 import type { Result } from "../ipc.js";
 import { statusWord } from "./bench.js";
 import { el, section, subsection } from "./dom.js";
-import { openWindow } from "./popup.js";
 import { forgetBlocks, ui } from "./state.js";
 
 /**
- * A block's earlier versions, in a window over the drawing.
+ * A block's earlier versions, as the last section of its panel.
  *
  * Fragmentor keeps no history of its own: the versions are commits of the git
- * repository holding the project, and the kernel reads them. This window lists
+ * repository holding the project, and the kernel reads them. The section lists
  * them, compares one with the block as it is, and swaps one in and back out.
  *
- * What it shows lives in its own elements rather than in `ui`. Nothing else
- * draws from it, and a comparison that took seconds to run has to outlive the
- * agent writing a file, which redraws everything that is drawn from `ui`.
+ * The panel is drawn again whenever anything changes, and asking git takes a
+ * moment, so what the section shows is kept here rather than asked for every
+ * time: the list last read, the comparisons run, and what each row is doing. A
+ * comparison that took seconds to run outlives the agent writing a file, and
+ * the person looking at another block and coming back.
  */
 
-let notify: () => Promise<void> = async () => {};
-/** Called once a swap or an undo has rewritten the project, to show it at once. */
-export function onVersionsChange(callback: () => Promise<void>): void {
-  notify = callback;
+let redraw: () => void = () => {};
+let redrawAll: () => void = () => {};
+let reloadProject: () => Promise<void> = async () => {};
+/**
+ * `panel` draws the inspector again, which is all that reading a list or
+ * comparing changes; `all` draws everything, for what the status line says;
+ * `reload` reads the project again and shows it, once a swap or an undo has
+ * rewritten it. Drawing only the panel matters: the list is read every time a
+ * block is picked, and drawing the tree again each time would move it under
+ * the pointer.
+ */
+export function onVersionsChange(callbacks: { panel: () => void; all: () => void; reload: () => Promise<void> }): void {
+  redraw = callbacks.panel;
+  redrawAll = callbacks.all;
+  reloadProject = callbacks.reload;
 }
 
-/** The window on screen: which block it is for, the list it was drawn from, and whether something in it is running. */
-interface Shown {
-  blockPath: string;
-  body: HTMLElement;
-  listed: string;
-  busy: boolean;
-}
+/** The list last read, and which block of which project it is for. */
+let listed: { dir: string; blockPath: string; result: Result<BlockVersions> } | null = null;
+/** The block whose list is being read, so a redraw meanwhile does not ask again. */
+let reading: string | null = null;
+/** Only the newest read counts. */
+let latestRead = 0;
+/** The comparison shown for a block, with the version it is against and when it was run. One a block, so the panel stays readable. */
+const comparisons = new Map<string, { commit: string; at: Date; value: VersionComparison }>();
+/** What a row is doing, or what went wrong with it, by block and row: a version's commit, or "now". */
+const notes = new Map<string, { text: string; bad: boolean }>();
+/** One thing at a time: while a comparison or a swap runs, nothing else in the section can be pressed. */
+let busy = false;
 
-/** The versions window last opened. It is on screen while its body is. */
-let showing: Shown | null = null;
+const noteKey = (blockPath: string, row: string) => `${blockPath}\n${row}`;
 
-function when(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+function when(date: string | Date): string {
+  return new Date(date).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
 /** Whether a block path is `root` or one of its parts, however deep. */
@@ -45,57 +62,64 @@ function under(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}/`);
 }
 
-/** What the window calls the block, as the project on screen has it. */
-function about(blockPath: string): { name: string; parts: boolean } {
-  const block = ui.snapshot?.blocks[blockPath];
-  return { name: block?.name ?? blockPath, parts: (block?.children.length ?? 0) > 0 };
+/** Everything the section keeps, for a project that has closed. */
+export function forgetVersions(): void {
+  listed = null;
+  reading = null;
+  comparisons.clear();
+  notes.clear();
 }
 
-export async function openVersionsWindow(blockPath: string): Promise<void> {
+/** Reads a block's list, and redraws the panel if it changed, so reading it again never takes the focus from anything. */
+async function read(blockPath: string): Promise<void> {
   const dir = ui.dir;
-  if (!dir || !ui.snapshot?.blocks[blockPath]) return;
-
-  // Opened at once, so the window is never a blank rectangle while git is asked.
-  const body = el("div", "window-sections");
-  body.append(el("p", "bench-note", "Reading the project's git history…"));
-  openWindow(about(blockPath).name, `versions · ${blockPath}`, body);
-  const shown: Shown = { blockPath, body, listed: "", busy: false };
-  showing = shown;
-
+  if (!dir) return;
+  const ticket = ++latestRead;
+  reading = blockPath;
   const result = await window.fragmentor.blockVersions(dir, blockPath);
-  // Something else was opened, or it was closed, while the history was read.
-  if (!body.isConnected) return;
-  draw(shown, result);
+  if (ticket !== latestRead || ui.dir !== dir) return;
+  reading = null;
+
+  const before = listed?.dir === dir && listed.blockPath === blockPath ? JSON.stringify(listed.result) : null;
+  listed = { dir, blockPath, result };
+  if (JSON.stringify(result) !== before) redraw();
 }
 
 /**
- * Reads the list again, and redraws the window only if it changed, so a
- * comparison on screen stays there. Nothing is redrawn while something in the
- * window is running; a comparison that finishes, and every swap and undo, reads
- * the list again, so a change heard in the meantime is not lost.
+ * Reads the list on screen again, for a change the project's files cannot
+ * show: an agent's commit touches only .git, which nothing watches. Nothing is
+ * read while something in the section is running; a comparison that finishes,
+ * and every swap and undo, reads the list again itself.
  */
-export async function refreshVersionsWindow(): Promise<void> {
-  const shown = showing;
-  const dir = ui.dir;
-  if (!shown || !dir || !shown.body.isConnected || shown.busy) return;
-
-  const result = await window.fragmentor.blockVersions(dir, shown.blockPath);
-  if (showing !== shown || ui.dir !== dir || !shown.body.isConnected || shown.busy) return;
-  if (JSON.stringify(result) !== shown.listed) draw(shown, result);
+export async function refreshVersions(): Promise<void> {
+  const onScreen = document.querySelector<HTMLElement>("#inspector [data-versions-of]")?.dataset.versionsOf;
+  if (busy || onScreen === undefined || listed?.blockPath !== onScreen) return;
+  await read(onScreen);
 }
 
-function draw(shown: Shown, result: Result<BlockVersions>): void {
-  shown.listed = JSON.stringify(result);
-  const { name, parts } = about(shown.blockPath);
-
-  if (!result.ok) {
-    shown.body.replaceChildren(el("p", "bench-note bad", `Could not read the versions: ${result.error}`));
-    return;
-  }
-  const { unavailable, versions, more, changed, blocked, swapped } = result.value;
-
+export function versionsSection(block: SnapshotBlock): HTMLElement {
   const node = section("Versions");
-  shown.body.replaceChildren(node);
+  node.dataset.versionsOf = block.path;
+
+  const shown = listed?.dir === ui.dir && listed?.blockPath === block.path ? listed.result : null;
+  if (shown === null) {
+    node.append(el("p", "bench-note", "Reading the project's git history…"));
+    if (reading !== block.path) void read(block.path);
+    return node;
+  }
+  if (!shown.ok) {
+    node.append(el("p", "bench-note bad", `Could not read the versions: ${shown.error}`));
+    return node;
+  }
+  draw(node, block, shown.value);
+  return node;
+}
+
+function draw(node: HTMLElement, block: SnapshotBlock, listing: BlockVersions): void {
+  const { name } = block;
+  const parts = block.children.length > 0;
+  const { unavailable, versions, more, changed, blocked, swapped } = listing;
+
   node.append(
     el(
       "p",
@@ -140,13 +164,15 @@ function draw(shown: Shown, result: Result<BlockVersions>): void {
     ),
   );
   if (swapped !== null) {
-    const undo = el("button", undefined, "Undo swap");
-    undo.title = `Put ${name} back as it was before the swap, from the copy kept when it was made.`;
-    undo.addEventListener("click", () => void swapOrUndo(shown, now, null));
-    const actions = el("div", "case-actions");
-    actions.append(undo);
-    now.append(actions);
+    now.append(
+      actions(
+        button("Undo swap", `Put ${name} back as it was before the swap, from the copy kept when it was made.`, () =>
+          swapOrUndo(block, null),
+        ),
+      ),
+    );
   }
+  rowNote(now, block.path, "now");
   list.append(now);
 
   // Undoing needs only the copy the swap kept, not git, so a swap can still
@@ -156,6 +182,7 @@ function draw(shown: Shown, result: Result<BlockVersions>): void {
     return;
   }
 
+  const shown = comparisons.get(block.path);
   versions.forEach((version, at) => {
     const row = el("div", "case-row version-row");
     row.dataset.commit = version.commit;
@@ -170,16 +197,19 @@ function draw(shown: Shown, result: Result<BlockVersions>): void {
       ),
     );
     if (blocked === null) {
-      const compare = el("button", undefined, "Compare");
-      compare.title = `Run the saved tests of both versions against ${name} as it is now and as it was then.`;
-      compare.addEventListener("click", () => void compareWith(shown, row, version));
-      const swap = el("button", undefined, "Swap to this");
-      swap.title = `Make ${name} as it was in this version. Undo swap returns it to how it is now.`;
-      swap.addEventListener("click", () => void swapOrUndo(shown, row, version));
-      const actions = el("div", "case-actions");
-      actions.append(compare, swap);
-      row.append(actions);
+      row.append(
+        actions(
+          button("Compare", `Run the saved tests of both versions against ${name} as it is now and as it was then.`, () =>
+            compareWith(block, version),
+          ),
+          button("Swap to this", `Make ${name} as it was in this version. Undo swap returns it to how it is now.`, () =>
+            swapOrUndo(block, version),
+          ),
+        ),
+      );
     }
+    rowNote(row, block.path, version.commit);
+    if (shown?.commit === version.commit) row.append(comparison(block, shown.value, shown.at));
     list.append(row);
   });
   node.append(list);
@@ -196,39 +226,50 @@ function draw(shown: Shown, result: Result<BlockVersions>): void {
   if (more) node.append(el("p", "bench-note", "Only the newest 100 versions are listed."));
 }
 
-/** What is happening to one row, or what went wrong with it, across the whole row. Null takes it away. */
-function rowNote(row: HTMLElement, text: string | null, bad = false): void {
-  row.querySelector(":scope > .bench-note")?.remove();
-  if (text === null) return;
-  // Above any comparison already there, next to the buttons it is about.
-  row.insertBefore(el("p", bad ? "bench-note bad" : "bench-note", text), row.querySelector(":scope > .version-compare"));
+function button(label: string, title: string, act: () => Promise<void>): HTMLButtonElement {
+  const pressed = el("button", undefined, label);
+  pressed.title = title;
+  pressed.disabled = busy;
+  pressed.addEventListener("click", () => void act());
+  return pressed;
 }
 
-/** One thing at a time: while a comparison or a swap runs, nothing else in the window can be pressed. */
-function setBusy(shown: Shown, busy: boolean): void {
-  shown.busy = busy;
-  for (const button of shown.body.querySelectorAll<HTMLButtonElement>(".versions button")) button.disabled = busy;
+function actions(...buttons: HTMLButtonElement[]): HTMLElement {
+  const box = el("div", "case-actions");
+  box.append(...buttons);
+  return box;
 }
 
-async function compareWith(shown: Shown, row: HTMLElement, version: BlockVersion): Promise<void> {
+/** What a row is doing, or what went wrong with it, across the whole row. */
+function rowNote(row: HTMLElement, blockPath: string, key: string): void {
+  const note = notes.get(noteKey(blockPath, key));
+  if (note) row.append(el("p", note.bad ? "bench-note bad" : "bench-note", note.text));
+}
+
+/** Sets what a row says, or takes it away, and draws the panel again. */
+function say(blockPath: string, row: string, text: string | null, bad = false): void {
+  if (text === null) notes.delete(noteKey(blockPath, row));
+  else notes.set(noteKey(blockPath, row), { text, bad });
+  redraw();
+}
+
+async function compareWith(block: SnapshotBlock, version: BlockVersion): Promise<void> {
   const dir = ui.dir;
   if (!dir) return;
 
-  setBusy(shown, true);
-  rowNote(row, "Comparing: running the saved tests against both versions…");
-  const result = await window.fragmentor.compareVersion(dir, shown.blockPath, version.commit);
-  setBusy(shown, false);
-  if (!shown.body.isConnected) return;
+  busy = true;
+  say(block.path, version.commit, "Comparing: running the saved tests against both versions…");
+  const result = await window.fragmentor.compareVersion(dir, block.path, version.commit);
+  busy = false;
+  if (ui.dir !== dir) return;
 
   if (!result.ok) {
-    // Kept on screen: a list read again now could redraw it away.
-    rowNote(row, `Could not compare: ${result.error}`, true);
+    say(block.path, version.commit, `Could not compare: ${result.error}`, true);
     return;
   }
-  rowNote(row, null);
-  row.querySelector(":scope > .version-compare")?.remove();
-  row.append(comparison(shown.blockPath, result.value));
-  await refreshVersionsWindow();
+  comparisons.set(block.path, { commit: version.commit, at: new Date(), value: result.value });
+  say(block.path, version.commit, null);
+  await read(block.path);
 }
 
 /**
@@ -236,19 +277,18 @@ async function compareWith(shown: Shown, row: HTMLElement, version: BlockVersion
  * version, and whichever other tests in its system come out differently, since
  * a swap can change what a block outside it does without touching its files.
  */
-function comparison(blockPath: string, compared: VersionComparison): HTMLElement {
-  const { name, parts } = about(blockPath);
-  const whole = `${name}${parts ? " and its parts" : ""}`;
+function comparison(block: SnapshotBlock, compared: VersionComparison, at: Date): HTMLElement {
+  const whole = `${block.name}${block.children.length > 0 ? " and its parts" : ""}`;
   const box = el("div", "version-compare");
   box.append(
     el(
       "p",
       "bench-note",
-      `Every saved test of ${whole}, from either version, runs against both, as does every other saved test in ${compared.system}. A test saved in both versions runs as it is saved now.`,
+      `Every saved test of ${whole}, from either version, runs against both, as does every other saved test in ${compared.system}. A test saved in both versions runs as it is saved now. Compared ${when(at)}.`,
     ),
   );
 
-  const tests = compared.inside.flatMap((block) => block.tests);
+  const tests = compared.inside.flatMap((each) => each.tests);
   const total = tests.length;
   const differ = tests.filter((test) => test.differs).length;
   // A test that ends in an error in both versions, because the block could
@@ -256,7 +296,7 @@ function comparison(blockPath: string, compared: VersionComparison): HTMLElement
   // the same way, which says nothing about the two versions.
   const erred = (result: CaseResult | null) => result !== null && result.status === "error" && result.inputProblems.length === 0;
   const erredBoth = total > 0 && tests.every((test) => erred(test.now) && erred(test.then));
-  const unread = compared.inside.some((block) => block.unreadable.now !== null || block.unreadable.then !== null);
+  const unread = compared.inside.some((each) => each.unreadable.now !== null || each.unreadable.then !== null);
   box.append(
     el(
       "p",
@@ -270,11 +310,11 @@ function comparison(blockPath: string, compared: VersionComparison): HTMLElement
             : `${differ} of ${total} saved test${total === 1 ? "" : "s"} of ${whole} ${differ === 1 ? "comes" : "come"} out differently.`,
     ),
   );
-  for (const block of compared.inside) box.append(testsOf(block));
+  for (const each of compared.inside) box.append(testsOf(each));
 
   const others = compared.othersRun;
   if (others > 0) {
-    const elsewhere = compared.outside.reduce((sum, block) => sum + block.tests.length, 0);
+    const elsewhere = compared.outside.reduce((sum, each) => sum + each.tests.length, 0);
     box.append(
       el(
         "p",
@@ -287,7 +327,15 @@ function comparison(blockPath: string, compared: VersionComparison): HTMLElement
   }
   // Listed even when no other test ran: a block can be here only because
   // its tests could not be read.
-  for (const block of compared.outside) box.append(testsOf(block));
+  for (const each of compared.outside) box.append(testsOf(each));
+
+  // A comparison is long, and the panel has everything else about the block to show.
+  const hide = el("button", "btn quiet tiny", "Hide comparison");
+  hide.addEventListener("click", () => {
+    comparisons.delete(block.path);
+    redraw();
+  });
+  box.append(hide);
   return box;
 }
 
@@ -344,57 +392,56 @@ function outcome(side: "now" | "then", result: CaseResult | null): HTMLElement {
  * editor holds unsaved text for one of them: that text was typed against the
  * file being replaced, and saving it afterwards would quietly undo the swap.
  */
-async function swapOrUndo(shown: Shown, row: HTMLElement, version: BlockVersion | null): Promise<void> {
+async function swapOrUndo(block: SnapshotBlock, version: BlockVersion | null): Promise<void> {
   const dir = ui.dir;
   if (!dir) return;
-  const { blockPath } = shown;
-  const { name } = about(blockPath);
+  const { path: blockPath, name } = block;
+  const row = version?.commit ?? "now";
 
   const unsaved = [...ui.edits.keys()].find((path) => under(blockPath, path));
   if (unsaved !== undefined) {
     const text = `Save or revert the unsaved changes to ${ui.snapshot?.blocks[unsaved]?.name ?? unsaved}'s code first: ${
       version === null ? "undoing the swap" : "swapping"
     } would replace that file.`;
-    rowNote(row, text, true);
     ui.status = { text, tone: "bad" };
-    await notify();
+    notes.set(noteKey(blockPath, row), { text, bad: true });
+    redrawAll();
     return;
   }
 
-  setBusy(shown, true);
-  rowNote(row, version === null ? "Undoing the swap…" : "Swapping…");
+  busy = true;
+  say(blockPath, row, version === null ? "Undoing the swap…" : "Swapping…");
   const result =
     version === null
       ? await window.fragmentor.undoSwap(dir, blockPath)
       : await window.fragmentor.swapVersion(dir, blockPath, version.commit);
+  busy = false;
   if (ui.dir !== dir) return;
+  notes.delete(noteKey(blockPath, row));
 
   // A swap to what is already there changes nothing and keeps no record; an
   // undo always keeps one, so its swap can't be undone twice.
   if (result.ok && result.value.changed === 0 && version !== null) {
     ui.status = { text: `${name} is already as it was in that version.`, tone: "info" };
   } else {
-    // Even a swap that failed may have written some files before it stopped.
+    // Even a swap that failed may have written some files before it stopped,
+    // and a comparison made before it is of files that are no longer there.
     forgetBlocks(blockPath);
+    comparisons.clear();
     if (!result.ok) {
       const text = version === null ? `Could not undo the swap of ${name}: ${result.error}` : `Could not swap ${name}: ${result.error}`;
-      rowNote(row, text, true);
+      notes.set(noteKey(blockPath, row), { text, bad: true });
       ui.status = { text, tone: "bad" };
     } else if (version === null) {
       ui.status = { text: `Put ${name} back as it was before the swap.`, tone: "good" };
     } else {
-      ui.status = { text: `Swapped ${name} to the version “${version.subject}”. Undo swap is in its Versions window.`, tone: "good" };
+      ui.status = { text: `Swapped ${name} to the version “${version.subject}”. Undo swap is under Versions in its panel.`, tone: "good" };
     }
   }
 
-  await notify();
-  setBusy(shown, false);
-  // Read again, for the swap Undo swap now reverses. A failure that still left
-  // a copy behind gets its Undo swap; one that did not keeps its note. A
-  // window closed in the meantime stays closed.
-  if (result.ok) {
-    if (shown.body.isConnected) await openVersionsWindow(blockPath);
-  } else {
-    await refreshVersionsWindow();
-  }
+  await reloadProject();
+  // Read again, for the swap Undo swap now reverses, and drawn again whatever
+  // it says, since the buttons were drawn as they were while it ran.
+  await read(blockPath);
+  redrawAll();
 }

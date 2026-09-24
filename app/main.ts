@@ -936,10 +936,10 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
     ],
     ["a new project starts a git repository, so its blocks have versions from the start", value("newRepo", "started") === true],
     [
-      "every block offers its versions in a window of its own, newest first, without adding a section to its panel",
+      "every block's panel ends with its versions, newest first, with no window of their own",
       value("history", "built") === true &&
-        value("versions", "title") === "Pricing" &&
-        !/Versions/.test(String(value("versions", "sections"))) &&
+        /Versions$/.test(String(value("versions", "sections"))) &&
+        !/Versions/.test(String(value("versions", "windows"))) &&
         value("versions", "listed") === 2 &&
         value("versions", "subjects") === "Take ten percent off from the fifth seat | Price seats with a discount from the third seat" &&
         value("versions", "latest") === true &&
@@ -973,7 +973,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       "swapping puts a block back as it was, parts and code included, forgets what was shown about it, and changes nothing outside it",
       value("swapped", "arrived") === true &&
         value("swapped", "status") ===
-          "Swapped Pricing to the version “Price seats with a discount from the third seat”. Undo swap is in its Versions window." &&
+          "Swapped Pricing to the version “Price seats with a discount from the third seat”. Undo swap is under Versions in its panel." &&
         /^Swapped to the version “Price seats with a discount from the third seat”, of /.test(String(value("swapped", "now"))) &&
         value("swapped", "marked") === true &&
         value("swapped", "undo") === true &&
@@ -2268,12 +2268,12 @@ function attachSelfCheck(
         // A block's versions, from the history the tickets copy was given at
         // the start: pricing as it ships, and an older pricing with a part of
         // its own that took a fifth off from the third seat.
-        const versionsWindow = `
+        const versionsSection = `
           const node = (label) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === label);
           const heading = (label) => until(() => text("#inspector h2") === label, 5000);
           const button = (within, label) => (within ? [...within.querySelectorAll("button")].find((b) => b.textContent === label) : undefined);
-          // The older version's row in the window.
-          const older = () => [...document.querySelectorAll("#overlay .version-row")]
+          // The older version's row, at the bottom of the panel.
+          const older = () => [...document.querySelectorAll("#inspector .version-row")]
             .find((row) => (row.querySelector(".case-name") || {}).textContent === "Price seats with a discount from the third seat");
           // How one saved test came out in the two versions, as its row says.
           const cells = (name) => {
@@ -2282,24 +2282,21 @@ function attachSelfCheck(
           };
         `;
 
-        await run("versions", `${versionsWindow}
+        await run("versions", `${versionsSection}
           node("pricing").click();
           if (!(await heading("Pricing"))) return { opened: false, inspector: text("#inspector h2") };
-          const open = [...document.querySelectorAll("#inspector .insp-windows .btn")].find((b) => b.textContent === "Versions");
-          if (!open) return { opened: false, stage: "no Versions button" };
-          open.click();
           const rows = await until(() => {
-            const found = [...document.querySelectorAll("#overlay .version-row")];
+            const found = [...document.querySelectorAll("#inspector .version-row")];
             return found.length >= 3 ? found : null;
           }, 10000);
-          if (!rows) return { opened: false, window: text("#overlay .window-body") };
+          if (!rows) return { opened: false, section: text("#inspector [data-versions-of]") };
 
           const meta = (row) => (row.querySelector(".version-meta") || {}).textContent || "";
           return {
             opened: true,
-            title: text("#overlay .window-names h2"),
-            // A window of its own, not another section of the panel.
+            // The last section of the panel, with no window of its own.
             sections: [...document.querySelectorAll("#inspector .section h4")].map((h) => h.textContent).join(" "),
+            windows: [...document.querySelectorAll("#inspector .insp-windows .btn")].map((b) => b.textContent).join(" "),
             listed: rows.length - 1,
             now: meta(rows[0]),
             subjects: rows.slice(1).map((row) => row.querySelector(".case-name").textContent).join(" | "),
@@ -2311,7 +2308,7 @@ function attachSelfCheck(
 
         // Both versions' saved tests, run against both, and the rest of the
         // system's too: the older pricing changes what booking five seats costs.
-        await run("compared", `${versionsWindow}
+        await run("compared", `${versionsSection}
           const compare = button(older(), "Compare");
           if (!compare) return { compared: false };
           compare.click();
@@ -2333,13 +2330,14 @@ function attachSelfCheck(
             outside: cells("the fifth seat onwards"),
             newSince: saved.filter((each) => /new since then/.test(each)).length,
             notSaved: saved.filter((each) => /no longer saved/.test(each)).length,
+            scrolled: (older().querySelector(".version-compare").scrollIntoView({ block: "start" }), true),
           };
         `);
         await capture(window, "self-check-versions");
 
         // Code typed into a file the swap would replace, and not saved: the
         // swap waits, and says which block's code to save or revert first.
-        await run("guarded", `${versionsWindow}
+        await run("guarded", `${versionsSection}
           node("price-seat").click();
           if (!(await heading("Price Seat"))) return { stage: "panel stayed on " + text("#inspector h2") };
           const bench = await openBench();
@@ -2356,7 +2354,7 @@ function attachSelfCheck(
 
           node("pricing").click();
           await heading("Pricing");
-          const swap = button(older(), "Swap to this");
+          const swap = await until(() => button(older(), "Swap to this"), 10000);
           if (!swap) return { ran, stage: "no Swap to this" };
           swap.click();
           const said = await until(() => {
@@ -2383,17 +2381,18 @@ function attachSelfCheck(
         // The swap: the older pricing's part arrives on the tree, and the
         // bench still open on Price Seat shows that version's tests, with
         // nothing left from the run before.
-        await run("swapped", `${versionsWindow}
-          const swap = button(older(), "Swap to this");
+        await run("swapped", `${versionsSection}
+          const swap = await until(() => button(older(), "Swap to this"), 10000);
           if (!swap) return { arrived: false, stage: "no Swap to this" };
           swap.click();
           const arrived = Boolean(await until(() => document.querySelector('.block-box[data-id="seat-discount"]'), 15000));
-          const undo = Boolean(await until(() => button(document.querySelector("#overlay .version-row"), "Undo swap"), 10000));
+          const undo = Boolean(await until(() => button(document.querySelector("#inspector .version-row"), "Undo swap"), 10000));
           await wait(400);
+          document.querySelector("#inspector [data-versions-of]").scrollIntoView({ block: "start" });
           return {
             arrived,
             status: text("#status .message"),
-            now: text("#overlay .version-row .version-meta"),
+            now: text("#inspector .version-row .version-meta"),
             // The version in place says so on its own row too.
             marked: /swapped in$/.test(older()?.querySelector(".version-meta")?.textContent ?? ""),
             undo,
@@ -2418,20 +2417,20 @@ function attachSelfCheck(
           notForCommitting: !porcelain.includes(".fragmentor"),
         };
 
-        await run("undone", `${versionsWindow}
-          const undo = button(document.querySelector("#overlay .version-row"), "Undo swap");
+        await run("undone", `${versionsSection}
+          const undo = button(document.querySelector("#inspector .version-row"), "Undo swap");
           if (!undo) return { gone: false, stage: "no Undo swap" };
           undo.click();
           const gone = Boolean(await until(() => !document.querySelector('.block-box[data-id="seat-discount"]'), 15000));
           const now = await until(() => {
-            const meta = document.querySelector("#overlay .version-row .version-meta");
+            const meta = document.querySelector("#inspector .version-row .version-meta");
             return meta && !/^Swapped/.test(meta.textContent) ? meta.textContent : null;
           }, 10000);
           return {
             gone,
             now,
             status: text("#status .message"),
-            undo: Boolean(button(document.querySelector("#overlay .version-row"), "Undo swap")),
+            undo: Boolean(button(document.querySelector("#inspector .version-row"), "Undo swap")),
             benchTests: [...document.querySelectorAll(".bench-window .case-row .case-name")].map((each) => each.textContent).join(" | "),
           };
         `);

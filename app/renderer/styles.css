@@ -1587,6 +1587,7 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
 .version-row .version-meta { grid-column: 1; font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
 .version-row > .bench-note, .version-compare { grid-column: 1 / -1; }
 .version-compare { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.version-compare > .btn { align-self: flex-start; }
 .compare-row .case-status.compare-then { grid-column: 2; justify-self: end; }
 .compare-row[data-differs="true"] { border-color: var(--rule-bright); }
 .case-saved { color: var(--ink-faint); }
