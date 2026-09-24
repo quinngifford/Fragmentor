@@ -151,6 +151,12 @@ describe("the guide", () => {
     for (const guide of Object.values(guides)) expect(guide).toContain("Commit each time a block is finished and passes");
   });
 
+  it("asks for the versions the person saves to be committed and left alone", () => {
+    for (const guide of Object.values(guides)) {
+      expect(guide).toContain("kept in `.fragmentor/versions/`: commit them with everything else, and never change or delete them.");
+    }
+  });
+
   it("says that every function block points at its code, and that the layout is the codebase's own", () => {
     for (const guide of Object.values(guides)) {
       expect(guide).toContain("**Every function block has one.**");

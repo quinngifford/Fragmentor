@@ -2,7 +2,7 @@ import type { ProjectSnapshot } from "../src/project/snapshot.js";
 import type { EmitResult, NewProjectSettings } from "../src/codegen/emit.js";
 import type { CaseResult, RunEvent, RunOutcome, StoreSeeds } from "../src/run/run.js";
 import type { TestCase } from "../src/run/cases.js";
-import type { BlockVersions, SwapDone } from "../src/project/history.js";
+import type { BlockVersions, SavedVersion, SwapDone, VersionRef } from "../src/project/history.js";
 import type { VersionComparison } from "../src/run/versions.js";
 
 /**
@@ -36,6 +36,8 @@ export const CHANNELS = {
   compareVersion: "block:compare-version",
   swapVersion: "block:swap-version",
   undoSwap: "block:undo-swap",
+  saveVersion: "block:save-version",
+  deleteSavedVersion: "block:delete-saved-version",
 } as const;
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -117,14 +119,18 @@ export interface FragmentorApi {
   saveCases(request: SaveCasesRequest): Promise<Result<null>>;
   /** Runs every saved test for a block. */
   runCases(dir: string, blockPath: string): Promise<Result<CaseResult[]>>;
-  /** A block's versions from the git history holding the project, newest first, and the swap Undo swap would reverse. */
+  /** A block's saved versions and its git history, newest first, and the swap Undo swap would reverse. */
   blockVersions(dir: string, blockPath: string): Promise<Result<BlockVersions>>;
-  /** Runs the saved tests of both versions of a block, and every other saved test in its system, against the block as it is and as it was at one commit. */
-  compareVersion(dir: string, blockPath: string, commit: string): Promise<Result<VersionComparison>>;
-  /** Puts a block and its parts back as they were at one commit, keeping what was there so it can be undone. */
-  swapVersion(dir: string, blockPath: string, commit: string): Promise<Result<SwapDone>>;
+  /** Runs the saved tests of both versions of a block, and every other saved test in its system, against the block as it is and as it was in one version. */
+  compareVersion(dir: string, blockPath: string, version: VersionRef): Promise<Result<VersionComparison>>;
+  /** Puts a block and its parts back as they were in one version, keeping what was there so it can be undone. */
+  swapVersion(dir: string, blockPath: string, version: VersionRef): Promise<Result<SwapDone>>;
   /** Puts back what the last swap of this block replaced. */
   undoSwap(dir: string, blockPath: string): Promise<Result<SwapDone>>;
+  /** Saves a block as it is now as a version of it, with a name and a description, in the project for everyone working on it. */
+  saveVersion(dir: string, blockPath: string, name: string, description: string): Promise<Result<SavedVersion & { ignored: string | null }>>;
+  /** Deletes one of a block's saved versions. */
+  deleteSavedVersion(dir: string, blockPath: string, id: string): Promise<Result<null>>;
 }
 
 declare global {

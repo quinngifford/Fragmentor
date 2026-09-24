@@ -132,11 +132,16 @@ Conditions, loops and error handling are the code's. The diagram does not descri
 
 ## Versions
 
-A block's earlier versions come from the git history of whatever repository holds the project; Fragmentor keeps no history of its own. A version is the block with all its parts — their folders, saved tests and the code they point at — as they stood at one commit, because a block without its parts or its code is not the block as it was. What it uses beside it is not part of it: a version is put back into today's system, and runs against today's versions of whatever it calls.
+A version is a block with all its parts — their folders, saved tests and the code they point at — as they stood at one moment, because a block without its parts or its code is not the block as it was. What it uses beside it is not part of it: a version is put back into today's system, and runs against today's versions of whatever it calls.
 
-The person can compare a version with the block as it is, which runs the saved tests of both, and every other saved test in its system, against both; swap the block back to it; and undo the swap. Nothing a swap replaces is lost. A swap is refused where it would change code belonging to a function outside the block, because one file can hold more than one block's code.
+A block has two kinds of version, because they answer different needs:
 
-Starting a project starts a git repository when the folder is in none, and the agent commits each block as it finishes it, so every finished block is a version.
+- **Saved versions** are the few the person chooses to keep: saved from the application with a name and a description, when the block works the way they want to be able to come back to. They are files in the project, so they travel with its repository and everyone working on it sees them.
+- **Git history** is every commit of the repository holding the project that changed the block. It is complete and shared by whatever the team already uses, and far too fine-grained to be the only history, since an agent commits every small step.
+
+Either kind can be compared with the block as it is, which runs the saved tests of both, and every other saved test in its system, against both; swapped in; and the swap undone. Nothing a swap replaces is lost. A swap is refused where it would change code belonging to a function outside the block, because one file can hold more than one block's code.
+
+Starting a project starts a git repository when the folder is in none, and the agent commits each block as it finishes it, so every finished block is in the history. Git is what both kinds stand on: Fragmentor asks it which files make up a block, and does not keep a history of its own beside the one the person saves.
 
 ## Where the AI fits
 

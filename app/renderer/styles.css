@@ -1592,6 +1592,29 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
 .compare-row[data-differs="true"] { border-color: var(--rule-bright); }
 .case-saved { color: var(--ink-faint); }
 
+/* Saved versions and git history are the section's two named parts. A button
+   sits beside a list rather than stretched across it. What the person wrote
+   about a saved version is kept as they wrote it, line breaks included. */
+.version-part { margin-top: 4px; }
+.version-part > .btn { align-self: flex-start; }
+.version-row > .version-about { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* The form for saving one is a box, like the one for saving a test: something
+   to fill in rather than another part of what is above it. */
+.version-save {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--ground);
+}
+
+.version-save .field input, .version-save .field textarea { background: var(--panel); }
+.version-save .field textarea { min-height: 64px; }
+.version-save-actions { display: flex; gap: 6px; }
+
 /* ---- one execution, end to end ---- */
 
 /* Which of the two drawings is on the canvas. */

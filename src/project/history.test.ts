@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { applyPlan, blockVersions, swapToVersion, undoLastSwap } from "./history.js";
+import { applyPlan, blockVersions, deleteSavedVersion, saveVersion, swapToVersion, undoLastSwap } from "./history.js";
 import { commitExampleHistory, filesOf, gitIn } from "./exampleHistory.js";
 
 /**
@@ -71,12 +71,21 @@ async function put(dir: string, file: string, contents: string): Promise<void> {
 /** A project file's text, with a checkout's line endings read as the ones it was written with. */
 const text = async (dir: string, file: string) => (await readFile(path.join(dir, file), "utf8")).replace(/\r\n/g, "\n");
 
+/** Every file's text with its line endings read as the ones it was written with, for comparing across a checkout that converts them. */
+const asText = (files: Map<string, string>) =>
+  new Map([...files].map(([file, bytes]) => [file, Buffer.from(bytes, "base64").toString("latin1").replace(/\r\n/g, "\n")]));
+
 const there = (dir: string, file: string) => stat(path.join(dir, file)).then(() => true, () => false);
 
 const head = async (git: ReturnType<typeof gitIn>) => (await git("rev-parse", "HEAD")).trim();
 
 const record = async (dir: string, n: number) =>
   JSON.parse(await readFile(path.join(dir, ".fragmentor", "swaps", String(n), "swap.json"), "utf8"));
+
+/** Where a block's saved version is kept, relative to the project. */
+const savedAt = (blockPath: string, id: string) => `.fragmentor/versions/${blockPath}/${id}.json`;
+
+const savedFile = async (dir: string, blockPath: string, id: string) => JSON.parse(await readFile(path.join(dir, savedAt(blockPath, id)), "utf8"));
 
 describe("a block's versions", () => {
   it("are the commits that changed it, newest first", async () => {
@@ -230,7 +239,7 @@ describe("a block's versions", () => {
 
   it("are still listed when a swap's record was cut short, as an application stopped while writing it leaves it", async () => {
     const { dir, older, newer } = await ticketsHistory();
-    await swapToVersion(dir, pricing, older);
+    await swapToVersion(dir, pricing, { commit: older });
     const file = path.join(dir, ".fragmentor", "swaps", "1", "swap.json");
     await writeFile(file, (await readFile(file, "utf8")).slice(0, 40));
 
@@ -313,10 +322,10 @@ describe("swapping a block to a version", () => {
   it("puts the block, its parts and their code back as they were, and back again", async () => {
     const { dir, git, older, newer } = await ticketsHistory();
     // Nothing to do is nothing done, and nothing kept.
-    expect(await swapToVersion(dir, pricing, newer)).toEqual({ changed: 0 });
+    expect(await swapToVersion(dir, pricing, { commit: newer })).toEqual({ changed: 0 });
     expect(await there(dir, ".fragmentor")).toBe(false);
 
-    expect((await swapToVersion(dir, pricing, older)).changed).toBeGreaterThan(0);
+    expect((await swapToVersion(dir, pricing, { commit: older })).changed).toBeGreaterThan(0);
     const files = (await git("ls-tree", "-r", "-z", "--name-only", older, "--", PRICING, "src/booking")).split("\0").filter(Boolean);
     const version = files.filter((file) => file.startsWith(PRICING) || /^src\/booking\/(price-seat|refund-for|seat-discount)\.ts$/.test(file));
     expect(version).toContain(`${PRICING}/seat-discount/block.json`);
@@ -325,12 +334,12 @@ describe("swapping a block to a version", () => {
       expect(await text(dir, file), file).toBe((await git("cat-file", "--filters", `${older}:./${file}`)).replace(/\r\n/g, "\n"));
     }
 
-    await swapToVersion(dir, pricing, newer);
+    await swapToVersion(dir, pricing, { commit: newer });
     expect(await there(dir, `${PRICING}/seat-discount`)).toBe(false);
     expect(await there(dir, "src/booking/seat-discount.ts")).toBe(false);
     expect(await text(dir, "src/booking/price-seat.ts")).toBe((await git("cat-file", "--filters", `${newer}:./src/booking/price-seat.ts`)).replace(/\r\n/g, "\n"));
 
-    expect(await swapToVersion(dir, pricing, newer)).toEqual({ changed: 0 });
+    expect(await swapToVersion(dir, pricing, { commit: newer })).toEqual({ changed: 0 });
     expect(await readdir(path.join(dir, ".fragmentor", "swaps"))).toHaveLength(2);
   }, 30_000);
 
@@ -351,7 +360,7 @@ describe("swapping a block to a version", () => {
     await git("add", "--all", "--", ".");
     await git("commit", "--quiet", "-m", "Keep it with booking");
 
-    await swapToVersion(dir, pricing, then);
+    await swapToVersion(dir, pricing, { commit: then });
     expect(await text(dir, "src/booking/price-seat.ts")).toBe("export const HELPER = true;\n");
     expect(await text(dir, "src/pricing/seat.ts")).toBe(shipped.code);
   }, 30_000);
@@ -368,10 +377,10 @@ describe("swapping a block to a version", () => {
     await git("commit", "--quiet", "-m", "Keep notes as a file");
     const file = await head(git);
 
-    await swapToVersion(dir, pricing, folder);
+    await swapToVersion(dir, pricing, { commit: folder });
     expect(JSON.parse(await text(dir, `${PRICING}/notes/block.json`))).toMatchObject({ responsibility: "Notes on pricing." });
 
-    await swapToVersion(dir, pricing, file);
+    await swapToVersion(dir, pricing, { commit: file });
     expect(await text(dir, `${PRICING}/notes`)).toBe("Prices are in pounds.\n");
   }, 30_000);
 
@@ -385,7 +394,7 @@ describe("swapping a block to a version", () => {
     await put(dir, `${PRICING}/__pycache__/x.pyc`, "compiled");
     await put(dir, "src/pricing/.env", "SECRET=1\n");
 
-    await swapToVersion(dir, pricing, newer);
+    await swapToVersion(dir, pricing, { commit: newer });
     expect(await there(dir, "src/pricing/rates.ts")).toBe(false);
     expect(await text(dir, `${PRICING}/__pycache__/x.pyc`)).toBe("compiled");
     expect(await text(dir, "src/pricing/.env")).toBe("SECRET=1\n");
@@ -409,7 +418,7 @@ describe("swapping a block to a version", () => {
     await put(dir, decoy, "decoy now\n");
 
     expect((await blockVersions(dir, `${pricing}/hold-seats`)).versions.map((version) => version.commit)).toEqual([last, first]);
-    await swapToVersion(dir, `${pricing}/hold-seats`, first);
+    await swapToVersion(dir, `${pricing}/hold-seats`, { commit: first });
     expect(await text(dir, real)).toBe("export async function holdSeats() { return 1; }\n");
     expect(await text(dir, decoy)).toBe("decoy now\n");
     expect((await record(dir, 1)).files.map((each: { path: string }) => each.path)).not.toContain(decoy);
@@ -419,7 +428,7 @@ describe("swapping a block to a version", () => {
     const { dir, git, older } = await ticketsHistory();
     const code = await readFile(path.join(dir, "src", "booking", "price-seat.ts"));
 
-    await swapToVersion(dir, pricing, older);
+    await swapToVersion(dir, pricing, { commit: older });
     expect(await record(dir, 1)).toMatchObject({
       kind: "swap",
       block: pricing,
@@ -434,7 +443,7 @@ describe("swapping a block to a version", () => {
     // Said beside the record once every change is made, never by writing it again.
     expect(await there(dir, ".fragmentor/swaps/1/done")).toBe(true);
 
-    expect(await readFile(path.join(dir, ".fragmentor", ".gitignore"), "utf8")).toBe("*\n");
+    expect(await readFile(path.join(dir, ".fragmentor", ".gitignore"), "utf8")).toBe("*\n!versions/\n!versions/**\n");
     expect(await git("status", "--porcelain", "--untracked-files=all")).not.toContain(".fragmentor");
   }, 30_000);
 
@@ -444,7 +453,7 @@ describe("swapping a block to a version", () => {
     await put(dir, `${PRICING}/notes.txt`, "not in git at all\n");
     const before = await filesOf(dir);
 
-    await swapToVersion(dir, pricing, older);
+    await swapToVersion(dir, pricing, { commit: older });
     expect((await blockVersions(dir, pricing)).swapped).toMatchObject({ commit: older, subject: "Price seats with a discount from the third seat" });
     expect(await there(dir, `${PRICING}/notes.txt`)).toBe(false);
 
@@ -463,7 +472,7 @@ describe("swapping a block to a version", () => {
 
     await chmod(code, 0o444);
     try {
-      await expect(swapToVersion(dir, pricing, older)).rejects.toThrow(
+      await expect(swapToVersion(dir, pricing, { commit: older })).rejects.toThrow(
         /^Could not write src\/booking\/price-seat\.ts: .+\. What was there before is kept: press Undo swap to put it back\.$/,
       );
     } finally {
@@ -474,7 +483,7 @@ describe("swapping a block to a version", () => {
     expect((await blockVersions(dir, pricing)).swapped).toMatchObject({ commit: older });
 
     // Trying again would keep a copy of the half-swapped files, not of what was there before.
-    await expect(swapToVersion(dir, pricing, older)).rejects.toThrow(
+    await expect(swapToVersion(dir, pricing, { commit: older })).rejects.toThrow(
       "The last swap of Pricing did not finish. Press Undo swap under Versions in its panel first, so what it replaced is put back.",
     );
 
@@ -487,7 +496,7 @@ describe("swapping a block to a version", () => {
     const code = path.join(dir, "src", "booking", "price-seat.ts");
     await appendFile(code, "// not committed\n");
     const before = await filesOf(dir);
-    await swapToVersion(dir, pricing, older);
+    await swapToVersion(dir, pricing, { commit: older });
 
     await chmod(code, 0o444);
     try {
@@ -507,7 +516,7 @@ describe("swapping a block to a version", () => {
   it("can be undone while git cannot be used, since undoing needs only the copy the swap kept", async () => {
     const { repo, dir, older } = await ticketsHistory();
     const before = await filesOf(dir);
-    await swapToVersion(dir, pricing, older);
+    await swapToVersion(dir, pricing, { commit: older });
     await rename(path.join(repo, ".git"), path.join(repo, "git put away"));
 
     const listed = await blockVersions(dir, pricing);
@@ -531,7 +540,7 @@ describe("swapping a block to a version", () => {
     const before = await filesOf(dir);
 
     if (process.platform === "win32" || process.platform === "darwin") {
-      await expect(swapToVersion(dir, pricing, newer)).rejects.toThrow(
+      await expect(swapToVersion(dir, pricing, { commit: newer })).rejects.toThrow(
         /would change src\/booking\/(refund-for|Refund-For)\.ts, whose name differs only in capitals from src\/booking\/(Refund-For|refund-for)\.ts/,
       );
       expect(await filesOf(dir)).toEqual(before);
@@ -539,7 +548,7 @@ describe("swapping a block to a version", () => {
       return;
     }
 
-    await swapToVersion(dir, pricing, newer);
+    await swapToVersion(dir, pricing, { commit: newer });
     expect(await refundNames(dir)).toEqual(["refund-for.ts"]);
     await undoLastSwap(dir, pricing);
     expect(await filesOf(dir)).toEqual(before);
@@ -554,11 +563,253 @@ describe("swapping a block to a version", () => {
     const before = await filesOf(dir);
 
     if (process.platform !== "win32" && process.platform !== "darwin") return;
-    await expect(swapToVersion(dir, pricing, older)).rejects.toThrow(
+    await expect(swapToVersion(dir, pricing, { commit: older })).rejects.toThrow(
       "would change src/booking/refund-for.ts, whose name differs only in capitals from src/booking/Refund-For.ts",
     );
     expect(await filesOf(dir)).toEqual(before);
     expect(await refundNames(dir)).toEqual(["Refund-For.ts"]);
+  }, 30_000);
+});
+
+describe("a saved version", () => {
+  it("is listed with its name, description and author, and shows up to be committed while swaps stay hidden", async () => {
+    const { dir, git, older } = await ticketsHistory();
+    await git("config", "user.name", "Ada Lovelace");
+    // What a Fragmentor from before saved versions told git, which would hide them too.
+    await put(dir, ".fragmentor/.gitignore", "*\n");
+
+    const { ignored, ...saved } = await saveVersion(dir, pricing, "  Ten percent from the fifth seat ", " As it shipped. ");
+    expect(ignored).toBeNull();
+    expect(saved).toEqual({
+      id: expect.stringMatching(/^\d{13}-ten-percent-from-the-fifth-seat$/),
+      name: "Ten percent from the fifth seat",
+      description: "As it shipped.",
+      date: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+      author: "Ada Lovelace",
+    });
+    expect(await savedFile(dir, pricing, saved.id)).toMatchObject({ name: saved.name, block: pricing, saved: saved.date, by: "Ada Lovelace" });
+    const listed = await blockVersions(dir, pricing);
+    expect(listed).toMatchObject({ saved: [saved], unreadable: [], swapped: null, changed: false });
+    expect(await readFile(path.join(dir, ".fragmentor", ".gitignore"), "utf8")).toBe("*\n!versions/\n!versions/**\n");
+
+    await swapToVersion(dir, pricing, { commit: older });
+    const status = await git("status", "--porcelain", "--untracked-files=all");
+    expect(status).toContain(savedAt(pricing, saved.id));
+    expect(status).not.toContain(".fragmentor/swaps");
+    expect(status).not.toContain(".fragmentor/.gitignore");
+  }, 30_000);
+
+  it("holds the block, its parts, their saved tests and the code they point at, as they are now", async () => {
+    const { dir } = await ticketsHistory();
+    await appendFile(path.join(dir, "src", "booking", "refund-for.ts"), "// not committed\n");
+    await put(dir, `${PRICING}/notes.txt`, "not in git at all\n");
+    await put(dir, `${PRICING}/.env`, "SECRET=1\n");
+
+    const saved = await saveVersion(dir, pricing, "As it is", "");
+    const files = (await savedFile(dir, pricing, saved.id)).files;
+    expect(Object.keys(files).sort()).toEqual([
+      `${PRICING}/block.json`,
+      `${PRICING}/notes.txt`,
+      `${PRICING}/price-seat/block.json`,
+      `${PRICING}/price-seat/cases.json`,
+      `${PRICING}/price-seat/contract.ts`,
+      `${PRICING}/refund-for/block.json`,
+      `${PRICING}/refund-for/cases.json`,
+      `${PRICING}/refund-for/contract.ts`,
+      "src/booking/price-seat.ts",
+      "src/booking/refund-for.ts",
+    ]);
+    expect(files["src/booking/refund-for.ts"].text).toMatch(/\/\/ not committed\n$/);
+
+    // Swapped to straight away, it is what is there.
+    expect(await swapToVersion(dir, pricing, { saved: saved.id })).toEqual({ changed: 0 });
+    expect(await there(dir, ".fragmentor/swaps")).toBe(false);
+  }, 30_000);
+
+  it("is swapped to exactly as it was saved, over another version, and the swap can be undone", async () => {
+    const { dir, older } = await ticketsHistory();
+    await appendFile(path.join(dir, "src", "booking", "refund-for.ts"), "// not committed\n");
+    await put(dir, `${PRICING}/notes.txt`, "not in git at all\n");
+    const snapshot = await filesOf(dir);
+    const { ignored, ...saved } = await saveVersion(dir, pricing, "Ten percent", "");
+
+    await swapToVersion(dir, pricing, { commit: older });
+    expect(await there(dir, `${PRICING}/seat-discount/block.json`)).toBe(true);
+    const atOlder = await filesOf(dir);
+
+    expect((await swapToVersion(dir, pricing, { saved: saved.id })).changed).toBeGreaterThan(0);
+    expect(await there(dir, `${PRICING}/seat-discount`)).toBe(false);
+    // The code of a part added since is under a pointer the saved version
+    // knows nothing about, so it is left where it is rather than taken away.
+    const after = await filesOf(dir);
+    expect(after.get("src/booking/seat-discount.ts")).toBe(atOlder.get("src/booking/seat-discount.ts"));
+    after.delete("src/booking/seat-discount.ts");
+    // What was written was written as a checkout here writes it, which this
+    // repository does with Windows line endings; the fixture's files had none.
+    expect(asText(after)).toEqual(asText(snapshot));
+
+    expect((await blockVersions(dir, pricing)).swapped).toEqual({ kind: "saved", ...saved });
+    expect(await record(dir, 2)).toMatchObject({ kind: "swap", block: pricing, name: "Pricing", saved });
+
+    await undoLastSwap(dir, pricing);
+    expect(await filesOf(dir)).toEqual(atOlder);
+    expect((await blockVersions(dir, pricing)).swapped).toBeNull();
+  }, 30_000);
+
+  it("keeps a file that is not text as its bytes, and puts them back exactly", async () => {
+    const { dir } = await ticketsHistory();
+    const bytes = Buffer.from([0xff, 0xfe, 0x00, 0x80, 0x0d, 0x0a, 0xc3]);
+    await writeFile(path.join(dir, PRICING, "seat-map.bin"), bytes);
+
+    const saved = await saveVersion(dir, pricing, "With its seat map", "");
+    const files = (await savedFile(dir, pricing, saved.id)).files;
+    expect(files[`${PRICING}/seat-map.bin`]).toEqual({ base64: bytes.toString("base64") });
+    expect(files[`${PRICING}/block.json`]).toEqual({ text: await readFile(path.join(dir, PRICING, "block.json"), "utf8") });
+
+    await writeFile(path.join(dir, PRICING, "seat-map.bin"), Buffer.from([1, 2, 3]));
+    await swapToVersion(dir, pricing, { saved: saved.id });
+    expect(await readFile(path.join(dir, PRICING, "seat-map.bin"))).toEqual(bytes);
+  }, 30_000);
+
+  it("leaves alone a file under code the block has pointed at only since it was saved", async () => {
+    const { dir, git } = await ticketsHistory();
+    const saved = await saveVersion(dir, pricing, "Before the rules", "");
+
+    // A helper that was there all along, which a part added since points at.
+    await put(dir, "src/booking/refund-rules.ts", "export const FEE = 5;\n");
+    await git("add", "--all", "--", ".");
+    await git("commit", "--quiet", "-m", "Keep the refund rules apart");
+    await put(dir, `${PRICING}/refund-rules/block.json`, JSON.stringify({ responsibility: "Say what a refund keeps.", code: "src/booking/refund-rules.ts#FEE" }));
+
+    await swapToVersion(dir, pricing, { saved: saved.id });
+    expect(await there(dir, `${PRICING}/refund-rules`)).toBe(false);
+    expect(await text(dir, "src/booking/refund-rules.ts")).toBe("export const FEE = 5;\n");
+  }, 30_000);
+
+  it("keeps text as git stores it, and writes it back as this computer's checkout would", async () => {
+    const { dir } = await ticketsHistory();
+    // The fixture's repository converts line endings, as Windows does by default.
+    const code = path.join(dir, "src", "booking", "price-seat.ts");
+    const asCheckedOut = (await readFile(code, "utf8")).replace(/\r?\n/g, "\r\n");
+    await writeFile(code, asCheckedOut, "utf8");
+
+    const saved = await saveVersion(dir, pricing, "Ten percent", "");
+    const stored = (await savedFile(dir, pricing, saved.id)).files["src/booking/price-seat.ts"].text as string;
+    expect(stored).not.toContain("\r");
+    expect(stored).toBe(asCheckedOut.replace(/\r\n/g, "\n"));
+
+    await appendFile(code, "// changed\r\n");
+    await swapToVersion(dir, pricing, { saved: saved.id });
+    expect(await readFile(code, "utf8")).toBe(asCheckedOut);
+  }, 30_000);
+
+  it("says which rule keeps git from sharing it, where the repository ignores where it is kept", async () => {
+    const { dir, git } = await ticketsHistory();
+    await put(dir, ".gitignore", ".fragmentor/\n");
+
+    const saved = await saveVersion(dir, pricing, "Kept here", "");
+    expect(saved.ignored).toMatch(/\.gitignore:1:\.fragmentor\//);
+    expect(await git("status", "--porcelain", "--untracked-files=all")).not.toContain(".fragmentor/versions");
+  }, 30_000);
+
+  it("is refused without a name, with a name the block's saved versions already have, or with too much said", async () => {
+    const { dir } = await ticketsHistory();
+
+    await expect(saveVersion(dir, pricing, "   ", "")).rejects.toThrow("A saved version needs a name.");
+    await expect(saveVersion(dir, pricing, "x".repeat(81), "")).rejects.toThrow("A saved version's name can be at most 80 characters.");
+    await expect(saveVersion(dir, pricing, "Fine", "x".repeat(2001))).rejects.toThrow(
+      "A saved version's description can be at most 2000 characters.",
+    );
+    const { ignored, ...taken } = await saveVersion(dir, pricing, "Ten percent", "");
+    await expect(saveVersion(dir, pricing, " TEN PERCENT", "")).rejects.toThrow(
+      "Pricing already has a saved version named “Ten percent”. Give this one a name of its own.",
+    );
+
+    // A part's saved versions are its own, kept in a folder inside its block's.
+    const { ignored: alsoIgnored, ...part } = await saveVersion(dir, priceSeat, "Ten percent", "");
+    expect((await blockVersions(dir, pricing)).saved).toEqual([taken]);
+    expect((await blockVersions(dir, priceSeat)).saved).toEqual([part]);
+
+    // A block git is told to ignore has nothing a swap could put back.
+    await put(dir, `${PRICING}/hold-seats/block.json`, JSON.stringify({ role: "component", responsibility: "Hold seats." }));
+    await put(dir, ".gitignore", "hold-seats/\n");
+    await expect(saveVersion(dir, `${pricing}/hold-seats`, "Held", "")).rejects.toThrow(
+      "Hold Seats cannot be saved as a version: git does not see its block.json, as when it is told to ignore it, so it could never be swapped back.",
+    );
+  }, 30_000);
+
+  it("is refused for a block that could never be swapped back on its own, naming the block to save instead", async () => {
+    const dir = path.join(await scratch(), "messenger app");
+    await cp(path.join(examples, "messenger"), dir, { recursive: true });
+    const git = gitIn(dir);
+    await git("init", "--quiet");
+    await git("add", "--all");
+    await git("commit", "--quiet", "-m", "The messenger");
+
+    await expect(saveVersion(dir, "app/api/auth/log-in", "Logs in", "")).rejects.toThrow(
+      "Log In cannot be saved as a version on its own, since swapping it back would also change the code of Check Session and Log Out, which are not part of it: src/api/auth.ts. Save Auth, which holds them all, instead.",
+    );
+    expect(await there(dir, ".fragmentor")).toBe(false);
+    expect((await saveVersion(dir, "app/api/auth", "Logs in", "")).name).toBe("Logs in");
+  }, 30_000);
+
+  it("is refused, and still listed, while git cannot be used", async () => {
+    const { repo, dir } = await ticketsHistory();
+    const { ignored, ...saved } = await saveVersion(dir, pricing, "Kept", "");
+    await rename(path.join(repo, ".git"), path.join(repo, "git put away"));
+
+    const listed = await blockVersions(dir, pricing);
+    expect(listed.unavailable).toBe(
+      "Versions come from the project's git history, and this folder is not in a git repository yet. Ask your agent to put it under git and commit.",
+    );
+    expect(listed.saved).toEqual([saved]);
+    await expect(saveVersion(dir, pricing, "Another", "")).rejects.toThrow(listed.unavailable!);
+  }, 30_000);
+
+  it("that cannot be read, as a merge can leave one, is named rather than dropped, and is not swapped to", async () => {
+    const { dir } = await ticketsHistory();
+    const { ignored, ...kept } = await saveVersion(dir, pricing, "Kept", "");
+    const conflicted = await saveVersion(dir, pricing, "Conflicted", "");
+    const file = path.join(dir, savedAt(pricing, conflicted.id));
+    const text = await readFile(file, "utf8");
+    await writeFile(file, `<<<<<<< ours\n${text}=======\n${text}>>>>>>> theirs\n`);
+    // One whose paths climb out of the project was never written by Fragmentor.
+    await put(
+      dir,
+      savedAt(pricing, "1700000000000-outside"),
+      JSON.stringify({ name: "Outside", description: "", block: pricing, saved: "", by: "", files: { "../outside.ts": { text: "" } } }),
+    );
+
+    const listed = await blockVersions(dir, pricing);
+    expect(listed.saved).toEqual([kept]);
+    expect(listed.unreadable).toEqual([savedAt(pricing, conflicted.id), savedAt(pricing, "1700000000000-outside")].sort());
+    await expect(swapToVersion(dir, pricing, { saved: conflicted.id })).rejects.toThrow(
+      `This version cannot be compared or swapped: Fragmentor cannot read ${savedAt(pricing, conflicted.id)} as a saved version.`,
+    );
+  }, 30_000);
+
+  it("is refused by an id that is not one, or no longer there", async () => {
+    const { dir } = await ticketsHistory();
+    for (const id of ["-x", "../../../outside", "1700000000000-Capitals"]) {
+      await expect(swapToVersion(dir, pricing, { saved: id })).rejects.toThrow(`"${id}" is not a saved version.`);
+      await expect(deleteSavedVersion(dir, pricing, id)).rejects.toThrow(`"${id}" is not a saved version.`);
+    }
+    await expect(swapToVersion(dir, pricing, { saved: "1700000000000-gone" })).rejects.toThrow("That saved version is not there any more.");
+    await expect(deleteSavedVersion(dir, pricing, "1700000000000-gone")).rejects.toThrow("That saved version is not there any more.");
+  }, 30_000);
+
+  it("can be deleted, taking the folders it leaves empty with it", async () => {
+    const { dir } = await ticketsHistory();
+    const part = await saveVersion(dir, priceSeat, "Part", "");
+    const whole = await saveVersion(dir, pricing, "Whole", "");
+
+    await deleteSavedVersion(dir, priceSeat, part.id);
+    expect(await there(dir, `.fragmentor/versions/${priceSeat}`)).toBe(false);
+    expect(await there(dir, savedAt(pricing, whole.id))).toBe(true);
+
+    await deleteSavedVersion(dir, pricing, whole.id);
+    expect(await readdir(path.join(dir, ".fragmentor", "versions"))).toEqual([]);
+    expect((await blockVersions(dir, pricing)).saved).toEqual([]);
   }, 30_000);
 });
 
@@ -573,11 +824,11 @@ describe("a link", () => {
     await git("update-index", "--add", "--cacheinfo", `120000,${object},${prefix}${PRICING}/notes.md`);
     await git("commit", "--quiet", "-m", "Link the notes");
 
-    expect(await swapToVersion(dir, pricing, await head(git))).toEqual({ changed: 0 });
+    expect(await swapToVersion(dir, pricing, { commit: await head(git) })).toEqual({ changed: 0 });
     expect(await there(dir, `${PRICING}/notes.md`)).toBe(true);
   }, 30_000);
 
-  it("on the way to code a swap would change refuses the swap, and is left as it was", async () => {
+  it("on the way to code a swap would change refuses the swap, and saving a version it could never be swapped back to", async () => {
     const { dir, older } = await ticketsHistory();
     // The code is kept in a folder shared with something else.
     const shared = path.join(await scratch(), "shared booking");
@@ -587,11 +838,16 @@ describe("a link", () => {
     await symlink(shared, booking, "junction");
     const kept = await filesOf(shared);
 
-    await expect(swapToVersion(dir, pricing, older)).rejects.toThrow(
+    await expect(swapToVersion(dir, pricing, { commit: older })).rejects.toThrow(
       "Swapping Pricing would go through a link at src/booking, and Fragmentor never writes through one, so it cannot be compared or swapped.",
     );
     expect((await lstat(booking)).isSymbolicLink()).toBe(true);
     expect(await filesOf(shared)).toEqual(kept);
+
+    await expect(saveVersion(dir, pricing, "Linked", "")).rejects.toThrow(
+      "Pricing cannot be saved as a version: it goes through a link at src/booking, and Fragmentor never writes through one, so it could never be swapped back.",
+    );
+    expect(await there(dir, ".fragmentor")).toBe(false);
   }, 30_000);
 
   it("is never written or deleted through, even when it appears after the plan was made", async () => {
@@ -620,7 +876,7 @@ describe("a version that cannot be swapped in", () => {
     await put(dir, `${PRICING}/block.json`, block);
     await git("commit", "--quiet", "-am", "Stop listing them");
 
-    const refused = swapToVersion(dir, pricing, listed);
+    const refused = swapToVersion(dir, pricing, { commit: listed });
     await expect(refused).rejects.toThrow(
       `This version cannot be compared or swapped: Fragmentor no longer reads ${PRICING}/block.json as it was written then.`,
     );
@@ -633,7 +889,7 @@ describe("a version that cannot be swapped in", () => {
     await git("add", "--all", "--", ".");
     await git("commit", "--quiet", "-m", "Add a fee");
 
-    await expect(swapToVersion(dir, `${pricing}/add-fee`, older)).rejects.toThrow("Add Fee was not a block in this version.");
+    await expect(swapToVersion(dir, `${pricing}/add-fee`, { commit: older })).rejects.toThrow("Add Fee was not a block in this version.");
   }, 30_000);
 
   it("is refused when it would change another block's folder", async () => {
@@ -650,7 +906,7 @@ describe("a version that cannot be swapped in", () => {
     await git("add", "--all", "--", ".");
     await git("commit", "--quiet", "-m", "Price them with pricing");
 
-    await expect(swapToVersion(dir, pricing, then)).rejects.toThrow(
+    await expect(swapToVersion(dir, pricing, { commit: then })).rejects.toThrow(
       `Swapping Pricing would change ${inside}, which is inside another block's folder, so it cannot be compared or swapped on its own.`,
     );
   }, 30_000);
@@ -667,13 +923,13 @@ describe("a version that cannot be swapped in", () => {
     await git("commit", "--quiet", "-am", "Point back inside");
     await put(repo, "outside.ts", "on disk\n");
 
-    await swapToVersion(dir, pricing, then);
+    await swapToVersion(dir, pricing, { commit: then });
     expect(await text(dir, `${PRICING}/price-seat/block.json`)).toContain("../outside.ts");
     expect(await text(repo, "outside.ts")).toBe("on disk\n");
   }, 30_000);
 
   it("is refused when it is not a commit at all", async () => {
     const { dir } = await ticketsHistory();
-    await expect(swapToVersion(dir, pricing, "-x")).rejects.toThrow('"-x" is not a commit.');
+    await expect(swapToVersion(dir, pricing, { commit: "-x" })).rejects.toThrow('"-x" is not a commit.');
   }, 30_000);
 });

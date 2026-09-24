@@ -4,9 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { compareWithVersion } from "./versions.js";
-import type { ComparedBlock } from "./versions.js";
+import type { ComparedBlock, VersionComparison } from "./versions.js";
 import type { CaseResult } from "./run.js";
 import { commitExampleHistory, filesOf, gitIn } from "../project/exampleHistory.js";
+import { saveVersion, swapToVersion, undoLastSwap } from "../project/history.js";
 
 /**
  * Comparing pricing with its older version, in which a part of its own took a
@@ -63,7 +64,7 @@ describe("comparing a block with a version", () => {
     const before = await copies();
     const project = await filesOf(dir);
 
-    const compared = await compareWithVersion(dir, pricing, older);
+    const compared = await compareWithVersion(dir, pricing, { commit: older });
     const inside = (id: string) => compared.inside.find((block) => block.blockPath === `${pricing}/${id}`);
 
     expect(compared.system).toBe("Tickets");
@@ -91,6 +92,24 @@ describe("comparing a block with a version", () => {
     expect(await copies()).toEqual(before);
     expect(await filesOf(dir)).toEqual(project);
   }, 60_000);
+
+  it("compares with a saved version just as with the commit it was saved from", async () => {
+    const { dir, older } = await ticketsHistory();
+    await swapToVersion(dir, pricing, { commit: older });
+    const saved = await saveVersion(dir, pricing, "A fifth off from the third seat", "");
+    await undoLastSwap(dir, pricing);
+    const project = await filesOf(dir);
+
+    const bySaved = await compareWithVersion(dir, pricing, { saved: saved.id });
+    const byCommit = await compareWithVersion(dir, pricing, { commit: older });
+    const verdicts = (compared: VersionComparison) => [...compared.inside, ...compared.outside].map((block) => [block.blockPath, outcomes(block)]);
+    expect(verdicts(bySaved)).toEqual(verdicts(byCommit));
+    expect(outcomes(bySaved.inside.find((block) => block.blockPath === `${pricing}/seat-discount`))).toEqual({
+      "the third seat is a fifth off": "absent / passed",
+    });
+    expect(bySaved.othersRun).toBe(byCommit.othersRun);
+    expect(await filesOf(dir)).toEqual(project);
+  }, 120_000);
 
   it("runs each version in a copy of its own, reading the project's other files and never writing them", async () => {
     const dir = path.join(await scratch(), "rates app");
@@ -137,7 +156,7 @@ export async function price(input: { amount: number }, caps: any) {
     const before = await copies();
     const project = await filesOf(dir);
 
-    const compared = await compareWithVersion(dir, "rates", tripled);
+    const compared = await compareWithVersion(dir, "rates", { commit: tripled });
 
     // The version reads the rate a swap would put back, not today's.
     expect(outcomes(compared.inside[0])).toEqual({ doubles: "passed / failed" });
@@ -156,7 +175,7 @@ export async function price(input: { amount: number }, caps: any) {
     await writeFile(cases, shipped);
     await git("commit", "--quiet", "-am", "Take the comma away");
 
-    const compared = await compareWithVersion(dir, pricing, broken);
+    const compared = await compareWithVersion(dir, pricing, { commit: broken });
     const priceSeat = compared.inside.find((block) => block.blockPath === `${pricing}/price-seat`);
     expect(priceSeat?.unreadable).toEqual({ now: null, then: expect.stringMatching(/^cases\.json is not valid JSON/) });
     expect(priceSeat?.tests.map((test) => test.saved)).toEqual(["both", "both"]);
@@ -175,7 +194,7 @@ export async function price(input: { amount: number }, caps: any) {
     await rm(samples, { recursive: true });
     await symlink(shared, samples, "junction");
 
-    await expect(compareWithVersion(dir, pricing, then)).rejects.toThrow(
+    await expect(compareWithVersion(dir, pricing, { commit: then })).rejects.toThrow(
       `Swapping Pricing would go through a link at blocks/${pricing}/price-seat/samples, and Fragmentor never writes through one, so it cannot be compared or swapped.`,
     );
     expect(await readdir(shared)).toEqual(["a.txt", "b.txt"]);
@@ -193,7 +212,7 @@ export async function price(input: { amount: number }, caps: any) {
     const cases = JSON.parse(await readFile(path.join(folder, "cases.json"), "utf8")) as { input: Record<string, unknown> }[];
     await writeFile(path.join(folder, "cases.json"), JSON.stringify(cases.map((each) => ({ ...each, input: { ...each.input, currency: "GBP" } }))));
 
-    const compared = await compareWithVersion(dir, pricing, newer);
+    const compared = await compareWithVersion(dir, pricing, { commit: newer });
     const fifth = compared.inside
       .find((each) => each.blockPath === `${pricing}/price-seat`)
       ?.tests.find((test) => test.name === "the fifth is ten percent off");

@@ -2,6 +2,7 @@ import { copyFile, cp, lstat, mkdir, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { applyPlan, noise, planSwap, pointerPath, under } from "../project/history.js";
+import type { VersionRef } from "../project/history.js";
 import { loadProject } from "../project/project.js";
 import type { Project } from "../project/project.js";
 import { readCases } from "./cases.js";
@@ -86,8 +87,9 @@ async function testsIn(project: Project, dir: string, blockPath: string): Promis
   return { cases: read.cases, unreadable: read.problem?.replace(/^Its tests could not be read: /, "") ?? null };
 }
 
-export async function compareWithVersion(projectDir: string, blockPath: string, commit: string): Promise<VersionComparison> {
-  const plan = await planSwap(projectDir, blockPath, commit);
+/** Compares a block with one of its versions, a commit or a saved version alike. */
+export async function compareWithVersion(projectDir: string, blockPath: string, version: VersionRef): Promise<VersionComparison> {
+  const plan = await planSwap(projectDir, blockPath, version);
   const live = plan.project;
 
   const copies = await mkdtemp(path.join(tmpdir(), "fragmentor-compare-"));

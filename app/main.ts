@@ -24,8 +24,16 @@ import { resolveInside } from "../src/project/safePath.js";
 import { runCases, startRun } from "../src/run/run.js";
 import type { CaseResult, RunControl, RunOutcome } from "../src/run/run.js";
 import { saveCases } from "../src/run/cases.js";
-import { blockVersions, noise, swapToVersion, undoLastSwap } from "../src/project/history.js";
-import type { BlockVersions, SwapDone } from "../src/project/history.js";
+import {
+  blockVersions,
+  deleteSavedVersion,
+  noise,
+  savedIdPattern,
+  saveVersion,
+  swapToVersion,
+  undoLastSwap,
+} from "../src/project/history.js";
+import type { BlockVersions, SavedVersion, SwapDone, VersionRef } from "../src/project/history.js";
 import { compareWithVersion } from "../src/run/versions.js";
 import type { VersionComparison } from "../src/run/versions.js";
 import { commitExampleHistory, filesOf, gitIn } from "../src/project/exampleHistory.js";
@@ -86,6 +94,35 @@ function failed(error: unknown): Result<never> {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Text the window sent, refused unless it is text no longer than the panel's
+ * own field lets anyone type. The renderer is not trusted to send only what
+ * the panel would, so this is checked before the kernel sees it, which checks
+ * everything again for whoever calls it.
+ */
+function sent(value: unknown, what = "What the window sent", most = Infinity): string {
+  if (typeof value !== "string") throw new Error(`${what} must be text.`);
+  if (value.length > most) throw new Error(`${what} can be at most ${most} characters.`);
+  return value;
+}
+
+/** A saved version's id, as the window sent it, refused before any path is made from it. */
+function savedId(value: unknown): string {
+  const id = sent(value, "A saved version's id");
+  if (!savedIdPattern.test(id)) throw new Error(`"${id}" is not a saved version.`);
+  return id;
+}
+
+/** The version the window asked for: a commit, or a saved version by its id, and nothing beside it. */
+function versionRef(value: unknown): VersionRef {
+  if (typeof value === "object" && value !== null && Object.keys(value).length === 1) {
+    // Whether a commit looks like one is the kernel's to check, before git sees it.
+    if ("commit" in value) return { commit: sent(value.commit, "A commit") };
+    if ("saved" in value) return { saved: savedId(value.saved) };
+  }
+  throw new Error("That is not a commit or a saved version.");
 }
 
 async function exists(file: string): Promise<boolean> {
@@ -471,13 +508,15 @@ function registerHandlers(): void {
   });
 
   /**
-   * A swap rewrites files, and a comparison is planned from them: two at once
-   * could each back up, or compare, what the other half wrote. Here rather
-   * than in the panel, which can be left for another project while one runs.
+   * A swap rewrites files, and a comparison is planned from them, as a saved
+   * version is read from them: two at once could each back up, compare or
+   * save what the other half wrote. A saved version is read by a comparison
+   * or a swap of it, so it is never deleted from under one. Here rather than
+   * in the panel, which can be left for another project while one runs.
    */
   let busy = false;
   async function oneAtATime<T>(work: () => Promise<T>): Promise<T> {
-    if (busy) throw new Error("Something is still being compared or swapped. Try again once it has finished.");
+    if (busy) throw new Error("Something is still being compared, swapped or saved. Try again once it has finished.");
     busy = true;
     try {
       return await work();
@@ -488,18 +527,20 @@ function registerHandlers(): void {
 
   ipcMain.handle(
     CHANNELS.compareVersion,
-    async (_event, dir: string, blockPath: string, commit: string): Promise<Result<VersionComparison>> => {
+    async (_event, dir: unknown, blockPath: unknown, version: unknown): Promise<Result<VersionComparison>> => {
       try {
-        return ok(await oneAtATime(() => compareWithVersion(dir, blockPath, commit)));
+        const ref = versionRef(version);
+        return ok(await oneAtATime(() => compareWithVersion(sent(dir), sent(blockPath), ref)));
       } catch (error) {
         return failed(error);
       }
     },
   );
 
-  ipcMain.handle(CHANNELS.swapVersion, async (_event, dir: string, blockPath: string, commit: string): Promise<Result<SwapDone>> => {
+  ipcMain.handle(CHANNELS.swapVersion, async (_event, dir: unknown, blockPath: unknown, version: unknown): Promise<Result<SwapDone>> => {
     try {
-      return ok(await oneAtATime(() => swapToVersion(dir, blockPath, commit)));
+      const ref = versionRef(version);
+      return ok(await oneAtATime(() => swapToVersion(sent(dir), sent(blockPath), ref)));
     } catch (error) {
       return failed(error);
     }
@@ -508,6 +549,29 @@ function registerHandlers(): void {
   ipcMain.handle(CHANNELS.undoSwap, async (_event, dir: string, blockPath: string): Promise<Result<SwapDone>> => {
     try {
       return ok(await oneAtATime(() => undoLastSwap(dir, blockPath)));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  ipcMain.handle(
+    CHANNELS.saveVersion,
+    async (_event, dir: unknown, blockPath: unknown, name: unknown, description: unknown): Promise<Result<SavedVersion & { ignored: string | null }>> => {
+      try {
+        const called = sent(name, "A saved version's name", 80);
+        const about = sent(description, "A saved version's description", 2000);
+        return ok(await oneAtATime(() => saveVersion(sent(dir), sent(blockPath), called, about)));
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  ipcMain.handle(CHANNELS.deleteSavedVersion, async (_event, dir: unknown, blockPath: unknown, id: unknown): Promise<Result<null>> => {
+    try {
+      const saved = savedId(id);
+      await oneAtATime(() => deleteSavedVersion(sent(dir), sent(blockPath), saved));
+      return ok(null);
     } catch (error) {
       return failed(error);
     }
@@ -936,16 +1000,21 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
     ],
     ["a new project starts a git repository, so its blocks have versions from the start", value("newRepo", "started") === true],
     [
-      "every block's panel ends with its versions, newest first, with no window of their own",
+      "every block's panel ends with its versions, the saved ones and then its git history, newest first, with no window of their own",
       value("history", "built") === true &&
         /Versions$/.test(String(value("versions", "sections"))) &&
         !/Versions/.test(String(value("versions", "windows"))) &&
+        value("versions", "parts") === "Saved | Git history" &&
+        value("versions", "nowFirst") === true &&
         value("versions", "listed") === 2 &&
         value("versions", "subjects") === "Take ten percent off from the fifth seat | Price seats with a discount from the third seat" &&
         value("versions", "latest") === true &&
-        value("versions", "now") === "The same as the latest version." &&
+        value("versions", "now") === "The same as the latest commit." &&
         value("versions", "offers") === "Compare | Swap to this" &&
-        value("versions", "undo") === false,
+        value("versions", "undo") === false &&
+        value("versions", "saveOffered") === true &&
+        value("versions", "noneSaved") === "No saved versions yet. Save one when Pricing works the way you want to keep it." &&
+        value("versions", "noFold") === true,
     ],
     [
       "comparing a version runs the saved tests of both versions against both, and shows what that would change elsewhere",
@@ -979,7 +1048,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       value("swapped", "arrived") === true &&
         value("swapped", "status") ===
           "Swapped Pricing to the version “Price seats with a discount from the third seat”. Undo swap is under Versions in its panel." &&
-        /^Swapped to the version “Price seats with a discount from the third seat”, of /.test(String(value("swapped", "now"))) &&
+        /^Swapped to “Price seats with a discount from the third seat”, committed /.test(String(value("swapped", "now"))) &&
         value("swapped", "marked") === true &&
         value("swapped", "undo") === true &&
         value("guarded", "ran") === "2 of 2 passed." &&
@@ -992,11 +1061,62 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
     [
       "undoing a swap puts back exactly what was there",
       value("undone", "gone") === true &&
-        value("undone", "now") === "The same as the latest version." &&
+        value("undone", "now") === "The same as the latest commit." &&
         value("undone", "status") === "Put Pricing back as it was before the swap." &&
         value("undone", "undo") === false &&
         value("undone", "benchTests") === "the first four seats are full price | the fifth is ten percent off" &&
         value("undoneOnDisk", "exactly") === true,
+    ],
+    [
+      "a block is saved as a version from a form that keeps what is typed, and is listed with its name, description and author, in a file that shows up to be committed with the project",
+      value("saveForm", "focused") === true &&
+        value("saveForm", "emptyRefused") === true &&
+        value("saveForm", "kept") === true &&
+        value("saving", "about") === "The first four seats at full price, and ten percent off each one after." &&
+        /^saved .+ · Fragmentor$/.test(String(value("saving", "meta"))) &&
+        value("saving", "offers") === "Compare | Swap to this | Delete" &&
+        value("saving", "formGone") === true &&
+        value("saving", "status") ===
+          "Saved “Ten percent from the fifth seat” as a version of Pricing. It is shared once the project is next committed." &&
+        ["written", "forCommitting", "swapsPrivate"].every((key) => value("savedOnDisk", key) === true),
+    ],
+    [
+      "a saved version is compared like a commit",
+      value("savedCompared", "summary") === "Every saved test of Pricing and its parts comes out the same in both versions." &&
+        value("savedCompared", "others") === "Every other saved test in Tickets comes out the same in both versions." &&
+        value("savedCompared", "differing") === 0,
+    ],
+    [
+      "swapping to a saved version puts back every file it saved, leaves alone code it knew nothing about, and undoing that puts back what was there",
+      value("swappedOlder", "arrived") === true &&
+        value("swappedSaved", "gone") === true &&
+        /^Swapped to “Ten percent from the fifth seat”, saved /.test(String(value("swappedSaved", "now"))) &&
+        value("swappedSaved", "status") ===
+          "Swapped Pricing to the version “Ten percent from the fifth seat”. Undo swap is under Versions in its panel." &&
+        value("swappedSaved", "marked") === true &&
+        value("swappedSaved", "undo") === true &&
+        value("savedSwapOnDisk", "exactly") === true &&
+        value("undoneSaved", "back") === true &&
+        value("undoneSavedOnDisk", "exactly") === true,
+    ],
+    [
+      "a saved version is deleted only once the person has said so twice",
+      value("asked", "question") ===
+        "Delete “Ten percent from the fifth seat”? It goes for everyone once the project is next committed. If it was ever committed, git's history still has it; if not, it is gone for good." &&
+        value("asked", "answers") === "Delete it | Keep" &&
+        value("asked", "kept") === true &&
+        value("askedOnDisk", "still") === true &&
+        value("deleted", "gone") === true &&
+        value("deleted", "status") === "Deleted the saved version “Ten percent from the fifth seat”." &&
+        value("deleted", "none") === "No saved versions yet. Save one when Pricing works the way you want to keep it." &&
+        value("deletedOnDisk", "gone") === true,
+    ],
+    [
+      "the git history lists its newest five commits until all of them are asked for",
+      value("historyFolded", "offered") === true &&
+        value("historyFolded", "folded") === 5 &&
+        value("historyFolded", "unfolded") === 6 &&
+        value("historyFolded", "back") === 5,
     ],
     [
       "an execution is stepped through on the tree, one arrow at a time, and read end to end as its own drawing",
@@ -1276,6 +1396,13 @@ function attachSelfCheck(
         report[label] = (await window.webContents.executeJavaScript(step(body))) as StepResult;
       };
       const inProject = (...parts: string[]) => path.join(check.projectDir, ...parts);
+      // Every byte of every file the same, as filesOf gives them.
+      const sameFiles = (a: Map<string, string>, b: Map<string, string>) =>
+        a.size === b.size && [...a].every(([file, bytes]) => b.get(file) === bytes);
+      // The same text in every file, whatever line endings a checkout here gave it.
+      const asText = (bytes: string | undefined) => (bytes === undefined ? undefined : Buffer.from(bytes, "base64").toString("latin1").replace(/\r\n/g, "\n"));
+      const sameText = (a: Map<string, string>, b: Map<string, string>) =>
+        a.size === b.size && [...a].every(([file, bytes]) => asText(b.get(file)) === asText(bytes));
 
       try {
         // The tickets copy is given a history first, while nothing has it open
@@ -2277,9 +2404,16 @@ function attachSelfCheck(
           const node = (label) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === label);
           const heading = (label) => until(() => text("#inspector h2") === label, 5000);
           const button = (within, label) => (within ? [...within.querySelectorAll("button")].find((b) => b.textContent === label) : undefined);
-          // The older version's row, at the bottom of the panel.
-          const older = () => [...document.querySelectorAll("#inspector .version-row")]
-            .find((row) => (row.querySelector(".case-name") || {}).textContent === "Price seats with a discount from the third seat");
+          const meta = (row) => ((row && row.querySelector(".version-meta")) || {}).textContent || "";
+          // The block as it is, above both lists.
+          const nowRow = () => document.querySelector("#inspector .version-row[data-now]");
+          // The section's two named parts: "Saved" and "Git history".
+          const part = (title) => [...document.querySelectorAll("#inspector .version-part")].find((each) => each.querySelector("h5").textContent === title);
+          const named = (rows, name) => [...rows].find((row) => (row.querySelector(".case-name") || {}).textContent === name);
+          // The older version's row, in the git history.
+          const older = () => named(document.querySelectorAll("#inspector .version-row[data-commit]"), "Price seats with a discount from the third seat");
+          // The version saved from the panel, among the saved ones.
+          const savedRow = () => named(document.querySelectorAll("#inspector .version-row[data-saved]"), "Ten percent from the fifth seat");
           // How one saved test came out in the two versions, as its row says.
           const cells = (name) => {
             const row = older() && [...older().querySelectorAll(".compare-row")].find((each) => each.querySelector(".case-name").textContent.startsWith(name));
@@ -2291,23 +2425,29 @@ function attachSelfCheck(
           node("pricing").click();
           if (!(await heading("Pricing"))) return { opened: false, inspector: text("#inspector h2") };
           const rows = await until(() => {
-            const found = [...document.querySelectorAll("#inspector .version-row")];
-            return found.length >= 3 ? found : null;
+            const found = [...document.querySelectorAll("#inspector .version-row[data-commit]")];
+            return found.length >= 2 ? found : null;
           }, 10000);
           if (!rows) return { opened: false, section: text("#inspector [data-versions-of]") };
 
-          const meta = (row) => (row.querySelector(".version-meta") || {}).textContent || "";
           return {
             opened: true,
             // The last section of the panel, with no window of its own.
             sections: [...document.querySelectorAll("#inspector .section h4")].map((h) => h.textContent).join(" "),
             windows: [...document.querySelectorAll("#inspector .insp-windows .btn")].map((b) => b.textContent).join(" "),
-            listed: rows.length - 1,
-            now: meta(rows[0]),
-            subjects: rows.slice(1).map((row) => row.querySelector(".case-name").textContent).join(" | "),
-            latest: /latest/.test(meta(rows[1])),
+            parts: [...document.querySelectorAll("#inspector .version-part h5")].map((h) => h.textContent).join(" | "),
+            // The Now row comes before either list.
+            nowFirst: Boolean(nowRow() && part("Saved") && nowRow().compareDocumentPosition(part("Saved")) & Node.DOCUMENT_POSITION_FOLLOWING),
+            listed: rows.length,
+            now: meta(nowRow()),
+            subjects: rows.map((row) => row.querySelector(".case-name").textContent).join(" | "),
+            latest: /latest/.test(meta(rows[0])),
             offers: older() ? [...older().querySelectorAll(".case-actions button")].map((b) => b.textContent).join(" | ") : "",
-            undo: Boolean(button(rows[0], "Undo swap")),
+            undo: Boolean(button(nowRow(), "Undo swap")),
+            saveOffered: Boolean(button(part("Saved"), "Save this version")),
+            noneSaved: (part("Saved")?.querySelector(".bench-note") || {}).textContent || "",
+            // Only a longer history is folded.
+            noFold: ![...part("Git history").querySelectorAll("button")].some((b) => /^Show /.test(b.textContent)),
           };
         `);
 
@@ -2396,13 +2536,13 @@ function attachSelfCheck(
           if (!swap) return { arrived: false, stage: "no Swap to this" };
           swap.click();
           const arrived = Boolean(await until(() => document.querySelector('.block-box[data-id="seat-discount"]'), 15000));
-          const undo = Boolean(await until(() => button(document.querySelector("#inspector .version-row"), "Undo swap"), 10000));
+          const undo = Boolean(await until(() => button(nowRow(), "Undo swap"), 10000));
           await wait(400);
           document.querySelector("#inspector [data-versions-of]").scrollIntoView({ block: "start" });
           return {
             arrived,
             status: text("#status .message"),
-            now: text("#inspector .version-row .version-meta"),
+            now: meta(nowRow()),
             // The version in place says so on its own row too.
             marked: /swapped in$/.test(older()?.querySelector(".version-meta")?.textContent ?? ""),
             undo,
@@ -2428,26 +2568,201 @@ function attachSelfCheck(
         };
 
         await run("undone", `${versionsSection}
-          const undo = button(document.querySelector("#inspector .version-row"), "Undo swap");
+          const undo = button(nowRow(), "Undo swap");
           if (!undo) return { gone: false, stage: "no Undo swap" };
           undo.click();
           const gone = Boolean(await until(() => !document.querySelector('.block-box[data-id="seat-discount"]'), 15000));
-          const now = await until(() => {
-            const meta = document.querySelector("#inspector .version-row .version-meta");
-            return meta && !/^Swapped/.test(meta.textContent) ? meta.textContent : null;
-          }, 10000);
+          const now = await until(() => (meta(nowRow()) && !/^Swapped/.test(meta(nowRow())) ? meta(nowRow()) : null), 10000);
           return {
             gone,
             now,
             status: text("#status .message"),
-            undo: Boolean(button(document.querySelector("#inspector .version-row"), "Undo swap")),
+            undo: Boolean(button(nowRow(), "Undo swap")),
             benchTests: [...document.querySelectorAll(".bench-window .case-row .case-name")].map((each) => each.textContent).join(" | "),
           };
         `);
-        const afterUndo = await filesOf(check.application);
-        report.undoneOnDisk = {
-          exactly: afterUndo.size === beforeSwap.size && [...beforeSwap].every(([file, bytes]) => afterUndo.get(file) === bytes),
+        report.undoneOnDisk = { exactly: sameFiles(beforeSwap, await filesOf(check.application)) };
+
+        // Pricing saved as a version from the panel, as the person would:
+        // named and described in the form, which keeps what is typed while
+        // they look at another block. Whoever saves one is named by git's own
+        // setting, which a machine that has never committed does not have.
+        await gitIn(check.application)("config", "user.name", "Fragmentor");
+        const saveForm = `${versionsSection}
+          const form = () => document.querySelector("#inspector .version-save");
+        `;
+        await run("saveForm", `${saveForm}
+          const open = await until(() => button(part("Saved"), "Save this version"), 10000);
+          if (!open) return { stage: "no Save this version" };
+          open.click();
+          if (!(await until(form))) return { stage: "no form" };
+          const focused = document.activeElement === form().querySelector("input");
+          const emptyRefused = button(form(), "Save").disabled;
+          const put = (box, value) => {
+            box.value = value;
+            box.dispatchEvent(new Event("input", { bubbles: true }));
+          };
+          put(form().querySelector("input"), "Ten percent from the fifth seat");
+          put(form().querySelector("textarea"), "The first four seats at full price, and ten percent off each one after.");
+
+          // Away to another block and back, so the panel and the form are drawn afresh.
+          node("price-seat").click();
+          await heading("Price Seat");
+          node("pricing").click();
+          await heading("Pricing");
+          await until(form, 10000);
+          const kept =
+            Boolean(form()) &&
+            form().querySelector("input").value === "Ten percent from the fifth seat" &&
+            form().querySelector("textarea").value === "The first four seats at full price, and ten percent off each one after.";
+          await wait(300);
+          part("Saved").scrollIntoView({ block: "center" });
+          return { focused, emptyRefused, kept };
+        `);
+        await capture(window, "self-check-save-form");
+
+        await run("saving", `${saveForm}
+          button(form(), "Save").click();
+          const row = await until(savedRow, 15000);
+          if (!row) return { stage: "not listed", said: text("#inspector .version-save .bench-note") };
+          await wait(300);
+          document.querySelector("#inspector [data-versions-of]").scrollIntoView({ block: "start" });
+          return {
+            about: (row.querySelector(".version-about") || {}).textContent || "",
+            meta: meta(row),
+            offers: [...row.querySelectorAll(".case-actions button")].map((b) => b.textContent).join(" | "),
+            formGone: !form(),
+            status: text("#status .message"),
+          };
+        `);
+        await capture(window, "self-check-saved");
+        const savedFolder = path.join(check.application, ".fragmentor", "versions", "tickets", "booking-api", "pricing");
+        const savedFiles = (await readdir(savedFolder).catch(() => [] as string[])).filter((file) => file.endsWith(".json"));
+        const savedFile = savedFiles.length === 1 ? path.join(savedFolder, savedFiles[0]!) : null;
+        const toCommit = await gitIn(check.application)("status", "--porcelain", "--untracked-files=all");
+        report.savedOnDisk = {
+          written: savedFile !== null,
+          // It shows up to be committed with the project; the copies Undo swap keeps do not.
+          forCommitting: toCommit.includes(`.fragmentor/versions/tickets/booking-api/pricing/${savedFiles[0]}`),
+          swapsPrivate: !/\.fragmentor\/(swaps|\.gitignore)/.test(toCommit),
         };
+        const whenSaved = await filesOf(check.application);
+
+        // Compared with the block it was saved from, which it still is.
+        await run("savedCompared", `${versionsSection}
+          const compare = button(savedRow(), "Compare");
+          if (!compare) return { stage: "no Compare" };
+          compare.click();
+          const summary = await until(() => {
+            const found = savedRow() && savedRow().querySelector(".version-compare .case-summary");
+            return found ? found.textContent : null;
+          }, 30000);
+          return {
+            summary,
+            others: ((savedRow() && savedRow().querySelector(".compare-others")) || {}).textContent || "",
+            differing: savedRow() ? savedRow().querySelectorAll('.compare-row[data-differs="true"]').length : -1,
+          };
+        `);
+
+        // Swapped to the older commit, and then to the saved version, which
+        // puts back every file it saved as it was when it was saved.
+        await run("swappedOlder", `${versionsSection}
+          const swap = await until(() => button(older(), "Swap to this"), 10000);
+          if (!swap) return { arrived: false, stage: "no Swap to this" };
+          swap.click();
+          const arrived = Boolean(await until(() => document.querySelector('.block-box[data-id="seat-discount"]'), 15000));
+          // The list is read again after a swap, and the next one waits for it.
+          await until(() => button(nowRow(), "Undo swap") && button(savedRow(), "Swap to this"), 10000);
+          return { arrived };
+        `);
+        const olderInPlace = await filesOf(check.application);
+
+        await run("swappedSaved", `${versionsSection}
+          const swap = button(savedRow(), "Swap to this");
+          if (!swap) return { gone: false, stage: "no Swap to this" };
+          swap.click();
+          const gone = Boolean(await until(() => !document.querySelector('.block-box[data-id="seat-discount"]'), 15000));
+          const now = await until(() => (/^Swapped to “Ten/.test(meta(nowRow())) ? meta(nowRow()) : null), 10000);
+          return {
+            gone,
+            now,
+            status: text("#status .message"),
+            marked: /swapped in$/.test(meta(savedRow())),
+            undo: Boolean(button(nowRow(), "Undo swap")),
+          };
+        `);
+        // Every file it saved is back, written as a checkout here writes it.
+        // The code of the part the older commit added is under a pointer the
+        // saved version knows nothing about, so it is left as it was.
+        const afterSaved = await filesOf(check.application);
+        const leftOver = "src/booking/seat-discount.ts";
+        report.savedSwapOnDisk = {
+          exactly:
+            afterSaved.get(leftOver) === olderInPlace.get(leftOver) &&
+            sameText(whenSaved, new Map([...afterSaved].filter(([file]) => file !== leftOver))),
+        };
+
+        await run("undoneSaved", `${versionsSection}
+          const undo = button(nowRow(), "Undo swap");
+          if (!undo) return { back: false, stage: "no Undo swap" };
+          undo.click();
+          const back = Boolean(await until(() => document.querySelector('.block-box[data-id="seat-discount"]'), 15000));
+          // Only the latest swap can be undone, and this undid it.
+          await until(() => !button(nowRow(), "Undo swap") && savedRow(), 10000);
+          return { back };
+        `);
+        report.undoneSavedOnDisk = { exactly: sameFiles(olderInPlace, await filesOf(check.application)) };
+
+        // Deleted only once the person has said so twice.
+        await run("asked", `${versionsSection}
+          const remove = button(savedRow(), "Delete");
+          if (!remove) return { stage: "no Delete" };
+          remove.click();
+          const question = await until(() => ((savedRow() && savedRow().querySelector(".bench-note.bad")) || {}).textContent, 5000);
+          const answers = [...savedRow().querySelectorAll(".case-actions button")].map((b) => b.textContent).join(" | ");
+          button(savedRow(), "Keep").click();
+          await wait(200);
+          const kept = Boolean(savedRow()) && !savedRow().querySelector(".bench-note.bad") && Boolean(button(savedRow(), "Delete"));
+          button(savedRow(), "Delete").click();
+          await until(() => button(savedRow(), "Delete it"), 5000);
+          return { question, answers, kept };
+        `);
+        report.askedOnDisk = { still: savedFile !== null && (await exists(savedFile)) };
+
+        await run("deleted", `${versionsSection}
+          const yes = button(savedRow(), "Delete it");
+          if (!yes) return { gone: false, stage: "no Delete it" };
+          yes.click();
+          const gone = Boolean(await until(() => !savedRow(), 10000));
+          return {
+            gone,
+            status: text("#status .message"),
+            none: ((part("Saved") && part("Saved").querySelector(".bench-note")) || {}).textContent || "",
+          };
+        `);
+        report.deletedOnDisk = { gone: savedFile !== null && !(await exists(savedFile)) };
+
+        // An agent commits every small step, so the git history lists only the
+        // newest five until the person asks for all of them.
+        for (let n = 1; n <= 4; n += 1) {
+          const file = `blocks/tickets/booking-api/pricing/step-${n}.md`;
+          await writeFile(path.join(check.application, ...file.split("/")), `A small step, ${n}.\n`, "utf8");
+          await gitIn(check.application)("add", "--", file);
+          await gitIn(check.application)("commit", "--quiet", "-m", `Take a small step, ${n}`);
+        }
+        await run("historyFolded", `${versionsSection}
+          // A commit touches only .git, which nothing watches: the list is read
+          // again when the window has the focus back.
+          window.dispatchEvent(new Event("focus"));
+          const all = await until(() => button(part("Git history"), "Show all 6"), 15000);
+          if (!all) return { offered: false };
+          const commits = () => part("Git history").querySelectorAll(".version-row[data-commit]").length;
+          const folded = commits();
+          all.click();
+          const unfolded = commits();
+          button(part("Git history"), "Show fewer").click();
+          return { offered: true, folded, unfolded, back: commits() };
+        `);
 
         // An execution written down in the messenger: picked, drawn over the
         // whole application, stepped through, and followed inside.

@@ -30,6 +30,8 @@ const CHANNELS = {
   compareVersion: "block:compare-version",
   swapVersion: "block:swap-version",
   undoSwap: "block:undo-swap",
+  saveVersion: "block:save-version",
+  deleteSavedVersion: "block:delete-saved-version",
 };
 
 contextBridge.exposeInMainWorld("fragmentor", {
@@ -57,7 +59,9 @@ contextBridge.exposeInMainWorld("fragmentor", {
   saveCases: (request) => ipcRenderer.invoke(CHANNELS.saveCases, request),
   runCases: (dir, blockPath) => ipcRenderer.invoke(CHANNELS.runCases, dir, blockPath),
   blockVersions: (dir, blockPath) => ipcRenderer.invoke(CHANNELS.blockVersions, dir, blockPath),
-  compareVersion: (dir, blockPath, commit) => ipcRenderer.invoke(CHANNELS.compareVersion, dir, blockPath, commit),
-  swapVersion: (dir, blockPath, commit) => ipcRenderer.invoke(CHANNELS.swapVersion, dir, blockPath, commit),
+  compareVersion: (dir, blockPath, version) => ipcRenderer.invoke(CHANNELS.compareVersion, dir, blockPath, version),
+  swapVersion: (dir, blockPath, version) => ipcRenderer.invoke(CHANNELS.swapVersion, dir, blockPath, version),
   undoSwap: (dir, blockPath) => ipcRenderer.invoke(CHANNELS.undoSwap, dir, blockPath),
+  saveVersion: (dir, blockPath, name, description) => ipcRenderer.invoke(CHANNELS.saveVersion, dir, blockPath, name, description),
+  deleteSavedVersion: (dir, blockPath, id) => ipcRenderer.invoke(CHANNELS.deleteSavedVersion, dir, blockPath, id),
 });
