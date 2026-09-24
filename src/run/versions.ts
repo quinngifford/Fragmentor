@@ -82,7 +82,7 @@ const definition = (testCase: TestCase) => ({ input: testCase.input, stores: tes
 async function testsIn(project: Project, dir: string, blockPath: string): Promise<{ cases: TestCase[]; unreadable: string | null }> {
   if (!project.byPath.has(blockPath)) return { cases: [], unreadable: null };
   const read = await readCases(dir, blockPath);
-  // readCases says "Its tests could not be read"; the window says which version.
+  // readCases says "Its tests could not be read"; the panel says which version.
   return { cases: read.cases, unreadable: read.problem?.replace(/^Its tests could not be read: /, "") ?? null };
 }
 
@@ -126,7 +126,7 @@ export async function compareWithVersion(projectDir: string, blockPath: string, 
     );
 
     // Each block's list of tests. A block whose tests could not be read is
-    // kept even with none, so the window can say so.
+    // kept even with none, so the panel can say so.
     const read = await Promise.all(
       paths.map(async (each) => {
         const nowRead = await testsIn(live, projectDir, each);

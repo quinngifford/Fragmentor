@@ -473,7 +473,7 @@ function registerHandlers(): void {
   /**
    * A swap rewrites files, and a comparison is planned from them: two at once
    * could each back up, or compare, what the other half wrote. Here rather
-   * than in the window, which can be closed and opened again while one runs.
+   * than in the panel, which can be left for another project while one runs.
    */
   let busy = false;
   async function oneAtATime<T>(work: () => Promise<T>): Promise<T> {
@@ -963,11 +963,16 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("compared", "notSaved") === 3,
     ],
     [
-      "a swap waits while the code it would replace has unsaved changes",
+      "a swap waits while the code it would replace has unsaved changes, and stops asking once it is saved or reverted",
       /unsaved changes to Price Seat's code/.test(String(value("guarded", "said"))) &&
         value("guarded", "untouched") === true &&
         value("guardedOnDisk", "untouched") === true &&
-        value("guarded", "reverted") === true,
+        value("guarded", "reverted") === true &&
+        value("guarded", "askedStill") === false,
+    ],
+    [
+      "a comparison stays in its block's panel while the person looks at another block",
+      value("guarded", "kept") === true,
     ],
     [
       "swapping puts a block back as it was, parts and code included, forgets what was shown about it, and changes nothing outside it",
@@ -2356,6 +2361,8 @@ function attachSelfCheck(
           await heading("Pricing");
           const swap = await until(() => button(older(), "Swap to this"), 10000);
           if (!swap) return { ran, stage: "no Swap to this" };
+          // The comparison made before going to Price Seat is still there on the way back.
+          const kept = Boolean(older().querySelector(".version-compare .case-summary"));
           swap.click();
           const said = await until(() => {
             const note = older() && older().querySelector(".bench-note.bad");
@@ -2373,7 +2380,10 @@ function attachSelfCheck(
           const reverted = text("#inspector .code-foot .bench-note") === "Saved.";
           node("pricing").click();
           await heading("Pricing");
-          return { ran, said, untouched, reverted };
+          // Nothing is left unsaved, so nothing is left asking for it to be.
+          await until(() => button(older(), "Swap to this"), 10000);
+          const askedStill = Boolean(older() && older().querySelector(".bench-note.bad"));
+          return { ran, kept, said, untouched, reverted, askedStill };
         `);
         report.guardedOnDisk = { untouched: !(await exists(path.join(check.application, "src", "booking", "seat-discount.ts"))) };
         const beforeSwap = await filesOf(check.application);

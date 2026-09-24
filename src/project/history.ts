@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { copyFile, lstat, mkdir, readFile, readdir, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { blockIdPattern, parseBlockFile } from "../model/block.js";
 import { isArchitecture } from "../model/roles.js";
@@ -41,11 +42,12 @@ type GitResult = { code: number; out: Buffer; err: string } | { missing: true };
  * pattern matching other files. The person's own settings that would add to
  * what `log` prints, or make it follow a file back past where it was added,
  * are turned off, so its output is only what was asked for. Optional locks
- * are off, so reading the history never takes the index from an agent
- * committing at the same moment, and git never stops to ask for a password
- * nobody can type.
+ * are off, so a listing or a status never takes the index from an agent
+ * committing at the same moment (a diff takes it anyway, so it is given a
+ * copy: see onIndexCopy), and git never stops to ask for a password nobody
+ * can type.
  */
-function git(dir: string, args: string[]): Promise<GitResult> {
+function git(dir: string, args: string[], env: Record<string, string> = {}): Promise<GitResult> {
   return new Promise((resolve) => {
     execFile(
       "git",
@@ -54,7 +56,7 @@ function git(dir: string, args: string[]): Promise<GitResult> {
         encoding: "buffer",
         maxBuffer: 256 << 20,
         windowsHide: true,
-        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
+        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", ...env },
       },
       (error, stdout, stderr) => {
         if (error?.code === "ENOENT") return resolve({ missing: true });
@@ -67,7 +69,7 @@ function git(dir: string, args: string[]): Promise<GitResult> {
   });
 }
 
-const NO_GIT = "Versions come from git, which is not installed on this computer. Install it, then open this window again.";
+const NO_GIT = "Versions come from git, which is not installed on this computer. Install it, then come back to Fragmentor.";
 
 /** Git's first line of complaint, only ever placed inside a sentence of ours. */
 function firstLine(err: string): string {
@@ -225,6 +227,29 @@ async function insideRepositoryFolder(dir: string): Promise<boolean> {
 }
 
 /**
+ * Runs git against a copy of the repository's index.
+ *
+ * A diff brings the index up to date as it goes, whatever optional locks are
+ * turned off, and to do that it takes the index's lock. The list of versions
+ * is read again every time the agent writes a file, so on the real index it
+ * would sooner or later take that lock from the agent committing, whose commit
+ * would then fail. A copy of its own leaves the real one alone. Without one to
+ * copy, as in a repository nothing has been added to, git is asked as it is.
+ */
+async function onIndexCopy<T>(dir: string, work: (env: Record<string, string>) => Promise<T>): Promise<T> {
+  const found = await git(dir, ["rev-parse", "--git-path", "index"]);
+  const index = "missing" in found || found.code !== 0 ? null : path.resolve(dir, found.out.toString("utf8").trim());
+  const aside = await mkdtemp(path.join(tmpdir(), "fragmentor-index-"));
+  try {
+    const copy = path.join(aside, "index");
+    if (index === null || !(await copyFile(index, copy).then(() => true, () => false))) return await work({});
+    return await work({ GIT_INDEX_FILE: copy });
+  } finally {
+    await rm(aside, { recursive: true, force: true });
+  }
+}
+
+/**
  * The files under these paths at one commit. Only ordinary files are part of
  * a version: a link or a nested repository is not something a swap can write.
  */
@@ -357,7 +382,7 @@ async function loadBlock(projectDir: string, blockPath: string): Promise<{ proje
 }
 
 /**
- * A block's versions, newest first, and what the window needs to say about
+ * A block's versions, newest first, and what the panel needs to say about
  * them. Whether a version can still be read is left until it is compared or
  * swapped: reading every one here would cost two processes a commit.
  */
@@ -426,7 +451,7 @@ export async function blockVersions(projectDir: string, blockPath: string): Prom
     // Not git status: that reports a file whose line endings alone were
     // rewritten, which is exactly what a swap does to a file an agent wrote.
     // A diff compares what git would store, so it is not fooled.
-    const diff = await git(projectDir, ["diff", "--quiet", "HEAD", "--", ...specs]);
+    const diff = await onIndexCopy(projectDir, (env) => git(projectDir, ["diff", "--quiet", "HEAD", "--", ...specs], env));
     changed = now.untracked.length > 0 || (!("missing" in diff) && diff.code === 1);
   }
 
@@ -499,7 +524,7 @@ function claims(project: Project, blockPath: string, paths: string[]): string | 
  * that lived at that path then is written back rather than deleted.
  */
 export async function planSwap(projectDir: string, blockPath: string, commit: string): Promise<SwapPlan> {
-  // The window names the commit, so anything else, such as a value starting
+  // The panel names the commit, so anything else, such as a value starting
   // with "-" that git would read as an option, is refused before git sees it.
   if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(commit)) throw new Error(`"${commit}" is not a commit.`);
 
@@ -652,7 +677,7 @@ export async function swapToVersion(projectDir: string, blockPath: string, commi
   // files, and what the person had before would be out of reach.
   const last = await lastRecord(projectDir);
   if (last !== null && !last.done) {
-    throw new Error(`The last swap of ${last.name} did not finish. Press Undo swap in its Versions window first, so what it replaced is put back.`);
+    throw new Error(`The last swap of ${last.name} did not finish. Press Undo swap under Versions in its panel first, so what it replaced is put back.`);
   }
 
   const plan = await planSwap(projectDir, blockPath, commit);

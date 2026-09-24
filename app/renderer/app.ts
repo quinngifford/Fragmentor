@@ -691,7 +691,6 @@ try {
   // be from before the swap, and drawing it would fill the bench again with
   // what forgetBlocks just took away. The later read shows what is there.
   onVersionsChange({
-    panel: renderInspector,
     all: render,
     reload: async () => {
       if (await reload()) render();

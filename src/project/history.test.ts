@@ -1,4 +1,4 @@
-import { appendFile, chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { appendFile, chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -106,6 +106,18 @@ describe("a block's versions", () => {
     const file = path.join(dir, PRICING, "refund-for", "block.json");
     await writeFile(file, (await readFile(file, "utf8")).replace(/\r?\n/g, "\r\n"), "utf8");
     expect((await blockVersions(dir, pricing)).changed).toBe(false);
+  }, 30_000);
+
+  it("are read without touching the repository's index, which an agent committing needs", async () => {
+    const { dir, git } = await ticketsHistory();
+    // A file whose time changed and nothing else, which a diff would record in the index.
+    const later = new Date(Date.now() + 60_000);
+    await utimes(path.join(dir, "src", "booking", "price-seat.ts"), later, later);
+    const index = path.join(dir, (await git("rev-parse", "--git-path", "index")).trim());
+    const before = await readFile(index);
+
+    expect((await blockVersions(dir, pricing)).changed).toBe(false);
+    expect(await readFile(index)).toEqual(before);
   }, 30_000);
 
   it("include a commit that changed only the code of one of its parts, for the parts that point at it", async () => {
@@ -255,7 +267,7 @@ describe("a block's versions", () => {
     process.env.PATH = nowhere;
     try {
       expect((await blockVersions(dir, pricing)).unavailable).toBe(
-        "Versions come from git, which is not installed on this computer. Install it, then open this window again.",
+        "Versions come from git, which is not installed on this computer. Install it, then come back to Fragmentor.",
       );
     } finally {
       process.env.PATH = searched;
@@ -463,7 +475,7 @@ describe("swapping a block to a version", () => {
 
     // Trying again would keep a copy of the half-swapped files, not of what was there before.
     await expect(swapToVersion(dir, pricing, older)).rejects.toThrow(
-      "The last swap of Pricing did not finish. Press Undo swap in its Versions window first, so what it replaced is put back.",
+      "The last swap of Pricing did not finish. Press Undo swap under Versions in its panel first, so what it replaced is put back.",
     );
 
     await undoLastSwap(dir, pricing);

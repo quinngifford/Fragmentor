@@ -21,21 +21,30 @@ import { forgetBlocks, ui } from "./state.js";
  * the person looking at another block and coming back.
  */
 
-let redraw: () => void = () => {};
 let redrawAll: () => void = () => {};
 let reloadProject: () => Promise<void> = async () => {};
 /**
- * `panel` draws the inspector again, which is all that reading a list or
- * comparing changes; `all` draws everything, for what the status line says;
- * `reload` reads the project again and shows it, once a swap or an undo has
- * rewritten it. Drawing only the panel matters: the list is read every time a
- * block is picked, and drawing the tree again each time would move it under
- * the pointer.
+ * `all` draws everything, for what the status line says; `reload` reads the
+ * project again and shows it, once a swap or an undo has rewritten it. Reading
+ * a list or comparing changes nothing but this section, which draws itself
+ * again in place: the list is read every time a block is picked, and drawing
+ * the panel again would take the cursor from its code editor.
  */
-export function onVersionsChange(callbacks: { panel: () => void; all: () => void; reload: () => Promise<void> }): void {
-  redraw = callbacks.panel;
+export function onVersionsChange(callbacks: { all: () => void; reload: () => Promise<void> }): void {
   redrawAll = callbacks.all;
   reloadProject = callbacks.reload;
+}
+
+/**
+ * Draws the section on screen again, whichever block it is for: something
+ * running for one block leaves every block's buttons unpressable until it
+ * ends. With no section on screen there is nothing to do; the panel draws it
+ * from what is kept here when it next shows one.
+ */
+function redraw(): void {
+  const old = document.querySelector<HTMLElement>("#inspector [data-versions-of]");
+  const block = old ? ui.snapshot?.blocks[old.dataset.versionsOf!] : undefined;
+  if (old && block) old.replaceWith(versionsSection(block));
 }
 
 /** The list last read, and which block of which project it is for. */
@@ -46,10 +55,21 @@ let reading: string | null = null;
 let latestRead = 0;
 /** The comparison shown for a block, with the version it is against and when it was run. One a block, so the panel stays readable. */
 const comparisons = new Map<string, { commit: string; at: Date; value: VersionComparison }>();
-/** What a row is doing, or what went wrong with it, by block and row: a version's commit, or "now". */
-const notes = new Map<string, { text: string; bad: boolean }>();
+/**
+ * What a row is doing, or what went wrong with it, by block and row: a
+ * version's commit, or "now". Each is about the last thing pressed, so all of
+ * them go when the next thing is. One asking for unsaved code to be saved goes
+ * as soon as it has been.
+ */
+const notes = new Map<string, { text: string; bad: boolean; untilSaved?: boolean }>();
 /** One thing at a time: while a comparison or a swap runs, nothing else in the section can be pressed. */
 let busy = false;
+/**
+ * Which project the section is on, counted rather than named: something still
+ * running for a project that has been closed must not touch what is shown for
+ * the next one, even if that is the same project opened again.
+ */
+let session = 0;
 
 const noteKey = (blockPath: string, row: string) => `${blockPath}\n${row}`;
 
@@ -64,6 +84,8 @@ function under(root: string, path: string): boolean {
 
 /** Everything the section keeps, for a project that has closed. */
 export function forgetVersions(): void {
+  session += 1;
+  busy = false;
   listed = null;
   reading = null;
   comparisons.clear();
@@ -243,7 +265,17 @@ function actions(...buttons: HTMLButtonElement[]): HTMLElement {
 /** What a row is doing, or what went wrong with it, across the whole row. */
 function rowNote(row: HTMLElement, blockPath: string, key: string): void {
   const note = notes.get(noteKey(blockPath, key));
-  if (note) row.append(el("p", note.bad ? "bench-note bad" : "bench-note", note.text));
+  if (!note) return;
+  if (note.untilSaved && unsavedUnder(blockPath) === undefined) {
+    notes.delete(noteKey(blockPath, key));
+    return;
+  }
+  row.append(el("p", note.bad ? "bench-note bad" : "bench-note", note.text));
+}
+
+/** A block, or one of its parts, whose code has unsaved changes in the editor. */
+function unsavedUnder(blockPath: string): string | undefined {
+  return [...ui.edits.keys()].find((path) => under(blockPath, path));
 }
 
 /** Sets what a row says, or takes it away, and draws the panel again. */
@@ -257,11 +289,13 @@ async function compareWith(block: SnapshotBlock, version: BlockVersion): Promise
   const dir = ui.dir;
   if (!dir) return;
 
+  const mine = session;
   busy = true;
+  notes.clear();
   say(block.path, version.commit, "Comparing: running the saved tests against both versions…");
   const result = await window.fragmentor.compareVersion(dir, block.path, version.commit);
+  if (session !== mine) return;
   busy = false;
-  if (ui.dir !== dir) return;
 
   if (!result.ok) {
     say(block.path, version.commit, `Could not compare: ${result.error}`, true);
@@ -269,7 +303,9 @@ async function compareWith(block: SnapshotBlock, version: BlockVersion): Promise
   }
   comparisons.set(block.path, { commit: version.commit, at: new Date(), value: result.value });
   say(block.path, version.commit, null);
-  await read(block.path);
+  // Only if this block is still on screen: reading its list would take the
+  // place of a list being read for whichever block is.
+  await refreshVersions();
 }
 
 /**
@@ -398,26 +434,28 @@ async function swapOrUndo(block: SnapshotBlock, version: BlockVersion | null): P
   const { path: blockPath, name } = block;
   const row = version?.commit ?? "now";
 
-  const unsaved = [...ui.edits.keys()].find((path) => under(blockPath, path));
+  notes.clear();
+  const unsaved = unsavedUnder(blockPath);
   if (unsaved !== undefined) {
     const text = `Save or revert the unsaved changes to ${ui.snapshot?.blocks[unsaved]?.name ?? unsaved}'s code first: ${
       version === null ? "undoing the swap" : "swapping"
     } would replace that file.`;
     ui.status = { text, tone: "bad" };
-    notes.set(noteKey(blockPath, row), { text, bad: true });
+    notes.set(noteKey(blockPath, row), { text, bad: true, untilSaved: true });
     redrawAll();
     return;
   }
 
+  const mine = session;
   busy = true;
   say(blockPath, row, version === null ? "Undoing the swap…" : "Swapping…");
   const result =
     version === null
       ? await window.fragmentor.undoSwap(dir, blockPath)
       : await window.fragmentor.swapVersion(dir, blockPath, version.commit);
+  if (session !== mine) return;
   busy = false;
-  if (ui.dir !== dir) return;
-  notes.delete(noteKey(blockPath, row));
+  notes.clear();
 
   // A swap to what is already there changes nothing and keeps no record; an
   // undo always keeps one, so its swap can't be undone twice.
@@ -439,9 +477,11 @@ async function swapOrUndo(block: SnapshotBlock, version: BlockVersion | null): P
     }
   }
 
+  // The list is from before the swap, and so is any read of it still under
+  // way, so whichever section is shown next reads its own afresh: for the
+  // swap Undo swap now reverses, if it is this block's.
+  listed = null;
+  reading = null;
   await reloadProject();
-  // Read again, for the swap Undo swap now reverses, and drawn again whatever
-  // it says, since the buttons were drawn as they were while it ran.
-  await read(blockPath);
   redrawAll();
 }
