@@ -1,4 +1,4 @@
-import type { BlockVersions, SavedVersion, VersionRef } from "../../src/project/history.js";
+import type { BlockVersions, SavedVersion, SwappedVersion, VersionRef } from "../../src/project/history.js";
 import type { SnapshotBlock } from "../../src/project/snapshot.js";
 import type { CaseResult } from "../../src/run/run.js";
 import type { ComparedBlock, ComparedTest, VersionComparison } from "../../src/run/versions.js";
@@ -19,9 +19,13 @@ import { forgetBlocks, ui } from "./state.js";
  * The panel is drawn again whenever anything changes, and asking git takes a
  * moment, so what the section shows is kept here rather than asked for every
  * time: the list last read, the comparisons run, what each row is doing, and
- * what is typed into the form for saving a version. A comparison that took
- * seconds to run outlives the agent writing a file, and the person looking at
- * another block and coming back.
+ * what is typed into the forms for saving a version and for changing one. A
+ * comparison that took seconds to run outlives the agent writing a file, and
+ * the person looking at another block and coming back.
+ *
+ * Which version the block is on is said where it is seen first, in a badge
+ * in the panel's header, as well as on the rows. Both are drawn from the same
+ * list, so the badge is drawn here too, and drawn again with the section.
  */
 
 let redrawAll: () => void = () => {};
@@ -56,6 +60,8 @@ function redraw(): void {
   const at = field && { id: field.id, start: field.selectionStart, end: field.selectionEnd, scroll: field.scrollTop };
 
   old.replaceWith(versionsSection(block));
+  const badge = document.querySelector<HTMLElement>("#inspector [data-version-badge-of]");
+  if (badge?.dataset.versionBadgeOf === block.path) badge.replaceWith(versionBadge(block));
 
   const again = at && document.getElementById(at.id);
   if (at && (again instanceof HTMLInputElement || again instanceof HTMLTextAreaElement)) {
@@ -85,8 +91,18 @@ const comparisons = new Map<string, { row: string; at: Date; value: VersionCompa
  * two buttons drawn under it.
  */
 const notes = new Map<string, { text: string; bad: boolean; untilSaved?: boolean; confirm?: boolean }>();
-/** What is typed into the form for saving a block as a version, while it is open, so drawing the panel again never loses it. */
+/**
+ * What is typed into a form, so drawing the panel again never loses it: by
+ * block and "save" for the one that saves the block as a version, and by
+ * block and id for the one that changes a saved version.
+ */
 const drafts = new Map<string, { name: string; description: string }>();
+/**
+ * Which form is open in a block's section: "save", or a saved version's id.
+ * One at a time; opening one closes the other, whose draft is kept for when
+ * it is opened again.
+ */
+const forms = new Map<string, string>();
 /** Blocks whose whole git history is listed, rather than its newest commits. */
 const unfolded = new Set<string>();
 /** How many commits are listed until the person asks for all of them: an agent commits every small step. */
@@ -127,6 +143,7 @@ export function forgetVersions(): void {
   comparisons.clear();
   notes.clear();
   drafts.clear();
+  forms.clear();
   unfolded.clear();
 }
 
@@ -176,6 +193,66 @@ export function versionsSection(block: SnapshotBlock): HTMLElement {
   return node;
 }
 
+/**
+ * The badge in a block's panel header saying which version it is on: a saved
+ * version it is exactly as, or else the version swapped in, or else the
+ * latest commit; or which of those it has changed since; or that it is in no
+ * commit yet. Nothing until the list has been read, and nothing while git
+ * cannot say what the block is made of.
+ */
+export function versionBadge(block: SnapshotBlock): HTMLElement {
+  const badge = el("span");
+  badge.dataset.versionBadgeOf = block.path;
+  badge.hidden = true;
+  const shown = listed?.dir === ui.dir && listed?.blockPath === block.path ? listed.result : null;
+  if (shown === null || !shown.ok || shown.value.unavailable !== null) return badge;
+
+  const { versions, swapped, saved, inUse, changedFrom } = shown.value;
+  const latest = versions[0];
+  const using =
+    saved.find((each) => inUse.includes(each.id))?.name ??
+    (swapped !== null && inUse.includes(rowOf(swapped)) ? nameOf(swapped) : undefined) ??
+    (latest !== undefined && inUse.includes(latest.commit) ? latest.subject : undefined);
+  const from =
+    changedFrom === null
+      ? undefined
+      : swapped !== null && rowOf(swapped) === changedFrom
+        ? nameOf(swapped)
+        : versions.find((each) => each.commit === changedFrom)?.subject;
+
+  const [said, full, tone] =
+    using !== undefined
+      ? [`version: ${shortened(using)}`, `The version in use: “${using}”.`, " in-use"]
+      : from !== undefined
+        ? [`changed since: ${shortened(from)}`, `Changed since the version “${from}”.`, ""]
+        : versions.length === 0
+          ? ["not committed yet", "Not in any commit yet.", ""]
+          : [null, "", ""];
+  if (said === null) return badge;
+  badge.className = `badge${tone}`;
+  badge.textContent = said;
+  badge.title = `${full} See Versions at the bottom of the panel.`;
+  badge.hidden = false;
+  return badge;
+}
+
+/** A name cut to about 28 characters, at a word where there is one, so the badge stays one line in the header. */
+function shortened(name: string): string {
+  if (name.length <= 28) return name;
+  const head = name.slice(0, 28);
+  const space = head.lastIndexOf(" ");
+  return `${space > 14 ? head.slice(0, space) : head.slice(0, 27)}…`;
+}
+
+/** The row of the version a swap put in place: its commit, or its id. */
+function rowOf(swapped: SwappedVersion): string {
+  return swapped.kind === "commit" ? swapped.commit : swapped.id;
+}
+
+function nameOf(swapped: SwappedVersion): string {
+  return swapped.kind === "commit" ? swapped.subject : swapped.name;
+}
+
 function draw(node: HTMLElement, block: SnapshotBlock, listing: BlockVersions): void {
   const { name } = block;
   const { unavailable, blocked, swapped, saved, unreadable } = listing;
@@ -221,24 +298,34 @@ function rows(...each: HTMLElement[]): HTMLElement {
   return list;
 }
 
-/** The block as it is now: whether a swap put it there, or how it stands against the latest commit. */
-function nowRow(block: SnapshotBlock, { versions, changed, swapped }: BlockVersions): HTMLElement {
+/**
+ * The block as it is now: whether a swap put it there and it is still as the
+ * swap left it, or how it stands against the latest commit and whether it is
+ * one of its saved versions. Without git, what it is made of now cannot be
+ * listed, so a swap is only said to have been made.
+ */
+function nowRow(block: SnapshotBlock, { unavailable, versions, changed, swapped, saved, inUse }: BlockVersions): HTMLElement {
   const row = el("div", "case-row version-row");
   row.dataset.now = "true";
+  const savedInUse = saved.find((each) => inUse.includes(each.id));
   row.append(
     el("div", "case-name", "Now"),
     el(
       "div",
       "version-meta",
       swapped !== null
-        ? swapped.kind === "commit"
-          ? `Swapped to “${swapped.subject}”, committed ${when(swapped.date)}.`
-          : `Swapped to “${swapped.name}”, saved ${when(swapped.date)}.`
-        : versions.length === 0
-          ? "Not in any commit yet."
-          : changed
-            ? "Changed since the latest commit; these changes are in no commit yet."
-            : "The same as the latest commit.",
+        ? unavailable === null && !inUse.includes(rowOf(swapped))
+          ? `Swapped to “${nameOf(swapped)}”, and changed since.`
+          : swapped.kind === "commit"
+            ? `Swapped to “${swapped.subject}”, committed ${when(swapped.date)}.`
+            : `Swapped to “${swapped.name}”, saved ${when(swapped.date)}.`
+        : `${
+            versions.length === 0
+              ? "Not in any commit yet."
+              : changed
+                ? "Changed since the latest commit; these changes are in no commit yet."
+                : "The same as the latest commit."
+          }${savedInUse === undefined ? "" : ` It is the saved version “${savedInUse.name}”.`}`,
     ),
   );
   if (swapped !== null) {
@@ -262,19 +349,14 @@ function savedPart(block: SnapshotBlock, listing: BlockVersions): HTMLElement {
   // Saving one is refused wherever it could never be swapped back.
   const canSave = unavailable === null && blocked === null;
 
-  if (canSave && drafts.has(block.path)) {
-    node.append(saveForm(block));
+  if (canSave && forms.get(block.path) === "save") {
+    node.append(versionForm(block, null));
   } else if (canSave) {
     node.append(
       button(
         "Save this version",
         `Keep ${block.name} as it is now, with a name, for everyone working on the project.`,
-        () => {
-          notes.clear();
-          drafts.set(block.path, { name: "", description: "" });
-          redraw();
-          document.querySelector<HTMLInputElement>("#inspector [data-versions-of] .version-save input")?.focus();
-        },
+        () => openForm(block, "save", { name: "", description: "" }),
         "btn quiet",
       ),
     );
@@ -308,29 +390,45 @@ function savedPart(block: SnapshotBlock, listing: BlockVersions): HTMLElement {
 }
 
 /**
- * The form for saving the block as it is now. What is typed is kept in
- * `drafts` as it is typed, since the agent writing a file draws the panel
- * again underneath it.
+ * Opens a form in a block's section, closing whichever was open, with what
+ * was typed into it before or else `blank`, and puts the cursor in its name.
  */
-function saveForm(block: SnapshotBlock): HTMLElement {
-  const draft = drafts.get(block.path)!;
+function openForm(block: SnapshotBlock, row: string, blank: { name: string; description: string }): void {
+  notes.clear();
+  forms.set(block.path, row);
+  if (!drafts.has(noteKey(block.path, row))) drafts.set(noteKey(block.path, row), blank);
+  redraw();
+  document.querySelector<HTMLInputElement>("#inspector [data-versions-of] .version-save input")?.focus();
+}
+
+/**
+ * The form for saving the block as it is now, or, in a saved version's row,
+ * for changing that version's name and description. What is typed is kept in
+ * `drafts` as it is typed, since the agent writing a file draws the panel
+ * again underneath it, and each field has an id of its own, so redraw finds
+ * the one the cursor was in.
+ */
+function versionForm(block: SnapshotBlock, editing: SavedVersion | null): HTMLElement {
+  const row = editing?.id ?? "save";
+  const draft = drafts.get(noteKey(block.path, row))!;
   const form = el("form", "version-save");
+  const which = editing === null ? "" : `#${editing.id}`;
 
   // The kernel refuses anything longer, so the fields do not take it.
   const name = el("input");
-  name.id = `version-name-${block.path}`;
+  name.id = `version-name-${block.path}${which}`;
   name.type = "text";
   name.maxLength = 80;
   name.placeholder = "What to call it";
   name.value = draft.name;
 
   const description = el("textarea");
-  description.id = `version-description-${block.path}`;
+  description.id = `version-description-${block.path}${which}`;
   description.maxLength = 2000;
   description.placeholder = "What it does that is worth coming back to";
   description.value = draft.description;
 
-  const save = el("button", "btn", "Save");
+  const save = el("button", "btn", editing === null ? "Save" : "Save changes");
   save.type = "submit";
   const ready = () => {
     save.disabled = busy || name.value.trim() === "";
@@ -346,14 +444,15 @@ function saveForm(block: SnapshotBlock): HTMLElement {
   // Enter in the name saves, as in any form.
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (!save.disabled) void saveThis(block);
+    if (!save.disabled) void (editing === null ? saveThis(block) : editThis(block, editing));
   });
 
   const cancel = el("button", "btn quiet", "Cancel");
   cancel.type = "button";
   cancel.disabled = busy;
   cancel.addEventListener("click", () => {
-    drafts.delete(block.path);
+    drafts.delete(noteKey(block.path, row));
+    forms.delete(block.path);
     notes.clear();
     redraw();
   });
@@ -361,7 +460,7 @@ function saveForm(block: SnapshotBlock): HTMLElement {
   const buttons = el("div", "version-save-actions");
   buttons.append(save, cancel);
   form.append(field("Name", name), field("Description, if any", description));
-  rowNote(form, block.path, "save");
+  rowNote(form, block.path, row);
   form.append(buttons);
   return form;
 }
@@ -374,27 +473,29 @@ function field(label: string, input: HTMLInputElement | HTMLTextAreaElement): HT
   return box;
 }
 
-function savedRow(block: SnapshotBlock, version: SavedVersion, { unavailable, blocked, swapped }: BlockVersions): HTMLElement {
+function savedRow(block: SnapshotBlock, version: SavedVersion, listing: BlockVersions): HTMLElement {
+  const { unavailable, blocked } = listing;
   const row = el("div", "case-row version-row");
   row.dataset.saved = version.id;
-  row.append(el("div", "case-name", version.name));
-  if (version.description !== "") row.append(el("p", "bench-note version-about", version.description));
-  row.append(
-    el(
-      "div",
-      "version-meta",
-      `saved ${when(version.date)}${version.author === "" ? "" : ` · ${version.author}`}${
-        swapped?.kind === "saved" && swapped.id === version.id ? " · swapped in" : ""
-      }`,
-    ),
-  );
-
+  const tag = mark(row, version.id, listing);
   // Read-only while git cannot be used, as the rest of the section is.
+  const editing = unavailable === null && forms.get(block.path) === version.id;
+  row.append(el("div", "case-name", version.name));
+  // While its form is open, what it says about itself is in the form.
+  if (version.description !== "" && !editing) row.append(el("p", "bench-note version-about", version.description));
+  row.append(metaLine(tag, `saved ${when(version.date)}${version.author === "" ? "" : ` · ${version.author}`}`));
+
   const asking = notes.get(noteKey(block.path, version.id))?.confirm === true;
-  if (unavailable === null && !asking) {
+  if (editing) {
+    row.append(versionForm(block, version));
+  } else if (unavailable === null && !asking) {
     row.append(
       actions(
         ...(blocked === null ? versionButtons(block, { ref: { saved: version.id }, row: version.id, label: version.name }) : []),
+        // Only its file changes, so it can be edited wherever it can be deleted.
+        button("Edit", "Change the name and description of this saved version.", () =>
+          openForm(block, version.id, { name: version.name, description: version.description }),
+        ),
         button("Delete", "Delete this saved version. The project's git history keeps whatever was committed.", () => {
           notes.clear();
           notes.set(noteKey(block.path, version.id), {
@@ -407,8 +508,9 @@ function savedRow(block: SnapshotBlock, version: SavedVersion, { unavailable, bl
       ),
     );
   }
-  rowNote(row, block.path, version.id);
-  if (asking) {
+  // An open form says what its row is doing itself.
+  if (!editing) rowNote(row, block.path, version.id);
+  if (asking && !editing) {
     row.append(
       actions(
         button("Delete it", `Delete “${version.name}”.`, () => deleteSaved(block, version)),
@@ -424,7 +526,7 @@ function savedRow(block: SnapshotBlock, version: SavedVersion, { unavailable, bl
 
 /** The commits that changed the block, newest first: the newest few, until the person asks for all of them. */
 function gitPart(block: SnapshotBlock, listing: BlockVersions): HTMLElement {
-  const { versions, more, blocked, swapped } = listing;
+  const { versions, more, blocked } = listing;
   const node = subsection("Git history");
   node.classList.add("version-part");
   const all = unfolded.has(block.path);
@@ -436,15 +538,10 @@ function gitPart(block: SnapshotBlock, listing: BlockVersions): HTMLElement {
         ...(all ? versions : versions.slice(0, FOLDED)).map((version, at) => {
           const row = el("div", "case-row version-row");
           row.dataset.commit = version.commit;
+          const tag = mark(row, version.commit, listing);
           row.append(
             el("div", "case-name", version.subject),
-            el(
-              "div",
-              "version-meta",
-              `${when(version.date)} · ${version.author} · ${version.commit.slice(0, 7)}${at === 0 ? " · latest" : ""}${
-                swapped?.kind === "commit" && swapped.commit === version.commit ? " · swapped in" : ""
-              }`,
-            ),
+            metaLine(tag, `${when(version.date)} · ${version.author} · ${version.commit.slice(0, 7)}${at === 0 ? " · latest" : ""}`),
           );
           if (blocked === null) {
             row.append(actions(...versionButtons(block, { ref: { commit: version.commit }, row: version.commit, label: version.subject })));
@@ -477,6 +574,32 @@ function gitPart(block: SnapshotBlock, listing: BlockVersions): HTMLElement {
   }
   if (more) node.append(el("p", "bench-note", "Only the newest 100 commits are listed."));
   return node;
+}
+
+/**
+ * Marks a row the block is exactly as now, and the one it was taken from and
+ * has changed since, and gives back the tag that says which. Neither is
+ * anything wrong, so neither is drawn as a warning.
+ */
+function mark(row: HTMLElement, key: string, { inUse, changedFrom }: BlockVersions): HTMLElement | null {
+  if (inUse.includes(key)) {
+    row.dataset.inUse = "true";
+    return el("span", "badge in-use", "in use");
+  }
+  if (changedFrom === key) {
+    row.dataset.changedFrom = "true";
+    return el("span", "badge", "changed since");
+  }
+  return null;
+}
+
+/** A row's line saying when and by whom, after its tag if it has one. */
+function metaLine(tag: HTMLElement | null, text: string): HTMLElement {
+  const meta = el("div", "version-meta", text);
+  if (tag === null) return meta;
+  const line = el("div", "version-line");
+  line.append(tag, meta);
+  return line;
 }
 
 /** What can be done with a version of either kind that could be swapped in. */
@@ -549,7 +672,7 @@ function say(blockPath: string, row: string, text: string | null, bad = false): 
  */
 async function saveThis(block: SnapshotBlock): Promise<void> {
   const dir = ui.dir;
-  const draft = drafts.get(block.path);
+  const draft = drafts.get(noteKey(block.path, "save"));
   if (!dir || !draft) return;
 
   notes.clear();
@@ -564,7 +687,8 @@ async function saveThis(block: SnapshotBlock): Promise<void> {
   notes.clear();
 
   if (result.ok) {
-    drafts.delete(block.path);
+    drafts.delete(noteKey(block.path, "save"));
+    forms.delete(block.path);
     ui.status =
       result.value.ignored === null
         ? { text: `Saved “${result.value.name}” as a version of ${block.name}. It is shared once the project is next committed.`, tone: "good" }
@@ -579,6 +703,38 @@ async function saveThis(block: SnapshotBlock): Promise<void> {
   }
   // Read whatever came of it: nothing watches where saved versions are kept,
   // and a refusal can be for one saved elsewhere since the list was read.
+  await refreshVersions();
+  redrawAll();
+}
+
+/** Gives a saved version the name and description its form says. */
+async function editThis(block: SnapshotBlock, version: SavedVersion): Promise<void> {
+  const dir = ui.dir;
+  const draft = drafts.get(noteKey(block.path, version.id));
+  if (!dir || !draft) return;
+
+  const mine = session;
+  busy = true;
+  notes.clear();
+  say(block.path, version.id, "Saving…");
+  const result = await window.fragmentor.editSavedVersion(dir, block.path, version.id, draft.name, draft.description);
+  if (session !== mine) return;
+  busy = false;
+  notes.clear();
+
+  if (result.ok) {
+    drafts.delete(noteKey(block.path, version.id));
+    forms.delete(block.path);
+    ui.status =
+      result.value.name === version.name
+        ? { text: `Saved the description of “${result.value.name}”.`, tone: "good" }
+        : { text: `Renamed “${version.name}” to “${result.value.name}”.`, tone: "good" };
+  } else {
+    const text = `Could not change the saved version “${version.name}”: ${result.error}`;
+    notes.set(noteKey(block.path, version.id), { text, bad: true });
+    ui.status = { text, tone: "bad" };
+  }
+  // Read whatever came of it, as saving does: nothing watches where saved versions are kept.
   await refreshVersions();
   redrawAll();
 }

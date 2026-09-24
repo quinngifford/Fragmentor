@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -311,6 +312,11 @@ function sameText(a: Buffer, b: Buffer): boolean {
   return a.equals(b) || a.toString("latin1").replace(/\r\n/g, "\n") === b.toString("latin1").replace(/\r\n/g, "\n");
 }
 
+/** A file's bytes, line endings aside as sameText sets them aside, reduced to a hash: enough to tell later whether it changed. */
+function fingerprint(bytes: Buffer): string {
+  return createHash("sha1").update(bytes.toString("latin1").replace(/\r\n/g, "\n"), "latin1").digest("hex");
+}
+
 /** Runs `work` on every item, eight at a time: one git process per file, without starting hundreds at once. */
 async function eightAtATime<T>(items: T[], work: (item: T) => Promise<void>): Promise<void> {
   let next = 0;
@@ -383,6 +389,10 @@ export interface BlockVersions {
    * knows, since a version dropped from the list without a word looks lost.
    */
   unreadable: string[];
+  /** The rows the block is exactly as now: commits by hash, saved versions by id. */
+  inUse: string[];
+  /** When it is exactly as none of them, the row it was taken from and has changed since: the version swapped in, or else the latest commit. */
+  changedFrom: string | null;
 }
 
 /**
@@ -499,21 +509,135 @@ const listedAs = (id: string, file: SavedFile): SavedVersion => ({
   author: file.by,
 });
 
-/** A block's saved versions, newest first, and the files among them that cannot be read as one. */
-async function savedVersions(projectDir: string, blockPath: string): Promise<{ saved: SavedVersion[]; unreadable: string[] }> {
+/**
+ * A block's saved versions, newest first, and the files among them that
+ * cannot be read as one. What each holds is given beside them, by id, since
+ * the list does not carry it.
+ */
+async function savedVersions(
+  projectDir: string,
+  blockPath: string,
+): Promise<{ saved: SavedVersion[]; unreadable: string[]; held: Map<string, SavedFile["files"]> }> {
   const folder = savedFolder(projectDir, blockPath);
   const saved: SavedVersion[] = [];
   const unreadable: string[] = [];
+  const held = new Map<string, SavedFile["files"]>();
   for (const entry of await readdir(folder, { withFileTypes: true }).catch(() => [])) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
     const id = entry.name.slice(0, -".json".length);
     const file = parseSaved(await readFile(path.join(folder, entry.name), "utf8").catch(() => ""));
-    if (savedIdPattern.test(id) && file !== null) saved.push(listedAs(id, file));
-    else unreadable.push(path.relative(projectDir, path.join(folder, entry.name)).split(path.sep).join("/"));
+    if (savedIdPattern.test(id) && file !== null) {
+      saved.push(listedAs(id, file));
+      held.set(id, file.files);
+    } else {
+      unreadable.push(path.relative(projectDir, path.join(folder, entry.name)).split(path.sep).join("/"));
+    }
   }
   // An id starts with when it was saved, always in thirteen digits.
-  return { saved: saved.sort((a, b) => (a.id < b.id ? 1 : -1)), unreadable: unreadable.sort() };
+  return { saved: saved.sort((a, b) => (a.id < b.id ? 1 : -1)), unreadable: unreadable.sort(), held };
 }
+
+/**
+ * Which of a block's versions it is exactly as now, so that swapping to it
+ * would change nothing: the rows to mark as in use, commits by hash and saved
+ * versions by id. `specs` are what the block is made of now, its folder and
+ * the code it and its parts point at, and `files` those git lists under them,
+ * as nowFiles gives them.
+ *
+ * The list is read every time the agent writes a file, so only three kinds
+ * are checked, none of them with a git process of its own: the latest commit,
+ * which the caller has already compared, as `latest`; the version the swap
+ * standing put in place, from what its record says it left; and each saved
+ * version, against the files themselves. Any older commit would cost a diff
+ * of its own, so a block put back by hand to match one is not seen to.
+ */
+async function inUseNow(
+  projectDir: string,
+  specs: string[],
+  files: string[],
+  latest: string | null,
+  swap: Extract<Kept, { kind: "swap" }> | null,
+  held: Map<string, SavedFile["files"]>,
+): Promise<string[]> {
+  // Each file is read once, however many versions it is compared with. A
+  // folder where a file was reads as no file, as changesFrom takes it.
+  const disk = new Map<string, Promise<Buffer | null>>();
+  const read = (file: string) => {
+    let bytes = disk.get(file);
+    if (bytes === undefined) {
+      bytes = staysInside(projectDir, file) ? readFile(resolveInside(projectDir, file)).catch(() => null) : Promise.resolve(null);
+      disk.set(file, bytes);
+    }
+    return bytes;
+  };
+
+  const rows = latest === null ? [] : [latest];
+  // A swap that stopped part-way left the block as no version at all.
+  if (swap !== null && swap.done && (await asSwapLeft(projectDir, swap.n, specs, files, read))) {
+    rows.push("saved" in swap ? swap.saved.id : swap.commit);
+  }
+
+  // A block exactly as a saved version has that version's block.json files,
+  // so it points at the same code, and what the version covers is what the
+  // block is made of now: `files`. Swapping to it changes nothing when no
+  // file there is one the version does not hold, and every file it holds is
+  // there as it holds it, line endings aside, as changesFrom compares them.
+  // What it holds is left out as fromSaved and planSwap leave it out.
+  for (const [id, stored] of held) {
+    const kept = new Map(Object.entries(stored).filter(([file]) => !noise(file) && staysInside(projectDir, file)));
+    const same = async () => {
+      for (const file of files) if (!kept.has(file) && (await read(file)) !== null) return false;
+      for (const [file, content] of kept) {
+        const bytes = await read(file);
+        const then = "text" in content ? Buffer.from(content.text, "utf8") : Buffer.from(content.base64, "base64");
+        if (bytes === null || !sameText(bytes, then)) return false;
+      }
+      return true;
+    };
+    if (await same()) rows.push(id);
+  }
+  return unique(rows);
+}
+
+/**
+ * Whether the block is still as a swap left it: every path the swap touched
+ * that is still part of the block holds what it held when the swap finished,
+ * and no file the swap did not write has appeared among `files`, what the
+ * block is made of now. A path the swap touched that the block no longer
+ * points at is someone else's business: writing it again is not a change to
+ * this block. A record
+ * made before swaps said what they left says nothing, and is taken as
+ * unchanged, as it was before there was any telling.
+ */
+async function asSwapLeft(
+  projectDir: string,
+  n: number,
+  specs: string[],
+  files: string[],
+  read: (file: string) => Promise<Buffer | null>,
+): Promise<boolean> {
+  const text = await readFile(path.join(projectDir, ".fragmentor", "swaps", String(n), "done"), "utf8").catch(() => "");
+  let said: unknown;
+  try {
+    said = JSON.parse(text);
+  } catch {
+    return true;
+  }
+  const parsed = leftSchema.safeParse(said);
+  if (!parsed.success) return true;
+
+  const left = new Map(Object.entries(parsed.data.files));
+  for (const [file, hash] of left) {
+    if (!specs.some((spec) => under(spec, file))) continue;
+    const bytes = await read(file);
+    if ((bytes === null ? null : fingerprint(bytes)) !== hash) return false;
+  }
+  for (const file of files) if (!left.has(file) && (await read(file)) !== null) return false;
+  return true;
+}
+
+/** What a finished swap's `done` file says it left: each path it touched, by the fingerprint of what it held then, or null where it held nothing. */
+const leftSchema = z.object({ files: z.record(z.string(), z.string().nullable()) });
 
 /**
  * A block's versions, newest first, and what the panel needs to say about
@@ -523,14 +647,19 @@ async function savedVersions(projectDir: string, blockPath: string): Promise<{ s
 export async function blockVersions(projectDir: string, blockPath: string): Promise<BlockVersions> {
   // Undoing needs only the copy the swap kept, and the saved versions only
   // their files, so both are given whatever state git is in.
-  const pending = await pendingSwap(projectDir);
+  const found = await pendingSwap(projectDir);
+  const pending = found !== null && found.block === blockPath ? found : null;
+  const { saved, unreadable, held } = await savedVersions(projectDir, blockPath);
+  // A saved version is called what it is called now, if it is still there,
+  // rather than what it was called when it was swapped in.
   const swapped: SwappedVersion | null =
-    pending === null || pending.block !== blockPath
+    pending === null
       ? null
       : "saved" in pending
-        ? { kind: "saved", ...pending.saved }
+        ? { kind: "saved", ...(saved.find((each) => each.id === pending.saved.id) ?? pending.saved) }
         : { kind: "commit", commit: pending.commit, date: pending.date, author: pending.author, subject: pending.subject };
-  const { saved, unreadable } = await savedVersions(projectDir, blockPath);
+  // Which version the block is on cannot be told without git's list of the
+  // files it is made of, so nothing is said about it.
   const none = (unavailable: string): BlockVersions => ({
     unavailable,
     versions: [],
@@ -540,6 +669,8 @@ export async function blockVersions(projectDir: string, blockPath: string): Prom
     swapped,
     saved,
     unreadable,
+    inUse: [],
+    changedFrom: null,
   });
 
   const state = await gitState(projectDir);
@@ -587,7 +718,10 @@ export async function blockVersions(projectDir: string, blockPath: string): Prom
     changed = now.untracked.length > 0 || (!("missing" in diff) && diff.code === 1);
   }
 
-  return { unavailable: null, versions, more, changed, blocked, swapped, saved, unreadable };
+  const latest = versions[0]?.commit ?? null;
+  const inUse = await inUseNow(projectDir, specs, now.all, changed ? null : latest, pending, held);
+  const changedFrom = inUse.length > 0 ? null : swapped === null ? latest : swapped.kind === "commit" ? swapped.commit : swapped.id;
+  return { unavailable: null, versions, more, changed, blocked, swapped, saved, unreadable, inUse, changedFrom };
 }
 
 /**
@@ -923,9 +1057,10 @@ export async function swapToVersion(projectDir: string, blockPath: string, versi
   }
 
   const plan = await planSwap(projectDir, blockPath, version);
-  const changes = await changesFrom(projectDir, new Map(plan.touched.map((file) => [file, plan.then.get(file) ?? null])));
+  const whole = new Map(plan.touched.map((file) => [file, plan.then.get(file) ?? null]));
+  const changes = await changesFrom(projectDir, whole);
   if (changes.size === 0) return { changed: 0 };
-  return replace(projectDir, changes, { kind: "swap", block: blockPath, name: plan.name, ...plan.to });
+  return replace(projectDir, whole, changes, { kind: "swap", block: blockPath, name: plan.name, ...plan.to });
 }
 
 /**
@@ -945,7 +1080,7 @@ export async function undoLastSwap(projectDir: string, blockPath: string): Promi
   const kept = path.join(projectDir, ".fragmentor", "swaps", String(record.n), "files");
   const plan = new Map<string, Buffer | null>();
   for (const each of record.files) plan.set(each.path, each.existed ? await readFile(resolveInside(kept, each.path)) : null);
-  return replace(projectDir, await changesFrom(projectDir, plan), { kind: "undo", block: blockPath, name: record.name, undoes: record.n });
+  return replace(projectDir, plan, await changesFrom(projectDir, plan), { kind: "undo", block: blockPath, name: record.name, undoes: record.n });
 }
 
 /**
@@ -983,7 +1118,8 @@ async function ignoreAllButSaved(projectDir: string): Promise<void> {
 }
 
 /**
- * Applies a plan to the project, having first copied everything it replaces.
+ * Applies the changes a plan makes to the project, having first copied
+ * everything they replace.
  *
  * The record is complete on disk before anything live is touched, and its
  * swap.json is written last, so a record without one is a copy that never
@@ -993,8 +1129,17 @@ async function ignoreAllButSaved(projectDir: string): Promise<void> {
  * that fails part-way, on a file something else holds open, leaves a record
  * that is not done: Undo swap still reverses the swap from the swap's own
  * copy, and no other swap is made until it has.
+ *
+ * `done` says what every path of the whole plan holds once it is done, by a
+ * fingerprint of each file, so the list can tell whether the block is still
+ * as the swap left it without asking git, and without a copy of any of it.
  */
-async function replace(projectDir: string, plan: Map<string, Buffer | null>, about: SwapAbout): Promise<SwapDone> {
+async function replace(
+  projectDir: string,
+  plan: Map<string, Buffer | null>,
+  changes: Map<string, Buffer | null>,
+  about: SwapAbout,
+): Promise<SwapDone> {
   await ignoreAllButSaved(projectDir);
   const swaps = path.join(projectDir, ".fragmentor", "swaps");
   await mkdir(swaps, { recursive: true });
@@ -1006,7 +1151,7 @@ async function replace(projectDir: string, plan: Map<string, Buffer | null>, abo
 
   try {
     const files: SwapRecord["files"] = [];
-    for (const file of plan.keys()) {
+    for (const file of changes.keys()) {
       const live = resolveInside(projectDir, file);
       // A folder where a file is going is not that file: what is inside it is
       // kept path by path, as the plan's own paths.
@@ -1026,14 +1171,17 @@ async function replace(projectDir: string, plan: Map<string, Buffer | null>, abo
   }
 
   try {
-    await applyPlan(projectDir, plan);
+    await applyPlan(projectDir, changes);
   } catch (error) {
     const advice =
       about.kind === "swap" ? "What was there before is kept: press Undo swap to put it back." : "Nothing is lost: press Undo swap again once the file is free.";
     throw new Error(`${messageOf(error)} ${advice}`);
   }
-  await writeFile(path.join(record, "done"), "", "utf8");
-  return { changed: plan.size };
+  // A path the plan leaves as it was holds what it should, line endings
+  // aside, so its fingerprint is the one the plan gives it.
+  const left = Object.fromEntries([...plan].map(([file, content]) => [file, content === null ? null : fingerprint(content)]));
+  await writeFile(path.join(record, "done"), `${JSON.stringify({ files: left }, null, 2)}\n`, "utf8");
+  return { changed: changes.size };
 }
 
 /** The project's most recent record that can be read, or null when nothing has been swapped. */
@@ -1169,6 +1317,50 @@ export async function saveVersion(
     ignored = !("missing" in rule) && rule.code === 0 ? rule.out.toString("utf8").split("\t")[0]!.trim() : "a rule of this repository";
   }
   return { ...listedAs(id, written), ignored };
+}
+
+/**
+ * Gives one of a block's saved versions a new name and description, held to
+ * what saving one is held to, and gives it back as it will be listed. Its id
+ * stays as it is, since a swap's record and a comparison know it by that;
+ * the name in its file name is only there for whoever reads the folder.
+ *
+ * Nothing else in its file changes, down to the line endings a checkout gave
+ * it, so a review of the commit that changes it shows only what the person
+ * changed. It needs no git: it is one file of the project.
+ */
+export async function editSavedVersion(projectDir: string, blockPath: string, id: string, name: string, description: string): Promise<SavedVersion> {
+  if (!savedIdPattern.test(id)) throw new Error(`"${id}" is not a saved version.`);
+  const called = name.trim();
+  const about = description.trim();
+  if (called === "") throw new Error("A saved version needs a name.");
+  if (called.length > 80) throw new Error("A saved version's name can be at most 80 characters.");
+  if (about.length > 2000) throw new Error("A saved version's description can be at most 2000 characters.");
+
+  const file = path.join(savedFolder(projectDir, blockPath), `${id}.json`);
+  const text = await readFile(file, "utf8").catch(() => null);
+  if (text === null) throw new Error("That saved version is not there any more.");
+  const saved = parseSaved(text);
+  if (saved === null) {
+    const where = path.relative(projectDir, file).split(path.sep).join("/");
+    throw new Error(`This version cannot be changed: Fragmentor cannot read ${where} as a saved version.`);
+  }
+
+  const same = (await savedVersions(projectDir, blockPath)).saved.find(
+    (each) => each.id !== id && each.name.toLowerCase() === called.toLowerCase(),
+  );
+  if (same !== undefined) {
+    const { node } = await loadBlock(projectDir, blockPath);
+    throw new Error(`${node.block.name} already has a saved version named “${same.name}”. Give this one a name of its own.`);
+  }
+
+  // Read again as it was written, rather than as the schema gives it back,
+  // so every field keeps its place and anything unknown is kept too. JSON
+  // writes no line break inside a string, so each one it writes is a line's end.
+  const raw = JSON.parse(text) as Record<string, unknown>;
+  const end = text.includes("\r\n") ? "\r\n" : "\n";
+  await writeFile(file, `${JSON.stringify({ ...raw, name: called, description: about }, null, 2)}\n`.replace(/\n/g, end), "utf8");
+  return listedAs(id, { ...saved, name: called, description: about });
 }
 
 /**

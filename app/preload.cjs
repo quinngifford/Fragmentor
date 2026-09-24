@@ -32,6 +32,7 @@ const CHANNELS = {
   undoSwap: "block:undo-swap",
   saveVersion: "block:save-version",
   deleteSavedVersion: "block:delete-saved-version",
+  editSavedVersion: "block:edit-saved-version",
 };
 
 contextBridge.exposeInMainWorld("fragmentor", {
@@ -64,4 +65,6 @@ contextBridge.exposeInMainWorld("fragmentor", {
   undoSwap: (dir, blockPath) => ipcRenderer.invoke(CHANNELS.undoSwap, dir, blockPath),
   saveVersion: (dir, blockPath, name, description) => ipcRenderer.invoke(CHANNELS.saveVersion, dir, blockPath, name, description),
   deleteSavedVersion: (dir, blockPath, id) => ipcRenderer.invoke(CHANNELS.deleteSavedVersion, dir, blockPath, id),
+  editSavedVersion: (dir, blockPath, id, name, description) =>
+    ipcRenderer.invoke(CHANNELS.editSavedVersion, dir, blockPath, id, name, description),
 });

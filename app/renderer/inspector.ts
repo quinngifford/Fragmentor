@@ -10,7 +10,7 @@ import { STEP_LINK, currentStep, describeStep } from "./execution.js";
 import { travelOf } from "../../src/model/trace.js";
 import type { AccessArrow } from "./canvas.js";
 import { openBenchWindow } from "./benchpanel.js";
-import { versionsSection } from "./versions.js";
+import { versionBadge, versionsSection } from "./versions.js";
 import { el, section } from "./dom.js";
 import { codeBlock, codeFragment, codeLines, languageOf } from "./highlight.js";
 
@@ -551,6 +551,9 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
           : "drawn";
   if (state) badges.append(el("span", `badge state${block.planned ? " planned" : ""}`, state));
   if (block.language) badges.append(el("span", "badge", block.language));
+  // Which version the block is on, from the list its Versions section reads,
+  // so it is seen without scrolling to the bottom of the panel.
+  badges.append(versionBadge(block));
   head.append(badges);
 
   // Coloured block by block, this is where a block's colour is chosen; the

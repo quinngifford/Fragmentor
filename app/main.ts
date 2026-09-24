@@ -1,6 +1,6 @@
 import { cpSync, mkdirSync, mkdtempSync, watch, writeFileSync } from "node:fs";
 import type { FSWatcher } from "node:fs";
-import { access, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, appendFile, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +27,7 @@ import { saveCases } from "../src/run/cases.js";
 import {
   blockVersions,
   deleteSavedVersion,
+  editSavedVersion,
   noise,
   savedIdPattern,
   saveVersion,
@@ -577,6 +578,20 @@ function registerHandlers(): void {
     }
   });
 
+  ipcMain.handle(
+    CHANNELS.editSavedVersion,
+    async (_event, dir: unknown, blockPath: unknown, id: unknown, name: unknown, description: unknown): Promise<Result<SavedVersion>> => {
+      try {
+        const saved = savedId(id);
+        const called = sent(name, "A saved version's name", 80);
+        const about = sent(description, "A saved version's description", 2000);
+        return ok(await oneAtATime(() => editSavedVersion(sent(dir), sent(blockPath), saved, called, about)));
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
   ipcMain.handle(CHANNELS.revealBlock, async (_event, dir: string, blockPath: string): Promise<Result<null>> => {
     try {
       shell.showItemInFolder(resolveInside(blockDir(dir, blockPath), "block.json"));
@@ -1017,6 +1032,15 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("versions", "noFold") === true,
     ],
     [
+      "which version a block is on is marked: the latest commit's row is lit as in use, and the badge in the panel's header names it",
+      value("versions", "inUse") === "Take ten percent off from the fifth seat" &&
+        value("versions", "latestTag") === "in use" &&
+        value("versions", "changedFrom") === "" &&
+        value("versions", "badge") === "version: Take ten percent off from…" &&
+        value("versions", "badgeLit") === true &&
+        /^The version in use: “Take ten percent off from the fifth seat”\. See Versions/.test(String(value("versions", "badgeTitle"))),
+    ],
+    [
       "comparing a version runs the saved tests of both versions against both, and shows what that would change elsewhere",
       // Pricing's own seven tests, and the one of book-seats' that its older
       // version changes the outcome of.
@@ -1049,7 +1073,6 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("swapped", "status") ===
           "Swapped Pricing to the version “Price seats with a discount from the third seat”. Undo swap is under Versions in its panel." &&
         /^Swapped to “Price seats with a discount from the third seat”, committed /.test(String(value("swapped", "now"))) &&
-        value("swapped", "marked") === true &&
         value("swapped", "undo") === true &&
         value("guarded", "ran") === "2 of 2 passed." &&
         value("swapped", "benchTests") === "the first two seats are full price | the third is a fifth off" &&
@@ -1057,6 +1080,22 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         ["partCode", "partContract", "callsPart", "nothingElse", "keptAside", "notForCommitting"].every(
           (key) => value("swappedOnDisk", key) === true,
         ),
+    ],
+    [
+      "after a swap, the version swapped in is the one marked in use, on its row and in the panel's header, and the latest commit is not",
+      value("swapped", "inUse") === "Price seats with a discount from the third seat" &&
+        value("swapped", "olderTag") === "in use" &&
+        value("swapped", "latestTag") === "" &&
+        value("swapped", "badge") === "version: Price seats with a discount…",
+    ],
+    [
+      "once a file the swap wrote is changed, the version swapped in is marked, quietly, as changed since, in the Now row, on its row and in the header",
+      value("changedSince", "now") === "Swapped to “Price seats with a discount from the third seat”, and changed since." &&
+        value("changedSince", "inUse") === "" &&
+        value("changedSince", "changedFrom") === "Price seats with a discount from the third seat" &&
+        value("changedSince", "olderTag") === "changed since" &&
+        value("changedSince", "badge") === "changed since: Price seats with a discount…" &&
+        value("changedSince", "quiet") === true,
     ],
     [
       "undoing a swap puts back exactly what was there",
@@ -1068,17 +1107,46 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("undoneOnDisk", "exactly") === true,
     ],
     [
+      "after undoing a swap, the latest commit is in use again, on its row and in the header",
+      value("undone", "inUse") === "Take ten percent off from the fifth seat" &&
+        value("undone", "changedFrom") === "" &&
+        value("undone", "badge") === "version: Take ten percent off from…",
+    ],
+    [
       "a block is saved as a version from a form that keeps what is typed, and is listed with its name, description and author, in a file that shows up to be committed with the project",
       value("saveForm", "focused") === true &&
         value("saveForm", "emptyRefused") === true &&
         value("saveForm", "kept") === true &&
         value("saving", "about") === "The first four seats at full price, and ten percent off each one after." &&
         /^saved .+ · Fragmentor$/.test(String(value("saving", "meta"))) &&
-        value("saving", "offers") === "Compare | Swap to this | Delete" &&
+        value("saving", "offers") === "Compare | Swap to this | Edit | Delete" &&
         value("saving", "formGone") === true &&
         value("saving", "status") ===
           "Saved “Ten percent from the fifth seat” as a version of Pricing. It is shared once the project is next committed." &&
         ["written", "forCommitting", "swapsPrivate"].every((key) => value("savedOnDisk", key) === true),
+    ],
+    [
+      "a version just saved is in use, as is the commit it is the same as, and the Now row and the header name the saved one",
+      value("saving", "inUse") === "Ten percent from the fifth seat | Take ten percent off from the fifth seat" &&
+        value("saving", "tag") === "in use" &&
+        value("saving", "now") === "The same as the latest commit. It is the saved version “Ten percent from the fifth seat”." &&
+        value("saving", "badge") === "version: Ten percent from the fifth…",
+    ],
+    [
+      "a saved version is renamed and described again from a form in its own row, which opens with what it says now and keeps what is typed, and its file changes in only those two",
+      value("versionEditing", "prefilled") === "Ten percent from the fifth seat / The first four seats at full price, and ten percent off each one after." &&
+        value("versionEditing", "offers") === "Save changes | Cancel" &&
+        value("versionEditing", "focused") === true &&
+        value("versionEditing", "kept") === true &&
+        value("versionRenamed", "renamed") === true &&
+        value("versionRenamed", "about") === "Full price for the first four seats, then ten percent off." &&
+        value("versionRenamed", "status") === "Renamed “Ten percent from the fifth seat” to “Ten percent off from the fifth seat”." &&
+        // It is the same version, so it is still the one in use.
+        value("versionRenamed", "tag") === "in use" &&
+        value("versionRenamed", "badge") === "version: Ten percent off from the…" &&
+        value("versionDescribed", "about") === "The first four seats at full price, and ten percent off each one after." &&
+        value("versionDescribed", "status") === "Saved the description of “Ten percent off from the fifth seat”." &&
+        ["named", "described", "restKept"].every((key) => value("editedOnDisk", key) === true),
     ],
     [
       "a saved version is compared like a commit",
@@ -1090,10 +1158,11 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       "swapping to a saved version puts back every file it saved, leaves alone code it knew nothing about, and undoing that puts back what was there",
       value("swappedOlder", "arrived") === true &&
         value("swappedSaved", "gone") === true &&
-        /^Swapped to “Ten percent from the fifth seat”, saved /.test(String(value("swappedSaved", "now"))) &&
+        /^Swapped to “Ten percent off from the fifth seat”, saved /.test(String(value("swappedSaved", "now"))) &&
         value("swappedSaved", "status") ===
-          "Swapped Pricing to the version “Ten percent from the fifth seat”. Undo swap is under Versions in its panel." &&
-        value("swappedSaved", "marked") === true &&
+          "Swapped Pricing to the version “Ten percent off from the fifth seat”. Undo swap is under Versions in its panel." &&
+        value("swappedSaved", "tag") === "in use" &&
+        value("swappedSaved", "badge") === "version: Ten percent off from the…" &&
         value("swappedSaved", "undo") === true &&
         value("savedSwapOnDisk", "exactly") === true &&
         value("undoneSaved", "back") === true &&
@@ -1102,12 +1171,12 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
     [
       "a saved version is deleted only once the person has said so twice",
       value("asked", "question") ===
-        "Delete “Ten percent from the fifth seat”? It goes for everyone once the project is next committed. If it was ever committed, git's history still has it; if not, it is gone for good." &&
+        "Delete “Ten percent off from the fifth seat”? It goes for everyone once the project is next committed. If it was ever committed, git's history still has it; if not, it is gone for good." &&
         value("asked", "answers") === "Delete it | Keep" &&
         value("asked", "kept") === true &&
         value("askedOnDisk", "still") === true &&
         value("deleted", "gone") === true &&
-        value("deleted", "status") === "Deleted the saved version “Ten percent from the fifth seat”." &&
+        value("deleted", "status") === "Deleted the saved version “Ten percent off from the fifth seat”." &&
         value("deleted", "none") === "No saved versions yet. Save one when Pricing works the way you want to keep it." &&
         value("deletedOnDisk", "gone") === true,
     ],
@@ -2410,10 +2479,17 @@ function attachSelfCheck(
           // The section's two named parts: "Saved" and "Git history".
           const part = (title) => [...document.querySelectorAll("#inspector .version-part")].find((each) => each.querySelector("h5").textContent === title);
           const named = (rows, name) => [...rows].find((row) => (row.querySelector(".case-name") || {}).textContent === name);
-          // The older version's row, in the git history.
+          // The older version's row, in the git history, and the latest's, which comes first.
           const older = () => named(document.querySelectorAll("#inspector .version-row[data-commit]"), "Price seats with a discount from the third seat");
-          // The version saved from the panel, among the saved ones.
-          const savedRow = () => named(document.querySelectorAll("#inspector .version-row[data-saved]"), "Ten percent from the fifth seat");
+          const latest = () => document.querySelector("#inspector .version-row[data-commit]");
+          // The version saved from the panel, the only one saved: it is renamed on the way.
+          const savedRow = () => document.querySelector("#inspector .version-row[data-saved]");
+          // Which version the block is on: the rows marked "in-use" or "changed-from",
+          // the tag on one row, and the badge in the panel's header.
+          const marked = (state) =>
+            [...document.querySelectorAll('#inspector .version-row[data-' + state + '="true"]')].map((row) => row.querySelector(".case-name").textContent).join(" | ");
+          const tag = (row) => ((row && row.querySelector(".version-line .badge")) || {}).textContent || "";
+          const badge = () => text("#inspector [data-version-badge-of]");
           // How one saved test came out in the two versions, as its row says.
           const cells = (name) => {
             const row = older() && [...older().querySelectorAll(".compare-row")].find((each) => each.querySelector(".case-name").textContent.startsWith(name));
@@ -2448,6 +2524,12 @@ function attachSelfCheck(
             noneSaved: (part("Saved")?.querySelector(".bench-note") || {}).textContent || "",
             // Only a longer history is folded.
             noFold: ![...part("Git history").querySelectorAll("button")].some((b) => /^Show /.test(b.textContent)),
+            inUse: marked("in-use"),
+            latestTag: tag(rows[0]),
+            changedFrom: marked("changed-from"),
+            badge: badge(),
+            badgeLit: document.querySelector("#inspector [data-version-badge-of]").classList.contains("in-use"),
+            badgeTitle: document.querySelector("#inspector [data-version-badge-of]").title,
           };
         `);
 
@@ -2543,14 +2625,46 @@ function attachSelfCheck(
             arrived,
             status: text("#status .message"),
             now: meta(nowRow()),
-            // The version in place says so on its own row too.
-            marked: /swapped in$/.test(older()?.querySelector(".version-meta")?.textContent ?? ""),
+            // The version in place says so on its own row, and in the panel's header.
+            inUse: marked("in-use"),
+            olderTag: tag(older()),
+            latestTag: tag(latest()),
+            badge: badge(),
             undo,
             benchTests: [...document.querySelectorAll(".bench-window .case-row .case-name")].map((each) => each.textContent).join(" | "),
             benchResults: Boolean(document.querySelector(".bench-window .case-summary")),
           };
         `);
         await capture(window, "self-check-swapped");
+        // The badge at the top of the panel, which says so without scrolling,
+        // and the rows that say so, as wide as the inspector opens: the check
+        // widened it earlier, and gives it that width back afterwards.
+        const inspectorWidth = (width: string) => `
+          const pane = document.getElementById("inspector-pane");
+          const handle = document.getElementById("inspector-splitter");
+          const from = Math.round(pane.getBoundingClientRect().width);
+          const at = (type, x, target) => target.dispatchEvent(
+            new PointerEvent(type, { bubbles: true, pointerId: 7, clientX: x, clientY: 400, isPrimary: true }),
+          );
+          at("pointerdown", window.innerWidth - from, handle);
+          at("pointermove", window.innerWidth - ${width}, window);
+          at("pointerup", window.innerWidth - ${width}, window);
+          await wait(200);
+        `;
+        await run("badgeShown", `${inspectorWidth("360")}
+          document.querySelector("#inspector .insp-head").scrollIntoView({ block: "start" });
+          return { from, width: Math.round(pane.getBoundingClientRect().width), shown: text("#inspector [data-version-badge-of]") };
+        `);
+        await capture(window, "self-check-version-badge");
+        await run("rowsShown", `
+          document.querySelector("#inspector [data-versions-of]").scrollIntoView({ block: "start" });
+          await wait(200);
+          return {};
+        `);
+        await capture(window, "self-check-version-rows");
+        await run("widenedAgain", `${inspectorWidth(String(report.badgeShown?.from ?? 360))}
+          return { width: Math.round(pane.getBoundingClientRect().width) };
+        `);
         const afterSwap = await filesOf(check.application);
         // Everything a swap of pricing may write: its folder, and the code it
         // and its parts point at, now or in that version.
@@ -2567,6 +2681,24 @@ function attachSelfCheck(
           notForCommitting: !porcelain.includes(".fragmentor"),
         };
 
+        // The agent changes a file the swap wrote. The block is no longer the
+        // version swapped in, nor any other: it has changed since that one.
+        await appendFile(path.join(check.application, "src", "booking", "price-seat.ts"), "// changed after the swap\n", "utf8");
+        await run("changedSince", `${versionsSection}
+          const now = await until(() => (/, and changed since\\.$/.test(meta(nowRow())) ? meta(nowRow()) : null), 15000);
+          await wait(300);
+          document.querySelector("#inspector [data-versions-of]").scrollIntoView({ block: "start" });
+          return {
+            now,
+            inUse: marked("in-use"),
+            changedFrom: marked("changed-from"),
+            olderTag: tag(older()),
+            badge: badge(),
+            quiet: !document.querySelector("#inspector [data-version-badge-of]").classList.contains("in-use"),
+          };
+        `);
+        await capture(window, "self-check-changed-since");
+
         await run("undone", `${versionsSection}
           const undo = button(nowRow(), "Undo swap");
           if (!undo) return { gone: false, stage: "no Undo swap" };
@@ -2579,6 +2711,9 @@ function attachSelfCheck(
             status: text("#status .message"),
             undo: Boolean(button(nowRow(), "Undo swap")),
             benchTests: [...document.querySelectorAll(".bench-window .case-row .case-name")].map((each) => each.textContent).join(" | "),
+            inUse: marked("in-use"),
+            changedFrom: marked("changed-from"),
+            badge: badge(),
           };
         `);
         report.undoneOnDisk = { exactly: sameFiles(beforeSwap, await filesOf(check.application)) };
@@ -2633,6 +2768,11 @@ function attachSelfCheck(
             offers: [...row.querySelectorAll(".case-actions button")].map((b) => b.textContent).join(" | "),
             formGone: !form(),
             status: text("#status .message"),
+            // It is the block as it is, as the latest commit also is.
+            inUse: marked("in-use"),
+            tag: tag(row),
+            now: meta(nowRow()),
+            badge: badge(),
           };
         `);
         await capture(window, "self-check-saved");
@@ -2647,6 +2787,74 @@ function attachSelfCheck(
           swapsPrivate: !/\.fragmentor\/(swaps|\.gitignore)/.test(toCommit),
         };
         const whenSaved = await filesOf(check.application);
+        const asSaved = savedFile === null ? null : JSON.parse(await readFile(savedFile, "utf8"));
+
+        // Renamed and described again from its own row, as the person would:
+        // the form opens there with what it says now, and keeps what is typed
+        // while they look at another block.
+        const editForm = `${versionsSection}
+          const editing = () => savedRow() && savedRow().querySelector(".version-save");
+          const put = (box, value) => {
+            box.value = value;
+            box.dispatchEvent(new Event("input", { bubbles: true }));
+          };
+        `;
+        const openEdit = `
+          const edit = await until(() => button(savedRow(), "Edit"), 10000);
+          if (!edit) return { stage: "no Edit" };
+          edit.click();
+          if (!(await until(editing, 5000))) return { stage: "no form" };
+        `;
+        await run("versionEditing", `${editForm}${openEdit}
+          const prefilled = editing().querySelector("input").value + " / " + editing().querySelector("textarea").value;
+          const offers = [...editing().querySelectorAll("button")].map((b) => b.textContent).join(" | ");
+          const focused = document.activeElement === editing().querySelector("input");
+          put(editing().querySelector("input"), "Ten percent off from the fifth seat");
+          put(editing().querySelector("textarea"), "Full price for the first four seats, then ten percent off.");
+
+          node("price-seat").click();
+          await heading("Price Seat");
+          node("pricing").click();
+          await heading("Pricing");
+          await until(editing, 10000);
+          const kept = Boolean(editing()) && editing().querySelector("input").value === "Ten percent off from the fifth seat";
+          await wait(300);
+          savedRow().scrollIntoView({ block: "center" });
+          return { prefilled, offers, focused, kept };
+        `);
+        await capture(window, "self-check-version-edit");
+        await run("versionRenamed", `${editForm}
+          const save = editing() && button(editing(), "Save changes");
+          if (!save) return { stage: "no form" };
+          save.click();
+          const renamed = await until(
+            () => savedRow() && !editing() && savedRow().querySelector(".case-name").textContent === "Ten percent off from the fifth seat",
+            10000,
+          );
+          return {
+            renamed: Boolean(renamed),
+            about: (savedRow().querySelector(".version-about") || {}).textContent || "",
+            status: text("#status .message"),
+            tag: tag(savedRow()),
+            badge: badge(),
+          };
+        `);
+        await run("versionDescribed", `${editForm}${openEdit}
+          put(editing().querySelector("textarea"), "The first four seats at full price, and ten percent off each one after.");
+          button(editing(), "Save changes").click();
+          await until(() => savedRow() && !editing(), 10000);
+          return {
+            about: (savedRow().querySelector(".version-about") || {}).textContent || "",
+            status: text("#status .message"),
+          };
+        `);
+        // The same file, with only its name and description changed.
+        const asEdited = savedFile === null ? null : JSON.parse(await readFile(savedFile, "utf8"));
+        report.editedOnDisk = {
+          named: asEdited?.name === "Ten percent off from the fifth seat",
+          described: asEdited?.description === "The first four seats at full price, and ten percent off each one after.",
+          restKept: asSaved !== null && JSON.stringify({ ...asEdited, name: asSaved.name, description: asSaved.description }) === JSON.stringify(asSaved),
+        };
 
         // Compared with the block it was saved from, which it still is.
         await run("savedCompared", `${versionsSection}
@@ -2687,7 +2895,8 @@ function attachSelfCheck(
             gone,
             now,
             status: text("#status .message"),
-            marked: /swapped in$/.test(meta(savedRow())),
+            tag: tag(savedRow()),
+            badge: badge(),
             undo: Boolean(button(nowRow(), "Undo swap")),
           };
         `);

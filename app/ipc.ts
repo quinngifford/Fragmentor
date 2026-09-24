@@ -38,6 +38,7 @@ export const CHANNELS = {
   undoSwap: "block:undo-swap",
   saveVersion: "block:save-version",
   deleteSavedVersion: "block:delete-saved-version",
+  editSavedVersion: "block:edit-saved-version",
 } as const;
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -131,6 +132,8 @@ export interface FragmentorApi {
   saveVersion(dir: string, blockPath: string, name: string, description: string): Promise<Result<SavedVersion & { ignored: string | null }>>;
   /** Deletes one of a block's saved versions. */
   deleteSavedVersion(dir: string, blockPath: string, id: string): Promise<Result<null>>;
+  /** Gives one of a block's saved versions a new name and description, keeping everything else about it. */
+  editSavedVersion(dir: string, blockPath: string, id: string, name: string, description: string): Promise<Result<SavedVersion>>;
 }
 
 declare global {

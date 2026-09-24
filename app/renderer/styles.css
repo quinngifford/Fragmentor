@@ -1585,7 +1585,7 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
    and by whom underneath, where a test says how it went. A comparison is the
    same rows again, with the other version's result where the buttons go. */
 .version-row .version-meta { grid-column: 1; font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
-.version-row > .bench-note, .version-compare { grid-column: 1 / -1; }
+.version-row > .bench-note, .version-row > .version-save, .version-compare { grid-column: 1 / -1; }
 .version-compare { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
 .version-compare > .btn { align-self: flex-start; }
 .compare-row .case-status.compare-then { grid-column: 2; justify-self: end; }
@@ -1598,6 +1598,16 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
 .version-part { margin-top: 4px; }
 .version-part > .btn { align-self: flex-start; }
 .version-row > .version-about { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Which version the block is on. The one it is exactly as is lit, as a chip
+   that is on; the one it has changed since is marked, but quietly. Neither is
+   anything wrong, so neither is ever red. The same badges say it in the
+   panel's header. */
+.version-row[data-in-use="true"] { border-color: var(--signal-dim); }
+.version-row[data-changed-from="true"] { border-color: var(--rule-bright); }
+.version-line { grid-column: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.version-line .badge { padding: 1px 6px; }
+.badge.in-use { color: var(--signal); border-color: var(--signal-dim); background: var(--signal-deep); }
 
 /* The form for saving one is a box, like the one for saving a test: something
    to fill in rather than another part of what is above it. */

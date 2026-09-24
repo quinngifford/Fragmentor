@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { applyPlan, blockVersions, deleteSavedVersion, saveVersion, swapToVersion, undoLastSwap } from "./history.js";
+import { applyPlan, blockVersions, deleteSavedVersion, editSavedVersion, saveVersion, swapToVersion, undoLastSwap } from "./history.js";
 import { commitExampleHistory, filesOf, gitIn } from "./exampleHistory.js";
 
 /**
@@ -764,6 +764,8 @@ describe("a saved version", () => {
     );
     expect(listed.saved).toEqual([saved]);
     await expect(saveVersion(dir, pricing, "Another", "")).rejects.toThrow(listed.unavailable!);
+    // What it is called is only its file, which needs no git to change.
+    expect(await editSavedVersion(dir, pricing, saved.id, "Still kept", "")).toEqual({ ...saved, name: "Still kept" });
   }, 30_000);
 
   it("that cannot be read, as a merge can leave one, is named rather than dropped, and is not swapped to", async () => {
@@ -798,6 +800,69 @@ describe("a saved version", () => {
     await expect(deleteSavedVersion(dir, pricing, "1700000000000-gone")).rejects.toThrow("That saved version is not there any more.");
   }, 30_000);
 
+  it("can be renamed and described again, keeping everything else in its file as it was", async () => {
+    const { dir } = await ticketsHistory();
+    const { ignored, ...saved } = await saveVersion(dir, pricing, "Ten percent", "As it shipped.");
+    const file = path.join(dir, savedAt(pricing, saved.id));
+    const before = JSON.parse(await readFile(file, "utf8"));
+
+    const renamed = await editSavedVersion(dir, pricing, saved.id, "  Ten percent from the fifth seat ", " From the fifth seat on. ");
+    expect(renamed).toEqual({ ...saved, name: "Ten percent from the fifth seat", description: "From the fifth seat on." });
+    // Every other field keeps its place and its bytes, the files it holds included.
+    expect(await readFile(file, "utf8")).toBe(`${JSON.stringify({ ...before, name: renamed.name, description: renamed.description }, null, 2)}\n`);
+    expect((await blockVersions(dir, pricing)).saved).toEqual([renamed]);
+
+    // Its own name in other capitals is no other version's.
+    expect(await editSavedVersion(dir, pricing, saved.id, "TEN PERCENT FROM THE FIFTH SEAT", "")).toEqual({
+      ...saved,
+      name: "TEN PERCENT FROM THE FIFTH SEAT",
+      description: "",
+    });
+
+    // A checkout that gave it Windows line endings, as one here does, keeps them.
+    await writeFile(file, (await readFile(file, "utf8")).replace(/\n/g, "\r\n"));
+    await editSavedVersion(dir, pricing, saved.id, "Ten percent", "Again.");
+    const kept = await readFile(file, "utf8");
+    expect(kept).not.toMatch(/[^\r]\n/);
+    expect(kept.replace(/\r\n/g, "\n")).toBe(`${JSON.stringify({ ...before, description: "Again." }, null, 2)}\n`);
+  }, 30_000);
+
+  it("is refused a name or description that saving one would refuse, or by an id that is not one, or no longer there", async () => {
+    const { dir } = await ticketsHistory();
+    await saveVersion(dir, pricing, "Ten percent", "");
+    const other = await saveVersion(dir, pricing, "A fifth", "");
+
+    await expect(editSavedVersion(dir, pricing, other.id, "   ", "")).rejects.toThrow("A saved version needs a name.");
+    await expect(editSavedVersion(dir, pricing, other.id, "x".repeat(81), "")).rejects.toThrow(
+      "A saved version's name can be at most 80 characters.",
+    );
+    await expect(editSavedVersion(dir, pricing, other.id, "Fine", "x".repeat(2001))).rejects.toThrow(
+      "A saved version's description can be at most 2000 characters.",
+    );
+    await expect(editSavedVersion(dir, pricing, other.id, " TEN PERCENT", "")).rejects.toThrow(
+      "Pricing already has a saved version named “Ten percent”. Give this one a name of its own.",
+    );
+    for (const id of ["-x", "../../../outside", "1700000000000-Capitals"]) {
+      await expect(editSavedVersion(dir, pricing, id, "Fine", "")).rejects.toThrow(`"${id}" is not a saved version.`);
+    }
+    await expect(editSavedVersion(dir, pricing, "1700000000000-gone", "Fine", "")).rejects.toThrow("That saved version is not there any more.");
+    // Nothing refused changed anything.
+    expect((await blockVersions(dir, pricing)).saved.map((each) => each.name).sort()).toEqual(["A fifth", "Ten percent"]);
+  }, 30_000);
+
+  it("swapped in is called by its new name once renamed, and by the one it had when it is gone", async () => {
+    const { dir, older } = await ticketsHistory();
+    const { ignored, ...saved } = await saveVersion(dir, pricing, "Ten percent", "");
+    await swapToVersion(dir, pricing, { commit: older });
+    await swapToVersion(dir, pricing, { saved: saved.id });
+
+    const renamed = await editSavedVersion(dir, pricing, saved.id, "Ten percent from the fifth seat", "Renamed.");
+    expect((await blockVersions(dir, pricing)).swapped).toEqual({ kind: "saved", ...renamed });
+
+    await deleteSavedVersion(dir, pricing, saved.id);
+    expect((await blockVersions(dir, pricing)).swapped).toEqual({ kind: "saved", ...saved });
+  }, 30_000);
+
   it("can be deleted, taking the folders it leaves empty with it", async () => {
     const { dir } = await ticketsHistory();
     const part = await saveVersion(dir, priceSeat, "Part", "");
@@ -810,6 +875,101 @@ describe("a saved version", () => {
     await deleteSavedVersion(dir, pricing, whole.id);
     expect(await readdir(path.join(dir, ".fragmentor", "versions"))).toEqual([]);
     expect((await blockVersions(dir, pricing)).saved).toEqual([]);
+  }, 30_000);
+});
+
+describe("which version a block is on", () => {
+  it("is the latest commit, when it is as that commit is", async () => {
+    const { dir, newer } = await ticketsHistory();
+    expect(await blockVersions(dir, pricing)).toMatchObject({ inUse: [newer], changedFrom: null });
+  }, 30_000);
+
+  it("is a version just saved, and the commit it is the same as", async () => {
+    const { dir, newer } = await ticketsHistory();
+    const saved = await saveVersion(dir, pricing, "Ten percent", "");
+
+    const listed = await blockVersions(dir, pricing);
+    expect(listed.inUse.sort()).toEqual([newer, saved.id].sort());
+    expect(listed.changedFrom).toBeNull();
+  }, 30_000);
+
+  it("is the commit swapped to rather than the latest, from what the swap said it left", async () => {
+    const { dir, older, newer } = await ticketsHistory();
+    await swapToVersion(dir, pricing, { commit: older });
+    expect(await blockVersions(dir, pricing)).toMatchObject({ inUse: [older], changedFrom: null });
+
+    const left = async (n: number) => JSON.parse(await readFile(path.join(dir, ".fragmentor", "swaps", String(n), "done"), "utf8")).files;
+    expect((await left(1))["src/booking/seat-discount.ts"]).toMatch(/^[0-9a-f]{40}$/);
+
+    // Swapped back, it is the latest commit twice over, and what that swap took away is said to be gone.
+    await swapToVersion(dir, pricing, { commit: newer });
+    expect(await blockVersions(dir, pricing)).toMatchObject({ inUse: [newer], changedFrom: null });
+    expect((await left(2))["src/booking/seat-discount.ts"]).toBeNull();
+  }, 30_000);
+
+  it("is still the version swapped to when a file the swap took away, and the block no longer points at, is written again", async () => {
+    const { dir, git, older, newer } = await ticketsHistory();
+    // A third commit, so the version swapped back to is not the latest.
+    await appendFile(path.join(dir, "src", "booking", "refund-for.ts"), "// the fee stays\n");
+    await git("commit", "--quiet", "-am", "Say the fee stays");
+    await swapToVersion(dir, pricing, { commit: older });
+    await swapToVersion(dir, pricing, { commit: newer });
+
+    // Something else starting on a file of the same name is no change to pricing.
+    await put(dir, "src/booking/seat-discount.ts", "export const elsewhere = true;\n");
+    expect(await blockVersions(dir, pricing)).toMatchObject({ inUse: [newer], changedFrom: null });
+  }, 30_000);
+
+  it("has changed since the commit swapped to once a file the swap wrote changes, and is the latest again once that is undone", async () => {
+    const { dir, older, newer } = await ticketsHistory();
+    await swapToVersion(dir, pricing, { commit: older });
+    await appendFile(path.join(dir, "src", "booking", "seat-discount.ts"), "// changed\n");
+    expect(await blockVersions(dir, pricing)).toMatchObject({ inUse: [], changedFrom: older });
+
+    await undoLastSwap(dir, pricing);
+    expect(await blockVersions(dir, pricing)).toMatchObject({ swapped: null, inUse: [newer], changedFrom: null });
+  }, 30_000);
+
+  it("has changed since the saved version swapped to once a file appears in its folder", async () => {
+    const { dir, older } = await ticketsHistory();
+    await appendFile(path.join(dir, "src", "booking", "refund-for.ts"), "// not committed\n");
+    const saved = await saveVersion(dir, pricing, "Not committed", "");
+    await swapToVersion(dir, pricing, { commit: older });
+    await swapToVersion(dir, pricing, { saved: saved.id });
+    expect(await blockVersions(dir, pricing)).toMatchObject({ inUse: [saved.id], changedFrom: null });
+
+    await put(dir, `${PRICING}/notes.txt`, "Something new.\n");
+    expect(await blockVersions(dir, pricing)).toMatchObject({ inUse: [], changedFrom: saved.id });
+  }, 30_000);
+
+  it("takes a swap recorded before swaps said what they left as still in place", async () => {
+    const { dir, older } = await ticketsHistory();
+    await swapToVersion(dir, pricing, { commit: older });
+    await writeFile(path.join(dir, ".fragmentor", "swaps", "1", "done"), "");
+    await appendFile(path.join(dir, "src", "booking", "seat-discount.ts"), "// changed\n");
+
+    expect(await blockVersions(dir, pricing)).toMatchObject({ inUse: [older], changedFrom: null });
+  }, 30_000);
+
+  it("is a saved version kept as git stores it, whatever line endings the checkout gave the files", async () => {
+    const { dir, newer } = await ticketsHistory();
+    const code = path.join(dir, "src", "booking", "price-seat.ts");
+    await writeFile(code, (await readFile(code, "utf8")).replace(/\r?\n/g, "\r\n"), "utf8");
+    const saved = await saveVersion(dir, pricing, "Ten percent", "");
+    expect((await savedFile(dir, pricing, saved.id)).files["src/booking/price-seat.ts"].text).not.toContain("\r");
+
+    expect((await blockVersions(dir, pricing)).inUse.sort()).toEqual([newer, saved.id].sort());
+  }, 30_000);
+
+  it("is no commit where there is none yet, and nothing has changed since one", async () => {
+    const dir = path.join(await scratch(), "fresh project");
+    await cp(path.join(examples, "tickets"), dir, { recursive: true });
+    await gitIn(dir)("init", "--quiet");
+    expect(await blockVersions(dir, pricing)).toMatchObject({ inUse: [], changedFrom: null });
+
+    // A version can be saved before anything is committed, and is in use once it is.
+    const saved = await saveVersion(dir, pricing, "First", "");
+    expect(await blockVersions(dir, pricing)).toMatchObject({ inUse: [saved.id], changedFrom: null });
   }, 30_000);
 });
 
