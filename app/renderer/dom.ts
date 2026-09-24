@@ -37,3 +37,22 @@ export function subsection(title: string, tone?: string): HTMLElement {
   node.append(el("h5", tone, title));
   return node;
 }
+
+/**
+ * Draws part of a panel again without taking the cursor from whoever is
+ * typing in it. The field they were in, and where in it, are found again by
+ * their id in whatever `redraw` puts in its place. `scope` is what is about
+ * to be drawn again; a field outside it is left alone.
+ */
+export function keepingFocus(scope: Element, redraw: () => void): void {
+  const typing = document.activeElement;
+  const field = (typing instanceof HTMLInputElement || typing instanceof HTMLTextAreaElement) && scope.contains(typing) && typing.id ? typing : null;
+  const at = field && { id: field.id, start: field.selectionStart, end: field.selectionEnd, scroll: field.scrollTop };
+  redraw();
+  const again = at && document.getElementById(at.id);
+  if (!at || !(again instanceof HTMLInputElement || again instanceof HTMLTextAreaElement)) return;
+  again.focus({ preventScroll: true });
+  // A checkbox has focus but no text to be in.
+  if (at.start !== null) again.setSelectionRange(at.start, at.end);
+  again.scrollTop = at.scroll;
+}

@@ -15,6 +15,7 @@ import {
   applyDependencies,
   clearCanvas,
   onBlockWindow,
+  onNotesPicked,
   onStepPicked,
   fitToView,
   fitWhenReady,
@@ -36,6 +37,7 @@ import { onExecutionChange, paintExecution, resetExecutions, setUpExecutions, sh
 import { closeWindow, openBlockWindow, setUpWindows } from "./popup.js";
 import { benchWindowIsOpen, closeBenchWindow, onBenchWindowChange, renderBenchWindow } from "./benchpanel.js";
 import { forgetVersions, onVersionsChange, refreshVersions } from "./versions.js";
+import { forgetNotes, onNotesChange, renderNotesBar, showNotesOf } from "./notes.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
 
@@ -74,6 +76,7 @@ let treeBefore: Set<string> | null = null;
 function forgetProject(): void {
   forgetBlocks(null);
   forgetVersions();
+  forgetNotes();
   ui.status = null;
   ui.selection.clear();
   ui.selectedLink = null;
@@ -574,6 +577,7 @@ function renderPanels(): void {
   renderTree();
   renderInspector();
   renderBenchWindow();
+  renderNotesBar();
   renderStatus();
 }
 
@@ -696,6 +700,13 @@ try {
       if (await reload()) render();
     },
   });
+  // A note written from the window is shown at once, rather than when the watcher next hears.
+  onNotesChange({
+    all: render,
+    reload: async () => {
+      await reload();
+    },
+  });
   // The agent works in the same folder; follow what it does.
   window.fragmentor.onProjectChanged((dir) => {
     if (dir === ui.dir) void reload().then(refreshVersions);
@@ -714,6 +725,8 @@ try {
   });
   setUpExecutions();
   onBlockWindow(openBlockWindow);
+  // The count on a block's corner leads to the notes it counts.
+  onNotesPicked(showNotesOf);
   // Clicking the step drawn on the tree asks about that step.
   onStepPicked(() => {
     showStep();

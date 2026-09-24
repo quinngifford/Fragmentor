@@ -1636,3 +1636,122 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
 .flow-box .block-plate { stroke-dasharray: none; }
 .flow-box[data-current="true"] .block-plate { stroke: var(--exec-trigger); stroke-width: 2.2; }
 #canvas-svg .exec-line-group[data-current="none"] .exec-line { opacity: 0.5; }
+
+/* ---- notes ---- */
+
+/* A note is a conversation, not a problem: nothing about it is wrong, so it is
+   never red. What waits for the person is amber, the colour of something to
+   look at; what is with the agent is quiet, because there is nothing to do
+   about it here but wait. */
+
+/* The count on a block's corner, straddling it so it covers neither the name
+   nor the buttons that show on the pointer. */
+.note-mark { cursor: pointer; }
+.note-mark-dot { fill: var(--panel-high); stroke: var(--ink-dim); stroke-width: 1.2; }
+.note-mark-count { font-family: var(--mono); font-size: 9px; font-weight: 700; fill: var(--ink); pointer-events: none; }
+.note-mark[data-waiting="person"] .note-mark-dot { fill: var(--effect); stroke: var(--effect); }
+.note-mark[data-waiting="person"] .note-mark-count { fill: var(--ground); }
+.note-mark:hover .note-mark-dot { stroke: var(--ink); }
+
+/* The bar above the drawing, beside the run bar and drawn like it. */
+.notes-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  max-width: 100%;
+  padding: 5px 6px 5px 12px;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink);
+}
+
+.notes-bar[hidden] { display: none; }
+.notes-bar-part { display: flex; align-items: center; gap: 6px; }
+.notes-bar-part[data-waiting="person"] > span { color: var(--effect); }
+
+/* What to tell the agent: the words themselves, set as something to type, with
+   a button to copy them. */
+.note-phrase { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 11.5px; color: var(--ink-dim); }
+.note-phrase.quiet { font-size: 11px; color: var(--ink-faint); }
+.note-phrase-words {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--rule-bright);
+  border-radius: 2px;
+  background: var(--ground);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.note-phrase .run-btn, .notes-bar .run-btn { padding: 2px 8px; font-size: 10.5px; }
+
+/* One note: whose turn it is and when, then each message in turn. */
+.note-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--ink-faint);
+  border-radius: var(--radius);
+  background: var(--ground);
+}
+
+.note-card[data-waiting="person"] { border-left-color: var(--effect); }
+.note-card[data-waiting="none"] { opacity: 0.8; }
+.note-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.note-state { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-dim); }
+.note-card[data-waiting="person"] .note-state { color: var(--effect); }
+.note-when { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); }
+.note-message { display: flex; flex-direction: column; gap: 2px; }
+.note-from { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+.note-message[data-from="agent"] .note-from { color: var(--ink-dim); }
+.note-text { margin: 0; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note-card .case-actions { align-self: flex-end; }
+
+/* A run carried by a note, folded to one line until it is wanted. */
+.note-run { font-size: 11.5px; color: var(--ink-dim); }
+.note-run > summary { cursor: pointer; font-family: var(--mono); font-size: 11px; }
+.note-run[open] { display: flex; flex-direction: column; gap: 6px; }
+.note-run pre.code { max-height: 200px; overflow: auto; white-space: pre-wrap; }
+.note-run ul { margin: 0; padding-left: 16px; }
+
+/* Writing one is a box, like saving a version: something to fill in. */
+.note-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--ground);
+}
+
+.note-form textarea {
+  font: inherit;
+  font-size: 12px;
+  min-height: 64px;
+  resize: vertical;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  color: var(--ink);
+  padding: 6px 8px;
+  width: 100%;
+}
+
+.note-form textarea::placeholder { color: var(--ink-faint); }
+.note-form-actions { display: flex; gap: 6px; }
+.note-leave, .note-resolved-toggle { align-self: flex-start; }
+.problem.note-row { border-left-color: var(--ink-faint); }
+.problem.note-row[data-waiting="person"] { border-left-color: var(--effect); }
+.problem.note-row[data-waiting="person"] .problem-level { color: var(--effect); }
+
+/* Under a run that went wrong in the bench: whether to flag it for the agent. */
+.flag-offer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 11.5px; color: var(--ink-dim); }
+.flag-offer .run-btn { padding: 2px 8px; font-size: 10.5px; }

@@ -55,6 +55,12 @@ export function onBlockWindow(callback: (kind: "code" | "details", blockPath: st
   opened = callback;
 }
 
+let notesPicked: (blockPath: string) => void = () => {};
+/** Called when the person clicks the mark saying a block has notes waiting, with the block the first of them is on. */
+export function onNotesPicked(callback: (blockPath: string) => void): void {
+  notesPicked = callback;
+}
+
 let currentTree: Tree | null = null;
 let currentFlow: Flow | null = null;
 
@@ -693,9 +699,10 @@ export function renderCanvas(): void {
   drawBranches(tree, element("branch-layer"));
   drawAccesses(tree, element("access-layer"));
   const nodeLayer = element("node-layer");
+  const marks = noteMarks(tree);
   for (const node of tree.nodes.values()) {
     const arrival = arriving.indexOf(node.path);
-    drawNode(node, nodeLayer, arrival === -1 ? null : Math.min(arrival, 12) * ARRIVAL_STAGGER_MS);
+    drawNode(node, nodeLayer, arrival === -1 ? null : Math.min(arrival, 12) * ARRIVAL_STAGGER_MS, marks.get(node.path));
   }
 
   renderLegend(true);
@@ -1007,10 +1014,71 @@ export function hasDetails(block: SnapshotBlock): boolean {
   return block.exposes.length > 0 || block.inputs.length > 0 || block.outputs.length > 0 || block.access.length > 0;
 }
 
+/**
+ * The open notes a block on screen carries: how many wait for the agent and
+ * how many for the person, the block the first is on, and whether any is on
+ * a part folded away inside it.
+ */
+interface NoteMark {
+  forAgent: number;
+  forPerson: number;
+  first: string;
+  inside: boolean;
+}
+
+/**
+ * The open notes on each block on screen. A note on a block folded away is
+ * gathered onto the block standing for it, as a step of a trace is, so
+ * folding never hides that something is waiting.
+ */
+function noteMarks(tree: Tree): Map<string, NoteMark> {
+  const marks = new Map<string, NoteMark>();
+  for (const note of ui.snapshot?.notes ?? []) {
+    // A note on a block that has gone is listed in the project's panel; it is
+    // not on any block, so it is drawn on none.
+    if (note.waiting === null || !ui.snapshot?.blocks[note.block]) continue;
+    const node = shownAt(tree, note.block);
+    if (!node) continue;
+    const mark = marks.get(node.path) ?? { forAgent: 0, forPerson: 0, first: note.block, inside: false };
+    if (note.block !== node.path) mark.inside = true;
+    if (note.waiting === "agent") mark.forAgent += 1;
+    else mark.forPerson += 1;
+    marks.set(node.path, mark);
+  }
+  return marks;
+}
+
+/**
+ * A count on a block's corner saying notes are open on it. It is amber while
+ * any of them waits for the person, and quiet while all of them are with the
+ * agent: nothing about a note is wrong, so it is never red.
+ */
+function drawNoteMark(group: SVGGElement, mark: NoteMark): void {
+  const count = mark.forAgent + mark.forPerson;
+  const badge = svgEl("g", {
+    class: "note-mark",
+    transform: `translate(${BOX_W} 0)`,
+    "data-waiting": mark.forPerson > 0 ? "person" : "agent",
+  }, group);
+  const whose = [mark.forPerson > 0 ? `${mark.forPerson} for you` : "", mark.forAgent > 0 ? `${mark.forAgent} for your agent` : ""]
+    .filter(Boolean)
+    .join(", ");
+  const where = mark.inside ? " on it or inside it" : "";
+  svgEl("title", {}, badge).textContent = `${count} open note${count === 1 ? "" : "s"}${where}: ${whose}. Click to read them.`;
+  svgEl("circle", { r: 8, class: "note-mark-dot" }, badge);
+  svgEl("text", { y: 3.5, class: "note-mark-count", "text-anchor": "middle" }, badge).textContent = count > 9 ? "9+" : String(count);
+  badge.addEventListener("pointerdown", (event) => event.stopPropagation());
+  badge.addEventListener("dblclick", (event) => event.stopPropagation());
+  badge.addEventListener("click", (event) => {
+    event.stopPropagation();
+    notesPicked(mark.first);
+  });
+}
+
 /** How much of a name fits across a box, at 12.5px. */
 const NAME_CHARS = 21;
 
-function drawNode(node: TreeNode, layer: Element, arrivalDelay: number | null): void {
+function drawNode(node: TreeNode, layer: Element, arrivalDelay: number | null, notes: NoteMark | undefined): void {
   const block = node.block;
   const group = svgEl("g", {
     class: "block-box",
@@ -1072,6 +1140,7 @@ function drawNode(node: TreeNode, layer: Element, arrivalDelay: number | null): 
 
   drawBlockButtons(group, block);
   if (node.hasParts) drawFold(group, node);
+  if (notes) drawNoteMark(group, notes);
 
   // Beside the block's name: where a run can be told to pause before it.
   if (canPause(block)) {

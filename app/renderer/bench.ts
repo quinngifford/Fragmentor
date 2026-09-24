@@ -6,6 +6,7 @@ import { requireSnapshot, ui } from "./state.js";
 import { runWatched, watchSection } from "./watch.js";
 import { el, section, subsection } from "./dom.js";
 import { codeBlock, typeLine } from "./highlight.js";
+import { flagOffer } from "./notes.js";
 
 /**
  * The test bench: enter values, run the block, see what came back.
@@ -278,6 +279,27 @@ function resultPanel(block: SnapshotBlock): HTMLElement | null {
     panel.append(problemList("The result does not match what this block promises", outcome.outputProblems, "bad"));
   }
 
+  // A block that failed, or broke its promise, is something to fix, and the
+  // agent is who fixes it. A run the person stopped, or values the block
+  // refused, say nothing about the code.
+  const ran = ui.ranWith.get(block.path);
+  if (ran && !outcome.stopped && (!outcome.ok || outcome.outputProblems.length > 0)) {
+    panel.append(
+      flagOffer(
+        block,
+        {
+          test: null,
+          input: ran.input,
+          stores: ran.stores,
+          ...(outcome.ok ? { output: outcome.output } : {}),
+          problems: outcome.ok ? outcome.outputProblems : [outcome.error ?? "The block failed, and gave no reason."],
+          logs: outcome.logs,
+        },
+        outcome,
+      ),
+    );
+  }
+
   const effects = storeEffects(block, outcome);
   if (effects) panel.append(effects);
 
@@ -301,6 +323,7 @@ function whyNotRunnable(block: SnapshotBlock): string | null {
 async function runFromBench(block: SnapshotBlock, input: unknown, stores: StoreSeeds): Promise<void> {
   ui.running.add(block.path);
   ui.runs.delete(block.path);
+  ui.ranWith.set(block.path, { input: structuredClone(input), stores: structuredClone(stores) });
   notify();
 
   const result = await runWatched(block, input, stores);
@@ -443,6 +466,13 @@ function newCaseBox(block: SnapshotBlock): HTMLElement {
   return box;
 }
 
+/**
+ * The tests as they were when each set of results was run, so a test flagged
+ * for the agent carries the input and expectation that failed, even after the
+ * agent has changed it since.
+ */
+const ranAs = new WeakMap<CaseResult[], TestCase[]>();
+
 function casesSection(block: SnapshotBlock): HTMLElement {
   const node = section("Saved tests");
 
@@ -462,6 +492,7 @@ function casesSection(block: SnapshotBlock): HTMLElement {
       void (async () => {
         ui.runningCases.add(block.path);
         ui.caseResults.delete(block.path);
+        const running = structuredClone(block.cases);
         notify();
 
         const outcome = await window.fragmentor.runCases(requireSnapshot().dir, block.path);
@@ -471,6 +502,7 @@ function casesSection(block: SnapshotBlock): HTMLElement {
           ui.status = { text: `Could not run the tests: ${outcome.error}`, tone: "bad" };
         } else {
           ui.caseResults.set(block.path, outcome.value);
+          ranAs.set(outcome.value, running);
           const passed = outcome.value.filter((entry) => entry.status === "passed").length;
           const checked = outcome.value.filter((entry) => entry.status !== "unchecked").length;
           ui.status = {
@@ -500,7 +532,22 @@ function casesSection(block: SnapshotBlock): HTMLElement {
     for (const result of results) {
       if (result.status === "passed" || result.status === "unchecked") continue;
       const detail = result.differences.length > 0 ? result.differences : [result.error ?? "Failed."];
-      node.append(problemList(result.name, detail, "bad"));
+      const failed = problemList(result.name, detail, "bad");
+      const testCase = ranAs.get(results)?.find((each) => each.name === result.name);
+      if (testCase) {
+        failed.append(
+          flagOffer(block, {
+            test: testCase.name,
+            input: testCase.input,
+            ...(testCase.stores === undefined ? {} : { stores: testCase.stores }),
+            ...(testCase.expected === undefined ? {} : { expected: testCase.expected }),
+            ...(result.output === undefined ? {} : { output: result.output }),
+            problems: [...detail, ...result.inputProblems],
+            logs: result.logs,
+          }),
+        );
+      }
+      node.append(failed);
     }
   }
 

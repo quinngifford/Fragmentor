@@ -1,9 +1,10 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { blockDir, createProject, writeBlock, loadProject } from "./project.js";
 import type { Manifest } from "./project.js";
+import { NOTES_DIR, addNote, replyToNote, resolveNote } from "./notes.js";
 import { projectSnapshot } from "./snapshot.js";
 import { emitProject } from "../codegen/emit.js";
 import { makeBlock, t } from "../model/testing.js";
@@ -165,6 +166,70 @@ describe("executions in a snapshot", () => {
     const snapshot = await projectSnapshot(dir);
     expect(snapshot.executions).toEqual([]);
     expect(snapshot.diagnostics.filter((each) => each.blockPath === "executions")).toHaveLength(1);
+  });
+});
+
+describe("notes in a snapshot", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("carries every note, resolved ones too, with whose turn it is", async () => {
+    // A minute apart, so which is oldest does not depend on how fast this runs.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const at = (minute: number) => vi.setSystemTime(new Date(Date.UTC(2026, 8, 24, 10, minute)));
+    at(0);
+    const asked = await addNote(dir, "double-it/add-to-self", "person", "Write this one.");
+    at(1);
+    const answered = await addNote(dir, "double-it", "person", "Explain the doubling.");
+    await replyToNote(dir, answered.id, "agent", "It adds the number to itself.");
+    at(2);
+    const done = await addNote(dir, "double-it", "agent", "I renamed the input.");
+    await resolveNote(dir, done.id);
+    vi.useRealTimers();
+
+    const snapshot = await projectSnapshot(dir);
+    expect(snapshot.notes.map((note) => [note.id, note.block, note.status, note.waiting])).toEqual([
+      [asked.id, "double-it/add-to-self", "open", "agent"],
+      [answered.id, "double-it", "open", "person"],
+      [done.id, "double-it", "resolved", null],
+    ]);
+    expect(snapshot.notes[1]!.messages.map((message) => message.text)).toEqual(["Explain the doubling.", "It adds the number to itself."]);
+    // A note says what someone wants done, not that anything is wrong.
+    expect(snapshot.diagnostics.filter((each) => each.blockPath.startsWith(NOTES_DIR))).toEqual([]);
+  });
+
+  it("warns about an open note on a block that is gone, and a note that cannot be read", async () => {
+    const message = { from: "person", at: "2026-09-24T10:00:00.000Z", text: "Where did this go?" };
+    await mkdir(path.join(dir, NOTES_DIR), { recursive: true });
+    await writeFile(
+      path.join(dir, NOTES_DIR, "1790000000001-moved.json"),
+      JSON.stringify({ block: "double-it/halve", status: "open", messages: [message] }),
+      "utf8",
+    );
+    // Once resolved, it is nobody's business where its block went.
+    await writeFile(
+      path.join(dir, NOTES_DIR, "1790000000002-long-gone.json"),
+      JSON.stringify({ block: "double-it/triple", status: "resolved", messages: [message] }),
+      "utf8",
+    );
+    await writeFile(path.join(dir, NOTES_DIR, "1790000000003-broken.json"), "<<<<<<< HEAD", "utf8");
+
+    const snapshot = await projectSnapshot(dir);
+    expect(snapshot.notes.map((note) => note.id)).toEqual(["1790000000001-moved", "1790000000002-long-gone"]);
+    const noted = snapshot.diagnostics.filter((each) => each.blockPath.startsWith(NOTES_DIR));
+    expect(noted).toEqual([
+      {
+        severity: "warning",
+        blockPath: `${NOTES_DIR}/1790000000003-broken.json`,
+        message: expect.stringMatching(/^This note cannot be read: it is not valid JSON/),
+      },
+      {
+        severity: "warning",
+        blockPath: `${NOTES_DIR}/1790000000001-moved.json`,
+        message: expect.stringContaining("This note is on double-it/halve, which is no longer a block."),
+      },
+    ]);
   });
 });
 

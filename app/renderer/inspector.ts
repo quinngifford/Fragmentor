@@ -11,7 +11,8 @@ import { travelOf } from "../../src/model/trace.js";
 import type { AccessArrow } from "./canvas.js";
 import { openBenchWindow } from "./benchpanel.js";
 import { versionBadge, versionsSection } from "./versions.js";
-import { el, section } from "./dom.js";
+import { notesSection, projectNotesSection } from "./notes.js";
+import { el, keepingFocus, section } from "./dom.js";
 import { codeBlock, codeFragment, codeLines, languageOf } from "./highlight.js";
 
 let notify: () => void = () => {};
@@ -595,14 +596,18 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   const problems = problemsSection(requireSnapshot().diagnostics.filter((d) => d.blockPath === block.path), false);
   if (problems) panel.append(problems);
 
+  // What the person and the agent have asked each other about the block comes
+  // before what the block is, because it is what is waiting to be done.
+  panel.append(notesSection(block));
+
   // A block that is not code says what kind of thing it is. It is a quiet
   // line rather than the dashed box a planned block gets: a database is not a
   // warning about anything, and what Fragmentor does not do with it is
   // already said by the sections it has none of.
   if (block.architecture) panel.append(el("p", "role-note", ROLES[block.role].description));
 
-  // The same sections, in the same order, whatever kind of block this is: what
-  // it can be used through, what it reaches, where its code is, how to set it
+  // The same sections, in the same order, whatever kind of block this is: its
+  // notes, then what it can be used through, what it reaches, where its code is, how to set it
   // going, and last, its earlier versions. A block simply may not have one of
   // the middle ones; every block has versions, or a sentence saying why not.
   const leads = entryLeads(block);
@@ -724,7 +729,16 @@ function multiPanel(panel: HTMLElement): void {
 export function renderInspector(): void {
   const panel = document.getElementById("inspector");
   if (!panel) return;
-  panel.replaceChildren();
+
+  // The panel is drawn afresh whenever the agent changes a file, often while
+  // the person is writing a note to it.
+  keepingFocus(panel, () => {
+    panel.replaceChildren();
+    build(panel);
+  });
+}
+
+function build(panel: HTMLElement): void {
 
   if (!ui.snapshot || ui.waiting) {
     const note = !ui.dir
@@ -774,6 +788,8 @@ export function renderInspector(): void {
 
   const problems = problemsSection(snapshot.diagnostics, true);
   if (problems) panel.append(problems);
+
+  panel.append(projectNotesSection());
 
   const systems = section("Systems");
   const list = el("div", "ports");

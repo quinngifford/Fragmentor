@@ -509,6 +509,10 @@ export function agentGuide(manifest: Manifest): string {
     reviewStep: reviewStep(manifest),
     testStep: pack?.canRun ? " Where Fragmentor writes a contract, import it and write the block's tests." : "",
     testCommand: " and `fragmentor test`",
+    // Only a block Fragmentor runs can have a run go wrong for the person to flag.
+    flaggedRuns: pack?.canRun
+      ? "\n- A note flagged from a failed run carries its input, what was expected and what came back. Make that run pass, and add it as a saved test if it is not one."
+      : "",
     files: filesSection(pack),
     manifest: compactJson(exampleManifest(manifest)),
     languageRule: languageRule(manifest, chosen),

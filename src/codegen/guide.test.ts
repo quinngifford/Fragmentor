@@ -130,13 +130,17 @@ describe("the guide", () => {
     // agents writing executions each reported missing, along with the three
     // matching rules that decide whether an expectation means what it says —
     // and the one line asking for a commit each time a block is finished,
-    // because those commits are its versions, is the whole of what has been
+    // because those commits are its versions — and the notes, which are the
+    // one way the person asks for work beside the block it is about, and
+    // which an agent that has never been told `review fragmentor` means
+    // `fragmentor notes` cannot answer at all, is the whole of what has been
     // allowed to add to these numbers.
-    expect(guides.TypeScript!.split("\n").length).toBeLessThan(290);
+    expect(guides.TypeScript!.split("\n").length).toBeLessThan(303);
     // Nothing is generated or run without a pack, so contracts and block
-    // testing fall away. What is left still teaches executions, which is why
-    // this is not much smaller than it was.
-    expect(guides["in a language there is no pack for"]!.split("\n").length).toBeLessThan(245);
+    // testing fall away, and so does a note flagging a failed run. What is
+    // left still teaches executions and notes, which is why this is not much
+    // smaller than it was.
+    expect(guides["in a language there is no pack for"]!.split("\n").length).toBeLessThan(257);
   });
 
   it("tells an agent about every capability, and how to check and test its work", () => {
@@ -155,6 +159,19 @@ describe("the guide", () => {
     for (const guide of Object.values(guides)) {
       expect(guide).toContain("kept in `.fragmentor/versions/`: commit them with everything else, and never change or delete them.");
     }
+  });
+
+  it("tells every agent what `review fragmentor` means, and how to answer the notes it finds", () => {
+    for (const guide of Object.values(guides)) {
+      expect(guide).toContain("## Notes");
+      expect(guide).toContain("**When the person says `review fragmentor`, run `fragmentor notes`.**");
+      expect(guide).toContain('`fragmentor reply <id> "<what you did>"`');
+      expect(guide).toContain('`fragmentor note <block-path> "<text>"`');
+      expect(guide).toContain("`.fragmentor/notes/`");
+    }
+    // Only a block Fragmentor runs can have a failed run flagged on it.
+    expect(guides.TypeScript).toContain("A note flagged from a failed run");
+    expect(guides["in a language there is no pack for"]).not.toContain("A note flagged from a failed run");
   });
 
   it("says that every function block points at its code, and that the layout is the codebase's own", () => {

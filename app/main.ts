@@ -4,7 +4,7 @@ import { access, appendFile, cp, mkdir, readFile, readdir, rm, stat, writeFile }
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
+import { BrowserWindow, ClipboardItem, app, clipboard, dialog, ipcMain, shell } from "electron";
 import { CHANNELS } from "./ipc.js";
 import type {
   ProjectLoad,
@@ -15,9 +15,9 @@ import type {
   WriteImplRequest,
 } from "./ipc.js";
 import { projectSnapshot } from "../src/project/snapshot.js";
-import { blockDir, loadProject, locateCode, manifestPath } from "../src/project/project.js";
+import { blockDir, loadProject, locateCode, manifestPath, readManifest } from "../src/project/project.js";
 import { readBlockCode } from "../src/project/code.js";
-import { emitProject, startProject } from "../src/codegen/emit.js";
+import { emitProject, startProject, writeGuide } from "../src/codegen/emit.js";
 import type { EmitResult, NewProjectSettings } from "../src/codegen/emit.js";
 import { GUIDE_FILE } from "../src/codegen/guide.js";
 import { resolveInside } from "../src/project/safePath.js";
@@ -35,6 +35,8 @@ import {
   undoLastSwap,
 } from "../src/project/history.js";
 import type { BlockVersions, SavedVersion, SwapDone, VersionRef } from "../src/project/history.js";
+import { MOST_NOTE_TEXT, addNote, deleteNote, isNotePath, replyToNote, resolveNote } from "../src/project/notes.js";
+import type { FlaggedRun, Note } from "../src/project/notes.js";
 import { compareWithVersion } from "../src/run/versions.js";
 import type { VersionComparison } from "../src/run/versions.js";
 import { commitExampleHistory, filesOf, gitIn } from "../src/project/exampleHistory.js";
@@ -241,8 +243,9 @@ function watchProject(contents: Electron.WebContents, dir: string): void {
   try {
     watcher = watch(dir, { recursive: true }, (_event, filename) => {
       // The folders tools keep inside a project are nobody's business, by the
-      // same rule that keeps them out of a block's versions.
-      if (filename && noise(filename)) return;
+      // same rule that keeps them out of a block's versions. Notes are the
+      // exception: the agent answers them while the person watches.
+      if (filename && noise(filename) && !isNotePath(filename)) return;
       clearTimeout(timer);
       timer = setTimeout(notify, 300);
     });
@@ -591,6 +594,59 @@ function registerHandlers(): void {
       }
     },
   );
+
+  ipcMain.handle(
+    CHANNELS.addNote,
+    async (_event, dir: unknown, blockPath: unknown, text: unknown, run: unknown): Promise<Result<Note>> => {
+      try {
+        const project = sent(dir);
+        const note = await addNote(project, sent(blockPath), "person", sent(text, "A note", MOST_NOTE_TEXT), run === undefined ? undefined : (run as FlaggedRun));
+        // The agent learns what to do with notes from its guide, so a project
+        // whose guide was written before there were notes is brought up to
+        // date: the person is about to tell the agent to review them. The
+        // note is saved whatever becomes of that.
+        await readManifest(project).then((manifest) => writeGuide(project, manifest)).catch(() => false);
+        return ok(note);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  ipcMain.handle(CHANNELS.replyToNote, async (_event, dir: unknown, id: unknown, text: unknown, run: unknown): Promise<Result<Note>> => {
+    try {
+      const said = sent(text, "A note", MOST_NOTE_TEXT);
+      return ok(await replyToNote(sent(dir), sent(id, "A note's id", 64), "person", said, run === undefined ? undefined : (run as FlaggedRun)));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  ipcMain.handle(CHANNELS.resolveNote, async (_event, dir: unknown, id: unknown): Promise<Result<Note>> => {
+    try {
+      return ok(await resolveNote(sent(dir), sent(id, "A note's id", 64)));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  ipcMain.handle(CHANNELS.deleteNote, async (_event, dir: unknown, id: unknown): Promise<Result<null>> => {
+    try {
+      await deleteNote(sent(dir), sent(id, "A note's id", 64));
+      return ok(null);
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  ipcMain.handle(CHANNELS.copyText, async (_event, text: unknown): Promise<Result<null>> => {
+    try {
+      await clipboard.writeText(sent(text, "What is copied", MOST_NOTE_TEXT));
+      return ok(null);
+    } catch (error) {
+      return failed(error);
+    }
+  });
 
   ipcMain.handle(CHANNELS.revealBlock, async (_event, dir: string, blockPath: string): Promise<Result<null>> => {
     try {
@@ -1186,6 +1242,100 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("historyFolded", "folded") === 5 &&
         value("historyFolded", "unfolded") === 6 &&
         value("historyFolded", "back") === 5,
+    ],
+    [
+      "a block's panel offers to leave a note, before anything else about the block, while none is open",
+      value("notesOffered", "opened") === true &&
+        value("notesOffered", "of") === "tickets/booking-api/pricing/price-seat" &&
+        value("notesOffered", "notesFirst") === true &&
+        value("notesOffered", "offers") === true &&
+        value("notesOffered", "bar") === "" &&
+        value("notesOffered", "marked") === "",
+    ],
+    [
+      "a note left from the panel is for the agent, is counted on its block, and the words to tell the agent are shown",
+      value("noteLeft", "focused") === true &&
+        value("noteLeft", "emptyRefused") === true &&
+        value("noteLeft", "readyNow") === true &&
+        value("noteLeft", "waiting") === "agent" &&
+        value("noteLeft", "state") === "for your agent" &&
+        value("noteLeft", "says") === "Seats in row A should cost double." &&
+        value("noteLeft", "formGone") === true &&
+        value("noteLeft", "phrases") === "review fragmentor | review fragmentor tickets/booking-api/pricing/price-seat" &&
+        value("noteLeft", "marked") === "agent 1" &&
+        String(value("noteLeft", "bar")).startsWith("1 note for your agent. Tell it") &&
+        String(value("noteLeft", "bar")).includes("review fragmentor") &&
+        value("noteLeft", "status") === "Left a note on Price Seat. Tell your agent “review fragmentor” when you are ready.",
+    ],
+    [
+      "a note is a file in the project, committed with it, and the agent's guide says what to do with it",
+      value("noteOnDisk", "files") === 1 &&
+        value("noteOnDisk", "block") === "tickets/booking-api/pricing/price-seat" &&
+        value("noteOnDisk", "from") === "person" &&
+        value("noteOnDisk", "status") === "open" &&
+        value("noteOnDisk", "forCommitting") === true &&
+        value("noteOnDisk", "guided") === true,
+    ],
+    [
+      "the words to tell the agent are copied from the bar above the drawing",
+      value("phraseCopied", "copied") === true && value("phraseOnClipboard", "text") === "review fragmentor",
+    ],
+    [
+      "the agent's answer appears with nothing reloaded, and hands the note back to the person",
+      value("noteAnswered", "seen") === true &&
+        value("noteAnswered", "from") === "You Agent" &&
+        value("noteAnswered", "state") === "for you" &&
+        value("noteAnswered", "marked") === "person 1" &&
+        value("noteAnswered", "bar") === "1 note for youShow" &&
+        value("noteAnswered", "offers") === "Reply | Resolve | Delete",
+    ],
+    [
+      "a reply being written keeps its words, and the cursor its place, while the agent changes the project",
+      value("replying", "focused") === true &&
+        value("typingKept", "redrawn") === true &&
+        value("typingKept", "words") === "Row B too, please." &&
+        value("typingKept", "focused") === true &&
+        value("typingKept", "at") === 3,
+    ],
+    [
+      "the person resolves a note, which folds it away and takes its count off the block",
+      value("noteResolved", "gone") === true &&
+        value("noteResolved", "folded") === "1 resolved note" &&
+        value("noteResolved", "shown") === "none" &&
+        value("noteResolved", "marked") === "" &&
+        value("noteResolved", "elsewhere") === "person 1" &&
+        value("noteResolved", "status") === "Resolved a note on Price Seat." &&
+        value("resolvedOnDisk", "status") === "resolved",
+    ],
+    [
+      "the project's panel lists every open note, says what to tell the agent, and leads to each note's block",
+      value("projectNotes", "parts") === "For you (1) | On blocks no longer there (1) | What to tell your agent" &&
+        value("projectNotes", "listed") === "tickets/booking-api/find-event" &&
+        value("projectNotes", "phrases") === "review fragmentor | review fragmentor <block path>" &&
+        value("projectNotes", "goneMarked") === "" &&
+        value("projectNotes", "goneOffers") === "Reply | Delete" &&
+        String(value("projectNotes", "goneBar")).includes("1 note for you on a block no longer there") &&
+        value("projectNotes", "goneDeleted") === true &&
+        value("projectNotes", "went") === "tickets/booking-api/find-event",
+    ],
+    [
+      "a failing test is offered to the agent from the bench, and the note flagging it carries the test",
+      String(value("flagged", "offered")).startsWith("Flag this for your coding agent?") &&
+        value("flagged", "flagged") === true &&
+        value("flagged", "marked") === "agent 1" &&
+        value("flagged", "listed") === "The test “row A is double” fails." &&
+        value("flaggedOnDisk", "count") === 1 &&
+        value("flaggedOnDisk", "block") === "tickets/booking-api/pricing/price-seat" &&
+        value("flaggedOnDisk", "text") === "The test “row A is double” fails." &&
+        JSON.stringify(value("flaggedOnDisk", "run")) ===
+          JSON.stringify({
+            test: "row A is double",
+            input: { fullPrice: 25, seat: 1 },
+            expected: { price: 50 },
+            output: { price: 25 },
+            problems: ["output.price was 25, expected 50."],
+            logs: [],
+          }),
     ],
     [
       "an execution is stepped through on the tree, one arrow at a time, and read end to end as its own drawing",
@@ -2824,7 +2974,9 @@ function attachSelfCheck(
         `);
         await capture(window, "self-check-version-edit");
         await run("versionRenamed", `${editForm}
-          const save = editing() && button(editing(), "Save changes");
+          // Waited for: coming back to Pricing reads its versions again, and on a
+          // busy machine git can still be reading when this step starts.
+          const save = await until(() => editing() && button(editing(), "Save changes"), 15000);
           if (!save) return { stage: "no form" };
           save.click();
           const renamed = await until(
@@ -2972,6 +3124,262 @@ function attachSelfCheck(
           button(part("Git history"), "Show fewer").click();
           return { offered: true, folded, unfolded, back: commits() };
         `);
+
+        // Notes: the person leaves one on a block for the agent, from the
+        // block's panel; the agent answers it from the command line while the
+        // window is open, and leaves one of its own while the person is typing;
+        // the person resolves it; and a failing test is flagged from the bench.
+        const notesSection = `${versionsSection}
+          const notes = () => document.querySelector("#inspector [data-notes-of]");
+          const cards = () => [...document.querySelectorAll("#inspector [data-notes-of] .note-card")];
+          const mark = (id) => document.querySelector('.block-box[data-id="' + id + '"] .note-mark');
+          const count = (id) => (mark(id) ? mark(id).dataset.waiting + " " + mark(id).querySelector(".note-mark-count").textContent : "");
+          const bar = () => (document.getElementById("notes-bar").hidden ? "" : text("#notes-bar"));
+          const put = (box, value) => {
+            box.value = value;
+            box.dispatchEvent(new Event("input", { bubbles: true }));
+          };
+        `;
+        await run("notesOffered", `${notesSection}
+          // The bench left open by the steps before would cover the blocks and the bar.
+          const close = [...document.querySelectorAll(".bench-window .window-close")].find((each) => each.textContent === "✕");
+          if (close) close.click();
+          node("price-seat").click();
+          if (!(await heading("Price Seat"))) return { opened: false };
+          const section = await until(notes, 5000);
+          if (!section) return { opened: true, section: false };
+          const headings = [...document.querySelectorAll("#inspector .section h4")].map((h) => h.textContent);
+          return {
+            opened: true,
+            of: section.dataset.notesOf,
+            // What is waiting to be done comes before what the block is.
+            notesFirst: headings.indexOf("Notes") !== -1 && headings.indexOf("Notes") < headings.indexOf("Interface"),
+            offers: Boolean(button(section, "Leave a note")),
+            bar: bar(),
+            marked: count("price-seat"),
+          };
+        `);
+
+        await run("noteLeft", `${notesSection}
+          button(notes(), "Leave a note").click();
+          const box = await until(() => notes() && notes().querySelector(".note-form textarea"), 5000);
+          if (!box) return { stage: "no form" };
+          const focused = document.activeElement === box;
+          const send = () => button(notes().querySelector(".note-form"), "Leave note");
+          const emptyRefused = send().disabled;
+          put(box, "Seats in row A should cost double.");
+          const readyNow = !send().disabled;
+          send().click();
+          const card = await until(() => cards()[0], 10000);
+          if (!card) return { stage: "not listed", said: text("#inspector [data-notes-of] .bench-note.bad") };
+          await until(() => mark("price-seat"), 5000);
+          return {
+            focused,
+            emptyRefused,
+            readyNow,
+            waiting: card.dataset.waiting,
+            state: text("#inspector .note-card .note-state"),
+            says: text("#inspector .note-card .note-text"),
+            formGone: !notes().querySelector(".note-form"),
+            phrases: [...notes().querySelectorAll(".note-phrase-words")].map((c) => c.textContent).join(" | "),
+            marked: count("price-seat"),
+            bar: bar(),
+            status: text("#status .message"),
+          };
+        `);
+        await capture(window, "self-check-note-left");
+        const notesFolder = path.join(check.application, ".fragmentor", "notes");
+        const noteFiles = async () => (await readdir(notesFolder).catch(() => [] as string[])).filter((file) => file.endsWith(".json")).sort();
+        const readNoteFile = async (file: string) => JSON.parse(await readFile(path.join(notesFolder, file), "utf8"));
+        const [leftFile] = await noteFiles();
+        const noteId = leftFile === undefined ? null : leftFile.slice(0, -".json".length);
+        const leftNote = leftFile === undefined ? null : await readNoteFile(leftFile);
+        const notesToCommit = await gitIn(check.application)("status", "--porcelain", "--untracked-files=all");
+        report.noteOnDisk = {
+          files: (await noteFiles()).length,
+          block: leftNote?.block,
+          from: leftNote?.messages?.[0]?.from,
+          status: leftNote?.status,
+          // It shows up to be committed with the project, as a saved version does.
+          forCommitting: leftFile !== undefined && notesToCommit.includes(`.fragmentor/notes/${leftFile}`),
+          // And the guide the agent reads says what to do with it.
+          guided: (await readFile(path.join(check.application, "FRAGMENTOR.md"), "utf8")).includes("review fragmentor"),
+        };
+
+        // What to tell the agent, copied from the bar above the drawing. The
+        // clipboard is the person's, so whatever was on it, in every format, is put back.
+        // Read out in full first: an item read from the clipboard cannot be written back as it is.
+        const clipboardBefore = await Promise.all(
+          (await clipboard.read()).map(
+            async (item) => new ClipboardItem(Object.fromEntries(await Promise.all(item.types.map(async (type) => [type, await item.getType(type)] as const)))),
+          ),
+        );
+        await run("phraseCopied", `${notesSection}
+          const copy = [...document.querySelectorAll("#notes-bar button")].find((b) => b.textContent === "Copy");
+          if (!copy) return { copied: false };
+          copy.click();
+          return { copied: Boolean(await until(() => copy.textContent === "Copied", 3000)) };
+        `);
+        report.phraseOnClipboard = { text: await clipboard.readText() };
+        await clipboard.write(clipboardBefore);
+
+        // The agent answers from the command line, as its guide says, with
+        // nothing in the window asked to read the project again.
+        if (noteId !== null) {
+          await replyToNote(check.application, noteId, "agent", "Done: priceSeat now charges double for any seat in row A. Its tests pass.");
+        }
+        await run("noteAnswered", `${notesSection}
+          const answered = await until(() => (cards()[0] && cards()[0].dataset.waiting === "person" ? cards()[0] : null), 10000);
+          if (!answered) return { seen: false };
+          return {
+            seen: true,
+            from: [...answered.querySelectorAll(".note-from")].map((f) => f.textContent).join(" "),
+            state: text("#inspector .note-card .note-state"),
+            marked: count("price-seat"),
+            bar: bar(),
+            offers: [...answered.querySelectorAll(".case-actions button")].map((b) => b.textContent).join(" | "),
+          };
+        `);
+        await capture(window, "self-check-note-answered");
+
+        // The person starts a reply, and the agent leaves a note on another
+        // block while they type, which draws the whole window again.
+        await run("replying", `${notesSection}
+          button(cards()[0], "Reply").click();
+          const box = await until(() => cards()[0] && cards()[0].querySelector("textarea"), 5000);
+          if (!box) return { focused: false };
+          put(box, "Row B too, please.");
+          box.setSelectionRange(3, 3);
+          return { focused: document.activeElement === box };
+        `);
+        await addNote(check.application, "tickets/booking-api/find-event", "agent", "An event that has been cancelled is still found. Should it be?");
+        await run("typingKept", `${notesSection}
+          const other = await until(() => mark("find-event"), 10000);
+          const box = cards()[0] && cards()[0].querySelector("textarea");
+          const kept = {
+            redrawn: Boolean(other),
+            words: box ? box.value : "",
+            focused: Boolean(box) && document.activeElement === box,
+            at: box ? box.selectionStart : -1,
+          };
+          button(cards()[0].querySelector(".note-form"), "Cancel").click();
+          await until(() => !notes().querySelector(".note-form"), 3000);
+          return kept;
+        `);
+
+        await run("noteResolved", `${notesSection}
+          const resolve = button(cards()[0], "Resolve");
+          if (!resolve) return { stage: "no Resolve" };
+          resolve.click();
+          const gone = await until(() => cards().length === 0, 10000);
+          const toggle = [...notes().querySelectorAll("button")].find((b) => /resolved note/.test(b.textContent));
+          const folded = toggle ? toggle.textContent : "";
+          if (toggle) toggle.click();
+          await wait(100);
+          return {
+            gone: Boolean(gone),
+            folded,
+            shown: cards().map((card) => card.dataset.waiting).join(" "),
+            marked: count("price-seat"),
+            elsewhere: count("find-event"),
+            bar: bar(),
+            status: text("#status .message"),
+          };
+        `);
+        report.resolvedOnDisk = { status: leftFile === undefined ? null : (await readNoteFile(leftFile)).status };
+
+        // A note on a block the agent has since taken away, as its file would
+        // be left: answered by the agent, and so waiting for the person.
+        const goneNote = "1700000000000-take-this-block-away";
+        await writeFile(
+          path.join(notesFolder, `${goneNote}.json`),
+          `${JSON.stringify(
+            {
+              block: "tickets/booking-api/gone",
+              status: "open",
+              messages: [
+                { from: "person", at: "2023-11-14T22:13:20.000Z", text: "Take this block away." },
+                { from: "agent", at: "2023-11-14T22:20:00.000Z", text: "Done: it is gone, and nothing called it." },
+              ],
+            },
+            null,
+            2,
+          )}\n`,
+          "utf8",
+        );
+
+        // With nothing picked out, the project's own panel lists every open
+        // note, says what to tell the agent, and leads to each note's block.
+        await run("projectNotes", `${notesSection}
+          document.querySelector("#crumbs .crumb").click();
+          const notesPart = () => [...document.querySelectorAll("#inspector .section")].find((each) => each.querySelector("h4").textContent === "Notes");
+          const goneCard = () => notesPart() && notesPart().querySelector('.note-card[data-note="${goneNote}"]');
+          // The agent's answer on the block that has gone arrives with the watcher.
+          if (!(await until(goneCard, 10000))) return { listed: "", parts: notesPart() ? [...notesPart().querySelectorAll("h5")].map((h) => h.textContent).join(" | ") : "" };
+          const section = notesPart();
+          const rows = [...section.querySelectorAll(".note-row")];
+          const result = {
+            parts: [...section.querySelectorAll("h5")].map((h) => h.textContent).join(" | "),
+            listed: rows.map((row) => row.querySelector(".problem-where").textContent).join(" "),
+            phrases: [...section.querySelectorAll(".note-phrase-words")].map((c) => c.textContent).join(" | "),
+            // It is on no block, so no block carries its count.
+            goneMarked: count("booking-api"),
+            goneOffers: [...goneCard().querySelectorAll(".case-actions button")].map((b) => b.textContent).join(" | "),
+          };
+          result.goneBar = text("#notes-bar");
+          button(goneCard(), "Delete").click();
+          const yes = await until(() => button(goneCard(), "Delete it"), 5000);
+          if (yes) yes.click();
+          result.goneDeleted = Boolean(await until(() => !goneCard(), 10000));
+          const rowsNow = [...notesPart().querySelectorAll(".note-row")];
+          if (rowsNow[0]) rowsNow[0].click();
+          await heading("Find Event");
+          return { ...result, went: notes() ? notes().dataset.notesOf : "" };
+        `);
+
+        // A test that fails, flagged from the bench. It is a test of Price
+        // Seat's own, written as an agent writes one, that the code does not meet.
+        const priceSeatCases = path.join(check.application, "blocks", "tickets", "booking-api", "pricing", "price-seat", "cases.json");
+        const casesBefore = await readFile(priceSeatCases, "utf8");
+        const rowA = { name: "row A is double", input: { fullPrice: 25, seat: 1 }, expected: { price: 50 } };
+        await writeFile(priceSeatCases, `${JSON.stringify([...JSON.parse(casesBefore), rowA], null, 2)}\n`, "utf8");
+        await run("flagged", `${notesSection}
+          node("price-seat").click();
+          await heading("Price Seat");
+          if (!(await openBench())) return { stage: "no bench" };
+          // Found again each time: the window is drawn afresh as the project changes.
+          const bench = () => document.querySelector(".bench-window");
+          const runAll = () => bench() && [...bench().querySelectorAll("button")].find((b) => b.textContent === "Run all tests");
+          const ready = await until(() => runAll() && [...bench().querySelectorAll(".case-name")].some((n) => n.textContent === "row A is double"), 10000);
+          if (!ready) return { stage: "no new test" };
+          runAll().click();
+          const offer = await until(() => bench() && bench().querySelector(".flag-offer"), 30000);
+          if (!offer) return { stage: "no offer", summary: text(".bench-window .case-summary") };
+          const offered = offer.textContent;
+          [...offer.querySelectorAll("button")].find((b) => b.textContent === "Flag it").click();
+          const flagged = await until(() => /Flagged for your agent/.test(text(".bench-window .flag-offer")), 10000);
+          return {
+            offered,
+            flagged: Boolean(flagged),
+            summary: text(".bench-window .case-summary"),
+            marked: count("price-seat"),
+            // The open ones: the resolved note is still unfolded from before.
+            listed: cards().filter((card) => card.dataset.waiting !== "none").map((card) => card.querySelector(".note-text").textContent).join(" | "),
+          };
+        `);
+        await capture(window, "self-check-flagged");
+        await writeFile(priceSeatCases, casesBefore, "utf8");
+        const flaggedNotes: { block: string; messages: { text: string; run?: unknown }[] }[] = [];
+        for (const file of await noteFiles()) {
+          const note = await readNoteFile(file);
+          if (note.messages?.[0]?.run) flaggedNotes.push(note);
+        }
+        report.flaggedOnDisk = {
+          count: flaggedNotes.length,
+          block: flaggedNotes[0]?.block,
+          text: flaggedNotes[0]?.messages[0]?.text,
+          run: flaggedNotes[0]?.messages[0]?.run,
+        };
 
         // An execution written down in the messenger: picked, drawn over the
         // whole application, stepped through, and followed inside.

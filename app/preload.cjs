@@ -33,6 +33,11 @@ const CHANNELS = {
   saveVersion: "block:save-version",
   deleteSavedVersion: "block:delete-saved-version",
   editSavedVersion: "block:edit-saved-version",
+  addNote: "note:add",
+  replyToNote: "note:reply",
+  resolveNote: "note:resolve",
+  deleteNote: "note:delete",
+  copyText: "clipboard:write",
 };
 
 contextBridge.exposeInMainWorld("fragmentor", {
@@ -67,4 +72,9 @@ contextBridge.exposeInMainWorld("fragmentor", {
   deleteSavedVersion: (dir, blockPath, id) => ipcRenderer.invoke(CHANNELS.deleteSavedVersion, dir, blockPath, id),
   editSavedVersion: (dir, blockPath, id, name, description) =>
     ipcRenderer.invoke(CHANNELS.editSavedVersion, dir, blockPath, id, name, description),
+  addNote: (dir, blockPath, text, run) => ipcRenderer.invoke(CHANNELS.addNote, dir, blockPath, text, run),
+  replyToNote: (dir, id, text, run) => ipcRenderer.invoke(CHANNELS.replyToNote, dir, id, text, run),
+  resolveNote: (dir, id) => ipcRenderer.invoke(CHANNELS.resolveNote, dir, id),
+  deleteNote: (dir, id) => ipcRenderer.invoke(CHANNELS.deleteNote, dir, id),
+  copyText: (text) => ipcRenderer.invoke(CHANNELS.copyText, text),
 });

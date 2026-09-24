@@ -4,6 +4,7 @@ import type { CaseResult, RunEvent, RunOutcome, StoreSeeds } from "../src/run/ru
 import type { TestCase } from "../src/run/cases.js";
 import type { BlockVersions, SavedVersion, SwapDone, VersionRef } from "../src/project/history.js";
 import type { VersionComparison } from "../src/run/versions.js";
+import type { FlaggedRun, Note } from "../src/project/notes.js";
 
 /**
  * The whole surface between the interface and the kernel.
@@ -39,6 +40,11 @@ export const CHANNELS = {
   saveVersion: "block:save-version",
   deleteSavedVersion: "block:delete-saved-version",
   editSavedVersion: "block:edit-saved-version",
+  addNote: "note:add",
+  replyToNote: "note:reply",
+  resolveNote: "note:resolve",
+  deleteNote: "note:delete",
+  copyText: "clipboard:write",
 } as const;
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -134,6 +140,15 @@ export interface FragmentorApi {
   deleteSavedVersion(dir: string, blockPath: string, id: string): Promise<Result<null>>;
   /** Gives one of a block's saved versions a new name and description, keeping everything else about it. */
   editSavedVersion(dir: string, blockPath: string, id: string, name: string, description: string): Promise<Result<SavedVersion>>;
+  /** Leaves a note from the person on a block, with the run it flags when it flags one. */
+  addNote(dir: string, blockPath: string, text: string, run?: FlaggedRun): Promise<Result<Note>>;
+  /** Adds the person's reply to a note, with a run that still goes wrong where there is one, which hands it to the agent, opening it again if it was resolved. */
+  replyToNote(dir: string, id: string, text: string, run?: FlaggedRun): Promise<Result<Note>>;
+  /** Marks a note done. */
+  resolveNote(dir: string, id: string): Promise<Result<Note>>;
+  deleteNote(dir: string, id: string): Promise<Result<null>>;
+  /** Puts text on the clipboard, such as what to tell the agent. */
+  copyText(text: string): Promise<Result<null>>;
 }
 
 declare global {

@@ -163,6 +163,14 @@ A project keeps two things apart:
 
 The agent checks its work with the `fragmentor` command, which runs the same checks the application relies on and reports them as text and an exit status.
 
+### Notes
+
+A person reading the diagram notices things about particular blocks, and describing a block to the agent in words is exactly the rediscovery Fragmentor exists to save. So the person and the agent leave **notes** on blocks for each other. A note is a short conversation about one block: the person asks for a change, a fix or an explanation from the block's panel, or flags a test or a run that went wrong, which carries what it was given and what came back; the agent leaves one where the person should see something on the block itself, such as a bug it found and did not fix.
+
+Whose turn it is follows from who wrote last. The person sets the agent going by typing a fixed phrase into the agent, **`review fragmentor`** (or `review fragmentor <block path>` for one part of the system), which the application shows, with a button to copy it, wherever notes are waiting. The guide tells the agent what that means: list what is waiting with `fragmentor notes`, which gives each block's definition, the file and line of its code and its tests, so nothing has to be searched for; do what each asks; and answer it. The answer hands the note back, and **only the person resolves it**, because the agent saying it is done and the person agreeing are different things.
+
+Notes are files in the project, committed with it, one to a note so that the person and the agent never write the same file. They are not part of a block's versions: swapping a block back to last week keeps this week's notes. Fragmentor still calls no model; it keeps the notes and shows them, and the agent does the work.
+
 Decomposition is still a review loop rather than a single shot. The user defines as much of the block hierarchy as they want, at any level, and the agent fills in the rest. The agent settles the structure first and lets the user review it on the canvas; code is written only after the structure is agreed, working bottom-up.
 
 Decomposition depth is user-controlled. The granularity chosen when the project is created applies to the whole project, and any block may be pinned as a leaf. Granularity is expressed as a stop condition the agent evaluates — a block needs no parts when it has one clear responsibility with no further useful internal structure — with a hard depth limit as a safety net.
@@ -179,7 +187,7 @@ Each block carries a state: specified, implemented, tests passing, or stale. A b
 
 ## Developer interface
 
-The interface is a visual canvas — dark, high-contrast, structural — where the user reads the hierarchy, opens blocks, reads code, runs tests, follows runs, and watches the agent's work take shape. The whole system is one drawing rather than a series of pages, and blocks appear on it as the agent creates them. The user directs the agent in the agent's own tool; Fragmentor is where they see and check what it built.
+The interface is a visual canvas — dark, high-contrast, structural — where the user reads the hierarchy, opens blocks, reads code, runs tests, follows runs, and watches the agent's work take shape. The whole system is one drawing rather than a series of pages, and blocks appear on it as the agent creates them. The user directs the agent in the agent's own tool; Fragmentor is where they see and check what it built, and where they point at what needs doing, with notes on the blocks themselves.
 
 **The user interacts through the UI.** Understanding the structure should come from looking at it, and every action the user takes should be a clear, clickable control. The user is never expected to learn or type commands to operate Fragmentor. The `fragmentor` command exists for the coding agent, and for developing and verifying Fragmentor itself; it is not a user-facing surface.
 

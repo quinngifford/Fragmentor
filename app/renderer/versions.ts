@@ -4,7 +4,7 @@ import type { CaseResult } from "../../src/run/run.js";
 import type { ComparedBlock, ComparedTest, VersionComparison } from "../../src/run/versions.js";
 import type { Result } from "../ipc.js";
 import { statusWord } from "./bench.js";
-import { el, section, subsection } from "./dom.js";
+import { el, keepingFocus, section, subsection } from "./dom.js";
 import { forgetBlocks, ui } from "./state.js";
 
 /**
@@ -53,22 +53,12 @@ function redraw(): void {
   const block = old ? ui.snapshot?.blocks[old.dataset.versionsOf!] : undefined;
   if (!old || !block) return;
 
-  // Someone typing in the form keeps typing: the field they were in, and
-  // where in it, are found again in the section that takes its place.
-  const typing = document.activeElement;
-  const field = (typing instanceof HTMLInputElement || typing instanceof HTMLTextAreaElement) && old.contains(typing) && typing.id ? typing : null;
-  const at = field && { id: field.id, start: field.selectionStart, end: field.selectionEnd, scroll: field.scrollTop };
-
-  old.replaceWith(versionsSection(block));
-  const badge = document.querySelector<HTMLElement>("#inspector [data-version-badge-of]");
-  if (badge?.dataset.versionBadgeOf === block.path) badge.replaceWith(versionBadge(block));
-
-  const again = at && document.getElementById(at.id);
-  if (at && (again instanceof HTMLInputElement || again instanceof HTMLTextAreaElement)) {
-    again.focus({ preventScroll: true });
-    again.setSelectionRange(at.start, at.end);
-    again.scrollTop = at.scroll;
-  }
+  // Someone typing in the form keeps typing.
+  keepingFocus(old, () => {
+    old.replaceWith(versionsSection(block));
+    const badge = document.querySelector<HTMLElement>("#inspector [data-version-badge-of]");
+    if (badge?.dataset.versionBadgeOf === block.path) badge.replaceWith(versionBadge(block));
+  });
 }
 
 /** The list last read, and which block of which project it is for. */

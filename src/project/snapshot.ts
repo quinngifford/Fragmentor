@@ -15,6 +15,8 @@ import type { Trace } from "../model/trace.js";
 import type { CodeLocation, Granularity, Project, ProjectDiagnostic, Start } from "./project.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
 import { boundStores, describeBound } from "./stores.js";
+import { NOTES_DIR, loadNotes, waitingOn } from "./notes.js";
+import type { Note, NoteAuthor } from "./notes.js";
 import { readCases } from "../run/cases.js";
 import type { TestCase } from "../run/cases.js";
 
@@ -207,6 +209,9 @@ export interface SnapshotExecution {
   expects: boolean;
 }
 
+/** A note, with whose turn it is worked out here rather than again by the window. */
+export type SnapshotNote = Note & { waiting: NoteAuthor | null };
+
 export interface ProjectSnapshot {
   dir: string;
   name: string;
@@ -221,6 +226,8 @@ export interface ProjectSnapshot {
   systems: SnapshotSystem[];
   blocks: Record<string, SnapshotBlock>;
   executions: SnapshotExecution[];
+  /** Every note left on a block, resolved ones too, oldest first. */
+  notes: SnapshotNote[];
   diagnostics: ProjectDiagnostic[];
 }
 
@@ -308,6 +315,36 @@ async function executionsOf(project: Project, problems: ProjectDiagnostic[]): Pr
     });
   }
   return snapshots;
+}
+
+/**
+ * The notes left on the project's blocks. A note that cannot be read, or is
+ * on a block that is no longer there, is a warning rather than an error: it
+ * says nothing about whether the program is right, and a block that moved is
+ * the agent's to point its notes at again.
+ */
+async function notesOf(project: Project, problems: ProjectDiagnostic[]): Promise<SnapshotNote[]> {
+  let loaded: Awaited<ReturnType<typeof loadNotes>>;
+  try {
+    loaded = await loadNotes(project.dir);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    problems.push({ severity: "warning", blockPath: NOTES_DIR, message: `The notes could not be read: ${reason}` });
+    return [];
+  }
+  for (const unread of loaded.problems) {
+    problems.push({ severity: "warning", blockPath: unread.file, message: `This note cannot be read: ${unread.problem}` });
+  }
+  for (const note of loaded.notes) {
+    if (note.status === "open" && !project.byPath.has(note.block)) {
+      problems.push({
+        severity: "warning",
+        blockPath: `${NOTES_DIR}/${note.id}.json`,
+        message: `This note is on ${note.block}, which is no longer a block. If the block moved, change "block" in the note to where it went; if it is gone, resolve the note or delete it.`,
+      });
+    }
+  }
+  return loaded.notes.map((note) => ({ ...note, waiting: waitingOn(note) }));
 }
 
 export async function projectSnapshot(projectDir: string): Promise<ProjectSnapshot> {
@@ -434,6 +471,7 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
 
   // Read before the snapshot is put together, because its problems go into the list below.
   const executions = await executionsOf(project, fileProblems);
+  const notes = await notesOf(project, fileProblems);
 
   return {
     dir: project.dir,
@@ -454,6 +492,7 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
     }),
     blocks,
     executions,
+    notes,
     diagnostics: [...validateProject(project), ...fileProblems],
   };
 }

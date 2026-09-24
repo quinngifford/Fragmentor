@@ -1101,17 +1101,19 @@ type Kept = SwapRecord & { n: number; done: boolean };
 
 /**
  * What `.fragmentor/.gitignore` says: ignore everything here, this file
- * included, but the saved versions. A copy of old code kept for Undo swap is
- * never committed and never shows as a change, while every saved version
- * shows up to be committed with the project, so everyone working on it has it.
+ * included, but the saved versions and the notes left on blocks. A copy of
+ * old code kept for Undo swap is never committed and never shows as a change,
+ * while every saved version and every note shows up to be committed with the
+ * project, so everyone working on it has them.
  */
-const IGNORED = "*\n!versions/\n!versions/**\n";
+const IGNORED = "*\n!versions/\n!versions/**\n!notes/\n!notes/**\n";
 
 /**
  * Makes `.fragmentor/.gitignore` say exactly that, before anything is written
- * beside it. One written before there were saved versions ignores them too.
+ * beside it. One written before there were saved versions or notes ignores
+ * them too.
  */
-async function ignoreAllButSaved(projectDir: string): Promise<void> {
+export async function ignoreAllButShared(projectDir: string): Promise<void> {
   const file = path.join(projectDir, ".fragmentor", ".gitignore");
   await mkdir(path.dirname(file), { recursive: true });
   if ((await readFile(file, "utf8").catch(() => null)) !== IGNORED) await writeFile(file, IGNORED, "utf8");
@@ -1140,7 +1142,7 @@ async function replace(
   changes: Map<string, Buffer | null>,
   about: SwapAbout,
 ): Promise<SwapDone> {
-  await ignoreAllButSaved(projectDir);
+  await ignoreAllButShared(projectDir);
   const swaps = path.join(projectDir, ".fragmentor", "swaps");
   await mkdir(swaps, { recursive: true });
 
@@ -1297,7 +1299,7 @@ export async function saveVersion(
     files: Object.fromEntries(files),
   };
 
-  await ignoreAllButSaved(projectDir);
+  await ignoreAllButShared(projectDir);
   const folder = savedFolder(projectDir, blockPath);
   await mkdir(folder, { recursive: true });
   // Never over another version, however unlikely one is to have this id.

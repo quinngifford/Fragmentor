@@ -1,5 +1,6 @@
 import { emitProject } from "../codegen/emit.js";
 import type { EmitResult } from "../codegen/emit.js";
+import type { NoteAuthor } from "../project/notes.js";
 import { loadProject } from "../project/project.js";
 import type { ProjectDiagnostic } from "../project/project.js";
 import { packFor, readAllCode } from "../project/code.js";
@@ -65,6 +66,12 @@ export interface CheckReport {
   drawnOnly: DrawnOnly[];
   /** Blocks Fragmentor can run that have no saved tests. */
   untested: string[];
+  /**
+   * The open notes, by who they are waiting for, as the block each is on:
+   * a block with two notes waiting is named twice. A note is never an error,
+   * because it says what someone wants done rather than what is wrong.
+   */
+  notes: Record<NoteAuthor, string[]>;
   /** Errors of every kind. Warnings and unfinished work are not errors. */
   errorCount: number;
 }
@@ -116,6 +123,10 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
       .filter((block) => block.drawnBecause !== null)
       .map((block) => ({ blockPath: block.path, reason: block.drawnBecause! })),
     untested: real.filter((block) => block.runnable && block.cases.length === 0).map((block) => block.path),
+    notes: {
+      agent: snapshot.notes.filter((note) => note.waiting === "agent").map((note) => note.block),
+      person: snapshot.notes.filter((note) => note.waiting === "person").map((note) => note.block),
+    },
     errorCount,
   };
 }

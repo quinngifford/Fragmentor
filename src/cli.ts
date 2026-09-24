@@ -8,11 +8,13 @@ import { CLAUDE_FILE, GUIDE_FILE } from "./codegen/guide.js";
 import { getPack, isKnownLanguage } from "./lang/index.js";
 import { readAllCode } from "./project/code.js";
 import { loadExecutions } from "./project/executions.js";
+import { NOTES_DIR, addNote, describeRun, isNoteWithin, loadNotes, replyToNote, waitingOn } from "./project/notes.js";
+import type { Note } from "./project/notes.js";
 import { evaluate } from "./run/expect.js";
 import { isArchitecture } from "./model/roles.js";
-import { loadProject, manifestPath, readManifest, systemOf } from "./project/project.js";
+import { loadProject, locateCode, manifestPath, readManifest, systemOf } from "./project/project.js";
 import type { Project, ProjectDiagnostic } from "./project/project.js";
-import { readCases } from "./run/cases.js";
+import { casesPath, readCases } from "./run/cases.js";
 import { runCases } from "./run/run.js";
 import type { CaseResult } from "./run/run.js";
 
@@ -35,11 +37,23 @@ Commands:
   check                  Check the diagram, regenerate generated code, check the code, and list unfinished work.
   test [block-path ...]  Run the saved tests of every block, or of the named blocks only, and hold each
                          execution to its own expectations.
+  notes [block-path]     List the notes waiting for you, on every block or only on that block and its parts,
+                         with where each block's code and tests are. Run it when the person says "review fragmentor".
+  reply <note-id> <text>
+                         Answer a note once it is done, which hands it back to the person.
+  note <block-path> <text>
+                         Leave a note on a block for the person to read in Fragmentor.
 
-check and test use the nearest folder, from here upwards, that holds fragmentor.json.
-init uses the current folder. --project names a folder instead.`;
+init uses the current folder; the others use the nearest folder, from here upwards, that holds fragmentor.json.
+--project names a folder instead. Everything after a note's block path or id is its text, so put --project
+before it. Text that is just - is read from standard input.`;
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+/** "a", "a and b", "a, b and c", each named once. */
+const listed = (items: string[]) => {
+  const once = [...new Set(items)];
+  return once.length <= 1 ? (once[0] ?? "") : `${once.slice(0, -1).join(", ")} and ${once.at(-1)}`;
+};
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** Lines up the continuation lines of a long message under its first line. */
@@ -133,7 +147,7 @@ async function init(dir: string, options: Map<string, string>): Promise<number> 
 
 function problemLine(diagnostic: ProjectDiagnostic): string {
   const label = diagnostic.severity === "error" ? "ERROR" : "WARN ";
-  return `  ${label}  ${diagnostic.blockPath}: ${diagnostic.message}`;
+  return `  ${label}  ${diagnostic.blockPath}: ${indent(diagnostic.message, "         ")}`;
 }
 
 function formatReport(report: CheckReport): string {
@@ -214,6 +228,18 @@ function formatReport(report: CheckReport): string {
   if (report.untested.length > 0) {
     lines.push(`  no tests yet (${report.untested.length} of ${built}):`);
     lines.push(...report.untested.map((blockPath) => `    ${blockPath}`));
+  }
+
+  // A note says what someone wants done rather than what is wrong, so it is
+  // kept apart from the problems and never changes the result. The agent is
+  // told they are there, not asked to stop what it is doing for them.
+  const { agent, person } = report.notes;
+  if (agent.length > 0 || person.length > 0) {
+    lines.push("", "Notes");
+    if (agent.length > 0) {
+      lines.push(`  ${agent.length} waiting for you, on ${listed(agent)}. Run \`fragmentor notes\` when the person asks you to review them.`);
+    }
+    if (person.length > 0) lines.push(`  ${person.length} waiting for the person, on ${listed(person)}.`);
   }
 
   const warnings = report.problems.filter((d) => d.severity === "warning").length;
@@ -412,6 +438,148 @@ async function testExecutions(dir: string): Promise<number> {
 }
 
 /* -------------------------------------------------------------------------- */
+/* notes, reply and note                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** When a message was written, to the minute, or as it was written where that is not a date. */
+function when(at: string): string {
+  const time = new Date(at);
+  return Number.isNaN(time.getTime()) ? at : `${time.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+/**
+ * Where a note's block is written down and where its code and tests are, so
+ * the agent goes straight there rather than searching the codebase for it.
+ */
+async function whereLines(project: Project, note: Note): Promise<string[]> {
+  const node = project.byPath.get(note.block);
+  if (!node) {
+    return [`  That block is not there any more. If it moved, change "block" in ${NOTES_DIR}/${note.id}.json to its new path.`];
+  }
+
+  const lines = [`  block  blocks/${note.block}/block.json`];
+  if (node.block.code !== undefined) {
+    const found = await locateCode(project.dir, node.block.code);
+    if (!found.ok) {
+      lines.push(`  code   ${node.block.code}, which leads nowhere: ${found.problem}`);
+    } else {
+      const { file, line, symbol } = found.location;
+      lines.push(`  code   ${file}${line === null ? "" : `:${line}`}${symbol === null ? "" : `  (${symbol})`}`);
+    }
+  }
+  if (await exists(casesPath(project.dir, note.block))) lines.push(`  tests  blocks/${note.block}/cases.json`);
+  return lines;
+}
+
+/** A note's whole conversation, oldest first, with any run flagged beside a message. */
+function conversationLines(note: Note): string[] {
+  const lines: string[] = [];
+  for (const message of note.messages) {
+    lines.push(`  ${message.from}, ${when(message.at)}`, `    ${indent(message.text, "    ")}`);
+    if (message.run) lines.push(...describeRun(message.run).map((line) => `      ${indent(line, "      ")}`));
+  }
+  return lines;
+}
+
+/**
+ * Every open note waiting for the agent, or only those on one block and its
+ * parts, each with everything needed to act on it. What the person is still
+ * to answer is only counted, because it is not the agent's to do.
+ */
+async function notes(dir: string, within: string | undefined): Promise<number> {
+  let project: Project;
+  try {
+    project = await loadProject(dir);
+  } catch (error) {
+    console.log(`The project in ${dir} could not be read.\n\n${messageOf(error)}\n\nRun \`fragmentor check\` for details.`);
+    return 1;
+  }
+
+  if (within !== undefined && !project.byPath.has(within)) {
+    const example = [...project.byPath.keys()].at(-1) ?? "";
+    console.log(`There is no block at ${within}. A block path looks like ${example}.`);
+    return 1;
+  }
+
+  const loaded = await loadNotes(dir);
+  const here = within === undefined ? loaded.notes : loaded.notes.filter((note) => isNoteWithin(note, within));
+  const forYou = here.filter((note) => waitingOn(note) === "agent");
+  const forPerson = here.filter((note) => waitingOn(note) === "person");
+  const on = within === undefined ? "" : ` on ${within} or its parts`;
+
+  console.log(`${project.manifest.name}  ${dir}\n`);
+  console.log(
+    forYou.length === 0
+      ? `No notes${on} are waiting for you.`
+      : `${plural(forYou.length, "note")}${on} ${forYou.length === 1 ? "is" : "are"} waiting for you.`,
+  );
+
+  for (const note of forYou) {
+    const node = project.byPath.get(note.block);
+    console.log(`\n${note.id}  on ${note.block}${node ? ` (${node.block.name})` : ""}`);
+    console.log([...(await whereLines(project, note)), "", ...conversationLines(note)].join("\n"));
+  }
+
+  if (forPerson.length > 0) {
+    const blocks = listed(forPerson.map((note) => note.block));
+    console.log(`\n${plural(forPerson.length, "note")}${on} ${forPerson.length === 1 ? "is" : "are"} waiting for the person rather than you, on ${blocks}.`);
+  }
+  // A note is never quietly dropped, so one that cannot be read is named.
+  if (loaded.problems.length > 0) {
+    const count = loaded.problems.length;
+    console.log(`\n${plural(count, "note")} cannot be read, so ${count === 1 ? "it is" : "they are"} not listed:`);
+    for (const { file, problem } of loaded.problems) console.log(`  ${file}: ${indent(problem, "    ")}`);
+  }
+  if (forYou.length > 0) console.log(`\nWhen a note is done, answer it with \`fragmentor reply <id> "<what you did>"\`.`);
+  return 0;
+}
+
+/**
+ * A note's text: the words after the block or note it is for, or standard
+ * input where they are exactly `-`, which gets quotes and several lines
+ * through a shell intact. Standard input is read only then, because reading
+ * it when nothing is being sent would wait for ever.
+ */
+async function textFrom(words: string[]): Promise<string> {
+  if (words.length !== 1 || words[0] !== "-") return words.join(" ");
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8").replace(/\r\n/g, "\n");
+}
+
+async function reply(dir: string, id: string | undefined, words: string[]): Promise<number> {
+  if (id === undefined) {
+    console.log(`fragmentor reply needs the note's id and what to say: fragmentor reply <note-id> "<what you did>".`);
+    return 1;
+  }
+  try {
+    const answered = await replyToNote(dir, id, "agent", await textFrom(words));
+    console.log(`Answered note ${answered.id} on ${answered.block}.`);
+    console.log("It is the person's now: they resolve it in Fragmentor once they are satisfied, or reply if not.");
+    return 0;
+  } catch (error) {
+    console.log(messageOf(error));
+    return 1;
+  }
+}
+
+async function note(dir: string, blockPath: string | undefined, words: string[]): Promise<number> {
+  if (blockPath === undefined) {
+    console.log(`fragmentor note needs the block to leave it on and what to say: fragmentor note <block-path> "<text>".`);
+    return 1;
+  }
+  try {
+    const left = await addNote(dir, blockPath, "agent", await textFrom(words));
+    console.log(`Left note ${left.id} on ${left.block}.`);
+    console.log("The person will see it on the block in Fragmentor, and can reply to it there.");
+    return 0;
+  } catch (error) {
+    console.log(messageOf(error));
+    return 1;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /* Entry                                                                       */
 /* -------------------------------------------------------------------------- */
 
@@ -424,6 +592,13 @@ async function main(argv: string[]): Promise<number> {
   const options = new Map<string, string>();
 
   for (let i = 0; i < argv.length; i += 1) {
+    // A note's text is everything after the block or note it is for, and may
+    // itself say --project, so none of it is read as an option.
+    if (args.length === 2 && (args[0] === "note" || args[0] === "reply")) {
+      args.push(...argv.slice(i));
+      break;
+    }
+
     const arg = argv[i]!;
     const option = /^--([a-z][a-z-]*)(?:=(.*))?$/.exec(arg);
     if (!option || !(OPTIONS.has(option[1]!) || FLAGS.has(option[1]!))) {
@@ -450,7 +625,7 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === "init") return init(path.resolve(project ?? process.cwd()), options);
 
-  if (command === "check" || command === "test") {
+  if (command === "check" || command === "test" || command === "notes" || command === "reply" || command === "note") {
     const dir = project ? path.resolve(project) : await findProject(process.cwd());
     if (!dir || !(await exists(manifestPath(dir)))) {
       console.log(
@@ -461,8 +636,16 @@ async function main(argv: string[]): Promise<number> {
     }
 
     // Accept a path however it was typed: with backslashes, or a trailing slash.
-    const blockPaths = rest.map((entry) => entry.replace(/\\/g, "/").replace(/\/+$/, ""));
-    return command === "check" ? check(dir) : test(dir, blockPaths);
+    const asPath = (entry: string) => entry.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (command === "check") return check(dir);
+    if (command === "test") return test(dir, rest.map(asPath));
+    if (command === "reply") return reply(dir, rest[0], rest.slice(1));
+    if (command === "note") return note(dir, rest[0] === undefined ? undefined : asPath(rest[0]), rest.slice(1));
+    if (rest.length > 1) {
+      console.log(`fragmentor notes takes one block path at most, and was given ${rest.length}.`);
+      return 1;
+    }
+    return notes(dir, rest[0] === undefined ? undefined : asPath(rest[0]));
   }
 
   if (command === "help" || command === "--help" || command === "-h") {

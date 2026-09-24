@@ -443,7 +443,7 @@ describe("swapping a block to a version", () => {
     // Said beside the record once every change is made, never by writing it again.
     expect(await there(dir, ".fragmentor/swaps/1/done")).toBe(true);
 
-    expect(await readFile(path.join(dir, ".fragmentor", ".gitignore"), "utf8")).toBe("*\n!versions/\n!versions/**\n");
+    expect(await readFile(path.join(dir, ".fragmentor", ".gitignore"), "utf8")).toBe("*\n!versions/\n!versions/**\n!notes/\n!notes/**\n");
     expect(await git("status", "--porcelain", "--untracked-files=all")).not.toContain(".fragmentor");
   }, 30_000);
 
@@ -590,7 +590,7 @@ describe("a saved version", () => {
     expect(await savedFile(dir, pricing, saved.id)).toMatchObject({ name: saved.name, block: pricing, saved: saved.date, by: "Ada Lovelace" });
     const listed = await blockVersions(dir, pricing);
     expect(listed).toMatchObject({ saved: [saved], unreadable: [], swapped: null, changed: false });
-    expect(await readFile(path.join(dir, ".fragmentor", ".gitignore"), "utf8")).toBe("*\n!versions/\n!versions/**\n");
+    expect(await readFile(path.join(dir, ".fragmentor", ".gitignore"), "utf8")).toBe("*\n!versions/\n!versions/**\n!notes/\n!notes/**\n");
 
     await swapToVersion(dir, pricing, { commit: older });
     const status = await git("status", "--porcelain", "--untracked-files=all");

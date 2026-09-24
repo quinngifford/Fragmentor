@@ -116,6 +116,8 @@ export interface UiState {
   benchStores: Map<string, StoreSeeds>;
   /** The last result from running each block. */
   runs: Map<string, RunOutcome>;
+  /** What that last run was given, so a run that went wrong can be flagged for the agent as it was. */
+  ranWith: Map<string, { input: unknown; stores: StoreSeeds }>;
   /** Blocks currently running. */
   running: Set<string>;
   /** The last result of running each block's saved tests. */
@@ -244,6 +246,7 @@ export const ui: UiState = {
   benchInputs: new Map(),
   benchStores: new Map(),
   runs: new Map(),
+  ranWith: new Map(),
   running: new Set(),
   caseResults: new Map(),
   runningCases: new Set(),
@@ -261,7 +264,7 @@ export const ui: UiState = {
  * once, so a project being put away and a block being swapped forget the same.
  */
 export function forgetBlocks(root: string | null): void {
-  for (const byPath of [ui.edits, ui.benchInputs, ui.benchStores, ui.runs, ui.caseResults, ui.caseNames]) {
+  for (const byPath of [ui.edits, ui.benchInputs, ui.benchStores, ui.runs, ui.ranWith, ui.caseResults, ui.caseNames]) {
     for (const path of [...byPath.keys()]) {
       if (root === null || path === root || path.startsWith(`${root}/`)) byPath.delete(path);
     }

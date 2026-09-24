@@ -77,6 +77,15 @@ export function isGeneratedSource(source: string): boolean {
 }
 
 /**
+ * Brings the guide in a project up to date, and says whether that took a
+ * write. Anything that relies on the agent knowing what the guide says now,
+ * such as what to do with the notes the person leaves, calls this first.
+ */
+export async function writeGuide(projectDir: string, manifest: Manifest): Promise<boolean> {
+  return writeIfChanged(path.join(projectDir, GUIDE_FILE), agentGuide(manifest));
+}
+
+/**
  * Prepares a folder for a coding agent: the guide, and the two files agents
  * read first, which point at it. Those two are only ever created, never
  * rewritten, because they are where the person keeps instructions of their
@@ -89,7 +98,7 @@ export async function writeAgentFiles(
 ): Promise<{ written: string[]; kept: string[]; withoutGuide: string[] }> {
   await mkdir(projectDir, { recursive: true });
 
-  const written = (await writeIfChanged(path.join(projectDir, GUIDE_FILE), agentGuide(manifest))) ? [GUIDE_FILE] : [];
+  const written = (await writeGuide(projectDir, manifest)) ? [GUIDE_FILE] : [];
   const kept: string[] = [];
   const withoutGuide: string[] = [];
 
