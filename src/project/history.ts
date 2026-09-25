@@ -1426,11 +1426,12 @@ export async function startHistory(dir: string): Promise<{ written: string[]; no
  * nothing has been committed yet: an answer without a commit is still an
  * answer.
  */
-export async function headCommit(projectDir: string): Promise<{ hash: string; subject: string; date: string } | null> {
-  const found = await git(projectDir, ["log", "-1", "--format=%H%x00%s%x00%cI"]);
+export async function headCommit(projectDir: string): Promise<{ hash: string; subject: string; date: string; merge: boolean } | null> {
+  const found = await git(projectDir, ["log", "-1", "--format=%H%x00%s%x00%cI%x00%P"]);
   if ("missing" in found || found.code !== 0) return null;
-  const [hash, subject, date] = found.out.toString("utf8").trim().split("\0");
-  return hash && date ? { hash, subject: subject ?? "", date } : null;
+  const [hash, subject, date, parents] = found.out.toString("utf8").trim().split("\0");
+  // A merge has more than one parent, and says nothing of its own about what changed.
+  return hash && date ? { hash, subject: subject ?? "", date, merge: (parents ?? "").trim().split(/\s+/).length > 1 } : null;
 }
 
 /**

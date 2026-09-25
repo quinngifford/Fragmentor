@@ -194,14 +194,23 @@ export async function openCodeWindow(block: SnapshotBlock): Promise<void> {
  * since the answer to a note usually moves them, or null where they are no
  * longer there as they were.
  */
-function whereNow(text: string, kept: string): [number, number] | null {
-  const wanted = kept.split("\n").filter((line, at, all) => !(at === all.length - 1 && line.startsWith("… (")));
-  if (wanted.length === 0 || wanted.every((line) => line.trim() === "")) return null;
+function whereNow(text: string, kept: string, was: [number, number]): [number, number] | null {
   const lines = text.replace(/\r\n/g, "\n").split("\n");
+  // Lines cut short when the note was left end in a line saying so, and
+  // only what was kept can be looked for.
+  const cut = kept.split("\n").at(-1)?.startsWith("… (") ?? false;
+  const wanted = cut ? kept.split("\n").slice(0, -1) : kept.split("\n");
+  const matchesAt = (at: number) => at >= 0 && at + wanted.length <= lines.length && wanted.every((line, i) => lines[at + i] === line);
+  const span = (at: number): [number, number] => [at + 1, cut ? Math.max(at + wanted.length, at + 1 + was[1] - was[0]) : at + wanted.length];
+  // Still where the note said: short lines, such as a closing brace, are
+  // found many times over, and the one meant is the one there.
+  if (matchesAt(was[0] - 1)) return span(was[0] - 1);
+  // Moved: the copy nearest where they were.
+  let nearest: number | null = null;
   for (let at = 0; at + wanted.length <= lines.length; at += 1) {
-    if (wanted.every((line, i) => lines[at + i] === line)) return [at + 1, at + wanted.length];
+    if (matchesAt(at) && (nearest === null || Math.abs(at - (was[0] - 1)) < Math.abs(nearest - (was[0] - 1)))) nearest = at;
   }
-  return null;
+  return nearest === null ? null : span(nearest);
 }
 
 /**
@@ -226,7 +235,7 @@ export async function openCodeAt(pointer: string, title: string, lines?: [number
     body.append(el("p", "bench-note", "This points at a folder, or at a file too large to show."));
     return;
   }
-  const found = kept === undefined ? null : whereNow(result.value.text, kept);
+  const found = kept === undefined || lines === undefined ? null : whereNow(result.value.text, kept, lines);
   body.append(codeView(result.value.text, languageOf(snapshot.language ?? "", result.value.file), found ?? lines ?? result.value.line));
   if (kept !== undefined && found === null) {
     body.append(el("p", "bench-note", "These lines have changed since the note was left, so the lines marked are where they were then."));

@@ -595,10 +595,16 @@ async function textFrom(words: string[]): Promise<string> {
 async function commitFor(dir: string, note: Note): Promise<NoteCommit | string> {
   const since = note.messages.filter((message) => message.from === "person").at(-1) ?? note.messages[0]!;
   const head = await headCommit(dir);
-  if (head === null || Date.parse(head.date) <= Date.parse(since.at)) {
+  if (head === null) {
+    return "No commit was recorded with it, because git has no commit here to record: it is not installed, the project is in no repository, or nothing has been committed yet.";
+  }
+  if (Date.parse(head.date) <= Date.parse(since.at)) {
     return "No commit was recorded with it, because none has been made since the person wrote. If you changed files for it, commit them before you reply.";
   }
   const newest = `the newest commit, ${head.hash.slice(0, 7)} "${head.subject}",`;
+  if (head.merge) {
+    return `No commit was recorded with it, because ${newest} is a merge, which is not itself a version of the block. Reply before merging, straight after the commit holding the work.`;
+  }
   try {
     if (!(await commitTouchesBlock(dir, head.hash, note.block))) {
       return `No commit was recorded with it, because ${newest} did not change ${note.block}. Reply to each note as soon as its work is committed, so the newest commit is the one holding it.`;

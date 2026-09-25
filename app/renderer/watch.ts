@@ -98,13 +98,13 @@ function nodeRun(calls: WatchedCall[]): { state: "running" | "paused" | "done" |
 function overlayFor(watch: Watch, tree: Tree): RunOverlay {
   const overlay: RunOverlay = { nodes: new Map() };
   // Where a run went wrong: each call that threw of its own accord, rather
-  // than because one it made did, drawn at the block on screen standing for
-  // it. Everything around it that failed only by containing it is outlined,
+  // than passing on what one it made threw, drawn at the block on screen
+  // standing for it. Everything around it that failed only by containing it is outlined,
   // and one flag says where to look.
   const calls = [...watch.calls.values()];
   const flagged = new Set(
     calls
-      .filter((call) => call.state === "threw" && !calls.some((made) => made.parent === call.id && made.state === "threw"))
+      .filter((call) => call.state === "threw" && !calls.some((made) => made.parent === call.id && made.state === "threw" && made.error === call.error))
       .map((call) => shownAt(tree, call.block)?.path)
       .filter((path): path is string => path !== undefined),
   );

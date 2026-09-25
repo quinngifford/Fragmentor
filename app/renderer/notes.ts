@@ -114,24 +114,26 @@ function runOf(note: SnapshotNote): FlaggedRun | undefined {
 }
 
 /**
- * What running a block depends on, as far as the window can see: its code
- * and its parts'. A result from before any of it changed, as when a note's
- * own Swap back puts the old code in place, is a result about other code.
+ * What running a block depends on, as far as the window can see: the code of
+ * every block, since a block calls whatever it needs wherever it sits. A
+ * result from before any of it changed, as when a note's own Swap back puts
+ * the old code in place, is a result about other code.
  */
-function codeOf(blockPath: string): string {
+function codeNow(): string {
   return Object.values(ui.snapshot?.blocks ?? {})
-    .filter((each) => each.path === blockPath || each.path.startsWith(`${blockPath}/`))
     .map((each) => each.sources.code ?? "")
     .join("\0");
 }
+
+/** Whether a run cut short when it was flagged can no longer be run as it went. */
+const cutTooMuch = (run: FlaggedRun) => (run.cut ?? []).some((part) => part === "input" || part === "stores" || part === "expected");
 
 /**
  * Whether what a note flags can be run again as it was: on a block that is
  * there and that Fragmentor runs, with everything it was given kept whole.
  */
 function canRerun(blockPath: string, run: FlaggedRun): boolean {
-  const cut = run.cut ?? [];
-  return Boolean(ui.snapshot?.blocks[blockPath]?.runnable) && !cut.some((part) => part === "input" || part === "stores" || part === "expected");
+  return Boolean(ui.snapshot?.blocks[blockPath]?.runnable) && !cutTooMuch(run);
 }
 
 /** Whether a run came out right: a test that passes, or a run with no expectation that finished and kept its promise. */
@@ -359,9 +361,11 @@ function rerun(note: SnapshotNote): void {
   if (!dir) return;
   const mine = session;
   const upTo = note.messages.length;
-  const code = codeOf(note.block);
+  const code = codeNow();
   reruns.set(note.id, { upTo, code, state: "running" });
   setTimeout(() => {
+    // The project may have been put away before it started.
+    if (session !== mine) return;
     void window.fragmentor.rerunNote(dir, note.id).then((result) => {
       if (session !== mine) return;
       reruns.set(note.id, { upTo, code, state: result.ok ? result.value : { error: result.error } });
@@ -559,7 +563,9 @@ function commitLine(where: Where, hash: string, subject: string): HTMLElement {
  */
 function rerunLine(where: Where, note: SnapshotNote, run: FlaggedRun): HTMLElement {
   const line = el("div", "note-rerun");
-  const done = reruns.get(note.id);
+  // A result about code that has since changed says nothing about the code now.
+  const kept = reruns.get(note.id);
+  const done = kept && (kept.state === "running" || kept.code === codeNow()) ? kept : undefined;
   const again = button("Run it again", "Run what this note flags again, as it was flagged.", () => {
     rerun(note);
     redrawSection();
@@ -637,7 +643,7 @@ function noteCard(block: Where, note: SnapshotNote, gone = false): HTMLElement {
   const run = runOf(note);
   if (run && note.status === "open") {
     if (canRerun(block.path, run)) card.append(rerunLine(block, note, run));
-    else if (run.cut?.length) card.append(el("p", "bench-note", "What this note flags was too large to keep whole, so it cannot be run again as it was."));
+    else if (cutTooMuch(run)) card.append(el("p", "bench-note", "What this note flags was too large to keep whole, so it cannot be run again as it was."));
   }
 
   const row = key(block.path, note.id);
@@ -722,7 +728,7 @@ export function notesSection(block: SnapshotBlock): HTMLElement {
     if (note.waiting !== "person" || run === undefined || !canRerun(block.path, run)) continue;
     const last = reruns.get(note.id);
     if (last?.state === "running") continue;
-    if (last === undefined || last.upTo !== note.messages.length || last.code !== codeOf(block.path)) rerun(note);
+    if (last === undefined || last.upTo !== note.messages.length || last.code !== codeNow()) rerun(note);
   }
 
   if (open.length === 0 && forms.get(block.path) !== "new") {

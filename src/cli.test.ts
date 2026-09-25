@@ -191,7 +191,7 @@ describe("notes, from the agent's side", () => {
     expect(answered.status).toBe(0);
     expect(answered.output).toContain(`Answered note ${asked.id} on ${priceSeat}.`);
     // This copy is in no repository, so there is no commit to record, and an answer is still an answer.
-    expect(answered.output).toContain("No commit was recorded with it");
+    expect(answered.output).toContain("No commit was recorded with it, because git has no commit here to record");
     expect((await readNote(asked.id)).messages.map((message) => message.from)).toEqual(["person", "agent"]);
 
     const after = fragmentor(["notes"], dir);
@@ -293,6 +293,20 @@ describe("notes, from the agent's side", () => {
 
     await replyToNote(dir, asked.id, "person", "Thanks. And the tenth seat?");
     expect(fragmentor(["notes", priceSeat], dir).output).toContain(`      commit    ${hash.slice(0, 7)} Say why the discount is what it is`);
+
+    // A merge is not itself a version of the block, so an answer after one records nothing, and says why.
+    const merged = await addNote(dir, priceSeat, "person", "Start the discount at the fourth seat.");
+    await backdate(merged.id);
+    const trunk = (await git("rev-parse", "--abbrev-ref", "HEAD")).trim();
+    await git("checkout", "--quiet", "-b", "fourth-seat");
+    await writeFile(path.join(dir, "src", "booking", "price-seat.ts"), "// From the fourth seat.\n", { flag: "a" });
+    await git("commit", "--quiet", "-am", "Start the discount at the fourth seat");
+    await git("checkout", "--quiet", trunk);
+    await git("merge", "--quiet", "--no-ff", "-m", "Merge the fourth seat", "fourth-seat");
+    const afterMerge = fragmentor(["reply", merged.id, "Done on a branch, and merged."], dir);
+    expect(afterMerge.status).toBe(0);
+    expect(afterMerge.output).toContain("is a merge, which is not itself a version of the block");
+    expect((await readNote(merged.id)).messages[1]!.commit).toBeUndefined();
   }, 60_000);
 
   it("says plainly when there is no such note or block", () => {

@@ -1108,7 +1108,7 @@ describe("the newest commit", () => {
   it("is the one at the head of the repository holding the project, with when it was made", async () => {
     const { dir, newer } = await ticketsHistory();
     const found = await headCommit(dir);
-    expect(found).toEqual({ hash: newer, subject: "Take ten percent off from the fifth seat", date: expect.any(String) });
+    expect(found).toEqual({ hash: newer, subject: "Take ten percent off from the fifth seat", date: expect.any(String), merge: false });
     expect(Number.isNaN(Date.parse(found!.date))).toBe(false);
   }, 30_000);
 
