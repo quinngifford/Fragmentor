@@ -111,38 +111,9 @@ body {
 .toggle:hover, .zoom-btn:hover, .chip:hover { color: var(--ink); background: var(--panel-high); }
 .toggle[aria-pressed="true"] { color: var(--signal); border-color: var(--signal-dim); }
 
-/* What to tell the agent. Filled in where everything else on the bar is only
-   outlined, because it is where someone new looks for what they can do. */
-.commands-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 600;
-  padding: 5px 13px;
-  border-radius: var(--radius);
-  border: 1px solid var(--signal-dim);
-  background: var(--signal-deep);
-  color: var(--signal);
-  cursor: pointer;
-}
-/* Its own display would otherwise show it with no project open, and the
-   line after it would then divide nothing from the panel switches. */
-.commands-btn[hidden], .commands-btn[hidden] + .toolbar-sep { display: none; }
-.commands-btn:hover { background: var(--signal-dim); color: var(--ground); }
-.commands-glyph { font-weight: 700; letter-spacing: -0.04em; }
-
-/* Until it has been opened once, it glows. */
-.commands-btn[data-fresh="true"] { animation: commands-glow 2.4s ease-in-out infinite; }
-@keyframes commands-glow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(79, 227, 143, 0); }
-  50% { box-shadow: 0 0 0 3px rgba(79, 227, 143, 0.22), 0 0 16px rgba(79, 227, 143, 0.4); }
-}
-/* Without the movement, a steady ring says the same thing. */
-@media (prefers-reduced-motion: reduce) {
-  .commands-btn[data-fresh="true"] { box-shadow: 0 0 0 2px rgba(79, 227, 143, 0.35); }
-}
+/* With no project open, Commands is hidden, and the line after it would
+   divide nothing from the panel switches. */
+#agent-commands[hidden] + .toolbar-sep { display: none; }
 .chip[aria-pressed="true"] { color: var(--signal); border-color: var(--signal-dim); background: var(--signal-deep); }
 
 /* ---- panes ---- */
@@ -1278,15 +1249,7 @@ button.problem:hover .problem-where { color: var(--signal); }
 
 /* ---- a new project's first steps ---- */
 
-.first-step { display: flex; flex-direction: column; gap: 8px; margin: 0 0 18px; }
-.first-step-head {
-  margin: 0;
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  font-weight: 500;
-}
+.first-steps-body { margin-bottom: 18px; }
 .first-step-text { margin: 0; font-size: 12.5px; color: var(--ink); }
 
 /* The one thing to send first, set large enough to be the thing on the page. */

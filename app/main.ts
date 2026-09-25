@@ -1478,8 +1478,8 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("commandsListed", "names") === "notes review rebuild explain plan build make cover" &&
         value("commandsListed", "review") === "fragmentor review | fragmentor review tickets/booking-api/pricing/price-seat" &&
         value("commandsListed", "slash") === "fragmentor review [block] · in Claude Code, /fragmentor-review" &&
-        value("commandsListed", "litBefore") === true &&
-        value("commandsListed", "litAfter") === false,
+        value("commandsFromMenu", "subtitle") === "with Price Seat picked out" &&
+        value("commandsFromMenu", "names") === "notes review rebuild explain plan build make cover",
     ],
     [
       "an architecture block says what kind it is under what it does, the kind in its colour",
@@ -1838,7 +1838,7 @@ function attachSelfCheck(
           reloadIsTheProject: menuItem("reload-project").label === "Reload Project" && menuItem("reload-project").accelerator === "CmdOrCtrl+R",
           // Reloading the page would put the open project away, so it is not offered.
           noPageReload: !(Menu.getApplicationMenu()?.items ?? []).some((top) => (top.submenu?.items ?? []).some((item) => item.role === "reload" || item.role === "forceReload")),
-          closedWithNothingOpen: !menuItem("close-project").enabled && !menuItem("reload-project").enabled,
+          closedWithNothingOpen: !menuItem("close-project").enabled && !menuItem("reload-project").enabled && !menuItem("show-commands").enabled,
           toolbar: (await window.webContents.executeJavaScript(
             `[...document.querySelectorAll(".toolbar button")].map((b) => b.id).join(" ")`,
           )) as string,
@@ -3873,10 +3873,7 @@ function attachSelfCheck(
         await run("commandsListed", `${notesSection}
           node("price-seat").click();
           await heading("Price Seat");
-          const commands = document.getElementById("agent-commands");
-          const litBefore = commands.dataset.fresh === "true";
-          commands.click();
-          const litAfter = commands.dataset.fresh === "true";
+          document.getElementById("agent-commands").click();
           const listed = await until(() => document.querySelectorAll("#overlay [data-command]").length > 0 ? [...document.querySelectorAll("#overlay [data-command]")] : null, 5000);
           if (!listed) return { names: "" };
           const review = listed.find((each) => each.dataset.command === "review");
@@ -3885,13 +3882,20 @@ function attachSelfCheck(
             names: listed.map((each) => each.dataset.command).join(" "),
             review: review ? [...review.querySelectorAll(".note-phrase-words")].map((c) => c.textContent).join(" | ") : "",
             slash: review ? text('#overlay [data-command="review"] .command-usage') : "",
-            litBefore,
-            litAfter,
           };
           document.querySelector("#overlay .window-close").click();
           return result;
         `);
         await capture(window, "self-check-commands");
+        // View › Commands opens the same window, with the same block filled in.
+        pick("show-commands");
+        await run("commandsFromMenu", `
+          const listed = await until(() => document.querySelectorAll("#overlay [data-command]").length > 0 ? [...document.querySelectorAll("#overlay [data-command]")] : null, 5000);
+          if (!listed) return { names: "" };
+          const result = { subtitle: text("#overlay .window-head .window-sub"), names: listed.map((each) => each.dataset.command).join(" ") };
+          document.querySelector("#overlay .window-close").click();
+          return result;
+        `);
 
         // How a failure flagged for the agent looks, with nothing over the
         // drawing: the block outlined in red, and the note leading with the error.
@@ -4223,6 +4227,7 @@ function setUpMenu(): void {
     {
       label: "View",
       submenu: [
+        { id: "show-commands", label: "Commands", enabled: false, click: send("show-commands") },
         { id: "reload-project", label: "Reload Project", accelerator: "CmdOrCtrl+R", enabled: false, click: send("reload-project") },
         { type: "separator" },
         { role: "toggleDevTools" },
@@ -4239,9 +4244,9 @@ function setUpMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-/** Closing or reloading a project is only offered while one is open. */
+/** Closing or reloading a project, and the commands for its agent, are only offered while one is open. */
 function offerProjectMenu(open: boolean): void {
-  for (const id of ["close-project", "reload-project"]) {
+  for (const id of ["close-project", "reload-project", "show-commands"]) {
     const item = Menu.getApplicationMenu()?.getMenuItemById(id);
     if (item) item.enabled = open;
   }

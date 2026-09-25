@@ -50,7 +50,7 @@ export const CHANNELS = {
 } as const;
 
 /** What the application menu asks the window to do. */
-export type MenuCommand = "new-project" | "open-project" | "close-project" | "reload-project";
+export type MenuCommand = "new-project" | "open-project" | "close-project" | "reload-project" | "show-commands";
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 

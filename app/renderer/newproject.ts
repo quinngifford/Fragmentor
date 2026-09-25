@@ -1,5 +1,6 @@
 import type { NewProjectSettings } from "../../src/codegen/emit.js";
 import { COMMANDS, firstStep, usageOf } from "../../src/codegen/commands.js";
+import { el, section } from "./dom.js";
 import { phraseLine } from "./notes.js";
 
 /**
@@ -70,13 +71,6 @@ const LEVELS: Record<Level, string> = {
 
 /** Suggestions only: code in any language is drawn, whether or not it can be checked. */
 const COMMON_LANGUAGES = ["TypeScript", "JavaScript", "Python", "Go", "Java", "C#", "Rust", "Ruby", "PHP", "C++", "Kotlin", "Swift"];
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
 
 function legendText(node: HTMLLegendElement, text: string, tag: string): void {
   node.replaceChildren();
@@ -262,15 +256,14 @@ export function showFirstSteps(answers: { existingCode: boolean; start: Start },
   title.id = "first-steps-title";
   dialog.append(title, el("p", "dialog-lede", "Your coding agent builds it, and Fragmentor draws it as it goes."));
 
-  const open = el("section", "first-step");
-  open.append(
-    el("h3", "first-step-head", "1. Open your coding agent in this folder"),
-    phraseLine("Claude Code or Codex, in", dir, "note-phrase", "to open your coding agent in it"),
-  );
+  // Each step is headed the way every section of a panel is, so the heading
+  // reads louder than what it holds rather than as a caption under it.
+  const open = section("1. Open your coding agent");
+  open.append(phraseLine("Claude Code or Codex, in this folder:", dir, "note-phrase", "to open your coding agent in it"));
 
-  const send = el("section", "first-step");
+  const send = section("2. Send it this first");
   send.dataset.first = command.name;
-  send.append(el("h3", "first-step-head", "2. Send it this first"), phraseLine("", phrase, "note-phrase first-phrase"));
+  send.append(phraseLine("", phrase, "note-phrase first-phrase"));
   if (command.takes === "words") {
     const example = el("p", "dialog-note");
     example.append("Describe what you want where the angle brackets are, such as ", el("code", undefined, `fragmentor ${command.name} a site where people book seats for events`), ".");
@@ -279,8 +272,7 @@ export function showFirstSteps(answers: { existingCode: boolean; start: Start },
   send.append(el("p", "first-step-text", happens));
   if (next) send.append(phraseLine("When you agree to the plan, send", next));
 
-  const later = el("section", "first-step");
-  later.append(el("h3", "first-step-head", "Everything else you can ask"));
+  const later = section("Everything else you can ask");
   const list = el("dl", "first-commands");
   for (const each of COMMANDS) {
     const row = el("div", "first-command");
@@ -293,7 +285,7 @@ export function showFirstSteps(answers: { existingCode: boolean; start: Start },
     el(
       "p",
       "dialog-note",
-      "A command that names a block means that block and its parts. In Claude Code each is also a slash command, such as /fragmentor-review. They are always under Commands, at the top right.",
+      "A command that names a block means that block and its parts. In Claude Code each is also a slash command, such as /fragmentor-review. You can always find them again with Commands, at the top right, or View › Commands.",
     ),
   );
 
@@ -302,7 +294,9 @@ export function showFirstSteps(answers: { existingCode: boolean; start: Start },
   done.type = "button";
   actions.append(done);
 
-  dialog.append(open, send, later, actions);
+  const steps = el("div", "window-sections first-steps-body");
+  steps.append(open, send, later);
+  dialog.append(steps, actions);
   const finish = () => {
     dialog.close();
     dialog.remove();

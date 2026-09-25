@@ -619,39 +619,19 @@ function wireViewSettings(): void {
   showDependencies();
 }
 
-const COMMANDS_OPENED_KEY = "fragmentor.commandsOpened";
-
-/**
- * The toolbar's Commands, which glows until it has been opened once: it is
- * where someone new finds what they can ask their agent to do, and nothing
- * else on screen would tell them to look there.
- */
-function wireCommandsButton(): void {
-  const button = element("agent-commands");
-  try {
-    if (localStorage.getItem(COMMANDS_OPENED_KEY) !== "true") button.dataset.fresh = "true";
-  } catch {
-    // Storage can be unavailable; the button is then simply not lit.
-  }
-  button.addEventListener("click", () => {
-    delete button.dataset.fresh;
-    try {
-      localStorage.setItem(COMMANDS_OPENED_KEY, "true");
-    } catch {
-      // Remembering is a nicety; it will glow again next time.
-    }
-    // With a block picked out, the commands are offered for it as well.
-    openCommandsWindow(selectedBlock()?.path ?? null);
-  });
+/** The commands for the agent, with the block picked out, if there is one, filled in. */
+async function showCommands(): Promise<void> {
+  openCommandsWindow(selectedBlock()?.path ?? null);
 }
 
-/** What the application menu hands the window: everything to do with which project is open. */
+/** What the application menu hands the window: which project is open, and what to ask its agent. */
 function wireMenu(): void {
   const actions: Record<MenuCommand, () => Promise<void>> = {
     "new-project": newProject,
     "open-project": chooseProject,
     "close-project": closeProject,
     "reload-project": reloadByHand,
+    "show-commands": showCommands,
   };
   window.fragmentor.onMenuCommand((command) => {
     // A shortcut pressed while a dialog is up would start a second thing on
@@ -670,7 +650,7 @@ function wireToolbar(): void {
     ui.showInspector = !ui.showInspector;
     renderPanes();
   });
-  wireCommandsButton();
+  element("agent-commands").addEventListener("click", () => void showCommands());
 
   // The chosen colours go onto the document itself, so every block, line,
   // badge and swatch of a kind follows from one place.
