@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GUIDE_FILE, SKILLS_DIR, agentGuide, architectureExample, compactJson, executionExample, workedExample } from "./guide.js";
-import { COMMANDS } from "./commands.js";
+import { COMMANDS, firstStep } from "./commands.js";
 import { writeAgentFiles } from "./emit.js";
 import { blockFromFile } from "../model/block.js";
 import { CAPABILITIES } from "../model/capabilities.js";
@@ -189,6 +189,25 @@ describe("the guide", () => {
     expect(cover.steps).toContain("keep only what passes. Change no code");
     expect(cover.steps).toContain("do not keep it with the saved tests, and leave a note on the block with `fragmentor note`");
     expect(cover.steps).toContain("with its input, what it should give and what it gives");
+  });
+
+  it("gives a new project the one command its answers call for first", () => {
+    // Code already there is drawn from; nothing yet is planned, or made straight away.
+    expect(firstStep(true, "build")).toMatchObject({ phrase: "fragmentor rebuild", next: null });
+    expect(firstStep(false, "plan")).toMatchObject({ phrase: "fragmentor plan <what you want to build>", next: "fragmentor build" });
+    expect(firstStep(false, "build")).toMatchObject({ phrase: "fragmentor make <what you want to build>", next: null });
+    // Whatever it names is a command every agent is told the meaning of.
+    for (const [existingCode, start] of [[true, "build"], [false, "plan"], [false, "build"]] as const) {
+      expect(COMMANDS).toContain(firstStep(existingCode, start).command);
+    }
+  });
+
+  it("builds what `make` is given straight away, whichever way the project began", () => {
+    const make = COMMANDS.find((command) => command.name === "make")!;
+    expect(make.takes).toBe("words");
+    expect(make.steps).toContain("build it straight away rather than drawing it as a plan to be agreed first, whichever way this project began");
+    // The rebuild a project of existing code starts with has no diagram to redraw yet.
+    expect(COMMANDS.find((command) => command.name === "rebuild")!.steps).toContain("with no diagram yet, the whole codebase");
   });
 
   it("says what each command does in words that read the same in Fragmentor and in Claude Code's / menu", () => {

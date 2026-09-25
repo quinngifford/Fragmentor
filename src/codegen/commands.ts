@@ -55,9 +55,9 @@ export const COMMANDS: readonly AgentCommand[] = [
     optional: true,
     title: "Redraw from the code",
     summary:
-      "Brings the diagram, or one block and its parts, back in line with the code as it is now. It changes the blocks, not the code.",
+      "Brings the diagram, or one block and its parts, back in line with the code as it is now, and draws it from the code where there is none yet. It changes the blocks, not the code.",
     steps:
-      "Read the code behind every block in scope as it is now, and rewrite the blocks to match: responsibilities, parts, code pointers, ports, access, capabilities and exposed entries, adding blocks for code that has none and taking away blocks whose code is gone. Bring the executions through them up to date. Change no code: where it looks wrong, leave a note. Keep what the person wrote, and planned blocks, unless the code shows them wrong, and move a block's notes with it when it moves. Run `fragmentor check` and `fragmentor test`, commit, and say in the chat what changed.",
+      "Read the code behind every block in scope as it is now — with no diagram yet, the whole codebase — and rewrite the blocks to match: responsibilities, parts, code pointers, ports, access, capabilities and exposed entries, adding blocks for code that has none and taking away blocks whose code is gone. Bring the executions through them up to date. Change no code: where it looks wrong, leave a note. Keep what the person wrote, and planned blocks, unless the code shows them wrong, and move a block's notes with it when it moves. Run `fragmentor check` and `fragmentor test`, commit, and say in the chat what changed.",
   },
   {
     name: "explain",
@@ -87,6 +87,16 @@ export const COMMANDS: readonly AgentCommand[] = [
       "Build every planned block in scope, the deepest first: take `planned` off, give it real types, write its code, its tests and the executions through it, run `fragmentor check` and `fragmentor test` until they pass, and commit each block as it passes. Leave a note on any block where the plan turned out to be wrong.",
   },
   {
+    name: "make",
+    takes: "words",
+    optional: false,
+    title: "Make something new",
+    summary:
+      "Designs and builds what you describe straight away: its blocks, their code, tests and executions, with no plan to agree first.",
+    steps:
+      "Work out where what the person describes belongs, and build it straight away rather than drawing it as a plan to be agreed first, whichever way this project began: `fragmentor plan` is how they ask for a plan. Add its blocks, and for each write its code, its tests and the executions through it, run `fragmentor check` and `fragmentor test` until they pass, and commit it as it passes. Change the blocks and code already there only as far as the new ones need. Say in the chat what you built.",
+  },
+  {
     name: "cover",
     takes: "block",
     optional: true,
@@ -109,5 +119,46 @@ export function usageOf(command: AgentCommand): string {
   return `fragmentor ${command.name} ${command.optional ? `[${what}]` : `<${what}>`}`;
 }
 
+const named = (name: string) => COMMANDS.find((command) => command.name === name)!;
+
 /** The command that works through the notes, which the application offers wherever notes are waiting. */
-export const NOTES_COMMAND = COMMANDS.find((command) => command.name === "notes")!;
+export const NOTES_COMMAND = named("notes");
+
+/**
+ * What a new project's person sends their agent first, which follows from the
+ * two answers they gave when they created it: code that is already there is
+ * drawn from, and a program not written yet is either planned or made.
+ * `phrase` is the words to send, with what they want built left for them to
+ * fill in; `happens` says what the agent does with it; `next` is what to send
+ * once a plan is agreed, where there is one to agree.
+ */
+export function firstStep(
+  existingCode: boolean,
+  start: "plan" | "build",
+): { command: AgentCommand; phrase: string; happens: string; next: string | null } {
+  if (existingCode) {
+    const rebuild = named("rebuild");
+    return {
+      command: rebuild,
+      phrase: phraseFor(rebuild),
+      happens: "It reads your code and draws it as blocks, each pointing at the code it stands for, without changing any of the code.",
+      next: null,
+    };
+  }
+  if (start === "plan") {
+    const plan = named("plan");
+    return {
+      command: plan,
+      phrase: phraseFor(plan, "<what you want to build>"),
+      happens: "It draws the whole architecture as planned blocks, greyed out, for you to look over before any code is written.",
+      next: phraseFor(named("build")),
+    };
+  }
+  const make = named("make");
+  return {
+    command: make,
+    phrase: phraseFor(make, "<what you want to build>"),
+    happens: "It designs the blocks and writes their code straight away, without stopping for you to agree to a plan.",
+    next: null,
+  };
+}

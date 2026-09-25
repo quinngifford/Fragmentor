@@ -1,5 +1,5 @@
 import type { ProjectSnapshot } from "../src/project/snapshot.js";
-import type { EmitResult, NewProjectSettings } from "../src/codegen/emit.js";
+import type { NewProjectSettings } from "../src/codegen/emit.js";
 import type { CaseResult, RunEvent, RunOutcome, StoreSeeds } from "../src/run/run.js";
 import type { TestCase } from "../src/run/cases.js";
 import type { BlockVersions, SavedVersion, SwapDone, VersionRef } from "../src/project/history.js";
@@ -24,7 +24,6 @@ export const CHANNELS = {
   recentProjects: "project:recent",
   exampleProjects: "project:examples",
   writeImpl: "block:write-impl",
-  emitCode: "codegen:emit",
   revealBlock: "block:reveal",
   revealCode: "code:reveal",
   readCode: "code:read",
@@ -47,7 +46,11 @@ export const CHANNELS = {
   copyText: "clipboard:write",
   rerunNote: "note:rerun",
   refreshAgentFiles: "project:agent-files",
+  menuCommand: "menu:command",
 } as const;
+
+/** What the application menu asks the window to do. */
+export type MenuCommand = "new-project" | "open-project" | "close-project" | "reload-project";
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -111,7 +114,6 @@ export interface FragmentorApi {
   /** Example projects shipped with Fragmentor, so there is something to open. */
   exampleProjects(): Promise<Result<{ dir: string; name: string }[]>>;
   writeImpl(request: WriteImplRequest): Promise<Result<null>>;
-  emitCode(dir: string): Promise<Result<EmitResult>>;
   /** Shows a block's folder in the system file manager. */
   revealBlock(dir: string, blockPath: string): Promise<Result<null>>;
   /** Shows the file a block points at, given relative to the project. */
@@ -155,6 +157,8 @@ export interface FragmentorApi {
   deleteNote(dir: string, id: string): Promise<Result<null>>;
   /** Puts text on the clipboard, such as what to tell the agent. */
   copyText(text: string): Promise<Result<null>>;
+  /** Called with whatever the person picks from the application menu that is the window's to do. */
+  onMenuCommand(callback: (command: MenuCommand) => void): void;
 }
 
 declare global {

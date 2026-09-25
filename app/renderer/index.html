@@ -15,12 +15,9 @@
         <div class="mark"><strong>Fragmentor</strong></div>
         <nav class="crumbs" id="crumbs" aria-label="Block hierarchy"></nav>
         <div class="toolbar">
-          <button class="toggle" id="new-project" title="Start a project in an empty folder, for a coding agent to build">New project…</button>
-          <button class="toggle" id="open-project">Open project…</button>
-          <button class="toggle" id="close-project" title="Close this project and go back to the Fragmentor start screen">Close project</button>
-          <button class="toggle" id="reload-project" title="Re-read the project from disk. Fragmentor also does this whenever a file in it changes.">Reload</button>
-          <button class="toggle" id="generate-code" title="Regenerate every block's contract">Generate code</button>
-          <button class="toggle" id="agent-commands" title="Everything you can ask your coding agent to do, with the words to send it">Commands</button>
+          <!-- New, open and close are under File in the application menu, so
+               the one thing on the toolbar to do with a project is this. -->
+          <button class="commands-btn" id="agent-commands" title="Everything you can ask your coding agent to do, with the words to send it"><span class="commands-glyph" aria-hidden="true">&rsaquo;_</span>Commands</button>
           <span class="toolbar-sep"></span>
           <button class="toggle" id="toggle-rail" aria-pressed="true">Hierarchy</button>
           <button class="toggle" id="toggle-inspector" aria-pressed="true">Inspector</button>

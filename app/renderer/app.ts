@@ -1,4 +1,5 @@
-import type { ProjectLoad } from "../ipc.js";
+import type { MenuCommand, ProjectLoad } from "../ipc.js";
+import { firstStep } from "../../src/codegen/commands.js";
 import {
   COLOUR_BY,
   INSPECTOR_WIDTH,
@@ -31,7 +32,7 @@ import {
 } from "./canvas.js";
 import { onInspectorChange, renderInspector } from "./inspector.js";
 import { onBenchChange } from "./bench.js";
-import { askForProjectSettings } from "./newproject.js";
+import { askForProjectSettings, showFirstSteps } from "./newproject.js";
 import { onWatchChange, resetWatching, setUpWatching } from "./watch.js";
 import { onExecutionChange, paintExecution, resetExecutions, setUpExecutions, showStep } from "./execution.js";
 import { closeWindow, onLinesNoted, openBlockWindow, setUpWindows } from "./popup.js";
@@ -135,6 +136,9 @@ function show(load: ProjectLoad, opening: boolean): void {
 
   // The person has set the project up, and the agent has not defined a system yet.
   ui.waiting = load.snapshot.systems.length === 0;
+  // The canvas then names a command to send the agent first, which a project
+  // started before that command existed has to have explained to its agent.
+  if (ui.waiting && fresh) void window.fragmentor.refreshAgentFiles(load.dir);
 
   const firstSight = fresh || ui.snapshot === null || ui.snapshot.systems.length === 0;
   ui.snapshot = load.snapshot;
@@ -178,7 +182,11 @@ async function newProject(): Promise<void> {
     render();
     return;
   }
-  if (result.value) show(result.value, true);
+  if (!result.value) return;
+  show(result.value, true);
+  // Where the folder turned out to disagree with an answer, what was written
+  // down is what the agent will be told, so that is what the first step follows.
+  showFirstSteps(result.value.snapshot ?? settings, result.value.dir);
 }
 
 async function openPath(dir: string): Promise<void> {
@@ -243,27 +251,15 @@ async function reload(): Promise<boolean> {
   return true;
 }
 
-async function generateCode(): Promise<void> {
-  const snapshot = ui.snapshot;
-  if (!snapshot) return;
-
-  const result = await window.fragmentor.emitCode(snapshot.dir);
-  if (!result.ok) {
-    ui.status = { text: `Code generation failed: ${result.error}`, tone: "bad" };
-    render();
-    return;
-  }
-
-  const { written, removed, problems } = result.value;
-  const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-  const changes: string[] = [];
-  if (written.length > 0) changes.push(`Updated ${count(written.length, "file")}`);
-  // A block that has become planned has no code, so what was generated for it goes.
-  if (removed.length > 0) changes.push(`took away ${count(removed.length, "file")} the plan no longer needs`);
-  const summary = changes.length === 0 ? "Everything was already up to date." : `${changes.join(", ")}.`;
-  ui.status = problems.length > 0 ? { text: problems[0]!, tone: "bad" } : { text: summary, tone: "good" };
-
-  await reload();
+/**
+ * Reload Project, from the menu. A project that has not changed looks just
+ * the same afterwards, so it says it was read, unless reading it failed,
+ * which says so itself.
+ */
+async function reloadByHand(): Promise<void> {
+  if (!(await reload())) return;
+  if (!ui.loadError) ui.status = { text: "Read the project again from disk.", tone: "good" };
+  render();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -332,12 +328,8 @@ function renderPanes(): void {
   element("toggle-rail").setAttribute("aria-pressed", String(ui.showRail));
   element("toggle-inspector").setAttribute("aria-pressed", String(ui.showInspector));
 
-  // Only worth offering with something open to close, or to ask an agent about.
-  element("close-project").hidden = !ui.dir;
+  // Only worth offering with a project open to ask an agent about.
   element("agent-commands").hidden = !ui.dir;
-  // Only worth offering where there is something to generate: a block whose
-  // code is held to a contract Fragmentor writes.
-  element("generate-code").hidden = !Object.values(ui.snapshot?.blocks ?? {}).some((block) => block.files.contract !== "");
 }
 
 /** Dragging the edge between the diagram and the inspector, or nudging it with the arrow keys. */
@@ -515,43 +507,33 @@ function renderStatus(): void {
 }
 
 /**
- * What to ask the agent for, in the words of the project the person just made.
+ * What the canvas says when a folder is open but there is no diagram to draw.
  *
- * They answered where they were starting from and whether to plan first when
- * they created it, so these first instructions say what to do in that one
- * case rather than listing every case and leaving them to work out which is
- * theirs. `headline` names what is missing, `ask` is the sentence they act on,
- * and `note` says what to expect next.
+ * While the agent has not started, that is what to send it first. The person
+ * answered where they were starting from and whether to plan first when they
+ * created the project, so it names the one command for that case rather than
+ * listing every case and leaving them to work out which is theirs.
  */
-function firstInstructions(): { headline: string; ask: string; note: string } {
-  const snapshot = ui.snapshot;
-  const existingCode = snapshot?.existingCode ?? false;
-  const planFirst = snapshot?.start === "plan";
-
-  if (existingCode) {
-    return {
-      headline: "Nothing has been drawn yet.",
-      ask: "Open your coding agent (Claude Code or Codex) in this folder and ask it to map the code into a Fragmentor diagram:",
-      note: "It learns how from FRAGMENTOR.md. Every block points at the code it stands for, and the diagram appears here as soon as it defines the first system.",
-    };
-  }
-
-  return {
-    headline: "No system has been defined here yet.",
-    ask: planFirst
-      ? "Open your coding agent (Claude Code or Codex) in this folder and describe what you want to build. It draws the whole architecture first, greyed out, for you to agree to before it writes any code:"
-      : "Open your coding agent (Claude Code or Codex) in this folder and describe what you want to build:",
-    note: planFirst
-      ? "It learns how this project works from FRAGMENTOR.md. The planned blocks appear here as soon as it defines the first system, and fill in as you agree to them and it builds them."
-      : "It learns how this project works from FRAGMENTOR.md. The diagram appears here as soon as it defines the first system, and fills in as it builds.",
-  };
-}
-
-/** What the canvas says when a folder is open but there is no diagram to draw. */
 function noDiagramText(): string {
   if (ui.waiting) {
-    const { headline, ask, note } = firstInstructions();
-    return [headline, "", ask, "", `  ${ui.dir ?? ""}`, "", note].join("\n");
+    const existingCode = ui.snapshot?.existingCode ?? false;
+    const { command, phrase, happens, next } = firstStep(existingCode, ui.snapshot?.start ?? "build");
+    return [
+      existingCode ? "Nothing has been drawn yet." : "No system has been defined here yet.",
+      "",
+      "Open your coding agent (Claude Code or Codex) in this folder:",
+      "",
+      `  ${ui.dir ?? ""}`,
+      "",
+      command.takes === "words" ? "and send it this first, describing what you want to build where the angle brackets are:" : "and send it this first:",
+      "",
+      `  ${phrase}`,
+      "",
+      `${happens} It learns how from FRAGMENTOR.md, and the diagram appears here as soon as it defines the first system.`,
+      ...(next ? ["", "When you agree to the plan, send it:", "", `  ${next}`] : []),
+      "",
+      "Everything else you can ask it is under Commands, at the top right.",
+    ].join("\n");
   }
   return [
     "This project could not be read.",
@@ -637,6 +619,48 @@ function wireViewSettings(): void {
   showDependencies();
 }
 
+const COMMANDS_OPENED_KEY = "fragmentor.commandsOpened";
+
+/**
+ * The toolbar's Commands, which glows until it has been opened once: it is
+ * where someone new finds what they can ask their agent to do, and nothing
+ * else on screen would tell them to look there.
+ */
+function wireCommandsButton(): void {
+  const button = element("agent-commands");
+  try {
+    if (localStorage.getItem(COMMANDS_OPENED_KEY) !== "true") button.dataset.fresh = "true";
+  } catch {
+    // Storage can be unavailable; the button is then simply not lit.
+  }
+  button.addEventListener("click", () => {
+    delete button.dataset.fresh;
+    try {
+      localStorage.setItem(COMMANDS_OPENED_KEY, "true");
+    } catch {
+      // Remembering is a nicety; it will glow again next time.
+    }
+    // With a block picked out, the commands are offered for it as well.
+    openCommandsWindow(selectedBlock()?.path ?? null);
+  });
+}
+
+/** What the application menu hands the window: everything to do with which project is open. */
+function wireMenu(): void {
+  const actions: Record<MenuCommand, () => Promise<void>> = {
+    "new-project": newProject,
+    "open-project": chooseProject,
+    "close-project": closeProject,
+    "reload-project": reloadByHand,
+  };
+  window.fragmentor.onMenuCommand((command) => {
+    // A shortcut pressed while a dialog is up would start a second thing on
+    // top of the one the person is answering, so it is let go.
+    if (document.querySelector("dialog[open]")) return;
+    void actions[command]?.();
+  });
+}
+
 function wireToolbar(): void {
   element("toggle-rail").addEventListener("click", () => {
     ui.showRail = !ui.showRail;
@@ -646,13 +670,7 @@ function wireToolbar(): void {
     ui.showInspector = !ui.showInspector;
     renderPanes();
   });
-  element("new-project").addEventListener("click", () => void newProject());
-  element("open-project").addEventListener("click", () => void chooseProject());
-  element("close-project").addEventListener("click", () => void closeProject());
-  element("generate-code").addEventListener("click", () => void generateCode());
-  element("reload-project").addEventListener("click", () => void reload());
-  // With a block picked out, the commands are offered for it as well.
-  element("agent-commands").addEventListener("click", () => openCommandsWindow(selectedBlock()?.path ?? null));
+  wireCommandsButton();
 
   // The chosen colours go onto the document itself, so every block, line,
   // badge and swatch of a kind follows from one place.
@@ -718,6 +736,7 @@ try {
   // versions on screen is read again whenever the person comes back to it.
   window.addEventListener("focus", () => void refreshVersions());
   wireToolbar();
+  wireMenu();
   setUpSplitter();
   setUpCanvasGestures();
   watchCanvasSize();

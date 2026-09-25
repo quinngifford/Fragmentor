@@ -161,12 +161,12 @@ const cameRight = (result: CaseResult) => result.status === "passed" || result.s
  * the agent, not into Fragmentor, so they are shown in full rather than
  * hidden behind a button that could only half do it.
  */
-export function phraseLine(lead: string, phrase: string, className = "note-phrase"): HTMLElement {
+export function phraseLine(lead: string, phrase: string, className = "note-phrase", purpose = "to paste into your coding agent"): HTMLElement {
   const line = el("div", className);
   line.append(el("span", undefined, lead), el("code", "note-phrase-words", phrase));
   const copy = el("button", "run-btn", "Copy");
   copy.type = "button";
-  copy.title = `Copy “${phrase}”, to paste into your coding agent.`;
+  copy.title = `Copy “${phrase}”, ${purpose}.`;
   copy.addEventListener("click", () => {
     void window.fragmentor.copyText(phrase).then((result) => {
       // Said on the button itself rather than by drawing anything again,

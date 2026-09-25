@@ -4,9 +4,10 @@ import { access, appendFile, cp, mkdir, readFile, readdir, rm, stat, writeFile }
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BrowserWindow, ClipboardItem, app, clipboard, dialog, ipcMain, shell } from "electron";
+import { BrowserWindow, ClipboardItem, Menu, app, clipboard, dialog, ipcMain, shell } from "electron";
 import { CHANNELS } from "./ipc.js";
 import type {
+  MenuCommand,
   ProjectLoad,
   Result,
   RunCommand,
@@ -17,8 +18,8 @@ import type {
 import { projectSnapshot } from "../src/project/snapshot.js";
 import { blockDir, loadProject, locateCode, manifestPath, readManifest } from "../src/project/project.js";
 import { readBlockCode } from "../src/project/code.js";
-import { emitProject, startProject, writeCommandSkills, writeGuide } from "../src/codegen/emit.js";
-import type { EmitResult, NewProjectSettings } from "../src/codegen/emit.js";
+import { startProject, writeCommandSkills, writeGuide } from "../src/codegen/emit.js";
+import type { NewProjectSettings } from "../src/codegen/emit.js";
 import { GUIDE_FILE } from "../src/codegen/guide.js";
 import { resolveInside } from "../src/project/safePath.js";
 import { runCases, startRun } from "../src/run/run.js";
@@ -81,8 +82,9 @@ function prepareSelfCheck(): { root: string; projectDir: string; application: st
   const messenger = path.join(root, "messenger");
   cpSync(path.join(repoRoot, "examples", "messenger"), messenger, { recursive: true });
 
-  // Offered on the welcome screen as recent projects, which is how the check opens them.
-  writeFileSync(path.join(userData, "recent-projects.json"), JSON.stringify([projectDir, application, messenger]));
+  // Offered on the welcome screen as recent projects, which is how the check
+  // opens them. Its own project is started from the menu instead.
+  writeFileSync(path.join(userData, "recent-projects.json"), JSON.stringify([application, messenger]));
   app.setPath("userData", userData);
   return { root, projectDir, application, messenger };
 }
@@ -282,10 +284,14 @@ async function openProject(contents: Electron.WebContents, dir: string): Promise
   // change unseen in between.
   watchProject(contents, load.dir);
   await rememberProject(load.dir);
+  offerProjectMenu(true);
   return load;
 }
 
 async function pickFolder(contents: Electron.WebContents, options: Electron.OpenDialogOptions): Promise<string | undefined> {
+  // Nobody is there to answer a folder picker during the self-check, so it is
+  // answered with the folder the check made for starting a project in.
+  if (selfCheck) return selfCheck.projectDir;
   const window = BrowserWindow.fromWebContents(contents);
   const picked = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
   return picked.canceled ? undefined : picked.filePaths[0];
@@ -316,7 +322,7 @@ function registerHandlers(): void {
       if (!dir) return ok(null);
 
       if (await exists(manifestPath(dir))) {
-        throw new Error(`${dir} is already a Fragmentor project. Open it with Open project… instead.`);
+        throw new Error(`${dir} is already a Fragmentor project. Open it with File › Open Project… instead.`);
       }
 
       const window = BrowserWindow.fromWebContents(event.sender);
@@ -375,6 +381,7 @@ function registerHandlers(): void {
   // stops hearing about a folder it is no longer showing.
   ipcMain.handle(CHANNELS.closeProject, async (event): Promise<Result<null>> => {
     stopWatching(event.sender.id);
+    offerProjectMenu(false);
     return ok(null);
   });
 
@@ -433,14 +440,6 @@ function registerHandlers(): void {
       const target = resolveInside(request.dir, found.location.file);
       await writeFile(target, request.contents, "utf8");
       return ok(null);
-    } catch (error) {
-      return failed(error);
-    }
-  });
-
-  ipcMain.handle(CHANNELS.emitCode, async (_event, dir: string): Promise<Result<EmitResult>> => {
-    try {
-      return ok(await emitProject(await loadProject(dir)));
     } catch (error) {
       return failed(error);
     }
@@ -928,7 +927,10 @@ const INTERACTIONS = `
     const grew = pulled.width > was.width + 100 && pulled.height > was.height + 60;
 
     // A redraw must not undo it, which is the whole reason the size is in ui.
-    document.getElementById("reload-project").click();
+    // Changing what the colours mean redraws everything, and a second press
+    // puts them back.
+    document.getElementById("colour-by").click();
+    document.getElementById("colour-by").click();
     await wait(900);
     const after = document.querySelector(".bench-window");
     const kept = after && Math.abs(after.getBoundingClientRect().width - pulled.width) < 2;
@@ -1473,9 +1475,11 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
     [
       "every command is listed in a window of its own, with the block picked out filled in",
       value("commandsListed", "title") === "Commands for your agent" &&
-        value("commandsListed", "names") === "notes review rebuild explain plan build cover" &&
+        value("commandsListed", "names") === "notes review rebuild explain plan build make cover" &&
         value("commandsListed", "review") === "fragmentor review | fragmentor review tickets/booking-api/pricing/price-seat" &&
-        value("commandsListed", "slash") === "fragmentor review [block] · in Claude Code, /fragmentor-review",
+        value("commandsListed", "slash") === "fragmentor review [block] · in Claude Code, /fragmentor-review" &&
+        value("commandsListed", "litBefore") === true &&
+        value("commandsListed", "litAfter") === false,
     ],
     [
       "an architecture block says what kind it is under what it does, the kind in its colour",
@@ -1591,12 +1595,41 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("planned", "noTesting") === true,
     ],
     [
-      "a new project waits for its agent, and says what to ask for in the words of the answers given",
+      "a new project waits for its agent, and says what to send it first in the words of the answers given",
       value("waiting", "waiting") === true &&
+        /fragmentor plan <what you want to build>/.test(String(value("waiting", "note"))) &&
         /greyed out/.test(String(value("waiting", "note"))) &&
-        /planned blocks appear here/.test(String(value("waiting", "note"))) &&
+        /send it:\s+fragmentor build/.test(String(value("waiting", "note"))) &&
+        /under Commands/.test(String(value("waiting", "note"))) &&
         !/greyed out/.test(String(value("building", "note"))) &&
-        /describe what you want to build/.test(String(value("building", "note"))),
+        /fragmentor make <what you want to build>/.test(String(value("building", "note"))) &&
+        !/fragmentor build/.test(String(value("building", "note"))),
+    ],
+    [
+      "a project just made says what to send the agent first, from the answers given, and lists every command",
+      value("firstSteps", "shown") === true &&
+        value("firstSteps", "opened") === true &&
+        value("firstSteps", "first") === "plan" &&
+        value("firstSteps", "phrase") === "fragmentor plan <what you want to build>" &&
+        /\| fragmentor build$/.test(String(value("firstSteps", "phrases"))) &&
+        value("firstSteps", "listed") === "notes review rebuild explain plan build make cover" &&
+        value("firstSteps", "focused") === "Got it" &&
+        value("firstStepsClosed", "closed") === true,
+    ],
+    [
+      "new, open and close are under File, Reload Project reads the project again, and the toolbar is left to Commands",
+      value("menu", "file") === true &&
+        value("menu", "reloadIsTheProject") === true &&
+        value("menu", "noPageReload") === true &&
+        value("menu", "closedWithNothingOpen") === true &&
+        value("menu", "toolbar") === "agent-commands toggle-rail toggle-inspector" &&
+        value("waiting", "closeOffered") === true &&
+        value("waiting", "reloadOffered") === true &&
+        value("reloaded", "said") === true,
+    ],
+    [
+      "a waiting project opened again is taught the command its canvas names",
+      value("reopened", "opened") === true && value("reopened", "taught") === true,
     ],
     ["the diagram appears once the agent writes the project", value("appeared", "appeared") === true],
     [
@@ -1699,7 +1732,8 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       value("closed", "back") === true &&
         value("closed", "startScreen") === true &&
         value("closed", "blocks") === 0 &&
-        value("closed", "closeHidden") === true,
+        value("closed", "commandsHidden") === true &&
+        value("closed", "closeOffered") === false,
     ],
     [
       "blocks the agent writes arrive animated, and nothing else does",
@@ -1763,6 +1797,17 @@ function attachSelfCheck(
       const run = async (label: string, body: string) => {
         report[label] = (await window.webContents.executeJavaScript(step(body))) as StepResult;
       };
+      // The menu belongs to this process, so the check picks from it here, as
+      // the person would, and the window hears of it as it would then.
+      const menuItem = (id: string) => {
+        const item = Menu.getApplicationMenu()?.getMenuItemById(id);
+        if (!item) throw new Error(`The application menu has no "${id}".`);
+        return item;
+      };
+      const pick = (id: string) => {
+        const item = menuItem(id);
+        if (item.enabled) item.click(undefined, window, window.webContents);
+      };
       const inProject = (...parts: string[]) => path.join(check.projectDir, ...parts);
       // Every byte of every file the same, as filesOf gives them.
       const sameFiles = (a: Map<string, string>, b: Map<string, string>) =>
@@ -1786,12 +1831,26 @@ function attachSelfCheck(
           }
         })();
 
+        // Starting, opening and closing a project are under File, and the
+        // toolbar is left to what is done with one once it is open.
+        report.menu = {
+          file: ["new-project", "open-project", "close-project"].every((id) => menuItem(id).label.endsWith("Project…") || menuItem(id).label === "Close Project"),
+          reloadIsTheProject: menuItem("reload-project").label === "Reload Project" && menuItem("reload-project").accelerator === "CmdOrCtrl+R",
+          // Reloading the page would put the open project away, so it is not offered.
+          noPageReload: !(Menu.getApplicationMenu()?.items ?? []).some((top) => (top.submenu?.items ?? []).some((item) => item.role === "reload" || item.role === "forceReload")),
+          closedWithNothingOpen: !menuItem("close-project").enabled && !menuItem("reload-project").enabled,
+          toolbar: (await window.webContents.executeJavaScript(
+            `[...document.querySelectorAll(".toolbar button")].map((b) => b.id).join(" ")`,
+          )) as string,
+        };
+
         // The person asks for a new project. The questions are asked as a
         // tree: each answer reveals the next, and the form will not go on
-        // until every question that applies has one. It is cancelled before
-        // the folder picker, which the check cannot answer.
+        // until every question that applies has one. This time it is
+        // cancelled before the folder is chosen; the project is started for
+        // real further down.
+        pick("new-project");
         await run("dialog", `
-          document.getElementById("new-project").click();
           const dialog = await until(() => document.querySelector("dialog.new-project[open]"));
           if (!dialog) return { opened: false };
           const create = [...dialog.querySelectorAll(".dialog-actions .btn")].find((b) => b.textContent.startsWith("Choose folder"));
@@ -1845,24 +1904,67 @@ function attachSelfCheck(
 
         // New project: what the person chose, and no system for the agent to
         // have defined yet. It is started as a plan, because the first thing
-        // the empty canvas says is supposed to follow the answers given.
-        await startProject(check.projectDir, {
-          granularity: 3,
-          language: "typescript",
-          existingCode: false,
-          start: "plan",
-        });
+        // it is told to send, and what the empty canvas says, are supposed to
+        // follow the answers given. The folder picker answers with the check's
+        // own empty folder.
+        pick("new-project");
+        await run("firstSteps", `
+          const dialog = await until(() => document.querySelector("dialog.new-project[open]"));
+          if (!dialog) return { shown: false };
+          dialog.querySelector('input[name="starting-point"][value="false"]').click();
+          dialog.querySelector('input[name="start"][value="plan"]').click();
+          dialog.querySelector('input[name="granularity"][value="3"]').click();
+          const language = dialog.querySelector('input[list="project-languages"]');
+          language.value = "TypeScript";
+          language.dispatchEvent(new Event("input", { bubbles: true }));
+          [...dialog.querySelectorAll(".dialog-actions .btn")].find((b) => b.textContent.startsWith("Choose folder")).click();
+
+          const steps = await until(() => document.querySelector("dialog.first-steps[open]"), 15000);
+          if (!steps) return { shown: false };
+          const first = steps.querySelector("[data-first]");
+          return {
+            shown: true,
+            opened: document.body.dataset.project === "open",
+            first: first ? first.dataset.first : "",
+            phrase: text("dialog.first-steps .first-phrase .note-phrase-words"),
+            phrases: [...steps.querySelectorAll(".note-phrase-words")].map((each) => each.textContent).join(" | "),
+            listed: [...steps.querySelectorAll("[data-command]")].map((each) => each.dataset.command).join(" "),
+            focused: document.activeElement && document.activeElement.textContent,
+          };
+        `);
+        await capture(window, "self-check-first-steps");
+        await run("firstStepsClosed", `
+          const done = [...document.querySelectorAll("dialog.first-steps .btn")].find((b) => b.textContent === "Got it");
+          if (done) done.click();
+          await wait(200);
+          return { closed: !document.querySelector("dialog.first-steps") };
+        `);
         // Its folder is in no repository, so it gets one of its own.
         report.newRepo = { started: await exists(inProject(".git")) };
         await run("waiting", `
-          await wait(400);
-          const link = [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.projectDir)});
-          if (!link) return { waiting: false, links: [...document.querySelectorAll(".welcome-link")].map((b) => b.title || b.textContent) };
-          link.click();
           const waiting = await until(() => /FRAGMENTOR\\.md/.test(text(".canvas-empty")));
           return { waiting, note: text(".canvas-empty") };
         `);
+        report.waiting = { ...report.waiting, closeOffered: menuItem("close-project").enabled, reloadOffered: menuItem("reload-project").enabled };
         await capture(window, "self-check-waiting");
+
+        // The canvas names a command to send first, so a waiting project
+        // started before that command existed is taught it when it is opened.
+        const makeSkill = inProject(".claude", "skills", "fragmentor-make", "SKILL.md");
+        await rm(makeSkill);
+        pick("close-project");
+        await run("reopened", `
+          await until(() => document.body.dataset.project !== "open");
+          const link = await until(() => [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.projectDir)}));
+          if (!link) return { opened: false };
+          link.click();
+          return { opened: Boolean(await until(() => /fragmentor plan/.test(text(".canvas-empty")))) };
+        `);
+        report.reopened = { ...report.reopened, taught: false };
+        for (let tries = 0; tries < 50 && !report.reopened.taught; tries++) {
+          report.reopened.taught = await exists(makeSkill);
+          if (!report.reopened.taught) await new Promise((resolve) => setTimeout(resolve, 100));
+        }
 
         // The same project set to build instead. Nothing else about it
         // changes, so whatever the canvas now says came from that answer.
@@ -1878,6 +1980,12 @@ function attachSelfCheck(
             return /greyed out/.test(shown) ? null : shown;
           });
           return { note: note || text(".canvas-empty") };
+        `);
+        // Reading it again by hand says it did, since nothing else would show it.
+        pick("reload-project");
+        await run("reloaded", `
+          const said = await until(() => /Read the project again/.test(text("#status")) && text("#status"), 5000);
+          return { said: Boolean(said) };
         `);
 
         // The agent defines and builds the system — here, all at once.
@@ -2389,18 +2497,19 @@ function attachSelfCheck(
         `);
         await capture(window, "self-check-architecture");
 
+        pick("close-project");
         await run("closed", `
-          document.getElementById("close-project").click();
           await until(() => document.body.dataset.project !== "open");
           await wait(300);
           return {
             back: document.body.dataset.project !== "open",
             startScreen: Boolean(document.querySelector("#welcome-body .welcome-actions")),
             blocks: document.querySelectorAll(".block-box").length,
-            closeHidden: document.getElementById("close-project").hidden,
+            commandsHidden: document.getElementById("agent-commands").hidden,
             status: text("#status"),
           };
         `);
+        report.closed = { ...report.closed, closeOffered: menuItem("close-project").enabled };
 
         // A whole application, drawn as one tree: every block of it on screen
         // at once, each under whatever it is part of.
@@ -3764,7 +3873,10 @@ function attachSelfCheck(
         await run("commandsListed", `${notesSection}
           node("price-seat").click();
           await heading("Price Seat");
-          document.getElementById("agent-commands").click();
+          const commands = document.getElementById("agent-commands");
+          const litBefore = commands.dataset.fresh === "true";
+          commands.click();
+          const litAfter = commands.dataset.fresh === "true";
           const listed = await until(() => document.querySelectorAll("#overlay [data-command]").length > 0 ? [...document.querySelectorAll("#overlay [data-command]")] : null, 5000);
           if (!listed) return { names: "" };
           const review = listed.find((each) => each.dataset.command === "review");
@@ -3773,6 +3885,8 @@ function attachSelfCheck(
             names: listed.map((each) => each.dataset.command).join(" "),
             review: review ? [...review.querySelectorAll(".note-phrase-words")].map((c) => c.textContent).join(" | ") : "",
             slash: review ? text('#overlay [data-command="review"] .command-usage') : "",
+            litBefore,
+            litAfter,
           };
           document.querySelector("#overlay .window-close").click();
           return result;
@@ -3814,8 +3928,8 @@ function attachSelfCheck(
         // whole application, stepped through, and followed inside.
         // An execution written down in the messenger, stepped through on the
         // tree one arrow at a time, and then read end to end as its own drawing.
+        pick("close-project");
         await run("execution", `
-          document.getElementById("close-project").click();
           await until(() => document.body.dataset.project !== "open");
           const link = await until(() => [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.messenger)}));
           if (!link) return { opened: false };
@@ -4066,10 +4180,78 @@ function attachSelfCheck(
 }
 
 /* -------------------------------------------------------------------------- */
+/* Menu                                                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The application menu. Starting, opening and closing a project are under
+ * File, which leaves the toolbar to what is done with a project once it is
+ * open. Each of those is the window's to carry out, so the menu only passes
+ * the choice on.
+ *
+ * View › Reload Project reads the project from disk again. Reloading the page
+ * itself, which the standard menu offers there, would put whatever project was
+ * open away and show the start screen.
+ */
+function setUpMenu(): void {
+  const send = (command: MenuCommand) => (_item: Electron.MenuItem, window: Electron.BaseWindow | undefined) => {
+    const target = window instanceof BrowserWindow ? window : (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]);
+    if (target) {
+      target.webContents.send(CHANNELS.menuCommand, command);
+      return;
+    }
+    // On macOS the application outlives its window, and asking for a
+    // project is a reason to open one again.
+    const opened = createWindow();
+    opened.webContents.once("did-finish-load", () => opened.webContents.send(CHANNELS.menuCommand, command));
+  };
+  const mac = process.platform === "darwin";
+
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(mac ? [{ role: "appMenu" } as const] : []),
+    {
+      label: "File",
+      submenu: [
+        { id: "new-project", label: "New Project…", accelerator: "CmdOrCtrl+N", click: send("new-project") },
+        { id: "open-project", label: "Open Project…", accelerator: "CmdOrCtrl+O", click: send("open-project") },
+        { id: "close-project", label: "Close Project", enabled: false, click: send("close-project") },
+        { type: "separator" },
+        mac ? { role: "close" } : { role: "quit" },
+      ],
+    },
+    { role: "editMenu" },
+    {
+      label: "View",
+      submenu: [
+        { id: "reload-project", label: "Reload Project", accelerator: "CmdOrCtrl+R", enabled: false, click: send("reload-project") },
+        { type: "separator" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    { role: "windowMenu" },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/** Closing or reloading a project is only offered while one is open. */
+function offerProjectMenu(open: boolean): void {
+  for (const id of ["close-project", "reload-project"]) {
+    const item = Menu.getApplicationMenu()?.getMenuItemById(id);
+    if (item) item.enabled = open;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /* Window                                                                      */
 /* -------------------------------------------------------------------------- */
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1600,
     height: 1000,
@@ -4090,7 +4272,10 @@ function createWindow(): void {
   });
 
   const id = window.webContents.id;
-  window.webContents.on("destroyed", () => stopWatching(id));
+  window.webContents.on("destroyed", () => {
+    stopWatching(id);
+    offerProjectMenu(false);
+  });
 
   if (selfCheck) {
     // Shown but not focused: the page has to be composited to be captured,
@@ -4106,10 +4291,12 @@ function createWindow(): void {
   // Nothing in this application should navigate away or open a browser window.
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
+  return window;
 }
 
 void app.whenReady().then(() => {
   registerHandlers();
+  setUpMenu();
   createWindow();
 
   app.on("activate", () => {

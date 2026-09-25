@@ -17,7 +17,6 @@ const CHANNELS = {
   recentProjects: "project:recent",
   exampleProjects: "project:examples",
   writeImpl: "block:write-impl",
-  emitCode: "codegen:emit",
   revealBlock: "block:reveal",
   revealCode: "code:reveal",
   readCode: "code:read",
@@ -40,6 +39,7 @@ const CHANNELS = {
   copyText: "clipboard:write",
   rerunNote: "note:rerun",
   refreshAgentFiles: "project:agent-files",
+  menuCommand: "menu:command",
 };
 
 contextBridge.exposeInMainWorld("fragmentor", {
@@ -55,7 +55,6 @@ contextBridge.exposeInMainWorld("fragmentor", {
   recentProjects: () => ipcRenderer.invoke(CHANNELS.recentProjects),
   exampleProjects: () => ipcRenderer.invoke(CHANNELS.exampleProjects),
   writeImpl: (request) => ipcRenderer.invoke(CHANNELS.writeImpl, request),
-  emitCode: (dir) => ipcRenderer.invoke(CHANNELS.emitCode, dir),
   revealBlock: (dir, blockPath) => ipcRenderer.invoke(CHANNELS.revealBlock, dir, blockPath),
   revealCode: (dir, file) => ipcRenderer.invoke(CHANNELS.revealCode, dir, file),
   readCode: (dir, pointer) => ipcRenderer.invoke(CHANNELS.readCode, dir, pointer),
@@ -81,4 +80,7 @@ contextBridge.exposeInMainWorld("fragmentor", {
   resolveNote: (dir, id) => ipcRenderer.invoke(CHANNELS.resolveNote, dir, id),
   deleteNote: (dir, id) => ipcRenderer.invoke(CHANNELS.deleteNote, dir, id),
   copyText: (text) => ipcRenderer.invoke(CHANNELS.copyText, text),
+  onMenuCommand: (callback) => {
+    ipcRenderer.on(CHANNELS.menuCommand, (_event, command) => callback(command));
+  },
 });

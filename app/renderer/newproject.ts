@@ -1,4 +1,6 @@
 import type { NewProjectSettings } from "../../src/codegen/emit.js";
+import { COMMANDS, firstStep, usageOf } from "../../src/codegen/commands.js";
+import { phraseLine } from "./notes.js";
 
 /**
  * What the person decides before a project exists.
@@ -243,4 +245,77 @@ export function askForProjectSettings(): Promise<NewProjectSettings | null> {
     document.body.append(dialog);
     dialog.showModal();
   });
+}
+
+/**
+ * What to do now that the project exists: open the agent in its folder, and
+ * the one thing to send it first, which follows from the answers just given.
+ * The rest of the commands are listed underneath, since this is when someone
+ * is looking for what they can ask for, with where to find them again.
+ */
+export function showFirstSteps(answers: { existingCode: boolean; start: Start }, dir: string): void {
+  const { command, phrase, happens, next } = firstStep(answers.existingCode, answers.start);
+
+  const dialog = el("dialog", "new-project first-steps");
+  dialog.setAttribute("aria-labelledby", "first-steps-title");
+  const title = el("h2", undefined, "Your project is ready");
+  title.id = "first-steps-title";
+  dialog.append(title, el("p", "dialog-lede", "Your coding agent builds it, and Fragmentor draws it as it goes."));
+
+  const open = el("section", "first-step");
+  open.append(
+    el("h3", "first-step-head", "1. Open your coding agent in this folder"),
+    phraseLine("Claude Code or Codex, in", dir, "note-phrase", "to open your coding agent in it"),
+  );
+
+  const send = el("section", "first-step");
+  send.dataset.first = command.name;
+  send.append(el("h3", "first-step-head", "2. Send it this first"), phraseLine("", phrase, "note-phrase first-phrase"));
+  if (command.takes === "words") {
+    const example = el("p", "dialog-note");
+    example.append("Describe what you want where the angle brackets are, such as ", el("code", undefined, `fragmentor ${command.name} a site where people book seats for events`), ".");
+    send.append(example);
+  }
+  send.append(el("p", "first-step-text", happens));
+  if (next) send.append(phraseLine("When you agree to the plan, send", next));
+
+  const later = el("section", "first-step");
+  later.append(el("h3", "first-step-head", "Everything else you can ask"));
+  const list = el("dl", "first-commands");
+  for (const each of COMMANDS) {
+    const row = el("div", "first-command");
+    row.dataset.command = each.name;
+    row.append(el("dt", undefined, usageOf(each)), el("dd", undefined, each.title));
+    list.append(row);
+  }
+  later.append(
+    list,
+    el(
+      "p",
+      "dialog-note",
+      "A command that names a block means that block and its parts. In Claude Code each is also a slash command, such as /fragmentor-review. They are always under Commands, at the top right.",
+    ),
+  );
+
+  const actions = el("div", "dialog-actions");
+  const done = el("button", "btn", "Got it");
+  done.type = "button";
+  actions.append(done);
+
+  dialog.append(open, send, later, actions);
+  const finish = () => {
+    dialog.close();
+    dialog.remove();
+  };
+  done.addEventListener("click", finish);
+  dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    finish();
+  });
+
+  document.body.append(dialog);
+  dialog.showModal();
+  // Focusing the last button would otherwise scroll a short window to the
+  // bottom of the dialog, past the title and the first step.
+  done.focus({ preventScroll: true });
 }
