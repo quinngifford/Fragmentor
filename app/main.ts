@@ -1600,7 +1600,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         /fragmentor plan <what you want to build>/.test(String(value("waiting", "note"))) &&
         /greyed out/.test(String(value("waiting", "note"))) &&
         /send it:\s+fragmentor build/.test(String(value("waiting", "note"))) &&
-        /under Commands/.test(String(value("waiting", "note"))) &&
+        /full list of commands/i.test(String(value("waiting", "note"))) &&
         !/greyed out/.test(String(value("building", "note"))) &&
         /fragmentor make <what you want to build>/.test(String(value("building", "note"))) &&
         !/fragmentor build/.test(String(value("building", "note"))),

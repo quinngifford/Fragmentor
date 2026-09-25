@@ -272,7 +272,7 @@ export function showFirstSteps(answers: { existingCode: boolean; start: Start },
   send.append(el("p", "first-step-text", happens));
   if (next) send.append(phraseLine("When you agree to the plan, send", next));
 
-  const later = section("Everything else you can ask");
+  const later = section("Full Command List");
   const list = el("dl", "first-commands");
   for (const each of COMMANDS) {
     const row = el("div", "first-command");

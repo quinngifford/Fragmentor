@@ -532,7 +532,7 @@ function noDiagramText(): string {
       `${happens} It learns how from FRAGMENTOR.md, and the diagram appears here as soon as it defines the first system.`,
       ...(next ? ["", "When you agree to the plan, send it:", "", `  ${next}`] : []),
       "",
-      "Everything else you can ask it is under Commands, at the top right.",
+      "The full list of commands can be found in the top right.",
     ].join("\n");
   }
   return [

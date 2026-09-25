@@ -19,6 +19,7 @@
   --exec-trigger: #9fd3ff;
   --pending: #7a8b96;
   --bad: #e3778c;
+  --flag-red: rgb(235, 42, 74);
   /* What kind of thing a block is: set on the document by the renderer, which
      holds the defaults and whatever the person has changed them to. */
   /* Code colours. Quiet enough to sit beside the diagram, and distinct enough
@@ -567,7 +568,7 @@ body[data-project="open"] .welcome { display: none; }
    makes the indent read as containment rather than as a margin. */
 .section { display: flex; flex-direction: column; gap: 9px; padding-left: 13px; }
 
-.section > h4 {
+.section > h4, .dialog-field > legend {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -582,7 +583,7 @@ body[data-project="open"] .welcome { display: none; }
 /* A short bar in signal colour marks where a section starts, and a rule runs
    from its title to the edge of the panel. Only this rung is marked this way:
    one kind of heading, drawn once. */
-.section > h4::before {
+.section > h4::before, .dialog-field > legend::before {
   content: "";
   width: 3px;
   height: 12px;
@@ -591,7 +592,7 @@ body[data-project="open"] .welcome { display: none; }
   flex: none;
 }
 
-.section > h4::after {
+.section > h4::after, .dialog-field > legend::after {
   content: "";
   flex: 1;
   height: 1px;
@@ -1163,23 +1164,19 @@ button.problem:hover .problem-where { color: var(--signal); }
 .new-project h2 { margin: 0; font-size: 17px; font-weight: 600; }
 .dialog-lede { margin: 4px 0 18px; font-size: 12.5px; color: var(--ink-dim); }
 
-.dialog-field { border: 0; margin: 0 0 18px; padding: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+/* A question is headed the way a panel's section is, with the answers
+   indented under it, so the question reads louder than they do. */
+.dialog-field { border: 0; margin: 0 0 18px; padding: 0 0 0 13px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 /* A question that does not apply is not asked. Without this the fieldset's
    own display would override the hidden attribute and show it anyway. */
 .dialog-field[hidden] { display: none; }
 .choices { display: flex; flex-direction: column; gap: 8px; }
 
-.dialog-field legend {
-  padding: 0;
-  margin-bottom: 8px;
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  font-weight: 500;
-}
+/* A legend is not one of the fieldset's flex items, so the gap under it is
+   its own, and it is widened to reach back over the indent to the edge. */
+.dialog-field > legend { padding: 0; margin-bottom: 8px; width: calc(100% + 13px); }
 
-.field-tag { margin-left: 4px; letter-spacing: 0.06em; text-transform: lowercase; color: var(--ink-dim); }
+.field-tag { font-weight: 500; letter-spacing: 0.06em; text-transform: lowercase; color: var(--ink-dim); }
 
 .choice {
   display: flex;
@@ -1792,8 +1789,8 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
 .block-flag { display: none; pointer-events: bounding-box; }
 .block-box[data-run-flag="true"] .block-flag,
 .block-box[data-failing="true"] .block-flag { display: inline; }
-.block-flag-pole { fill: none; stroke: var(--bad); stroke-width: 1.5; stroke-linecap: round; }
-.block-flag-cloth { fill: var(--bad); stroke: var(--bad); stroke-width: 1; stroke-linejoin: round; }
+.block-flag-pole { fill: none; stroke: var(--flag-red); stroke-width: 1.5; stroke-linecap: round; }
+.block-flag-cloth { fill: var(--flag-red); stroke: var(--flag-red); stroke-width: 1; stroke-linejoin: round; }
 .block-box[data-run-flag="true"] .block-flag-cloth { filter: drop-shadow(0 0 3px color-mix(in srgb, var(--bad) 80%, transparent)); }
 
 /* While the agent works on a note, a ring spreads out from its count. */

@@ -17,7 +17,7 @@ npm link
 
 1. Start Fragmentor with `npm run app`.
 2. Choose **New project…**, on the start screen or under **File**, and answer its questions: where you are starting from, whether to plan the architecture before building it, and how finely to divide the work. Then pick a folder: an empty one, or one that already holds code.
-3. Open your coding agent in that folder and send it the first command Fragmentor shows you: `fragmentor rebuild` to draw code you already have, `fragmentor plan <what you want to build>` to plan first, or `fragmentor make <what you want to build>` to build straight away. Everything else you can ask it is under **Commands**, at the top right.
+3. Open your coding agent in that folder and send it the first command Fragmentor shows you: `fragmentor rebuild` to draw code you already have, `fragmentor plan <what you want to build>` to plan first, or `fragmentor make <what you want to build>` to build straight away. The full list of commands is under **Commands**, at the top right.
 
 The agent reads `FRAGMENTOR.md`, defines the blocks, writes the code wherever it belongs in the codebase, points each block at it, and runs `fragmentor check` and `fragmentor test` until both pass. Nothing requires the code to sit anywhere in particular: a block's folder says where the block is in the architecture, not where its code is on disk.
 
