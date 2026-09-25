@@ -149,7 +149,60 @@ async function read(blockPath: string): Promise<void> {
 
   const before = listed?.dir === dir && listed.blockPath === blockPath ? JSON.stringify(listed.result) : null;
   listed = { dir, blockPath, result };
-  if (JSON.stringify(result) !== before) redraw();
+  if (JSON.stringify(result) === before) return;
+  redraw();
+  for (const listener of readListeners) listener();
+}
+
+const readListeners: Array<() => void> = [];
+/**
+ * Called whenever a block's list has been read and drawn, for anything else
+ * in the panel drawn from it: a note answered by a commit, which offers the
+ * version before that commit.
+ */
+export function onVersionsRead(callback: () => void): void {
+  readListeners.push(callback);
+}
+
+/**
+ * The version of a block from just before a commit changed it: the next row
+ * down its git history. Null while the list is still being read, and a
+ * sentence saying why when there is no such version.
+ */
+export function versionBefore(blockPath: string, commit: string): { commit: string; subject: string } | string | null {
+  const shown = listed?.dir === ui.dir && listed?.blockPath === blockPath ? listed.result : null;
+  if (shown === null) return null;
+  if (!shown.ok) return `Its versions could not be read: ${shown.error}`;
+  const { versions, more, unavailable } = shown.value;
+  if (unavailable !== null) return unavailable;
+  const at = versions.findIndex((each) => each.commit === commit);
+  if (at === -1) return "That commit did not change this block, or is no longer in its history.";
+  const before = versions[at + 1];
+  if (before !== undefined) return before;
+  return more ? "The version before it is further back than its history lists." : "The block was added in that commit, so there is no version before it.";
+}
+
+/**
+ * Compares a block with one commit of its history, or swaps it back to it,
+ * exactly as that commit's own row does, for something elsewhere in the
+ * panel: a note answered by the commit after it. The row is unfolded and
+ * brought into view, since that is where what comes of it is shown.
+ */
+export async function actOnVersion(blockPath: string, commit: string, action: "compare" | "swap"): Promise<void> {
+  const block = ui.snapshot?.blocks[blockPath];
+  const shown = listed?.dir === ui.dir && listed?.blockPath === blockPath && listed.result.ok ? listed.result.value : null;
+  const index = shown?.versions.findIndex((each) => each.commit === commit) ?? -1;
+  if (busy) {
+    ui.status = { text: "Something is still being compared, swapped or saved under Versions. Try again once it has finished.", tone: "info" };
+    redrawAll();
+    return;
+  }
+  if (!block || !shown || index === -1) return;
+  if (index >= FOLDED) unfolded.add(blockPath);
+  const row: VersionRow = { ref: { commit }, row: commit, label: shown.versions[index]!.subject };
+  const going = action === "compare" ? compareWith(block, row) : swapOrUndo(block, row);
+  document.querySelector(`#inspector [data-versions-of] [data-commit="${commit}"]`)?.scrollIntoView({ block: "center" });
+  await going;
 }
 
 /**

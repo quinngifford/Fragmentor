@@ -3,7 +3,17 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { applyPlan, blockVersions, deleteSavedVersion, editSavedVersion, saveVersion, swapToVersion, undoLastSwap } from "./history.js";
+import {
+  applyPlan,
+  blockVersions,
+  commitTouchesBlock,
+  deleteSavedVersion,
+  editSavedVersion,
+  headCommit,
+  saveVersion,
+  swapToVersion,
+  undoLastSwap,
+} from "./history.js";
 import { commitExampleHistory, filesOf, gitIn } from "./exampleHistory.js";
 
 /**
@@ -1091,5 +1101,50 @@ describe("a version that cannot be swapped in", () => {
   it("is refused when it is not a commit at all", async () => {
     const { dir } = await ticketsHistory();
     await expect(swapToVersion(dir, pricing, { commit: "-x" })).rejects.toThrow('"-x" is not a commit.');
+  }, 30_000);
+});
+
+describe("the newest commit", () => {
+  it("is the one at the head of the repository holding the project, with when it was made", async () => {
+    const { dir, newer } = await ticketsHistory();
+    const found = await headCommit(dir);
+    expect(found).toEqual({ hash: newer, subject: "Take ten percent off from the fifth seat", date: expect.any(String) });
+    expect(Number.isNaN(Date.parse(found!.date))).toBe(false);
+  }, 30_000);
+
+  it("is nothing where there is no repository, or nothing committed in it yet", async () => {
+    const outside = await scratch();
+    expect(await headCommit(outside)).toBeNull();
+    await gitIn(outside)("init", "--quiet");
+    expect(await headCommit(outside)).toBeNull();
+  }, 30_000);
+});
+
+describe("whether a commit changed a block", () => {
+  it("asks of its folder, its parts' folders and the code they point at, and of nothing else", async () => {
+    const { dir, git, older, newer } = await ticketsHistory();
+
+    // The first commit holds the whole project, so it changed every block in it.
+    expect(await commitTouchesBlock(dir, older, refundFor)).toBe(true);
+    // The newer one changed Price Seat, and with it Pricing, which holds it, and not Refund For beside it.
+    expect(await commitTouchesBlock(dir, newer, priceSeat)).toBe(true);
+    expect(await commitTouchesBlock(dir, newer, pricing)).toBe(true);
+    expect(await commitTouchesBlock(dir, newer, refundFor)).toBe(false);
+
+    // Only the code a part points at: that changes the part and what holds it.
+    await appendFile(path.join(dir, "src", "booking", "price-seat.ts"), "// A comment.\n");
+    await git("commit", "--quiet", "-am", "Comment Price Seat's code");
+    const codeOnly = await head(git);
+    expect(await commitTouchesBlock(dir, codeOnly, pricing)).toBe(true);
+    expect(await commitTouchesBlock(dir, codeOnly, refundFor)).toBe(false);
+
+    // A note is not part of the block it is on.
+    await put(dir, ".fragmentor/notes/1790000000000-x.json", "{}\n");
+    await git("add", "--all", "--", ".");
+    await git("commit", "--quiet", "-m", "A note");
+    expect(await commitTouchesBlock(dir, await head(git), priceSeat)).toBe(false);
+
+    await expect(commitTouchesBlock(dir, "-x", priceSeat)).rejects.toThrow('"-x" is not a commit.');
+    await expect(commitTouchesBlock(dir, newer, "tickets/nowhere")).rejects.toThrow("There is no block at tickets/nowhere.");
   }, 30_000);
 });

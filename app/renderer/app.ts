@@ -34,10 +34,10 @@ import { onBenchChange } from "./bench.js";
 import { askForProjectSettings } from "./newproject.js";
 import { onWatchChange, resetWatching, setUpWatching } from "./watch.js";
 import { onExecutionChange, paintExecution, resetExecutions, setUpExecutions, showStep } from "./execution.js";
-import { closeWindow, openBlockWindow, setUpWindows } from "./popup.js";
+import { closeWindow, onLinesNoted, openBlockWindow, setUpWindows } from "./popup.js";
 import { benchWindowIsOpen, closeBenchWindow, onBenchWindowChange, renderBenchWindow } from "./benchpanel.js";
 import { forgetVersions, onVersionsChange, refreshVersions } from "./versions.js";
-import { forgetNotes, onNotesChange, renderNotesBar, showNotesOf } from "./notes.js";
+import { forgetNotes, noteOn, onNotesChange, openCommandsWindow, renderNotesBar, showNotesOf } from "./notes.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
 
@@ -332,8 +332,9 @@ function renderPanes(): void {
   element("toggle-rail").setAttribute("aria-pressed", String(ui.showRail));
   element("toggle-inspector").setAttribute("aria-pressed", String(ui.showInspector));
 
-  // Only worth offering with something open to close.
+  // Only worth offering with something open to close, or to ask an agent about.
   element("close-project").hidden = !ui.dir;
+  element("agent-commands").hidden = !ui.dir;
   // Only worth offering where there is something to generate: a block whose
   // code is held to a contract Fragmentor writes.
   element("generate-code").hidden = !Object.values(ui.snapshot?.blocks ?? {}).some((block) => block.files.contract !== "");
@@ -650,6 +651,8 @@ function wireToolbar(): void {
   element("close-project").addEventListener("click", () => void closeProject());
   element("generate-code").addEventListener("click", () => void generateCode());
   element("reload-project").addEventListener("click", () => void reload());
+  // With a block picked out, the commands are offered for it as well.
+  element("agent-commands").addEventListener("click", () => openCommandsWindow(selectedBlock()?.path ?? null));
 
   // The chosen colours go onto the document itself, so every block, line,
   // badge and swatch of a kind follows from one place.
@@ -727,6 +730,8 @@ try {
   onBlockWindow(openBlockWindow);
   // The count on a block's corner leads to the notes it counts.
   onNotesPicked(showNotesOf);
+  // Lines picked out in a block's code start a note on them.
+  onLinesNoted(noteOn);
   // Clicking the step drawn on the tree asks about that step.
   onStepPicked(() => {
     showStep();

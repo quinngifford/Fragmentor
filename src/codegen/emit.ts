@@ -9,13 +9,26 @@ import { startHistory } from "../project/history.js";
 import { boundStores } from "../project/stores.js";
 import type { LoadedBlock, Manifest, Project, Start } from "../project/project.js";
 import type { PortType } from "../model/types.js";
-import { AGENTS_FILE, AGENTS_SCAFFOLD, CLAUDE_FILE, CLAUDE_SCAFFOLD, GUIDE_FILE, agentGuide } from "./guide.js";
+import { COMMANDS } from "./commands.js";
+import {
+  AGENTS_FILE,
+  AGENTS_SCAFFOLD,
+  CLAUDE_FILE,
+  CLAUDE_SCAFFOLD,
+  GUIDE_FILE,
+  SKILLS_DIR,
+  agentGuide,
+  commandSkill,
+  isGeneratedSkill,
+  skillName,
+} from "./guide.js";
 
 /**
  * Writes the generated half of a project to disk, one language pack per system.
  *
  * That half is small, and all of it sits inside `blocks/`: each function
- * block's contract, the shared capability interfaces, and the agent's guide.
+ * block's contract and the shared capability interfaces. Beside it are the
+ * agent's guide and the slash commands that send the agent to it.
  * Fragmentor writes no code of its own. Every implementation is the agent's,
  * at whatever path its block points at, and nothing of Fragmentor's is ever
  * written into the codebase's own tree. The one time it writes code files is
@@ -86,11 +99,31 @@ export async function writeGuide(projectDir: string, manifest: Manifest): Promis
 }
 
 /**
+ * Brings the slash commands a project offers in Claude Code up to date, one
+ * skill for each of the phrases the person sets the agent going with, and
+ * says which it wrote. Only a skill Fragmentor wrote is ever changed, and
+ * nothing else in the folder is touched, since the person keeps skills of
+ * their own there, some perhaps made by copying one of these.
+ */
+export async function writeCommandSkills(projectDir: string): Promise<string[]> {
+  const written: string[] = [];
+  for (const command of COMMANDS) {
+    const file = path.join(projectDir, ...SKILLS_DIR.split("/"), skillName(command), "SKILL.md");
+    const existing = await readIfPresent(file);
+    if (existing !== null && !isGeneratedSkill(existing)) continue;
+    await mkdir(path.dirname(file), { recursive: true });
+    if (await writeIfChanged(file, commandSkill(command))) written.push(`${SKILLS_DIR}/${skillName(command)}/SKILL.md`);
+  }
+  return written;
+}
+
+/**
  * Prepares a folder for a coding agent: the guide, and the two files agents
  * read first, which point at it. Those two are only ever created, never
  * rewritten, because they are where the person keeps instructions of their
  * own. Any that were already there without mentioning the guide are reported,
- * since an agent reading them would never learn that it exists.
+ * since an agent reading them would never learn that it exists. The slash
+ * commands come too, so a new project offers them from the start.
  */
 export async function writeAgentFiles(
   projectDir: string,
@@ -112,6 +145,7 @@ export async function writeAgentFiles(
       if (!existing.includes(GUIDE_FILE)) withoutGuide.push(file);
     }
   }
+  written.push(...(await writeCommandSkills(projectDir)));
 
   return { written, kept, withoutGuide };
 }
@@ -188,8 +222,10 @@ export async function emitProject(project: Project, known?: Map<string, BlockCod
   };
 
   // The guide does not depend on the project being valid, and is most needed
-  // when it is not, so it is kept current before anything can be refused.
+  // when it is not, so it is kept current before anything can be refused, and
+  // so are the slash commands that send the agent to it.
   await write(path.join(project.dir, GUIDE_FILE), agentGuide(project.manifest));
+  written.push(...(await writeCommandSkills(project.dir)));
 
   for (const node of project.byPath.values()) {
     for (const [name, cap] of Object.entries(node.block.capabilities)) {

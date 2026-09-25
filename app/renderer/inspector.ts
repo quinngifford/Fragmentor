@@ -11,7 +11,7 @@ import { travelOf } from "../../src/model/trace.js";
 import type { AccessArrow } from "./canvas.js";
 import { openBenchWindow } from "./benchpanel.js";
 import { versionBadge, versionsSection } from "./versions.js";
-import { notesSection, projectNotesSection } from "./notes.js";
+import { noteOn, notesSection, problemFlag, projectNotesSection } from "./notes.js";
 import { el, keepingFocus, section } from "./dom.js";
 import { codeBlock, codeFragment, codeLines, languageOf } from "./highlight.js";
 
@@ -49,7 +49,14 @@ function problemsSection(diagnostics: ProjectDiagnostic[], linked: boolean): HTM
       row.addEventListener("click", () => revealBlock(diagnostic.blockPath));
     }
     row.append(el("span", "problem-text", diagnostic.message));
-    list.append(row);
+    const flag = problemFlag(diagnostic.blockPath, diagnostic.message);
+    if (flag) {
+      const line = el("div", "problem-line");
+      line.append(row, flag);
+      list.append(line);
+    } else {
+      list.append(row);
+    }
   }
 
   node.append(list);
@@ -407,6 +414,19 @@ function stepPanel(panel: HTMLElement): boolean {
   const said = event.type === "return" ? undefined : event.description;
   panel.append(el("p", "responsibility", said ?? describeStep(event, trigger, 400)));
   if (said) panel.append(el("p", "bench-note", describeStep(event, trigger, 400)));
+
+  // A note on a step goes on the block the step leaves, whose code makes it,
+  // as the guide tells the agent a step's code is.
+  const ends = event.type === "effect" ? null : (travelOf(event) ?? event);
+  const leaves = event.type === "effect" ? event.at : (ends?.from ?? ends?.to ?? null);
+  if (leaves && snapshot.blocks[leaves.path]) {
+    const note = el("button", "btn quiet tiny", "Leave a note on this step");
+    note.title = `A note for your coding agent about this step, on ${snapshot.blocks[leaves.path]!.name}.`;
+    note.addEventListener("click", () =>
+      noteOn(leaves.path, { execution: execution.id, step: event.id, description: said ?? describeStep(event, trigger, 200) }),
+    );
+    panel.append(note);
+  }
 
   // "Where", not "between": an effect happens at one block rather than
   // between two, and this is the section that says so for both.

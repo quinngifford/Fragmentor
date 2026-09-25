@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { GUIDE_FILE, agentGuide, architectureExample, compactJson, executionExample, workedExample } from "./guide.js";
+import { GUIDE_FILE, SKILLS_DIR, agentGuide, architectureExample, compactJson, executionExample, workedExample } from "./guide.js";
+import { COMMANDS } from "./commands.js";
 import { writeAgentFiles } from "./emit.js";
 import { blockFromFile } from "../model/block.js";
 import { CAPABILITIES } from "../model/capabilities.js";
@@ -53,12 +54,15 @@ async function writeSource(file: string, source: string): Promise<void> {
 /** A Python that can parse a file, or nothing if the machine has none. */
 const python = ["python", "python3", "py"].find((candidate) => spawnSync(candidate, ["-c", "print(1)"]).status === 0) ?? null;
 
+/** The slash command Claude Code offers for each command, as the files Fragmentor writes for them. */
+const SKILLS = COMMANDS.map((command) => `${SKILLS_DIR}/fragmentor-${command.name}/SKILL.md`);
+
 describe("writeAgentFiles", () => {
   const manifest = project();
 
   it("prepares a folder for an agent", async () => {
     expect(await writeAgentFiles(dir, manifest)).toEqual({
-      written: ["FRAGMENTOR.md", "AGENTS.md", "CLAUDE.md"],
+      written: ["FRAGMENTOR.md", "AGENTS.md", "CLAUDE.md", ...SKILLS],
       kept: [],
       withoutGuide: [],
     });
@@ -99,7 +103,7 @@ describe("writeAgentFiles", () => {
     await writeFile(path.join(dir, "CLAUDE.md"), "# House rules\nUse tabs.\n", "utf8");
 
     expect(await writeAgentFiles(dir, manifest)).toEqual({
-      written: ["FRAGMENTOR.md", "AGENTS.md"],
+      written: ["FRAGMENTOR.md", "AGENTS.md", ...SKILLS],
       kept: ["CLAUDE.md"],
       withoutGuide: ["CLAUDE.md"],
     });
@@ -132,15 +136,18 @@ describe("the guide", () => {
     // and the one line asking for a commit each time a block is finished,
     // because those commits are its versions — and the notes, which are the
     // one way the person asks for work beside the block it is about, and
-    // which an agent that has never been told `review fragmentor` means
-    // `fragmentor notes` cannot answer at all, is the whole of what has been
-    // allowed to add to these numbers.
-    expect(guides.TypeScript!.split("\n").length).toBeLessThan(303);
+    // which an agent that has never been told what `fragmentor notes` asks
+    // of it cannot answer at all — and a line for each of the commands the
+    // person sets the agent going with, since an agent cannot guess what a
+    // phrase of Fragmentor's own asks for, with a line asking it to say when
+    // it starts on a note, so the person sees what is being worked on, is
+    // the whole of what has been allowed to add to these numbers.
+    expect(guides.TypeScript!.split("\n").length).toBeLessThan(316);
     // Nothing is generated or run without a pack, so contracts and block
     // testing fall away, and so does a note flagging a failed run. What is
-    // left still teaches executions and notes, which is why this is not much
-    // smaller than it was.
-    expect(guides["in a language there is no pack for"]!.split("\n").length).toBeLessThan(257);
+    // left still teaches executions, notes and the commands, which is why
+    // this is not much smaller than it was.
+    expect(guides["in a language there is no pack for"]!.split("\n").length).toBeLessThan(270);
   });
 
   it("tells an agent about every capability, and how to check and test its work", () => {
@@ -161,11 +168,42 @@ describe("the guide", () => {
     }
   });
 
-  it("tells every agent what `review fragmentor` means, and how to answer the notes it finds", () => {
+  it("tells every agent what each command the person can give it means", () => {
+    for (const guide of Object.values(guides)) {
+      expect(guide).toContain("## Commands");
+      for (const command of COMMANDS) expect(guide).toContain(`fragmentor ${command.name}`);
+      expect(guide).toContain("`/fragmentor-review`");
+      // How the person asked for the notes before there were commands.
+      expect(guide).not.toContain("review fragmentor");
+    }
+  });
+
+  it("gives the person no phrase that is word for word a command of the program, but the notes one", () => {
+    // The `fragmentor` program's own commands, as cli.ts takes them.
+    const program = ["init", "check", "test", "notes", "working", "reply", "note", "help"];
+    expect(COMMANDS.map((command) => command.name).filter((name) => program.includes(name))).toEqual(["notes"]);
+  });
+
+  it("has the tests it adds kept only where they pass, so every later `fragmentor test` can pass", () => {
+    const cover = COMMANDS.find((command) => command.name === "cover")!;
+    expect(cover.steps).toContain("keep only what passes. Change no code");
+    expect(cover.steps).toContain("do not keep it with the saved tests, and leave a note on the block with `fragmentor note`");
+    expect(cover.steps).toContain("with its input, what it should give and what it gives");
+  });
+
+  it("says what each command does in words that read the same in Fragmentor and in Claude Code's / menu", () => {
+    // A summary is also its slash command's description, read beside the chat rather than in Fragmentor.
+    for (const command of COMMANDS) expect(command.summary).not.toMatch(/\bhere\b/);
+  });
+
+  it("tells every agent what `fragmentor notes` means, and how to answer the notes it finds", () => {
     for (const guide of Object.values(guides)) {
       expect(guide).toContain("## Notes");
-      expect(guide).toContain("**When the person says `review fragmentor`, run `fragmentor notes`.**");
+      expect(guide).toContain("**When the person says `fragmentor notes`, run it just as they said it.**");
+      expect(guide).toContain("`fragmentor working <id>`");
       expect(guide).toContain('`fragmentor reply <id> "<what you did>"`');
+      expect(guide).toContain('A question is answered, not acted on: answer it with `fragmentor reply <id> --no-commit "<your answer>"`');
+      expect(guide).toContain("only if it was made since the person wrote and changed the note's block");
       expect(guide).toContain('`fragmentor note <block-path> "<text>"`');
       expect(guide).toContain("`.fragmentor/notes/`");
     }

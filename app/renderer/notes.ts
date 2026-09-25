@@ -1,9 +1,14 @@
-import type { FlaggedRun, NoteMessage } from "../../src/project/notes.js";
+import { COMMANDS, NOTES_COMMAND, phraseFor, usageOf } from "../../src/codegen/commands.js";
+import type { FlaggedRun, NoteAnchor, NoteMessage } from "../../src/project/notes.js";
 import type { SnapshotBlock, SnapshotNote } from "../../src/project/snapshot.js";
+import type { CaseResult } from "../../src/run/run.js";
 import type { Result } from "../ipc.js";
 import { revealBlock } from "./canvas.js";
 import { el, keepingFocus, section, subsection } from "./dom.js";
+import { goToStep } from "./execution.js";
+import { closeWindow, openCodeAt, openWindow } from "./popup.js";
 import { ui } from "./state.js";
+import { actOnVersion, onVersionsRead, versionBefore } from "./versions.js";
 
 /**
  * Notes on blocks: the person and their coding agent, asking and answering
@@ -21,7 +26,7 @@ import { ui } from "./state.js";
  */
 
 /** What the person types to their agent to have it work through the notes. */
-export const REVIEW_PHRASE = "review fragmentor";
+export const NOTES_PHRASE = phraseFor(NOTES_COMMAND);
 
 let redrawAll: () => void = () => {};
 let reloadProject: () => Promise<void> = async () => {};
@@ -35,6 +40,8 @@ export function onNotesChange(callbacks: { all: () => void; reload: () => Promis
 const drafts = new Map<string, string>();
 /** Which form is open in a block's section: "new", or the id of the note being replied to. One at a time. */
 const forms = new Map<string, string>();
+/** What the note being written on a block is about, when it is some lines of its code or one of its steps. */
+const pendingOn = new Map<string, NoteAnchor>();
 /**
  * What the last thing pressed on a note said, or the question it asks: by
  * block and "new", or by block and note. Each goes when the next thing is pressed.
@@ -42,6 +49,12 @@ const forms = new Map<string, string>();
 const said = new Map<string, { text: string; confirm?: boolean }>();
 /** Runs from the bench that have been flagged, as the outcomes they came to, so none is flagged twice. */
 let flaggedRuns = new WeakSet<object>();
+/**
+ * What running a note's flagged run again came to, by note: how many
+ * messages the note had then, so an answer after it runs it again, and the
+ * result, or why there is none, or that it is still running.
+ */
+const reruns = new Map<string, { upTo: number; code: string; state: "running" | CaseResult | { error: string } }>();
 /** Blocks whose resolved notes are unfolded. */
 const unfolded = new Set<string>();
 /** Which note the bar's Show went to last, so pressing it again goes on to the next. */
@@ -58,11 +71,20 @@ export function forgetNotes(): void {
   busy = false;
   drafts.clear();
   forms.clear();
+  pendingOn.clear();
   said.clear();
+  reruns.clear();
   unfolded.clear();
   flaggedRuns = new WeakSet();
   shownLast = -1;
 }
+
+// A note answered by a commit offers the version before it, which is known
+// once the block's versions have been read.
+onVersionsRead(() => {
+  const old = document.querySelector<HTMLElement>("#inspector [data-notes-of]");
+  if (old) redrawSection();
+});
 
 /** The block a note is on, as a note needs it: by path, and called something. One that has gone is called by its path. */
 type Where = Pick<SnapshotBlock, "path" | "name">;
@@ -85,6 +107,35 @@ function fromWord(message: NoteMessage): string {
 function stateWord(note: SnapshotNote): string {
   return note.waiting === "agent" ? "for your agent" : note.waiting === "person" ? "for you" : "resolved";
 }
+
+/** The newest run a note flags: the one to run again. */
+function runOf(note: SnapshotNote): FlaggedRun | undefined {
+  return [...note.messages].reverse().find((message) => message.run !== undefined)?.run;
+}
+
+/**
+ * What running a block depends on, as far as the window can see: its code
+ * and its parts'. A result from before any of it changed, as when a note's
+ * own Swap back puts the old code in place, is a result about other code.
+ */
+function codeOf(blockPath: string): string {
+  return Object.values(ui.snapshot?.blocks ?? {})
+    .filter((each) => each.path === blockPath || each.path.startsWith(`${blockPath}/`))
+    .map((each) => each.sources.code ?? "")
+    .join("\0");
+}
+
+/**
+ * Whether what a note flags can be run again as it was: on a block that is
+ * there and that Fragmentor runs, with everything it was given kept whole.
+ */
+function canRerun(blockPath: string, run: FlaggedRun): boolean {
+  const cut = run.cut ?? [];
+  return Boolean(ui.snapshot?.blocks[blockPath]?.runnable) && !cut.some((part) => part === "input" || part === "stores" || part === "expected");
+}
+
+/** Whether a run came out right: a test that passes, or a run with no expectation that finished and kept its promise. */
+const cameRight = (result: CaseResult) => result.status === "passed" || result.status === "unchecked";
 
 /**
  * The words to say to the agent, with a button that copies them. Typed into
@@ -117,6 +168,21 @@ export function showNotesOf(blockPath: string): void {
   ui.showInspector = true;
   revealBlock(blockPath);
   document.querySelector("#inspector [data-notes-of]")?.scrollIntoView({ block: "start" });
+}
+
+/**
+ * Starts a note on part of a block, some lines of its code or one of its
+ * steps: its panel opens at a new note that says what it is on.
+ */
+export function noteOn(blockPath: string, on: NoteAnchor): void {
+  const block = ui.snapshot?.blocks[blockPath];
+  if (!block) return;
+  closeWindow();
+  pendingOn.set(blockPath, on);
+  said.clear();
+  forms.set(blockPath, "new");
+  showNotesOf(blockPath);
+  document.getElementById(`note-${blockPath}-new`)?.focus();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -155,15 +221,17 @@ function sentFrom(where: Where, which: string): () => void {
   return () => {
     drafts.delete(key(where.path, which));
     if (forms.get(where.path) === which) forms.delete(where.path);
+    if (which === "new") pendingOn.delete(where.path);
   };
 }
 
 async function leave(block: SnapshotBlock): Promise<void> {
   const text = drafts.get(key(block.path, "new")) ?? "";
+  const on = pendingOn.get(block.path);
   await write(
     key(block.path, "new"),
-    (dir) => window.fragmentor.addNote(dir, block.path, text),
-    () => `Left a note on ${block.name}. Tell your agent “${REVIEW_PHRASE}” when you are ready.`,
+    (dir) => window.fragmentor.addNote(dir, block.path, text, on === undefined ? {} : { on }),
+    () => `Left a note on ${block.name}. Tell your agent “${NOTES_PHRASE}” when you are ready.`,
     sentFrom(block, "new"),
   );
 }
@@ -178,10 +246,6 @@ async function reply(where: Where, note: SnapshotNote): Promise<void> {
   );
 }
 
-/**
- * Flags a run that went wrong for the agent: a note on the block carrying
- * what was run and what came of it, so the agent can run it again itself.
- */
 /** Where what went wrong flagging one run is said: under its own offer, not every offer on the block. */
 const flagKey = (block: SnapshotBlock, run: FlaggedRun) => key(block.path, run.test === null ? "flag" : `flag ${run.test}`);
 
@@ -196,9 +260,9 @@ async function flagRun(block: SnapshotBlock, run: FlaggedRun, outcome: object | 
     flagKey(block, run),
     (dir) =>
       answered
-        ? window.fragmentor.replyToNote(dir, answered.id, `The test “${run.test}” still fails.`, run)
-        : window.fragmentor.addNote(dir, block.path, run.test === null ? "This went wrong when I ran it from the bench." : `The test “${run.test}” fails.`, run),
-    () => `Flagged for your agent. Tell it “${REVIEW_PHRASE}” when you are ready.`,
+        ? window.fragmentor.replyToNote(dir, answered.id, `The test “${run.test}” still fails.`, { run })
+        : window.fragmentor.addNote(dir, block.path, run.test === null ? "This went wrong when I ran it from the bench." : `The test “${run.test}” fails.`, { run }),
+    () => `Flagged for your agent. Tell it “${NOTES_PHRASE}” when you are ready.`,
     () => {
       if (outcome !== undefined) flaggedRuns.add(outcome);
     },
@@ -233,7 +297,7 @@ function flagged(block: SnapshotBlock, run: FlaggedRun, outcome: object | undefi
 export function flagOffer(block: SnapshotBlock, run: FlaggedRun, outcome?: object): HTMLElement {
   const now = flagged(block, run, outcome);
   if (now === "with the agent") {
-    return phraseLine("Flagged for your agent. When you are ready, tell it", REVIEW_PHRASE, "note-phrase flag-offer");
+    return phraseLine("Flagged for your agent. When you are ready, tell it", NOTES_PHRASE, "note-phrase flag-offer");
   }
   const offer = el("div", "flag-offer");
   offer.append(
@@ -254,6 +318,59 @@ export function flagOffer(block: SnapshotBlock, run: FlaggedRun, outcome?: objec
   const trouble = said.get(flagKey(block, run));
   if (trouble) offer.append(el("p", "bench-note bad", trouble.text));
   return offer;
+}
+
+/**
+ * The button beside a problem Fragmentor reported on a block, which flags it
+ * for the agent as a note carrying the problem as it is worded. A problem
+ * flagged already, in a note still open, says so instead.
+ */
+export function problemFlag(blockPath: string, problem: string): HTMLElement | null {
+  const block = ui.snapshot?.blocks[blockPath];
+  if (!block) return null;
+  const already = allNotes().some(
+    (note) => note.block === blockPath && note.status === "open" && note.messages.some((message) => message.problem === problem),
+  );
+  if (already) return el("span", "problem-flagged", "flagged");
+  const flag = el("button", "run-btn problem-flag", "Flag");
+  flag.type = "button";
+  flag.disabled = busy;
+  flag.title = `Flag this for your coding agent, as a note on ${block.name}.`;
+  flag.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void write(
+      key(blockPath, "problem"),
+      (dir) => window.fragmentor.addNote(dir, blockPath, "Fragmentor reports a problem here. Please fix it.", { problem }),
+      () => `Flagged the problem on ${block.name} for your agent. Tell it “${NOTES_PHRASE}” when you are ready.`,
+    );
+  });
+  return flag;
+}
+
+/**
+ * Runs what a note flags again, as it was flagged, and draws what came of it
+ * on the note. It never touches the block's saved tests. It is marked as
+ * running at once, so a panel drawn meanwhile says so and starts no other,
+ * and it starts once whatever is being drawn now is done, because what
+ * comes of it draws the panel again.
+ */
+function rerun(note: SnapshotNote): void {
+  const dir = ui.dir;
+  if (!dir) return;
+  const mine = session;
+  const upTo = note.messages.length;
+  const code = codeOf(note.block);
+  reruns.set(note.id, { upTo, code, state: "running" });
+  setTimeout(() => {
+    void window.fragmentor.rerunNote(dir, note.id).then((result) => {
+      if (session !== mine) return;
+      reruns.set(note.id, { upTo, code, state: result.ok ? result.value : { error: result.error } });
+      // Drawn now only where the note is showing; anywhere else it is drawn
+      // from what is kept here when its block is next looked at.
+      const shown = document.querySelector<HTMLElement>("#inspector [data-notes-of]");
+      if (shown?.dataset.notesOf === note.block) redrawSection();
+    });
+  }, 0);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -284,9 +401,45 @@ function button(label: string, title: string, act: () => void, className?: strin
   return pressed;
 }
 
+/** What a note is on, in words, with a button that goes there. */
+function anchorLine(on: NoteAnchor): HTMLElement {
+  const line = el("div", "note-on");
+  if ("file" in on) {
+    const [first, last] = on.lines;
+    const lines = first === last ? `line ${first}` : `lines ${first}–${last}`;
+    line.append(el("span", undefined, `On ${lines} of ${on.file}`));
+    line.append(button("Show", "Open the file at those lines.", () => void openCodeAt(on.file, on.file, on.lines, on.text), "run-btn"));
+  } else {
+    const execution = ui.snapshot?.executions.find((each) => each.id === on.execution);
+    line.append(el("span", undefined, `On the step “${on.description}” of ${execution?.name ?? on.execution}`));
+    if (execution) {
+      line.append(
+        button("Show", "Go to that step.", () => {
+          if (!goToStep(on.execution, on.step)) ui.status = { text: "That step is no longer in its execution.", tone: "bad" };
+          redrawAll();
+        }, "run-btn"),
+      );
+    }
+  }
+  return line;
+}
+
 /** A place to write, with what sending it does. Enter makes a new line; the button sends. */
 function noteForm(block: Where, row: string, placeholder: string, send: string, act: () => void): HTMLElement {
   const form = el("form", "note-form");
+  // A new note on part of the block says which part, and can be made a note on the whole block again.
+  const on = row === "new" ? pendingOn.get(block.path) : undefined;
+  if (on) {
+    const line = anchorLine(on);
+    line.append(
+      button("×", "Make it a note on the whole block.", () => {
+        pendingOn.delete(block.path);
+        redrawSection();
+      }, "run-btn"),
+    );
+    form.append(line);
+  }
+
   const box = el("textarea");
   box.id = `note-${block.path}-${row}`;
   box.maxLength = 4000;
@@ -362,24 +515,129 @@ function runDetail(run: FlaggedRun): HTMLElement {
     logged.append(el("pre", "code", run.logs.join("\n")));
     detail.append(logged);
   }
+  if (run.cut?.length) {
+    const parts = { input: "the input", stores: "the rows in the stores", expected: "what was expected", output: "what came back" };
+    detail.append(el("p", "bench-note", `Too large to keep whole with this note, so cut short or left out: ${run.cut.map((part) => parts[part]).join(", ")}.`));
+  }
   return detail;
+}
+
+/**
+ * The commit the agent answered with, and what can be done with it from
+ * here: comparing the block with how it was before, or putting it back.
+ * Both are the block's Versions section's own, and what comes of them is
+ * shown there, on the row of the version before.
+ */
+function commitLine(where: Where, hash: string, subject: string): HTMLElement {
+  const line = el("div", "note-commit");
+  line.append(el("span", undefined, "In the commit "), el("code", undefined, hash.slice(0, 7)), el("span", undefined, ` “${subject}”`));
+  if (!ui.snapshot?.blocks[where.path]) return line;
+  const before = versionBefore(where.path, hash);
+  if (before === null) {
+    line.append(el("span", "bench-note", "Finding the version before it…"));
+  } else if (typeof before === "string") {
+    line.append(el("span", "bench-note", before));
+  } else {
+    const actions = el("div", "case-actions");
+    actions.append(
+      button("Compare with before", "Run the saved tests against the block as it is and as it was before this commit. Nothing is changed.", () => {
+        void actOnVersion(where.path, before.commit, "compare");
+      }),
+      button("Swap back to before", "Put the block back as it was before this commit. Undo swap puts it back again.", () => {
+        void actOnVersion(where.path, before.commit, "swap");
+      }),
+    );
+    line.append(actions);
+  }
+  return line;
+}
+
+/**
+ * What running the flagged run again came to, once the agent has answered:
+ * whether what the person flagged is put right, so they need not take the
+ * agent's word for it. Still wrong, it offers to say so on the note.
+ */
+function rerunLine(where: Where, note: SnapshotNote, run: FlaggedRun): HTMLElement {
+  const line = el("div", "note-rerun");
+  const done = reruns.get(note.id);
+  const again = button("Run it again", "Run what this note flags again, as it was flagged.", () => {
+    rerun(note);
+    redrawSection();
+  }, "run-btn");
+
+  if (done === undefined) {
+    line.append(el("span", undefined, "What this note flags can be run again."), again);
+    return line;
+  }
+  if (done.state === "running") {
+    line.append(el("span", undefined, "Running what this note flags again…"));
+    return line;
+  }
+  if ("error" in done.state) {
+    line.dataset.tone = "bad";
+    line.append(el("span", undefined, `It could not be run again: ${done.state.error}`), again);
+    return line;
+  }
+  const result = done.state;
+  if (cameRight(result)) {
+    line.dataset.tone = "good";
+    line.append(el("span", undefined, run.test === null ? "Ran it again: it finishes now, and keeps its promise." : `Ran it again: “${run.test}” passes now.`), again);
+    return line;
+  }
+  line.dataset.tone = "bad";
+  const problems = result.differences.length > 0 ? result.differences : [result.error ?? "It failed."];
+  line.append(el("span", undefined, `Ran it again: it still fails. ${[...problems, ...result.inputProblems].join(" ")}`), again);
+  if (note.waiting === "person" && ui.snapshot?.blocks[where.path]) {
+    const still: FlaggedRun = {
+      test: run.test,
+      input: run.input,
+      ...(run.stores === undefined ? {} : { stores: run.stores }),
+      ...(run.expected === undefined ? {} : { expected: run.expected }),
+      ...(result.output === undefined ? {} : { output: result.output }),
+      problems: [...problems, ...result.inputProblems],
+      logs: result.logs,
+    };
+    line.append(
+      button("Tell your agent", "Reply that it still fails, with this run, which gives the note back to your agent.", () => {
+        void write(
+          key(where.path, note.id),
+          (dir) => window.fragmentor.replyToNote(dir, note.id, "It still fails when I run it again.", { run: still }),
+          () => `Told your agent it still fails. Tell it “${NOTES_PHRASE}” when you are ready.`,
+        );
+      }, "run-btn"),
+    );
+  }
+  return line;
 }
 
 function noteCard(block: Where, note: SnapshotNote, gone = false): HTMLElement {
   const card = el("div", "note-card");
   card.dataset.note = note.id;
   card.dataset.waiting = note.waiting ?? "none";
+  if (note.working !== undefined && note.waiting === "agent") card.dataset.working = "true";
 
   const head = el("div", "note-head");
   head.append(el("span", "note-state", stateWord(note)), el("span", "note-when", when(note.messages.at(-1)!.at)));
   card.append(head);
+  if (note.on) card.append(anchorLine(note.on));
+  if (card.dataset.working) card.append(el("p", "note-working", `Your agent started on this at ${when(note.working!)}.`));
 
   for (const message of note.messages) {
     const line = el("div", "note-message");
     line.dataset.from = message.from;
     line.append(el("span", "note-from", fromWord(message)), el("p", "note-text", message.text));
+    if (message.problem) line.append(el("p", "note-problem", message.problem));
     if (message.run) line.append(runDetail(message.run));
+    if (message.commit) line.append(commitLine(block, message.commit.hash, message.commit.subject));
     card.append(line);
+  }
+
+  // Once the agent has answered a note flagging a run, what was flagged is
+  // run again, so whether it is put right is seen rather than taken on trust.
+  const run = runOf(note);
+  if (run && note.status === "open") {
+    if (canRerun(block.path, run)) card.append(rerunLine(block, note, run));
+    else if (run.cut?.length) card.append(el("p", "bench-note", "What this note flags was too large to keep whole, so it cannot be run again as it was."));
   }
 
   const row = key(block.path, note.id);
@@ -455,6 +713,18 @@ export function notesSection(block: SnapshotBlock): HTMLElement {
   const open = mine.filter((note) => note.status === "open");
   const resolved = mine.filter((note) => note.status === "resolved");
 
+  // A note the agent has answered since its run was last run again is run
+  // again now, for a block Fragmentor can run.
+  // Once more after anything it depends on changes, so what it says is
+  // about the code as it is now.
+  for (const note of open) {
+    const run = runOf(note);
+    if (note.waiting !== "person" || run === undefined || !canRerun(block.path, run)) continue;
+    const last = reruns.get(note.id);
+    if (last?.state === "running") continue;
+    if (last === undefined || last.upTo !== note.messages.length || last.code !== codeOf(block.path)) rerun(note);
+  }
+
   if (open.length === 0 && forms.get(block.path) !== "new") {
     node.append(el("p", "bench-note", "Leave a note here for your coding agent: something to change, fix or look into on this block. It can leave you notes here too."));
   }
@@ -469,11 +739,14 @@ export function notesSection(block: SnapshotBlock): HTMLElement {
   }
 
   if (open.some((note) => note.waiting === "agent")) {
-    node.append(phraseLine("When you are ready, tell your agent", REVIEW_PHRASE));
+    node.append(phraseLine("When you are ready, tell your agent", NOTES_PHRASE));
     // The agent takes the words to mean the block and everything inside it.
     const which = block.children.length === 0 ? "this block" : "this block and its parts";
-    node.append(phraseLine(`or, for ${which} only,`, `${REVIEW_PHRASE} ${block.path}`, "note-phrase quiet"));
+    node.append(phraseLine(`or, for ${which} only,`, phraseFor(NOTES_COMMAND, block.path), "note-phrase quiet"));
   }
+  const more = button("Every command for this block…", `What else you can ask your agent to do with ${block.name}.`, () => openCommandsWindow(block.path), "btn quiet tiny");
+  more.classList.add("note-commands");
+  node.append(more);
 
   if (resolved.length > 0) {
     const showing = unfolded.has(block.path);
@@ -547,10 +820,13 @@ export function projectNotesSection(): HTMLElement {
 
   const say = subsection("What to tell your agent");
   say.append(
-    phraseLine("To work through every note waiting for it:", REVIEW_PHRASE),
-    phraseLine("For one block and its parts only:", `${REVIEW_PHRASE} <block path>`, "note-phrase quiet"),
+    phraseLine("To work through every note waiting for it:", NOTES_PHRASE),
+    phraseLine("For one block and its parts only:", `${NOTES_PHRASE} <block path>`, "note-phrase quiet"),
     el("p", "bench-note", "It answers each note here when it is done, and the note comes back to you to resolve, or to reply to if it is not right yet."),
   );
+  const every = button("Every command…", "Everything you can ask your agent to do with the diagram.", () => openCommandsWindow(null), "btn quiet tiny");
+  every.classList.add("note-commands");
+  say.append(every);
   node.append(say);
   return node;
 }
@@ -569,11 +845,13 @@ export function renderNotesBar(): void {
 
   // The agent is told about a note on a block that has gone as about any
   // other; the person answers it from the project's panel, having no block to go to.
-  const forAgent = open.filter((note) => note.waiting === "agent").length;
+  const forAgent = open.filter((note) => note.waiting === "agent");
   const forYou = open.filter((note) => note.waiting === "person" && ui.snapshot?.blocks[note.block]);
   const gone = open.filter((note) => note.waiting === "person" && !ui.snapshot?.blocks[note.block]).length;
-  if (forAgent > 0) {
-    bar.append(phraseLine(`${plural(forAgent, "note")} for your agent. Tell it`, REVIEW_PHRASE, "notes-bar-part"));
+  if (forAgent.length > 0) {
+    const working = forAgent.filter((note) => note.working !== undefined).length;
+    const lead = `${plural(forAgent.length, "note")} for your agent${working > 0 ? `, ${working} being worked on` : ""}. Tell it`;
+    bar.append(phraseLine(lead, NOTES_PHRASE, "notes-bar-part"));
   }
   if (forYou.length > 0) {
     const part = el("div", "notes-bar-part");
@@ -608,4 +886,42 @@ export function renderNotesBar(): void {
     part.append(show);
     bar.append(part);
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Every command                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Everything the person can ask their agent to do, in one window: each
+ * command, what it does, and the words to send it, with the block picked out
+ * filled in where one can be named. Opened from the top bar and from notes.
+ */
+export function openCommandsWindow(blockPath: string | null): void {
+  const block = blockPath === null ? undefined : ui.snapshot?.blocks[blockPath];
+  // An agent learns these from its guide and its slash commands, which a
+  // project from before they existed has not been given yet.
+  if (ui.dir) void window.fragmentor.refreshAgentFiles(ui.dir);
+  const body = el("div", "window-sections commands");
+  body.append(
+    el(
+      "p",
+      "bench-note",
+      "Type these to your coding agent, in the folder this project is in. Each starts with “fragmentor”, and one that names a block means that block and its parts. In Claude Code, each is also a slash command.",
+    ),
+  );
+
+  for (const command of COMMANDS) {
+    const part = section(command.title);
+    part.dataset.command = command.name;
+    part.append(el("p", "command-summary", command.summary));
+    part.append(phraseLine("Say", phraseFor(command)));
+    // Explaining a block is asked by naming it, as the commands that take one are.
+    if (block && (command.takes === "block" || command.name === "explain")) {
+      part.append(phraseLine(`For ${block.name}:`, phraseFor(command, block.path), "note-phrase quiet"));
+    }
+    part.append(el("p", "bench-note command-usage", `${usageOf(command)} · in Claude Code, /fragmentor-${command.name}`));
+    body.append(part);
+  }
+  openWindow("Commands for your agent", block ? `with ${block.name} picked out` : "for the whole diagram, or a block you name", body);
 }

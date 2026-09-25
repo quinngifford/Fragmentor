@@ -8,8 +8,9 @@ import { CLAUDE_FILE, GUIDE_FILE } from "./codegen/guide.js";
 import { getPack, isKnownLanguage } from "./lang/index.js";
 import { readAllCode } from "./project/code.js";
 import { loadExecutions } from "./project/executions.js";
-import { NOTES_DIR, addNote, describeRun, isNoteWithin, loadNotes, replyToNote, waitingOn } from "./project/notes.js";
-import type { Note } from "./project/notes.js";
+import { commitTouchesBlock, headCommit } from "./project/history.js";
+import { NOTES_DIR, addNote, describeRun, isNoteWithin, loadNotes, markWorking, noteById, replyToNote, waitingOn } from "./project/notes.js";
+import type { Note, NoteCommit } from "./project/notes.js";
 import { evaluate } from "./run/expect.js";
 import { isArchitecture } from "./model/roles.js";
 import { loadProject, locateCode, manifestPath, readManifest, systemOf } from "./project/project.js";
@@ -38,15 +39,22 @@ Commands:
   test [block-path ...]  Run the saved tests of every block, or of the named blocks only, and hold each
                          execution to its own expectations.
   notes [block-path]     List the notes waiting for you, on every block or only on that block and its parts,
-                         with where each block's code and tests are. Run it when the person says "review fragmentor".
-  reply <note-id> <text>
-                         Answer a note once it is done, which hands it back to the person.
+                         with where each block's code and tests are. Run it when the person says "fragmentor notes".
+  working <note-id>      Say you have started on a note, so the person sees it being worked on until you reply.
+  reply <note-id> [--no-commit] <text>
+                         Answer a note once it is done, which hands it back to the person. It records the
+                         newest commit with it, if that was made since the person wrote and changed the
+                         note's block, so commit first. --no-commit records none, for a question answered
+                         rather than acted on, and goes straight after the id.
   note <block-path> <text>
                          Leave a note on a block for the person to read in Fragmentor.
 
 init uses the current folder; the others use the nearest folder, from here upwards, that holds fragmentor.json.
---project names a folder instead. Everything after a note's block path or id is its text, so put --project
-before it. Text that is just - is read from standard input.`;
+--project names a folder instead. Everything after a note's block path or id is its text, but for --no-commit
+straight after the id, so put --project before it. Text that is just - is read from standard input.`;
+
+/** Answers a note without recording a commit with it. */
+const NO_COMMIT = "--no-commit";
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 /** "a", "a and b", "a, b and c", each named once. */
@@ -237,7 +245,7 @@ function formatReport(report: CheckReport): string {
   if (agent.length > 0 || person.length > 0) {
     lines.push("", "Notes");
     if (agent.length > 0) {
-      lines.push(`  ${agent.length} waiting for you, on ${listed(agent)}. Run \`fragmentor notes\` when the person asks you to review them.`);
+      lines.push(`  ${agent.length} waiting for you, on ${listed(agent)}. Run \`fragmentor notes\` when the person asks you to work through them.`);
     }
     if (person.length > 0) lines.push(`  ${person.length} waiting for the person, on ${listed(person)}.`);
   }
@@ -471,12 +479,37 @@ async function whereLines(project: Project, note: Note): Promise<string[]> {
   return lines;
 }
 
-/** A note's whole conversation, oldest first, with any run flagged beside a message. */
+/**
+ * What in its block a note is on, where that is narrower than the block, and
+ * whether the agent has said it started on it. Lines of code are shown as
+ * they were when the note was left, since the file may have moved on.
+ */
+function onLines(note: Note): string[] {
+  const lines: string[] = [];
+  const on = note.on;
+  if (on !== undefined && "file" in on) {
+    const [first, last] = on.lines;
+    lines.push(`  on     ${first === last ? `line ${first}` : `lines ${first}-${last}`} of ${on.file}`);
+    lines.push(...on.text.replace(/\r\n/g, "\n").split("\n").map((line) => `         ${line}`.trimEnd()));
+  } else if (on !== undefined) {
+    lines.push(`  on     the step "${on.description}" (${on.step}) of executions/${on.execution}.json`);
+  }
+  if (note.working !== undefined) lines.push(`  working since ${when(note.working)}`);
+  return lines;
+}
+
+/**
+ * A note's whole conversation, oldest first, with whatever came with each
+ * message beside it: a problem or a run the person flagged, and the commit
+ * holding what was done.
+ */
 function conversationLines(note: Note): string[] {
   const lines: string[] = [];
   for (const message of note.messages) {
     lines.push(`  ${message.from}, ${when(message.at)}`, `    ${indent(message.text, "    ")}`);
+    if (message.problem) lines.push(`      problem   ${indent(message.problem, " ".repeat(16))}`);
     if (message.run) lines.push(...describeRun(message.run).map((line) => `      ${indent(line, "      ")}`));
+    if (message.commit) lines.push(`      commit    ${message.commit.hash.slice(0, 7)} ${message.commit.subject}`);
   }
   return lines;
 }
@@ -517,7 +550,7 @@ async function notes(dir: string, within: string | undefined): Promise<number> {
   for (const note of forYou) {
     const node = project.byPath.get(note.block);
     console.log(`\n${note.id}  on ${note.block}${node ? ` (${node.block.name})` : ""}`);
-    console.log([...(await whereLines(project, note)), "", ...conversationLines(note)].join("\n"));
+    console.log([...(await whereLines(project, note)), ...onLines(note), "", ...conversationLines(note)].join("\n"));
   }
 
   if (forPerson.length > 0) {
@@ -530,7 +563,12 @@ async function notes(dir: string, within: string | undefined): Promise<number> {
     console.log(`\n${plural(count, "note")} cannot be read, so ${count === 1 ? "it is" : "they are"} not listed:`);
     for (const { file, problem } of loaded.problems) console.log(`  ${file}: ${indent(problem, "    ")}`);
   }
-  if (forYou.length > 0) console.log(`\nWhen a note is done, answer it with \`fragmentor reply <id> "<what you did>"\`.`);
+  if (forYou.length > 0) {
+    console.log(
+      `\nAs you start on a note, run \`fragmentor working <id>\`. When it is done, commit, then answer it with \`fragmentor reply <id> "<what you did>"\`.` +
+        ` A question is answered, not acted on: answer it with \`fragmentor reply <id> ${NO_COMMIT} "<your answer>"\`.`,
+    );
+  }
   return 0;
 }
 
@@ -547,15 +585,70 @@ async function textFrom(words: string[]): Promise<string> {
   return Buffer.concat(chunks).toString("utf8").replace(/\r\n/g, "\n");
 }
 
+/**
+ * The commit holding the agent's work on a note, or why none is recorded,
+ * in a sentence. It is the newest commit, and only when it was made while
+ * the note waited for the agent, since an earlier one was there before the
+ * person asked, and it changed the note's block, since one that did not
+ * holds other work.
+ */
+async function commitFor(dir: string, note: Note): Promise<NoteCommit | string> {
+  const since = note.messages.filter((message) => message.from === "person").at(-1) ?? note.messages[0]!;
+  const head = await headCommit(dir);
+  if (head === null || Date.parse(head.date) <= Date.parse(since.at)) {
+    return "No commit was recorded with it, because none has been made since the person wrote. If you changed files for it, commit them before you reply.";
+  }
+  const newest = `the newest commit, ${head.hash.slice(0, 7)} "${head.subject}",`;
+  try {
+    if (!(await commitTouchesBlock(dir, head.hash, note.block))) {
+      return `No commit was recorded with it, because ${newest} did not change ${note.block}. Reply to each note as soon as its work is committed, so the newest commit is the one holding it.`;
+    }
+  } catch (error) {
+    return `No commit was recorded with it, because Fragmentor could not tell whether ${newest} changed ${note.block}: ${messageOf(error)}`;
+  }
+  return { hash: head.hash, subject: head.subject };
+}
+
 async function reply(dir: string, id: string | undefined, words: string[]): Promise<number> {
   if (id === undefined) {
     console.log(`fragmentor reply needs the note's id and what to say: fragmentor reply <note-id> "<what you did>".`);
     return 1;
   }
+  if (id === NO_COMMIT) {
+    console.log(`${NO_COMMIT} goes straight after the note's id: fragmentor reply <note-id> ${NO_COMMIT} "<your answer>".`);
+    return 1;
+  }
+  // Only straight after the id, since anything later is the answer's own words.
+  const noCommit = words[0] === NO_COMMIT;
   try {
-    const answered = await replyToNote(dir, id, "agent", await textFrom(words));
+    const text = await textFrom(noCommit ? words.slice(1) : words);
+    const asked = await noteById(dir, id);
+    const commit = noCommit ? `No commit was recorded with it, as ${NO_COMMIT} asked.` : await commitFor(dir, asked);
+
+    const answered = await replyToNote(dir, id, "agent", text, typeof commit === "string" ? {} : { commit });
     console.log(`Answered note ${answered.id} on ${answered.block}.`);
+    console.log(
+      typeof commit === "string"
+        ? commit
+        : `Recorded commit ${commit.hash.slice(0, 7)} "${commit.subject}" with it, so from the note the person can compare the block with how it was before, and swap it back.`,
+    );
     console.log("It is the person's now: they resolve it in Fragmentor once they are satisfied, or reply if not.");
+    return 0;
+  } catch (error) {
+    console.log(messageOf(error));
+    return 1;
+  }
+}
+
+async function working(dir: string, id: string | undefined): Promise<number> {
+  if (id === undefined) {
+    console.log("fragmentor working needs the id of the note you are starting on: fragmentor working <note-id>.");
+    return 1;
+  }
+  try {
+    const marked = await markWorking(dir, id);
+    console.log(`Marked note ${marked.id} on ${marked.block} as being worked on.`);
+    console.log("The person now sees it being worked on in Fragmentor, until you reply to it.");
     return 0;
   } catch (error) {
     console.log(messageOf(error));
@@ -625,7 +718,7 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === "init") return init(path.resolve(project ?? process.cwd()), options);
 
-  if (command === "check" || command === "test" || command === "notes" || command === "reply" || command === "note") {
+  if (["check", "test", "notes", "working", "reply", "note"].includes(command ?? "")) {
     const dir = project ? path.resolve(project) : await findProject(process.cwd());
     if (!dir || !(await exists(manifestPath(dir)))) {
       console.log(
@@ -642,9 +735,10 @@ async function main(argv: string[]): Promise<number> {
     if (command === "reply") return reply(dir, rest[0], rest.slice(1));
     if (command === "note") return note(dir, rest[0] === undefined ? undefined : asPath(rest[0]), rest.slice(1));
     if (rest.length > 1) {
-      console.log(`fragmentor notes takes one block path at most, and was given ${rest.length}.`);
+      console.log(`fragmentor ${command} takes one ${command === "working" ? "note's id" : "block path at most"}, and was given ${rest.length}.`);
       return 1;
     }
+    if (command === "working") return working(dir, rest[0]);
     return notes(dir, rest[0] === undefined ? undefined : asPath(rest[0]));
   }
 

@@ -18,15 +18,23 @@ The person you work with sees this project in Fragmentor as a diagram of **block
 
 When the design changes, change the `block.json` files first, then the code. If the `fragmentor` command is not found, ask the person to run `npm link` once in Fragmentor's folder.
 
+## Commands
+
+The person sets you going with a few fixed phrases, each starting with `fragmentor`: a block named after one means that block and its parts, and one left out means the whole diagram. In Claude Code each is also a slash command, such as `/fragmentor-review`.
+
+{{commands}}
+
 ## Notes
 
 The person leaves notes on blocks in Fragmentor — something to change, fix, look into or explain — and you can leave them too. They are kept in `.fragmentor/notes/`: commit them with everything else, and write them only with the commands below. The one exception is moving or renaming a block: then change `block` in each of its notes to the block's new path.
 
-**When the person says `review fragmentor`, run `fragmentor notes`.** It lists every note waiting for you, each with its block's `block.json`, the file and line of its code, and its tests: go straight there rather than searching. `review fragmentor <block>` means only the notes on that block and its parts: run `fragmentor notes <block-path>`.
+**When the person says `fragmentor notes`, run it just as they said it.** It lists every note waiting for you, or with a block path only those on that block and its parts, each with its block's `block.json`, the file and line of its code, its tests, and what in the block it is on where that is narrower: some lines of code, or one step of an execution. Go straight there rather than searching.
 
-- Do what each note asks as you would any request: change the blocks and the code, run `fragmentor check` and `fragmentor test`, and commit. A question is answered, not acted on.
-- Then answer it with `fragmentor reply <id> "<what you did>"`, which hands it back to the person. They resolve it when they are satisfied, or reply if not. If you cannot do it, or it needs their decision, say so in the reply.{{flaggedRuns}}
-- If you can hand work to helpers, such as subagents, give each one the notes on blocks that no other helper's blocks contain, call or share a file with, to change and answer. Run `fragmentor check` and `fragmentor test`, and commit, yourself once they have all finished: a contract one helper changes can break code another is working on.
+- Run `fragmentor working <id>` as you start on a note, so the person sees it being worked on until you reply.
+- Do what it asks as you would any request: change the blocks and the code, run `fragmentor check` and `fragmentor test`, and commit. A flagged problem is one Fragmentor reported on the block, which the person wants fixed.
+- Then answer it with `fragmentor reply <id> "<what you did>"`, which hands it back to the person and records your commit with it, so from the note they can compare the block with how it was before, and swap it back. Only the newest commit is recorded, and only if it was made since the person wrote and changed the note's block, so reply to each note as soon as its work is committed. They resolve it when they are satisfied, or reply if not. If you cannot do it, or it needs their decision, say so in the reply.
+- A question is answered, not acted on: answer it with `fragmentor reply <id> --no-commit "<your answer>"`, which records no commit with it.{{flaggedRuns}}
+- If you can hand work to helpers, such as subagents, give each one the notes on blocks that no other helper's blocks contain, call or share a file with. They change the code and report back to you. Once they have all finished, run `fragmentor check` and `fragmentor test` and commit yourself, since a contract one helper changes can break code another is working on, and only then reply to each note, so your commit is recorded with it.
 - Leave a note yourself with `fragmentor note <block-path> "<text>"` when the person should see something on the block itself: a bug you found and did not fix, a decision that is theirs, or a change they did not ask for. Do not leave one for routine work.
 - `fragmentor check` says how many notes are waiting for you. Work through them when the person asks, not in the middle of something else, and mention any still waiting when you finish.
 

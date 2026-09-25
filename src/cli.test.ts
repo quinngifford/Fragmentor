@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { NOTES_DIR, addNote } from "./project/notes.js";
+import { gitIn } from "./project/exampleHistory.js";
+import { NOTES_DIR, addNote, replyToNote } from "./project/notes.js";
 import type { Note } from "./project/notes.js";
 
 /**
@@ -15,6 +16,9 @@ import type { Note } from "./project/notes.js";
 const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const launcher = path.join(repo, "bin", "fragmentor.js");
 const tickets = path.join(repo, "examples", "tickets");
+
+/** Git, where the machine has it: the test recording a commit is skipped otherwise. */
+const hasGit = spawnSync("git", ["--version"]).status === 0;
 
 function fragmentor(args: string[], cwd: string, input?: string): { status: number | null; output: string } {
   const result = spawnSync(process.execPath, [launcher, ...args], { cwd, encoding: "utf8", input });
@@ -41,6 +45,7 @@ describe("the fragmentor command", () => {
     expect(init.status).toBe(0);
     expect(init.output).toContain("wrote  fragmentor.json");
     expect(init.output).toContain("wrote  FRAGMENTOR.md");
+    expect(init.output).toContain("wrote  .claude/skills/fragmentor-notes/SKILL.md");
     expect(JSON.parse(await readFile(path.join(dir, "fragmentor.json"), "utf8"))).toMatchObject({
       language: "typescript",
       granularity: { level: 3 },
@@ -142,16 +147,23 @@ describe("notes, from the agent's side", () => {
     expect(listed.output).toContain("No notes are waiting for you.");
     expect(listed.output).toContain(`1 note is waiting for the person rather than you, on ${priceSeat}.`);
     expect(listed.output).not.toContain("fragmentor reply");
+
+    // It is the person's turn, so it is not the agent's to start on.
+    const started = fragmentor(["working", idIn(left.output)], dir);
+    expect(started.status).toBe(1);
+    expect(started.output).toContain(`Note ${idIn(left.output)} is waiting for the person, not you: they answer it next.`);
   }, 30_000);
 
   it("lists a person's note with where its block, code and tests are, and hands it back once answered", async () => {
     const asked = await addNote(dir, priceSeat, "person", "Take a fifth off from the tenth seat.", {
-      test: "the tenth seat is a fifth off",
-      input: { fullPrice: 25, seat: 10 },
-      expected: { price: 20 },
-      output: { price: 22.5 },
-      problems: ["output.price was 22.5, expected 20."],
-      logs: [],
+      run: {
+        test: "the tenth seat is a fifth off",
+        input: { fullPrice: 25, seat: 10 },
+        expected: { price: 20 },
+        output: { price: 22.5 },
+        problems: ["output.price was 22.5, expected 20."],
+        logs: [],
+      },
     });
     const source = await readFile(path.join(dir, "src", "booking", "price-seat.ts"), "utf8");
     const line = source.split(/\r?\n/).findIndex((each) => each.includes("function priceSeat")) + 1;
@@ -178,6 +190,8 @@ describe("notes, from the agent's side", () => {
     const answered = fragmentor(["reply", asked.id, "Done: the tenth seat is a fifth off, and that run is a saved test."], dir);
     expect(answered.status).toBe(0);
     expect(answered.output).toContain(`Answered note ${asked.id} on ${priceSeat}.`);
+    // This copy is in no repository, so there is no commit to record, and an answer is still an answer.
+    expect(answered.output).toContain("No commit was recorded with it");
     expect((await readNote(asked.id)).messages.map((message) => message.from)).toEqual(["person", "agent"]);
 
     const after = fragmentor(["notes"], dir);
@@ -194,12 +208,102 @@ describe("notes, from the agent's side", () => {
     const answered = fragmentor(["reply", id, "-"], dir, 'Neither: it says "Book".\r\nSee book-seats.\r\n');
     expect(answered.status).toBe(0);
     expect((await readNote(id)).messages[1]!.text).toBe('Neither: it says "Book".\nSee book-seats.');
+
+    // --no-commit is taken only straight after the id; anywhere later it is words of the answer.
+    await replyToNote(dir, id, "person", "And the other button?");
+    expect(fragmentor(["reply", id, "--no-commit", "-"], dir, "It says Cancel.\n").status).toBe(0);
+    await replyToNote(dir, id, "person", "Thanks.");
+    expect(fragmentor(["reply", id, "Answer", "with", "--no-commit", "next", "time."], dir).status).toBe(0);
+    expect((await readNote(id)).messages.map((message) => message.text).slice(-3)).toEqual([
+      "It says Cancel.",
+      "Thanks.",
+      "Answer with --no-commit next time.",
+    ]);
   }, 30_000);
+
+  it.skipIf(!hasGit)("shows what a note is on and that it is being worked on, and records the commit holding the answer", async () => {
+    const git = gitIn(dir);
+    await git("init", "--quiet");
+    await git("add", "--all", "--", ".");
+    await git("commit", "--quiet", "-m", "The example as it ships");
+
+    const asked = await addNote(dir, priceSeat, "person", "Why ten percent, and not a fifth?", {
+      problem: "Price Seat has no test for the fifth seat.",
+      on: { file: "src/booking/price-seat.ts", lines: [4, 5], text: "const DISCOUNT_FROM = 5;\nconst DISCOUNT = 0.1;" },
+    });
+    const onStep = await addNote(dir, "tickets/box-office", "person", "Say which seats were booked.", {
+      on: { execution: "book-seats", step: "#1", description: "The page has nothing to show until the API says." },
+    });
+
+    const started = fragmentor(["working", asked.id], dir);
+    expect(started.status).toBe(0);
+    expect(started.output).toContain(`Marked note ${asked.id} on ${priceSeat} as being worked on.`);
+    expect(started.output).toContain("The person now sees it being worked on in Fragmentor, until you reply to it.");
+
+    const listed = fragmentor(["notes"], dir);
+    expect(listed.output).toContain(
+      ["  on     lines 4-5 of src/booking/price-seat.ts", "         const DISCOUNT_FROM = 5;", "         const DISCOUNT = 0.1;"].join("\n"),
+    );
+    expect(listed.output).toMatch(/\n {2}working since \d{4}-\d\d-\d\d \d\d:\d\d UTC\n/);
+    expect(listed.output).toContain("      problem   Price Seat has no test for the fifth seat.");
+    expect(listed.output).toContain('  on     the step "The page has nothing to show until the API says." (#1) of executions/book-seats.json');
+    expect(listed.output).toContain("run `fragmentor working <id>`");
+
+    // Nothing has been committed since the person wrote, so nothing is recorded.
+    const unchanged = fragmentor(["reply", onStep.id, "The page already says so."], dir);
+    expect(unchanged.output).toContain(
+      "No commit was recorded with it, because none has been made since the person wrote. If you changed files for it, commit them before you reply.",
+    );
+    expect((await readNote(onStep.id)).messages[1]!.commit).toBeUndefined();
+
+    // The person wrote a minute ago, and the work was committed since.
+    const backdate = async (id: string) => {
+      const kept = await readNote(id);
+      kept.messages[0]!.at = new Date(Date.now() - 60_000).toISOString();
+      await writeFile(path.join(dir, NOTES_DIR, `${id}.json`), JSON.stringify(kept, null, 2), "utf8");
+    };
+    const refundFor = "tickets/booking-api/pricing/refund-for";
+    const elsewhere = await addNote(dir, refundFor, "person", "Refund in full up to a day ahead.");
+    const question = await addNote(dir, priceSeat, "person", "Is ten percent what the venue asked for?");
+    for (const id of [asked.id, elsewhere.id, question.id]) await backdate(id);
+    await writeFile(path.join(dir, "src", "booking", "price-seat.ts"), "// A fifth, as asked.\n", { flag: "a" });
+    await git("commit", "--quiet", "-am", "Say why the discount is what it is");
+    const hash = (await git("rev-parse", "HEAD")).trim();
+
+    const answered = fragmentor(["reply", asked.id, "It was a guess; it now says why."], dir);
+    expect(answered.status).toBe(0);
+    expect(answered.output).toContain(`Recorded commit ${hash.slice(0, 7)} "Say why the discount is what it is" with it`);
+    const after = await readNote(asked.id);
+    expect(after.messages[1]!.commit).toEqual({ hash, subject: "Say why the discount is what it is" });
+    expect(after.working).toBeUndefined();
+
+    // That commit is newer than the note on Refund For, and holds no work on it.
+    const notItsBlock = fragmentor(["reply", elsewhere.id, "Done."], dir);
+    expect(notItsBlock.status).toBe(0);
+    expect(notItsBlock.output).toContain(
+      `No commit was recorded with it, because the newest commit, ${hash.slice(0, 7)} "Say why the discount is what it is", did not change ${refundFor}.`,
+    );
+    expect((await readNote(elsewhere.id)).messages[1]!.commit).toBeUndefined();
+
+    // A question is answered, not acted on, so no commit goes with it, even one that changed its block.
+    const answer = fragmentor(["reply", question.id, "--no-commit", "Yes:", "it", "is", "in", "their", "contract."], dir);
+    expect(answer.status).toBe(0);
+    expect(answer.output).toContain("No commit was recorded with it, as --no-commit asked.");
+    expect((await readNote(question.id)).messages[1]).toEqual({ from: "agent", at: expect.any(String), text: "Yes: it is in their contract." });
+
+    await replyToNote(dir, asked.id, "person", "Thanks. And the tenth seat?");
+    expect(fragmentor(["notes", priceSeat], dir).output).toContain(`      commit    ${hash.slice(0, 7)} Say why the discount is what it is`);
+  }, 60_000);
 
   it("says plainly when there is no such note or block", () => {
     const noNote = fragmentor(["reply", "1790000000000-nothing-here", "Done."], dir);
     expect(noNote.status).toBe(1);
     expect(noNote.output).toContain("There is no note 1790000000000-nothing-here.");
+
+    const noNoteToStart = fragmentor(["working", "1790000000000-nothing-here"], dir);
+    expect(noNoteToStart.status).toBe(1);
+    expect(noNoteToStart.output).toContain("There is no note 1790000000000-nothing-here.");
+    expect(fragmentor(["working"], dir).output).toContain("fragmentor working needs the id of the note you are starting on");
 
     const noBlock = fragmentor(["notes", "tickets/nowhere"], dir);
     expect(noBlock.status).toBe(1);
@@ -208,6 +312,10 @@ describe("notes, from the agent's side", () => {
     const noteOnNothing = fragmentor(["note", "tickets/nowhere", "Hello."], dir);
     expect(noteOnNothing.status).toBe(1);
     expect(noteOnNothing.output).toContain("There is no block at tickets/nowhere.");
+
+    const flagFirst = fragmentor(["reply", "--no-commit", "1790000000000-nothing-here", "Done."], dir);
+    expect(flagFirst.status).toBe(1);
+    expect(flagFirst.output).toContain(`--no-commit goes straight after the note's id: fragmentor reply <note-id> --no-commit "<your answer>".`);
   }, 30_000);
 
   it("has check say how many notes are waiting, without changing its result", async () => {
@@ -221,7 +329,7 @@ describe("notes, from the agent's side", () => {
     expect(result.output).toContain(
       [
         "Notes",
-        `  2 waiting for you, on ${priceSeat} and tickets/box-office. Run \`fragmentor notes\` when the person asks you to review them.`,
+        `  2 waiting for you, on ${priceSeat} and tickets/box-office. Run \`fragmentor notes\` when the person asks you to work through them.`,
         "  1 waiting for the person, on tickets/box-office.",
       ].join("\n"),
     );

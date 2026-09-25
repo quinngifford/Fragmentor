@@ -875,7 +875,8 @@ pre.code-view { max-height: 420px; overflow: auto; }
 }
 
 .block-box[data-run="done"] .block-plate { stroke: var(--signal-dim); stroke-width: 1.5; }
-.block-box[data-run="failed"] .block-plate { stroke: var(--bad); stroke-width: 2; }
+/* A failure glows faintly red, so it is found at a glance on a large tree. */
+.block-box[data-run="failed"] .block-plate { stroke: var(--bad); stroke-width: 2; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--bad) 70%, transparent)); }
 .block-box[data-run="paused"] .block-plate { stroke: var(--effect); stroke-width: 2.5; }
 .block-box[data-run="stopped"] .block-plate { stroke: var(--pending); stroke-width: 1.5; stroke-dasharray: 4 3; }
 .block-box[data-run="stopped"] .run-note { fill: var(--pending); }
@@ -1755,3 +1756,56 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
 /* Under a run that went wrong in the bench: whether to flag it for the agent. */
 .flag-offer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 11.5px; color: var(--ink-dim); }
 .flag-offer .run-btn { padding: 2px 8px; font-size: 10.5px; }
+
+/* The red flag on a block's corner: a run failed in it, or a note flags a
+   failure there. Red is spent here because something is wrong. */
+.block-flag { display: none; pointer-events: bounding-box; }
+.block-box[data-run-flag="true"] .block-flag,
+.block-box[data-flagged="true"] .block-flag { display: inline; }
+.block-flag-pole { fill: none; stroke: var(--bad); stroke-width: 1.5; stroke-linecap: round; }
+.block-flag-cloth { fill: var(--bad); stroke: var(--bad); stroke-width: 1; stroke-linejoin: round; }
+.block-box[data-run-flag="true"] .block-flag-cloth { filter: drop-shadow(0 0 3px color-mix(in srgb, var(--bad) 80%, transparent)); }
+
+/* While the agent works on a note, a ring spreads out from its count. */
+.note-mark-ring { fill: none; stroke: var(--ink); stroke-width: 1.5; transform-box: fill-box; transform-origin: center; animation: note-working 1.8s ease-out infinite; pointer-events: none; }
+@keyframes note-working {
+  from { transform: scale(1); opacity: 0.9; }
+  to { transform: scale(1.9); opacity: 0; }
+}
+
+/* What a note is about, when it is narrower than its block, and what the
+   agent is doing with it. */
+.note-on { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-dim); }
+.note-on .run-btn { padding: 1px 7px; font-size: 10px; }
+.note-working { margin: 0; font-size: 11px; color: var(--ink); }
+.note-card[data-working="true"] { border-left-color: var(--ink); }
+.note-problem { margin: 0; padding-left: 8px; border-left: 2px solid var(--bad); font-family: var(--mono); font-size: 11px; color: var(--ink-dim); overflow-wrap: anywhere; }
+
+/* The commit an answer was made in, and what can be done with it. */
+.note-commit { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 11px; color: var(--ink-dim); }
+.note-commit code { font-family: var(--mono); color: var(--ink); }
+.note-commit .case-actions { margin-left: auto; }
+
+/* Running what a note flags again: put right in green, still wrong in red. */
+.note-rerun { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 11.5px; color: var(--ink-dim); }
+.note-rerun[data-tone="good"] > span { color: var(--signal); }
+.note-rerun[data-tone="bad"] > span { color: var(--bad); }
+.note-rerun .run-btn { padding: 2px 8px; font-size: 10.5px; }
+
+.note-commands { align-self: flex-start; }
+
+/* A problem on a block, with a way to flag it for the agent beside it. */
+.problem-line { display: flex; align-items: flex-start; gap: 6px; }
+.problem-line > .problem { flex: 1; min-width: 0; }
+.problem-flag { flex: none; padding: 1px 7px; font-size: 10px; }
+.problem-flagged { flex: none; font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); }
+
+/* Every command, in its window. */
+.commands .command-summary { margin: 0; font-size: 12px; color: var(--ink); }
+.commands .command-usage { font-family: var(--mono); font-size: 10.5px; }
+
+/* Without the ring's movement, the count says the agent is working on it by
+   a heavier outline instead. */
+@media (prefers-reduced-motion: reduce) {
+  .note-mark[data-working="true"] .note-mark-dot { stroke: var(--ink); stroke-width: 2.5; }
+}

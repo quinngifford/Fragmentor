@@ -52,6 +52,19 @@ export interface FlaggedRun {
   /** What went wrong, as Fragmentor reported it. */
   problems: string[];
   logs: string[];
+  /**
+   * What was too large to keep whole with the note: a value cut short to the
+   * text it began with, or stores left out. Such a run can be read, but not
+   * run again as it went.
+   */
+  cut?: ("input" | "stores" | "expected" | "output")[];
+}
+
+/** The commit holding what the agent did about a note, as it answered it. */
+export interface NoteCommit {
+  /** The whole hash, as a swap asks for it. */
+  hash: string;
+  subject: string;
 }
 
 export interface NoteMessage {
@@ -60,15 +73,51 @@ export interface NoteMessage {
   at: string;
   text: string;
   run?: FlaggedRun;
+  /** A problem Fragmentor reported on the block, flagged by the person, as it was worded then. */
+  problem?: string;
+  commit?: NoteCommit;
 }
+
+/**
+ * What in its block a note is about, when that is narrower than the whole
+ * block: some lines of its code, or one step of an execution that leaves it.
+ * Each keeps what it pointed at as it was, since code and traces move on.
+ */
+export type NoteAnchor =
+  | {
+      /** Relative to the project, with forward slashes. */
+      file: string;
+      /** The first and last line, counting from 1. */
+      lines: [number, number];
+      /** Those lines as they were when the note was left. */
+      text: string;
+    }
+  | {
+      /** The execution's id: its file under executions/, without .json. */
+      execution: string;
+      /** The step's id in that execution's trace. */
+      step: string;
+      /** What the step said it was, when the note was left. */
+      description: string;
+    };
 
 export interface Note {
   id: string;
   /** The block it is on, by path. */
   block: string;
   status: "open" | "resolved";
+  /** When the agent said it had started on it, until anyone next writes to it. */
+  working?: string;
+  on?: NoteAnchor;
   /** Oldest first, and never empty. */
   messages: NoteMessage[];
+}
+
+/** What can come with a message beside its words. */
+export interface NoteExtras {
+  run?: FlaggedRun;
+  problem?: string;
+  commit?: NoteCommit;
 }
 
 /** A time and the note's first few words, so the folder reads in order and says what each is about. */
@@ -89,13 +138,29 @@ const runSchema = z
     output: z.unknown().optional(),
     problems: z.array(z.string()),
     logs: z.array(z.string()),
+    cut: z.array(z.enum(["input", "stores", "expected", "output"])).optional(),
   })
   .strict();
+
+const commitHash = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
+const anchorSchema = z.union([
+  z
+    .object({
+      file: z.string().min(1),
+      lines: z.tuple([z.number().int().min(1), z.number().int().min(1)]).refine(([first, last]) => first <= last, "the first line comes before the last"),
+      text: z.string(),
+    })
+    .strict(),
+  z.object({ execution: z.string().min(1), step: z.string().min(1), description: z.string() }).strict(),
+]);
 
 const noteFileSchema = z
   .object({
     block: z.string().min(1),
     status: z.enum(["open", "resolved"]),
+    working: z.string().min(1).optional(),
+    on: anchorSchema.optional(),
     messages: z
       .array(
         z
@@ -104,6 +169,8 @@ const noteFileSchema = z
             at: z.string().min(1),
             text: z.string().min(1),
             run: runSchema.optional(),
+            problem: z.string().min(1).optional(),
+            commit: z.object({ hash: z.string().regex(commitHash), subject: z.string() }).strict().optional(),
           })
           .strict(),
       )
@@ -152,7 +219,8 @@ function kept(value: unknown): unknown {
 /**
  * A flagged run as it is kept: held to the shape, with anything huge cut
  * short. Stores are rows by key, which a cut could only turn into something
- * that is not, so ones too large are left out, saying so, rather than cut.
+ * that is not, so ones too large are left out rather than cut. Either way
+ * `cut` says so, along with whatever was already cut when it was flagged.
  */
 function keptRun(run: FlaggedRun): FlaggedRun {
   const parsed = runSchema.safeParse(run);
@@ -162,22 +230,72 @@ function keptRun(run: FlaggedRun): FlaggedRun {
   const filled = Object.entries(given.stores ?? {}).filter(([, rows]) => Object.keys(rows).length > 0);
   const stores = filled.length === 0 ? undefined : Object.fromEntries(filled);
   const storesFit = stores === undefined || kept(stores) === stores;
+  const input = kept(given.input);
+  const expected = kept(given.expected);
+  const output = kept(given.output);
+  const wasCut = {
+    input: !Object.is(input, given.input),
+    stores: !storesFit,
+    expected: !Object.is(expected, given.expected),
+    output: !Object.is(output, given.output),
+  };
+  const cut = (["input", "stores", "expected", "output"] as const).filter((part) => wasCut[part] || given.cut?.includes(part));
   return {
     test: given.test === null ? null : given.test.slice(0, MOST_NOTE_TEXT),
-    input: kept(given.input),
+    input,
     ...(stores !== undefined && storesFit ? { stores } : {}),
-    ...(given.expected === undefined ? {} : { expected: kept(given.expected) }),
-    ...(given.output === undefined ? {} : { output: kept(given.output) }),
-    problems: [
-      ...given.problems.slice(0, 50).map((each) => each.slice(0, MOST_NOTE_TEXT)),
-      ...(storesFit ? [] : ["The rows the stores held before the run were too many to keep with this note, so they are left out."]),
-    ],
+    ...(given.expected === undefined ? {} : { expected }),
+    ...(given.output === undefined ? {} : { output }),
+    problems: given.problems.slice(0, 50).map((each) => each.slice(0, MOST_NOTE_TEXT)),
     logs: given.logs.slice(0, 50).map((each) => each.slice(0, MOST_NOTE_TEXT)),
+    ...(cut.length === 0 ? {} : { cut }),
   };
 }
 
-function message(from: NoteAuthor, text: string, run: FlaggedRun | undefined): NoteMessage {
-  return { from, at: new Date().toISOString(), text: textOf(text), ...(run === undefined ? {} : { run: keptRun(run) }) };
+function message(from: NoteAuthor, text: string, extras: NoteExtras): NoteMessage {
+  return {
+    from,
+    at: new Date().toISOString(),
+    text: textOf(text),
+    ...(extras.run === undefined ? {} : { run: keptRun(extras.run) }),
+    ...(extras.problem === undefined ? {} : { problem: textOf(extras.problem) }),
+    ...(extras.commit === undefined ? {} : { commit: extras.commit }),
+  };
+}
+
+/** Ends the lines kept with a note when not all of them fit. */
+const LINES_NOT_KEPT = "… (the rest of the lines picked out are not kept)";
+
+/**
+ * What a note is on, as it is kept. Lines of code past what a note should
+ * hold keep as many whole lines as fit, and say the rest are not kept, since
+ * a line cut off part way reads as code that says something else.
+ */
+function keptAnchor(on: NoteAnchor): NoteAnchor {
+  if (!("file" in on)) return { ...on, description: on.description.slice(0, MOST_NOTE_TEXT) };
+  const [first, last] = Array.isArray(on.lines) ? on.lines : [];
+  if (typeof first === "number" && typeof last === "number" && first > last) {
+    throw new Error(`The lines picked out run backwards, from ${first} to ${last}: the first line comes before the last.`);
+  }
+  if (typeof on.text !== "string" || on.text.length <= MOST_NOTE_TEXT) return on;
+
+  const whole: string[] = [];
+  let length = LINES_NOT_KEPT.length;
+  for (const line of on.text.split("\n")) {
+    length += line.length + 1;
+    if (length > MOST_NOTE_TEXT) break;
+    whole.push(line);
+  }
+  return { ...on, text: [...whole, LINES_NOT_KEPT].join("\n") };
+}
+
+/** The newest run flagged with a note, which is the one to run again. */
+export function flaggedRunOf(note: Note): FlaggedRun | undefined {
+  for (let i = note.messages.length - 1; i >= 0; i -= 1) {
+    const run = note.messages[i]!.run;
+    if (run !== undefined) return run;
+  }
+  return undefined;
 }
 
 function parseNote(text: string): NoteFile | string {
@@ -224,6 +342,11 @@ export async function loadNotes(projectDir: string): Promise<{ notes: Note[]; pr
   return { notes, problems };
 }
 
+/** One note, by its id. */
+export async function noteById(projectDir: string, id: string): Promise<Note> {
+  return (await readNote(projectDir, id)).note;
+}
+
 /** One note, read for changing. */
 async function readNote(projectDir: string, id: string): Promise<{ file: string; text: string; note: Note }> {
   const file = notePath(projectDir, id);
@@ -255,15 +378,21 @@ async function rewrite(file: string, before: string, note: Note): Promise<void> 
  * Leaves a new note on a block. It is refused for a block that is not there,
  * because a note on nothing could never be found again.
  */
-export async function addNote(projectDir: string, blockPath: string, from: NoteAuthor, text: string, run?: FlaggedRun): Promise<Note> {
-  const first = message(from, text, run);
+export async function addNote(
+  projectDir: string,
+  blockPath: string,
+  from: NoteAuthor,
+  text: string,
+  extras: NoteExtras & { on?: NoteAnchor } = {},
+): Promise<Note> {
+  const first = message(from, text, extras);
   const blockFile = path.join(blockDir(projectDir, blockPath), "block.json");
   if (!(await access(blockFile).then(() => true, () => false))) throw new Error(`There is no block at ${blockPath}.`);
+  const written: NoteFile = { block: blockPath, status: "open", ...(extras.on === undefined ? {} : { on: keptAnchor(extras.on) }), messages: [first] };
+  readable(written);
 
   await ignoreAllButShared(projectDir);
   await mkdir(path.join(projectDir, NOTES_DIR), { recursive: true });
-  const written: NoteFile = { block: blockPath, status: "open", messages: [first] };
-  readable(written);
   // The first few words, as many whole ones as fit.
   let slug = "";
   for (const word of first.text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)) {
@@ -291,10 +420,12 @@ export async function addNote(projectDir: string, blockPath: string, from: NoteA
  * this. Replying to a resolved note opens it again, because a reply is
  * something more to do.
  */
-export async function replyToNote(projectDir: string, id: string, from: NoteAuthor, text: string, run?: FlaggedRun): Promise<Note> {
-  const added = message(from, text, run);
+export async function replyToNote(projectDir: string, id: string, from: NoteAuthor, text: string, extras: NoteExtras = {}): Promise<Note> {
+  const added = message(from, text, extras);
   const { file, text: before, note } = await readNote(projectDir, id);
-  const next: Note = { ...note, status: "open", messages: [...note.messages, added] };
+  // Whoever writes next has finished whatever they started.
+  const { working: _working, ...rest } = note;
+  const next: Note = { ...rest, status: "open", messages: [...note.messages, added] };
   await rewrite(file, before, next);
   return next;
 }
@@ -303,7 +434,23 @@ export async function replyToNote(projectDir: string, id: string, from: NoteAuth
 export async function resolveNote(projectDir: string, id: string): Promise<Note> {
   const { file, text: before, note } = await readNote(projectDir, id);
   if (note.status === "resolved") return note;
-  const next: Note = { ...note, status: "resolved" };
+  const { working: _working, ...rest } = note;
+  const next: Note = { ...rest, status: "resolved" };
+  await rewrite(file, before, next);
+  return next;
+}
+
+/**
+ * Marks a note as one the agent has started on, so the person sees which
+ * blocks are being worked on while it happens. It lasts until the note is
+ * next written to, which is how the agent says it has finished. Only a note
+ * waiting for the agent can be started on.
+ */
+export async function markWorking(projectDir: string, id: string): Promise<Note> {
+  const { file, text: before, note } = await readNote(projectDir, id);
+  if (note.status === "resolved") throw new Error(`Note ${id} is resolved. The person opens it again if there is more to do.`);
+  if (waitingOn(note) !== "agent") throw new Error(`Note ${id} is waiting for the person, not you: they answer it next.`);
+  const next: Note = { ...note, working: new Date().toISOString() };
   await rewrite(file, before, next);
   return next;
 }
@@ -321,6 +468,9 @@ function shown(value: unknown): string {
   return written.length > 600 ? `${written.slice(0, 600)}…` : written;
 }
 
+/** What each part of a flagged run is, in words. */
+const RUN_PART = { input: "the input", stores: "the stores' rows", expected: "what was expected", output: "what came back" };
+
 /** A flagged run in words, a line each, as the agent reads it. */
 export function describeRun(run: FlaggedRun): string[] {
   const lines = [run.test === null ? "a run tried from the bench went wrong" : `the saved test "${run.test}" failed`];
@@ -330,5 +480,10 @@ export function describeRun(run: FlaggedRun): string[] {
   if (run.output !== undefined) lines.push(`got       ${shown(run.output)}`);
   lines.push(...run.problems);
   if (run.logs.length > 0) lines.push(`logged    ${run.logs.join(" | ")}`);
+  const cut = (run.cut ?? []).map((part) => RUN_PART[part]);
+  if (cut.length > 0) {
+    const named = cut.length === 1 ? cut[0] : `${cut.slice(0, -1).join(", ")} and ${cut.at(-1)}`;
+    lines.push(`Too large to keep whole with this note, so cut short or left out: ${named}. This is not all of the run, so it cannot be run again exactly as it went.`);
+  }
   return lines;
 }

@@ -150,7 +150,8 @@ export function applyDependencies(): void {
 
 /** A run laid over the tree: how each block, and whatever is inside it, is doing. */
 export interface RunOverlay {
-  nodes: Map<string, { state: "running" | "paused" | "done" | "failed" | "stopped"; note: string }>;
+  /** How each block is doing, and whether the run went wrong in it, rather than only inside it. */
+  nodes: Map<string, { state: "running" | "paused" | "done" | "failed" | "stopped"; note: string; flag?: boolean }>;
 }
 
 export function applyRunOverlay(overlay: RunOverlay | null): void {
@@ -158,6 +159,7 @@ export function applyRunOverlay(overlay: RunOverlay | null): void {
     const run = overlay?.nodes.get(path);
     if (run) group.dataset.run = run.state;
     else delete group.dataset.run;
+    group.dataset.runFlag = String(run?.flag ?? false);
     const note = group.querySelector(".run-note");
     if (note) note.textContent = run?.note ?? "";
   }
@@ -1024,6 +1026,10 @@ interface NoteMark {
   forPerson: number;
   first: string;
   inside: boolean;
+  /** Whether the agent has said it is working on any of them. */
+  working: boolean;
+  /** Whether any flags a run that went wrong, or a problem Fragmentor reported. */
+  flagged: boolean;
 }
 
 /**
@@ -1039,8 +1045,14 @@ function noteMarks(tree: Tree): Map<string, NoteMark> {
     if (note.waiting === null || !ui.snapshot?.blocks[note.block]) continue;
     const node = shownAt(tree, note.block);
     if (!node) continue;
-    const mark = marks.get(node.path) ?? { forAgent: 0, forPerson: 0, first: note.block, inside: false };
+    const mark = marks.get(node.path) ?? { forAgent: 0, forPerson: 0, first: note.block, inside: false, working: false, flagged: false };
     if (note.block !== node.path) mark.inside = true;
+    // Both are about what the agent still has to do: once it has answered,
+    // the note is the person's to judge, and says how the run went again.
+    if (note.waiting === "agent" && note.working !== undefined) mark.working = true;
+    if (note.waiting === "agent" && note.messages.some((each) => each.from === "person" && (each.run !== undefined || each.problem !== undefined))) {
+      mark.flagged = true;
+    }
     if (note.waiting === "agent") mark.forAgent += 1;
     else mark.forPerson += 1;
     marks.set(node.path, mark);
@@ -1059,12 +1071,16 @@ function drawNoteMark(group: SVGGElement, mark: NoteMark): void {
     class: "note-mark",
     transform: `translate(${BOX_W} 0)`,
     "data-waiting": mark.forPerson > 0 ? "person" : "agent",
+    "data-working": String(mark.working),
   }, group);
   const whose = [mark.forPerson > 0 ? `${mark.forPerson} for you` : "", mark.forAgent > 0 ? `${mark.forAgent} for your agent` : ""]
     .filter(Boolean)
     .join(", ");
   const where = mark.inside ? " on it or inside it" : "";
-  svgEl("title", {}, badge).textContent = `${count} open note${count === 1 ? "" : "s"}${where}: ${whose}. Click to read them.`;
+  const doing = mark.working ? " Your agent is working on it now." : "";
+  svgEl("title", {}, badge).textContent = `${count} open note${count === 1 ? "" : "s"}${where}: ${whose}.${doing} Click to read them.`;
+  // A ring spreading out from the count while the agent works on it.
+  if (mark.working) svgEl("circle", { r: 8, class: "note-mark-ring" }, badge);
   svgEl("circle", { r: 8, class: "note-mark-dot" }, badge);
   svgEl("text", { y: 3.5, class: "note-mark-count", "text-anchor": "middle" }, badge).textContent = count > 9 ? "9+" : String(count);
   badge.addEventListener("pointerdown", (event) => event.stopPropagation());
@@ -1073,6 +1089,21 @@ function drawNoteMark(group: SVGGElement, mark: NoteMark): void {
     event.stopPropagation();
     notesPicked(mark.first);
   });
+}
+
+/**
+ * A red flag at a block's corner, beside its count of notes: something went
+ * wrong there. It shows while a run being watched went wrong in the block
+ * itself, rather than only inside it, and while a note flags a run that went
+ * wrong or a problem Fragmentor reported.
+ * It is drawn on every block and shown by those two states, so a run can
+ * raise it without drawing anything anew.
+ */
+function drawFlag(group: SVGGElement): void {
+  const flag = svgEl("g", { class: "block-flag", transform: `translate(${BOX_W - 20} -9)` }, group);
+  svgEl("title", {}, flag).textContent = "Something went wrong here: in the run being watched, or in a run or problem flagged for your agent.";
+  svgEl("path", { d: "M0.75 0.5 V11", class: "block-flag-pole" }, flag);
+  svgEl("path", { d: "M1.5 0.5 H9.5 L7.25 3.75 L9.5 7 H1.5 Z", class: "block-flag-cloth" }, flag);
 }
 
 /** How much of a name fits across a box, at 12.5px. */
@@ -1141,6 +1172,8 @@ function drawNode(node: TreeNode, layer: Element, arrivalDelay: number | null, n
   drawBlockButtons(group, block);
   if (node.hasParts) drawFold(group, node);
   if (notes) drawNoteMark(group, notes);
+  group.dataset.flagged = String(notes?.flagged ?? false);
+  drawFlag(group);
 
   // Beside the block's name: where a run can be told to pause before it.
   if (canPause(block)) {

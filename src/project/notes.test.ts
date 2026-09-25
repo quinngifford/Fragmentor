@@ -11,9 +11,12 @@ import {
   addNote,
   deleteNote,
   describeRun,
+  flaggedRunOf,
   isNotePath,
   isNoteWithin,
   loadNotes,
+  markWorking,
+  noteById,
   noteIdPattern,
   replyToNote,
   resolveNote,
@@ -193,7 +196,7 @@ describe("a note's conversation", () => {
 
 describe("a flagged run", () => {
   it("is kept with the note it was flagged on, and described as the agent reads it", async () => {
-    const note = await addNote(dir, priceSeat, "person", "This one is wrong.", { ...failedRun, stores: {} });
+    const note = await addNote(dir, priceSeat, "person", "This one is wrong.", { run: { ...failedRun, stores: {} } });
 
     const { run } = (await readNoteFile(note.id)).messages[0]!;
     // Stores that held nothing say nothing, so they are not kept.
@@ -208,54 +211,180 @@ describe("a flagged run", () => {
     ]);
   });
 
-  it("cuts a huge value short, saying so, and refuses what is not a run", async () => {
+  it("cuts a huge value short, saying which, and refuses what is not a run", async () => {
     const huge = { rows: "x".repeat(30_000) };
-    const note = await addNote(dir, priceSeat, "person", "Too big.", { test: null, input: huge, problems: [], logs: [] });
+    const note = await addNote(dir, priceSeat, "person", "Too big.", {
+      run: { test: null, input: huge, expected: { price: 20 }, output: huge, problems: [], logs: [] },
+    });
 
     const { run } = (await readNoteFile(note.id)).messages[0]!;
     expect(typeof run!.input).toBe("string");
     expect(run!.input as string).toMatch(/^\(too large to keep whole; it began\) \{"rows":"xxx/);
     expect((run!.input as string).length).toBeLessThan(20_100);
-    expect(describeRun(run!)[0]).toBe("a run tried from the bench went wrong");
+    // What was small enough is kept whole, and not listed as cut.
+    expect(run!.expected).toEqual({ price: 20 });
+    expect(run!.cut).toEqual(["input", "output"]);
+    const described = describeRun(run!);
+    expect(described[0]).toBe("a run tried from the bench went wrong");
+    expect(described.at(-1)).toBe(
+      "Too large to keep whole with this note, so cut short or left out: the input and what came back. This is not all of the run, so it cannot be run again exactly as it went.",
+    );
+
+    // A run kept whole says nothing is cut.
+    const whole = await addNote(dir, priceSeat, "person", "Small.", { run: failedRun });
+    expect(whole.messages[0]!.run!.cut).toBeUndefined();
 
     await expect(
-      addNote(dir, priceSeat, "person", "Not a run.", { input: 1 } as unknown as FlaggedRun),
+      addNote(dir, priceSeat, "person", "Not a run.", { run: { input: 1 } as unknown as FlaggedRun }),
     ).rejects.toThrow("What was flagged is not a run Fragmentor can keep with a note.");
+  });
+
+  it("still says what was cut when a run that was cut is flagged again", async () => {
+    const note = await addNote(dir, priceSeat, "person", "Still wrong.", {
+      run: { ...failedRun, input: "(too large to keep whole; it began) {…", cut: ["input"] },
+    });
+    expect(note.messages[0]!.run!.cut).toEqual(["input"]);
+    expect((await loadNotes(dir)).problems).toEqual([]);
   });
 
   it("keeps only the stores the run was given rows for", async () => {
     const note = await addNote(dir, priceSeat, "person", "Empty stores.", {
-      test: null,
-      input: {},
-      stores: { "tickets/tickets-db.events": {}, "tickets/tickets-db.bookings": { b1: { id: "b1" } } },
-      problems: [],
-      logs: [],
+      run: {
+        test: null,
+        input: {},
+        stores: { "tickets/tickets-db.events": {}, "tickets/tickets-db.bookings": { b1: { id: "b1" } } },
+        problems: [],
+        logs: [],
+      },
     });
     expect(note.messages[0]!.run!.stores).toEqual({ "tickets/tickets-db.bookings": { b1: { id: "b1" } } });
 
-    const none = await addNote(dir, priceSeat, "person", "No rows at all.", { test: null, input: {}, stores: { "tickets/tickets-db.events": {} }, problems: [], logs: [] });
+    const none = await addNote(dir, priceSeat, "person", "No rows at all.", {
+      run: { test: null, input: {}, stores: { "tickets/tickets-db.events": {} }, problems: [], logs: [] },
+    });
     expect(none.messages[0]!.run!.stores).toBeUndefined();
   });
 
   it("leaves out stores too large to keep, saying so, so the note can still be read and answered", async () => {
     const rows = Object.fromEntries(Array.from({ length: 2000 }, (_, i) => [`row-${i}`, { id: `row-${i}`, seats: i }]));
     const note = await addNote(dir, priceSeat, "person", "Too many rows.", {
-      test: null,
-      input: { seats: 0 },
-      stores: { "tickets/tickets-db.events": rows },
-      problems: ["It threw."],
-      logs: [],
+      run: { test: null, input: { seats: 0 }, stores: { "tickets/tickets-db.events": rows }, problems: ["It threw."], logs: [] },
     });
 
     const { notes, problems } = await loadNotes(dir);
     expect(problems).toEqual([]);
     const run = notes.find((each) => each.id === note.id)!.messages[0]!.run!;
     expect(run.stores).toBeUndefined();
-    expect(run.problems).toEqual([
-      "It threw.",
-      "The rows the stores held before the run were too many to keep with this note, so they are left out.",
-    ]);
+    expect(run.problems).toEqual(["It threw."]);
+    expect(run.cut).toEqual(["stores"]);
+    expect(describeRun(run).at(-1)).toMatch(/^Too large to keep whole with this note, so cut short or left out: the stores' rows\./);
     await expect(replyToNote(dir, note.id, "agent", "Fixed.")).resolves.toMatchObject({ messages: [{}, { text: "Fixed." }] });
+  });
+});
+
+describe("what a note is on, and what comes with it", () => {
+  const hash = "0123456789abcdef0123456789abcdef01234567";
+
+  it("keeps some lines of code as they were, and past what a note holds as many whole lines as fit", async () => {
+    const lines = { file: "src/booking/price-seat.ts", lines: [3, 5] as [number, number], text: "one\ntwo\nthree" };
+    const note = await addNote(dir, priceSeat, "person", "Why a tenth?", { on: lines });
+    expect((await readNoteFile(note.id)).on).toEqual(lines);
+
+    // Right at the limit is kept whole.
+    const atLimit = { ...lines, text: "x".repeat(MOST_NOTE_TEXT) };
+    expect((await addNote(dir, priceSeat, "person", "Just fits.", { on: atLimit })).on).toEqual(atLimit);
+
+    // Lines of 99 characters and a line break each: past the limit, only whole ones are kept.
+    const line = (i: number) => `${String(i).padStart(3, "0")} ${"x".repeat(95)}`;
+    const many = Array.from({ length: 60 }, (_, i) => line(i)).join("\n");
+    const long = await addNote(dir, priceSeat, "person", "All of it.", { on: { ...lines, lines: [1, 60], text: many } });
+    const kept = (long.on as { text: string }).text;
+    expect(kept.length).toBeLessThanOrEqual(MOST_NOTE_TEXT);
+    const keptLines = kept.split("\n");
+    expect(keptLines.at(-1)).toBe("… (the rest of the lines picked out are not kept)");
+    expect(keptLines.slice(0, -1)).toEqual(Array.from({ length: keptLines.length - 1 }, (_, i) => line(i)));
+    // As many as fit: one more would not have.
+    expect(kept.length + line(keptLines.length - 1).length + 1).toBeGreaterThan(MOST_NOTE_TEXT);
+    expect(long.on).toMatchObject({ file: lines.file, lines: [1, 60] });
+  });
+
+  it("keeps a step of an execution, by the execution and the step's id", async () => {
+    const step = { execution: "book-seats", step: "price", description: "Each seat is priced in turn." };
+    const note = await addNote(dir, priceSeat, "person", "Price them all at once.", { on: step });
+    expect((await readNoteFile(note.id)).on).toEqual(step);
+    expect(await noteById(dir, note.id)).toEqual(note);
+  });
+
+  it("refuses lines that run backwards, rather than keep a note nobody could read back", async () => {
+    await expect(
+      addNote(dir, priceSeat, "person", "Backwards.", { on: { file: "src/booking/price-seat.ts", lines: [5, 2], text: "" } }),
+    ).rejects.toThrow("The lines picked out run backwards, from 5 to 2: the first line comes before the last.");
+    expect((await loadNotes(dir)).notes).toEqual([]);
+  });
+
+  it("keeps a problem the person flagged, and the commit the agent answered with", async () => {
+    const note = await addNote(dir, priceSeat, "person", "Fix this, please.", { problem: "  Price Seat's code is not there.  " });
+    expect((await readNoteFile(note.id)).messages[0]!.problem).toBe("Price Seat's code is not there.");
+
+    await replyToNote(dir, note.id, "agent", "Done.", { commit: { hash, subject: "Write Price Seat" } });
+    expect((await readNoteFile(note.id)).messages[1]!.commit).toEqual({ hash, subject: "Write Price Seat" });
+  });
+
+  it("refuses a commit that is not a whole hash, and leaves the note as it was", async () => {
+    const note = await addNote(dir, priceSeat, "person", "Fix this, please.");
+    const before = await readFile(noteFile(note.id), "utf8");
+    await expect(replyToNote(dir, note.id, "agent", "Done.", { commit: { hash: "abc1234", subject: "Short" } })).rejects.toThrow(
+      "Fragmentor could not keep this note",
+    );
+    expect(await readFile(noteFile(note.id), "utf8")).toBe(before);
+  });
+
+  it("gives the newest run flagged, which is the one to run again", async () => {
+    const note = await addNote(dir, priceSeat, "person", "This one is wrong.", { run: failedRun });
+    await replyToNote(dir, note.id, "agent", "Fixed.");
+    const newer = { ...failedRun, input: { fullPrice: 25, seat: 11 } };
+    const again = await replyToNote(dir, note.id, "person", "Still wrong for the eleventh.", { run: newer });
+
+    expect(flaggedRunOf(again)).toEqual(newer);
+    expect(flaggedRunOf(await addNote(dir, priceSeat, "person", "No run."))).toBeUndefined();
+  });
+});
+
+describe("working on a note", () => {
+  it("shows the agent has started on it, until anyone next writes to it", async () => {
+    const note = await addNote(dir, priceSeat, "person", "Take a fifth off from the tenth seat.");
+    const started = await markWorking(dir, note.id);
+    expect(Date.parse(started.working!)).not.toBeNaN();
+    expect((await readNoteFile(note.id)).working).toBe(started.working);
+    // It is still waiting for the agent: saying it has started is not an answer.
+    expect(waitingOn(started)).toBe("agent");
+
+    const answered = await replyToNote(dir, note.id, "agent", "Done.");
+    expect(answered.working).toBeUndefined();
+    expect((await readNoteFile(note.id)).working).toBeUndefined();
+
+    await replyToNote(dir, note.id, "person", "And the eleventh, please.");
+    await markWorking(dir, note.id);
+    expect((await resolveNote(dir, note.id)).working).toBeUndefined();
+    expect((await readNoteFile(note.id)).working).toBeUndefined();
+  });
+
+  it("is refused for a note that is resolved", async () => {
+    const note = await addNote(dir, priceSeat, "person", "Explain the discount.");
+    await resolveNote(dir, note.id);
+    await expect(markWorking(dir, note.id)).rejects.toThrow(`Note ${note.id} is resolved.`);
+  });
+
+  it("is refused for a note waiting for the person, and leaves it as it was", async () => {
+    const answered = await addNote(dir, priceSeat, "person", "Explain the discount.");
+    await replyToNote(dir, answered.id, "agent", "It is ten percent from the fifth seat.");
+    const theirs = await addNote(dir, priceSeat, "agent", "The discount is never tested.");
+
+    for (const note of [answered, theirs]) {
+      const before = await readFile(noteFile(note.id), "utf8");
+      await expect(markWorking(dir, note.id)).rejects.toThrow(`Note ${note.id} is waiting for the person, not you: they answer it next.`);
+      expect(await readFile(noteFile(note.id), "utf8")).toBe(before);
+    }
   });
 });
 

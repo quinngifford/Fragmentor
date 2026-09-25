@@ -1418,3 +1418,31 @@ export async function startHistory(dir: string): Promise<{ written: string[]; no
   }
   return { written, note: "Started a git repository here. Each commit of a block is a version of it; nothing is committed yet." };
 }
+
+/**
+ * The newest commit of the repository holding a project, with when it was
+ * made, which is how an answer to a note finds the commit holding its work.
+ * Null where git is not installed, the folder is in no repository, or
+ * nothing has been committed yet: an answer without a commit is still an
+ * answer.
+ */
+export async function headCommit(projectDir: string): Promise<{ hash: string; subject: string; date: string } | null> {
+  const found = await git(projectDir, ["log", "-1", "--format=%H%x00%s%x00%cI"]);
+  if ("missing" in found || found.code !== 0) return null;
+  const [hash, subject, date] = found.out.toString("utf8").trim().split("\0");
+  return hash && date ? { hash, subject: subject ?? "", date } : null;
+}
+
+/**
+ * Whether a commit changed a block: its folder, its parts' folders, or the
+ * code it and its parts point at now, which is what the block's versions are
+ * made of. It is how an answer to a note tells the commit holding its work
+ * from the newest commit holding someone else's. A first commit is compared
+ * with nothing, so everything in it is a change.
+ */
+export async function commitTouchesBlock(projectDir: string, hash: string, blockPath: string): Promise<boolean> {
+  if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(hash)) throw new Error(`"${hash}" is not a commit.`);
+  const { specs } = await loadBlock(projectDir, blockPath);
+  const changed = await git(projectDir, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--root", hash, "--", ...specs]);
+  return pathsIn(outputOf(changed)).length > 0;
+}

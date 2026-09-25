@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { emitProject, startProject } from "./emit.js";
+import { COMMANDS } from "./commands.js";
+import { emitProject, startProject, writeCommandSkills } from "./emit.js";
+import { SKILLS_DIR, commandSkill } from "./guide.js";
 import { blockDir, createProject, loadProject, readManifest, writeBlock } from "../project/project.js";
 import { gitIn } from "../project/exampleHistory.js";
 import type { Manifest } from "../project/project.js";
@@ -90,12 +92,16 @@ const syntaxErrorsIn = (source: string) =>
 
 const there = async (file: string) => access(file).then(() => true, () => false);
 
+/** The slash command Claude Code offers for each command, as the files Fragmentor writes for them. */
+const SKILLS = COMMANDS.map((command) => `${SKILLS_DIR}/fragmentor-${command.name}/SKILL.md`);
+
 describe("emitProject", () => {
-  it("writes the contract of each block one can be written for, the shared capabilities, and the guide", async () => {
+  it("writes the contract of each block one can be written for, the shared capabilities, the guide and the slash commands", async () => {
     const result = await emitProject(await loadProject(dir));
 
     expect(result.problems).toEqual([]);
     expect(result.written).toEqual([
+      ...[...SKILLS].sort(),
       "FRAGMENTOR.md",
       "blocks/capabilities.ts",
       "blocks/double-it/add-to-self/contract.ts",
@@ -222,7 +228,7 @@ describe("emitProject", () => {
     expect(result.problems[0]).toContain('unknown kind "QuantumComputer"');
   });
 
-  it("writes nothing but the guide where there is no language pack", async () => {
+  it("writes nothing but the guide and the slash commands where there is no language pack", async () => {
     await writeFile(
       path.join(dir, "fragmentor.json"),
       JSON.stringify({ ...manifest, systems: [{ rootBlock: "double-it", language: "Fortran" }] }),
@@ -230,7 +236,7 @@ describe("emitProject", () => {
     );
 
     const result = await emitProject(await loadProject(dir));
-    expect(result).toEqual({ written: ["FRAGMENTOR.md"], removed: [], problems: [] });
+    expect(result).toEqual({ written: [...[...SKILLS].sort(), "FRAGMENTOR.md"], removed: [], problems: [] });
   });
 });
 
@@ -246,7 +252,7 @@ describe("startProject", () => {
         existingCode: true,
         start: "build",
       });
-      expect(started.written).toEqual(["fragmentor.json", "FRAGMENTOR.md", "AGENTS.md", "CLAUDE.md", ".gitignore"]);
+      expect(started.written).toEqual(["fragmentor.json", "FRAGMENTOR.md", "AGENTS.md", "CLAUDE.md", ...SKILLS, ".gitignore"]);
       // Its blocks' versions will be the commits of the repository it starts,
       // which ignores what the watcher ignores and holds nothing yet.
       expect(await there(path.join(fresh, ".git"))).toBe(true);
@@ -319,7 +325,7 @@ describe("startProject", () => {
     process.env.PATH = nowhere;
     try {
       const started = await startProject(fresh, settings);
-      expect(started.written).toEqual(["fragmentor.json", "FRAGMENTOR.md", "AGENTS.md", "CLAUDE.md"]);
+      expect(started.written).toEqual(["fragmentor.json", "FRAGMENTOR.md", "AGENTS.md", "CLAUDE.md", ...SKILLS]);
       expect(started.history).toContain("Git is not installed");
       expect(await there(path.join(fresh, ".git"))).toBe(false);
     } finally {
@@ -400,5 +406,85 @@ describe("blocks nothing is generated for", () => {
     const result = await emitProject(await loadProject(dir));
     expect(result.problems).toEqual([]);
     expect(await there(childContract())).toBe(false);
+  });
+});
+
+describe("the slash commands", () => {
+  const skill = (name: string) => path.join(dir, ".claude", "skills", name, "SKILL.md");
+
+  /**
+   * A skill's settings, read as YAML reads these: a key, then a JSON string,
+   * which YAML takes as it is, or a bare word. Anything else fails the test.
+   */
+  function settingsOf(source: string): Record<string, unknown> {
+    const lines = source.split("\n");
+    // Claude Code reads the settings only where they open the file.
+    expect(lines[0]).toBe("---");
+    const end = lines.indexOf("---", 1);
+    expect(end).toBeGreaterThan(1);
+    return Object.fromEntries(
+      lines.slice(1, end).map((line) => {
+        const [, key, value] = /^([a-z-]+): (.+)$/.exec(line)!;
+        return [key, value!.startsWith('"') ? JSON.parse(value!) : value === "true" ? true : value];
+      }),
+    );
+  }
+
+  it("writes one for each command, with its settings first, for the person to give and not the agent", async () => {
+    expect(await writeCommandSkills(dir)).toEqual(SKILLS);
+
+    for (const command of COMMANDS) {
+      const source = await readFile(skill(`fragmentor-${command.name}`), "utf8");
+      expect(source).toBe(commandSkill(command));
+      expect(settingsOf(source)).toEqual({
+        name: `fragmentor-${command.name}`,
+        description: command.summary,
+        "argument-hint": command.optional ? "[block path]" : expect.stringMatching(/^<.+>$/),
+        "disable-model-invocation": true,
+      });
+      expect(source).toContain(`The person asked: \`fragmentor ${command.name} $ARGUMENTS\``);
+      expect(source).toContain(command.steps);
+    }
+  });
+
+  it("rewrites only what changed", async () => {
+    await writeCommandSkills(dir);
+    expect(await writeCommandSkills(dir)).toEqual([]);
+
+    await writeFile(skill("fragmentor-review"), "---\nname: fragmentor-review\n---\n\n<!-- Generated by Fragmentor, long ago. -->\n\nstale\n", "utf8");
+    expect(await writeCommandSkills(dir)).toEqual([`${SKILLS_DIR}/fragmentor-review/SKILL.md`]);
+    expect(await readFile(skill("fragmentor-review"), "utf8")).toBe(commandSkill(COMMANDS.find((each) => each.name === "review")!));
+  });
+
+  it("never changes or takes away anything else in the folder, even a copy of one of its own", async () => {
+    const ours = "---\nname: fragmentor-plan\ndescription: Our own way of planning.\n---\n\nPlan it our way.\n";
+    await mkdir(path.dirname(skill("fragmentor-plan")), { recursive: true });
+    await writeFile(skill("fragmentor-plan"), ours, "utf8");
+    await mkdir(path.dirname(skill("fragmentor-deploy")), { recursive: true });
+    await writeFile(skill("fragmentor-deploy"), "---\nname: fragmentor-deploy\n---\n\nShip it.\n", "utf8");
+    // Made by copying the review skill, so it still says Fragmentor generated it.
+    const copied = commandSkill({ ...COMMANDS.find((each) => each.name === "review")!, name: "review-strictly" });
+    await mkdir(path.dirname(skill("fragmentor-review-strictly")), { recursive: true });
+    await writeFile(skill("fragmentor-review-strictly"), copied, "utf8");
+
+    const written = await writeCommandSkills(dir);
+    expect(written).not.toContain(`${SKILLS_DIR}/fragmentor-plan/SKILL.md`);
+    expect(await readFile(skill("fragmentor-plan"), "utf8")).toBe(ours);
+    expect(await there(skill("fragmentor-deploy"))).toBe(true);
+    expect(await readFile(skill("fragmentor-review-strictly"), "utf8")).toBe(copied);
+
+    // And every check leaves them alone too.
+    await emitProject(await loadProject(dir));
+    expect(await readFile(skill("fragmentor-review-strictly"), "utf8")).toBe(copied);
+    expect(await there(skill("fragmentor-deploy"))).toBe(true);
+  });
+
+  it("is kept up to date by every check", async () => {
+    await emitProject(await loadProject(dir));
+    await writeFile(skill("fragmentor-notes"), "---\nname: fragmentor-notes\n---\n\n<!-- Generated by Fragmentor, long ago. -->\n\nstale\n", "utf8");
+
+    const result = await emitProject(await loadProject(dir));
+    expect(result.written).toEqual([`${SKILLS_DIR}/fragmentor-notes/SKILL.md`]);
+    expect(result.removed).toEqual([]);
   });
 });

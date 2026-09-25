@@ -10,6 +10,7 @@ import {
   treeInView,
 } from "./canvas.js";
 import type { RunOverlay } from "./canvas.js";
+import { shownAt } from "./tree.js";
 import type { Tree } from "./tree.js";
 import { requireSnapshot, ui } from "./state.js";
 import type { Watch, WatchedCall } from "./state.js";
@@ -83,7 +84,10 @@ function nodeRun(calls: WatchedCall[]): { state: "running" | "paused" | "done" |
   const finished = calls.filter((call) => call.state === "returned").length;
   const has = (state: WatchedCall["state"]) => calls.some((call) => call.state === state);
   const state = has("paused") ? "paused" : has("threw") ? "failed" : has("stopped") ? "stopped" : has("running") ? "running" : "done";
-  if (state === "paused" || state === "failed" || state === "stopped") return { state, note: state };
+  // A failure is said by the red flag on the block's corner rather than in
+  // words beside its kind, which a long kind ran into.
+  if (state === "failed") return { state, note: "" };
+  if (state === "paused" || state === "stopped") return { state, note: state };
   return { state, note: calls.length > 1 ? `${finished} of ${calls.length}` : state };
 }
 
@@ -93,6 +97,17 @@ function nodeRun(calls: WatchedCall[]): { state: "running" | "paused" | "done" |
  */
 function overlayFor(watch: Watch, tree: Tree): RunOverlay {
   const overlay: RunOverlay = { nodes: new Map() };
+  // Where a run went wrong: each call that threw of its own accord, rather
+  // than because one it made did, drawn at the block on screen standing for
+  // it. Everything around it that failed only by containing it is outlined,
+  // and one flag says where to look.
+  const calls = [...watch.calls.values()];
+  const flagged = new Set(
+    calls
+      .filter((call) => call.state === "threw" && !calls.some((made) => made.parent === call.id && made.state === "threw"))
+      .map((call) => shownAt(tree, call.block)?.path)
+      .filter((path): path is string => path !== undefined),
+  );
   for (const node of tree.nodes.values()) {
     const path = node.path;
     const inside = [...watch.calls.values()].filter((call) => isWithin(call.block, path));
@@ -103,7 +118,8 @@ function overlayFor(watch: Watch, tree: Tree): RunOverlay {
     // calls happened inside it instead.
     const own = inside.filter((call) => call.block === path);
     const run = nodeRun(own.length > 0 ? own : inside);
-    overlay.nodes.set(path, own.length > 0 || run.state !== "done" ? run : { state: "done", note: `${inside.length} inside` });
+    const shown = own.length > 0 || run.state !== "done" ? run : { state: "done" as const, note: `${inside.length} inside` };
+    overlay.nodes.set(path, { ...shown, flag: flagged.has(path) });
   }
   return overlay;
 }

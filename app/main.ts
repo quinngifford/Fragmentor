@@ -17,7 +17,7 @@ import type {
 import { projectSnapshot } from "../src/project/snapshot.js";
 import { blockDir, loadProject, locateCode, manifestPath, readManifest } from "../src/project/project.js";
 import { readBlockCode } from "../src/project/code.js";
-import { emitProject, startProject, writeGuide } from "../src/codegen/emit.js";
+import { emitProject, startProject, writeCommandSkills, writeGuide } from "../src/codegen/emit.js";
 import type { EmitResult, NewProjectSettings } from "../src/codegen/emit.js";
 import { GUIDE_FILE } from "../src/codegen/guide.js";
 import { resolveInside } from "../src/project/safePath.js";
@@ -35,8 +35,8 @@ import {
   undoLastSwap,
 } from "../src/project/history.js";
 import type { BlockVersions, SavedVersion, SwapDone, VersionRef } from "../src/project/history.js";
-import { MOST_NOTE_TEXT, addNote, deleteNote, isNotePath, replyToNote, resolveNote } from "../src/project/notes.js";
-import type { FlaggedRun, Note } from "../src/project/notes.js";
+import { MOST_NOTE_TEXT, addNote, deleteNote, flaggedRunOf, isNotePath, markWorking, noteById, replyToNote, resolveNote } from "../src/project/notes.js";
+import type { FlaggedRun, Note, NoteAnchor } from "../src/project/notes.js";
 import { compareWithVersion } from "../src/run/versions.js";
 import type { VersionComparison } from "../src/run/versions.js";
 import { commitExampleHistory, filesOf, gitIn } from "../src/project/exampleHistory.js";
@@ -216,6 +216,16 @@ function settingsFrom(raw: unknown): NewProjectSettings {
 /** The window is not trusted to send a mode that means anything, so anything else is a plain resume. */
 function resumeMode(raw: unknown): "continue" | "step" | "block" {
   return raw === "step" || raw === "block" ? raw : "continue";
+}
+
+/**
+ * Brings a project's guide and its agent's slash commands up to date, for
+ * whatever the person is about to ask the agent. It never fails: a project
+ * that cannot be read just keeps what it has.
+ */
+async function refreshAgentFiles(dir: string): Promise<void> {
+  await readManifest(dir).then((manifest) => writeGuide(dir, manifest)).catch(() => false);
+  await writeCommandSkills(dir).catch(() => null);
 }
 
 /** One watcher per window, on whichever project that window has open. */
@@ -595,17 +605,34 @@ function registerHandlers(): void {
     },
   );
 
+  /**
+   * What the window sent beside a note's words, taking only what the person
+   * may send: a run, a problem, and what the note is on. A commit is the
+   * agent's to record. Each is held to its shape by the kernel before anything
+   * is written.
+   */
+  const extrasFrom = (value: unknown): { run?: FlaggedRun; problem?: string; on?: NoteAnchor } => {
+    if (value === undefined) return {};
+    if (typeof value !== "object" || value === null) throw new Error("What came with that note is not something Fragmentor keeps with one.");
+    const { run, problem, on } = value as Record<string, unknown>;
+    return {
+      ...(run === undefined ? {} : { run: run as FlaggedRun }),
+      ...(problem === undefined ? {} : { problem: sent(problem, "A flagged problem", MOST_NOTE_TEXT) }),
+      ...(on === undefined ? {} : { on: on as NoteAnchor }),
+    };
+  };
+
   ipcMain.handle(
     CHANNELS.addNote,
-    async (_event, dir: unknown, blockPath: unknown, text: unknown, run: unknown): Promise<Result<Note>> => {
+    async (_event, dir: unknown, blockPath: unknown, text: unknown, extras: unknown): Promise<Result<Note>> => {
       try {
         const project = sent(dir);
-        const note = await addNote(project, sent(blockPath), "person", sent(text, "A note", MOST_NOTE_TEXT), run === undefined ? undefined : (run as FlaggedRun));
-        // The agent learns what to do with notes from its guide, so a project
-        // whose guide was written before there were notes is brought up to
-        // date: the person is about to tell the agent to review them. The
-        // note is saved whatever becomes of that.
-        await readManifest(project).then((manifest) => writeGuide(project, manifest)).catch(() => false);
+        const note = await addNote(project, sent(blockPath), "person", sent(text, "A note", MOST_NOTE_TEXT), extrasFrom(extras));
+        // The agent learns what to do with notes from its guide and its
+        // commands, so a project whose guide was written before there were
+        // notes is brought up to date: the person is about to tell the agent
+        // to work through them. The note is saved whatever becomes of that.
+        await refreshAgentFiles(project);
         return ok(note);
       } catch (error) {
         return failed(error);
@@ -613,10 +640,53 @@ function registerHandlers(): void {
     },
   );
 
-  ipcMain.handle(CHANNELS.replyToNote, async (_event, dir: unknown, id: unknown, text: unknown, run: unknown): Promise<Result<Note>> => {
+  ipcMain.handle(CHANNELS.refreshAgentFiles, async (_event, dir: unknown): Promise<Result<null>> => {
+    try {
+      await refreshAgentFiles(sent(dir));
+      return ok(null);
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  ipcMain.handle(CHANNELS.replyToNote, async (_event, dir: unknown, id: unknown, text: unknown, extras: unknown): Promise<Result<Note>> => {
     try {
       const said = sent(text, "A note", MOST_NOTE_TEXT);
-      return ok(await replyToNote(sent(dir), sent(id, "A note's id", 64), "person", said, run === undefined ? undefined : (run as FlaggedRun)));
+      const { run } = extrasFrom(extras);
+      return ok(await replyToNote(sent(dir), sent(id, "A note's id", 64), "person", said, run === undefined ? {} : { run }));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  /**
+   * Runs what a note flags again, as it was flagged: a saved test with the
+   * values it failed on, or a run from the bench with what it was given. It
+   * runs as a test of its own, so the block's saved tests are neither read
+   * nor written, and says whether what the person flagged is put right.
+   */
+  ipcMain.handle(CHANNELS.rerunNote, async (_event, dir: unknown, id: unknown): Promise<Result<CaseResult>> => {
+    try {
+      const project = sent(dir);
+      const note = await noteById(project, sent(id, "A note's id", 64));
+      const run = flaggedRunOf(note);
+      if (run === undefined) throw new Error("That note flags no run to run again.");
+      if (run.cut?.some((part) => part === "input" || part === "stores" || part === "expected")) {
+        throw new Error("What this note flags was too large to keep whole, so it cannot be run again as it was.");
+      }
+      if (!(await loadProject(project)).byPath.has(note.block)) throw new Error(`There is no block at ${note.block} any more.`);
+      const [result] = await runCases(project, note.block, {
+        cases: [
+          {
+            name: run.test ?? "the run from the bench",
+            input: run.input,
+            ...(run.stores === undefined ? {} : { stores: run.stores }),
+            ...(run.expected === undefined ? {} : { expected: run.expected }),
+          },
+        ],
+      });
+      if (result === undefined) throw new Error("The run came back with nothing to say.");
+      return ok(result);
     } catch (error) {
       return failed(error);
     }
@@ -1261,11 +1331,11 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("noteLeft", "state") === "for your agent" &&
         value("noteLeft", "says") === "Seats in row A should cost double." &&
         value("noteLeft", "formGone") === true &&
-        value("noteLeft", "phrases") === "review fragmentor | review fragmentor tickets/booking-api/pricing/price-seat" &&
+        value("noteLeft", "phrases") === "fragmentor notes | fragmentor notes tickets/booking-api/pricing/price-seat" &&
         value("noteLeft", "marked") === "agent 1" &&
         String(value("noteLeft", "bar")).startsWith("1 note for your agent. Tell it") &&
-        String(value("noteLeft", "bar")).includes("review fragmentor") &&
-        value("noteLeft", "status") === "Left a note on Price Seat. Tell your agent “review fragmentor” when you are ready.",
+        String(value("noteLeft", "bar")).includes("fragmentor notes") &&
+        value("noteLeft", "status") === "Left a note on Price Seat. Tell your agent “fragmentor notes” when you are ready.",
     ],
     [
       "a note is a file in the project, committed with it, and the agent's guide says what to do with it",
@@ -1278,7 +1348,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
     ],
     [
       "the words to tell the agent are copied from the bar above the drawing",
-      value("phraseCopied", "copied") === true && value("phraseOnClipboard", "text") === "review fragmentor",
+      value("phraseCopied", "copied") === true && value("phraseOnClipboard", "text") === "fragmentor notes",
     ],
     [
       "the agent's answer appears with nothing reloaded, and hands the note back to the person",
@@ -1311,7 +1381,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       "the project's panel lists every open note, says what to tell the agent, and leads to each note's block",
       value("projectNotes", "parts") === "For you (1) | On blocks no longer there (1) | What to tell your agent" &&
         value("projectNotes", "listed") === "tickets/booking-api/find-event" &&
-        value("projectNotes", "phrases") === "review fragmentor | review fragmentor <block path>" &&
+        value("projectNotes", "phrases") === "fragmentor notes | fragmentor notes <block path>" &&
         value("projectNotes", "goneMarked") === "" &&
         value("projectNotes", "goneOffers") === "Reply | Delete" &&
         String(value("projectNotes", "goneBar")).includes("1 note for you on a block no longer there") &&
@@ -1336,6 +1406,73 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
             problems: ["output.price was 25, expected 50."],
             logs: [],
           }),
+    ],
+    [
+      "while the agent works on a note, its block's count pulses and the note says since when",
+      value("noteWorking", "pulsing") === true &&
+        String(value("noteWorking", "said")).startsWith("Your agent started on this at ") &&
+        String(value("noteWorking", "bar")).startsWith("1 note for your agent, 1 being worked on. Tell it"),
+    ],
+    [
+      "the agent's answer carries its commit, offers the version before it, and what was flagged is run again",
+      value("noteCommitted", "seen") === true &&
+        value("noteCommitted", "drawnOnce") === true &&
+        String(value("noteCommitted", "commit")).includes("“Refuse a seat past the last one”") &&
+        value("noteCommitted", "offers") === "Compare with before | Swap back to before" &&
+        value("noteCommitted", "working") === false &&
+        value("noteCommitted", "rerunTone") === "bad" &&
+        value("noteCommitted", "rerunSaid") === "Ran it again: it still fails. output.price was 25, expected 50." &&
+        value("noteCommitted", "rerunOffers") === "Run it again | Tell your agent",
+    ],
+    [
+      "comparing from the note runs the Versions comparison against the version before the commit",
+      value("comparedFromNote", "compared") === true && value("comparedFromNote", "onRow") === true,
+    ],
+    [
+      "a flagged test still failing after the answer goes back to the agent with the run",
+      value("toldStillFails", "told") === true &&
+        value("toldOnDisk", "from") === "person" &&
+        value("toldOnDisk", "still") === "output.price was 25, expected 50." &&
+        value("toldOnDisk", "working") === null &&
+        value("toldOnDisk", "commit") === true,
+    ],
+    [
+      "a block that fails in a run carries a red flag and a red glow, and no word beside its kind",
+      value("failedRun", "failed") === true &&
+        value("failedRun", "said") === "" &&
+        value("failedRun", "flagShown") === true &&
+        value("failedRun", "around") === "price-seat" &&
+        String(value("failedRun", "glow")).includes("drop-shadow") &&
+        String(value("failedRun", "offered")).startsWith("Flag this for your coding agent?"),
+    ],
+    [
+      "a note is left on the lines picked out in a block's code",
+      value("lineNote", "on") === "On lines 2–3 of src/booking/price-seat.tsShow×" &&
+        value("lineNote", "windowClosed") === true &&
+        value("lineNote", "listed") === "On lines 2–3 of src/booking/price-seat.ts" &&
+        JSON.stringify(value("anchorsOnDisk", "lines")) === "[2,3]" &&
+        typeof value("anchorsOnDisk", "text") === "string",
+    ],
+    [
+      "a note is left on a step of an execution, and leads back to it",
+      String(value("stepNote", "on")).startsWith("On the step “") &&
+        String(value("stepNote", "on")).endsWith("” of Book seats") &&
+        value("stepNote", "went") === true &&
+        value("anchorsOnDisk", "execution") === "book-seats",
+    ],
+    [
+      "a problem Fragmentor reports on a block is flagged for the agent from the block's panel",
+      value("problemFlagged", "offered") === true &&
+        value("problemFlagged", "flagged") === true &&
+        String(value("problemFlagged", "problem")).includes("src/outbox-nowhere.ts") &&
+        value("problemFlagged", "redFlag") === true,
+    ],
+    [
+      "every command is listed in a window of its own, with the block picked out filled in",
+      value("commandsListed", "title") === "Commands for your agent" &&
+        value("commandsListed", "names") === "notes review rebuild explain plan build cover" &&
+        value("commandsListed", "review") === "fragmentor review | fragmentor review tickets/booking-api/pricing/price-seat" &&
+        value("commandsListed", "slash") === "fragmentor review [block] · in Claude Code, /fragmentor-review",
     ],
     [
       "an execution is stepped through on the tree, one arrow at a time, and read end to end as its own drawing",
@@ -3203,7 +3340,7 @@ function attachSelfCheck(
           // It shows up to be committed with the project, as a saved version does.
           forCommitting: leftFile !== undefined && notesToCommit.includes(`.fragmentor/notes/${leftFile}`),
           // And the guide the agent reads says what to do with it.
-          guided: (await readFile(path.join(check.application, "FRAGMENTOR.md"), "utf8")).includes("review fragmentor"),
+          guided: (await readFile(path.join(check.application, "FRAGMENTOR.md"), "utf8")).includes("fragmentor notes"),
         };
 
         // What to tell the agent, copied from the bar above the drawing. The
@@ -3380,6 +3517,250 @@ function attachSelfCheck(
           text: flaggedNotes[0]?.messages[0]?.text,
           run: flaggedNotes[0]?.messages[0]?.run,
         };
+
+        // Round two of notes. The agent says it has started on the flagged
+        // test, and the block's count pulses while it works.
+        let flaggedId: string | null = null;
+        for (const file of await noteFiles()) if ((await readNoteFile(file)).messages?.[0]?.run) flaggedId = file.slice(0, -".json".length);
+        if (flaggedId !== null) await markWorking(check.application, flaggedId);
+        await run("noteWorking", `${notesSection}
+          const working = await until(() => mark("price-seat") && mark("price-seat").dataset.working === "true", 10000);
+          const card = cards().find((each) => each.dataset.working === "true");
+          return {
+            pulsing: Boolean(working) && Boolean(mark("price-seat").querySelector(".note-mark-ring")),
+            said: card ? text("#inspector .note-working") : "",
+            bar: bar(),
+          };
+        `);
+
+        // The agent answers it as `fragmentor reply` does, recording the commit
+        // its work is in: a change to Price Seat that refuses a seat past 99.
+        const priceSeatCode = path.join(check.application, "src", "booking", "price-seat.ts");
+        const codeBefore = await readFile(priceSeatCode, "utf8");
+        await writeFile(
+          priceSeatCode,
+          codeBefore.replace(
+            /(export async function priceSeat\([^)]*\)[^{]*\{)/,
+            `$1\n  if (input.seat > 99) throw new Error("There is no seat " + input.seat + ".");`,
+          ),
+          "utf8",
+        );
+        await gitIn(check.application)("add", "--", "src/booking/price-seat.ts");
+        await gitIn(check.application)("commit", "--quiet", "-m", "Refuse a seat past the last one");
+        const fixHash = (await gitIn(check.application)("rev-parse", "HEAD")).trim();
+        if (flaggedId !== null) {
+          await replyToNote(check.application, flaggedId, "agent", "Row A is priced the same as any other row, so I have left the price alone; I made a seat past 99 an error instead.", {
+            commit: { hash: fixHash, subject: "Refuse a seat past the last one" },
+          });
+        }
+        await run("noteCommitted", `${notesSection}
+          window.dispatchEvent(new Event("focus"));
+          const answered = await until(() => cards().find((each) => each.dataset.waiting === "person" && each.querySelector(".note-commit")), 10000);
+          if (!answered) return { seen: false };
+          // The answer arriving starts what was flagged running again, which
+          // draws the panel again; it is still drawn once.
+          const headings = () => [...document.querySelectorAll("#inspector .section h4")].map((h) => h.textContent);
+          const drawnOnce = () => headings().filter((h) => h === "Notes").length === 1 && headings().filter((h) => h === "Versions").length === 1;
+          const onceAtAnswer = drawnOnce();
+          // Once the block's versions are read, the version before the commit is offered.
+          const offers = await until(() => {
+            const found = [...cards().find((each) => each.querySelector(".note-commit")).querySelectorAll(".note-commit button")].map((b) => b.textContent).join(" | ");
+            return found || null;
+          }, 15000);
+          // What was flagged is run again now it is answered, and still fails.
+          const rerun = await until(() => {
+            const line = cards().find((each) => each.querySelector(".note-commit")).querySelector(".note-rerun");
+            return line && line.dataset.tone ? line : null;
+          }, 30000);
+          // Looked at again from another block, as the person would, while the
+          // flagged run is run again: the panel is still drawn once.
+          node("find-event").click();
+          await heading("Find Event");
+          node("price-seat").click();
+          await heading("Price Seat");
+          await wait(300);
+          return {
+            seen: true,
+            drawnOnce: onceAtAnswer && drawnOnce(),
+            commit: text("#inspector .note-commit"),
+            offers: offers || "",
+            working: Boolean(mark("price-seat")) && mark("price-seat").dataset.working === "true",
+            rerunTone: rerun ? rerun.dataset.tone : "",
+            rerunSaid: rerun ? rerun.querySelector("span").textContent : "",
+            rerunOffers: rerun ? [...rerun.querySelectorAll("button")].map((b) => b.textContent).join(" | ") : "",
+          };
+        `);
+        await capture(window, "self-check-note-committed");
+
+        await run("comparedFromNote", `${notesSection}
+          const card = cards().find((each) => each.querySelector(".note-commit"));
+          const compare = card && button(card.querySelector(".note-commit"), "Compare with before");
+          if (!compare) return { compared: false };
+          compare.click();
+          const shown = await until(() => document.querySelector("#inspector [data-versions-of] .version-compare"), 60000);
+          return { compared: Boolean(shown), onRow: shown ? shown.closest(".version-row").dataset.commit !== ${JSON.stringify(fixHash)} : false };
+        `);
+
+        await run("toldStillFails", `${notesSection}
+          const card = cards().find((each) => each.querySelector(".note-rerun[data-tone='bad']"));
+          const tell = card && button(card.querySelector(".note-rerun"), "Tell your agent");
+          if (!tell) return { told: false };
+          tell.click();
+          const back = await until(() => cards().find((each) => each.dataset.note === card.dataset.note && each.dataset.waiting === "agent"), 10000);
+          return { told: Boolean(back) };
+        `);
+        const toldNote = flaggedId === null ? null : await readNoteFile(`${flaggedId}.json`);
+        report.toldOnDisk = {
+          from: toldNote?.messages?.at(-1)?.from,
+          still: toldNote?.messages?.at(-1)?.run?.problems?.join(" "),
+          working: toldNote?.working ?? null,
+          commit: toldNote?.messages?.find((message: { commit?: { hash: string } }) => message.commit)?.commit?.hash === fixHash,
+        };
+
+        // A run of Price Seat past the last seat fails in the block: a red
+        // flag on its corner and a red glow, with no word in the box.
+        await run("failedRun", `${notesSection}
+          const bench = await openBench();
+          if (!bench) return { stage: "no bench" };
+          const [fullPrice, seat] = [...document.querySelectorAll(".bench-window .bench-fields input")];
+          if (!fullPrice || !seat) return { stage: "no fields" };
+          put(fullPrice, "25");
+          put(seat, "100");
+          [...document.querySelectorAll(".bench-window button")].find((b) => b.textContent === "Run block").click();
+          const failed = await until(() => document.querySelector('.block-box[data-id="price-seat"][data-run="failed"]'), 20000);
+          if (!failed) return { stage: "did not fail", bar: text("#run-bar") };
+          const flag = failed.querySelector(".block-flag");
+          return {
+            failed: true,
+            said: failed.querySelector(".run-note").textContent,
+            flagShown: Boolean(flag) && getComputedStyle(flag).display !== "none",
+            // What holds it is outlined as failing too, but the flag says where it happened.
+            around: [...document.querySelectorAll('.block-box[data-run="failed"]')]
+              .filter((each) => getComputedStyle(each.querySelector(".block-flag")).display !== "none")
+              .map((each) => each.dataset.id)
+              .join(" "),
+            glow: getComputedStyle(failed.querySelector(".block-plate")).filter,
+            offered: text(".bench-window .flag-offer"),
+          };
+        `);
+        await capture(window, "self-check-failed-run");
+        await writeFile(priceSeatCode, codeBefore, "utf8");
+
+        // A note on the lines picked out in a block's code.
+        await run("linesPicked", `${notesSection}
+          const close = [...document.querySelectorAll(".bench-window .window-close")].find((each) => each.textContent === "✕");
+          if (close) close.click();
+          node("price-seat").click();
+          await heading("Price Seat");
+          const codeButton = [...document.querySelectorAll("#inspector .insp-windows button")].find((b) => b.textContent === "Code");
+          if (!codeButton) return { stage: "no Code button" };
+          codeButton.click();
+          const pre = await until(() => document.querySelector("#overlay pre.window-code"), 10000);
+          if (!pre) return { stage: "no code window" };
+          const lines = [...pre.querySelectorAll(".excerpt-line")];
+          const range = document.createRange();
+          range.setStart(lines[1], 1);
+          // Just after the fourth line's number: none of its code is taken.
+          range.setEnd(lines[3], 1);
+          const picked = window.getSelection();
+          picked.removeAllRanges();
+          picked.addRange(range);
+          const leave = [...document.querySelectorAll("#overlay .window-foot button")].find((b) => b.textContent === "Leave a note on the selected lines");
+          if (!leave) return { stage: "no button" };
+          leave.scrollIntoView({ block: "center" });
+          const box = leave.getBoundingClientRect();
+          return { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2) };
+        `);
+        const pressAt = report.linesPicked as { x?: number; y?: number } | undefined;
+        if (pressAt?.x !== undefined && pressAt.y !== undefined) {
+          window.webContents.sendInputEvent({ type: "mouseDown", x: pressAt.x, y: pressAt.y, button: "left", clickCount: 1 });
+          window.webContents.sendInputEvent({ type: "mouseUp", x: pressAt.x, y: pressAt.y, button: "left", clickCount: 1 });
+        }
+        await run("lineNote", `${notesSection}
+          const form = await until(() => notes() && notes().querySelector(".note-form .note-on"), 5000);
+          if (!form) return { stage: "no form" };
+          const on = form.textContent;
+          put(notes().querySelector(".note-form textarea"), "Say why these two lines are here.");
+          button(notes().querySelector(".note-form"), "Leave note").click();
+          const card = await until(() => cards().find((each) => each.querySelector(".note-on") && each.dataset.waiting === "agent"), 10000);
+          return { on, windowClosed: document.getElementById("overlay").hidden, listed: card ? card.querySelector(".note-on span").textContent : "" };
+        `);
+
+        // A note on one step of an execution, from the step's own page.
+        await run("stepNote", `${notesSection}
+          const barButton = (label) => [...document.querySelectorAll("#exec-bar button")].find((b) => b.textContent === label);
+          if (!barButton("Restart") || !barButton("Step")) return { stage: "no stepping" };
+          barButton("Restart").click();
+          await wait(200);
+          barButton("Step").click();
+          await wait(200);
+          const leave = await until(() => [...document.querySelectorAll("#inspector button")].find((b) => b.textContent === "Leave a note on this step"), 5000);
+          if (!leave) return { stage: "no button", inspector: text("#inspector h2") };
+          const step = text("#inspector h2");
+          leave.click();
+          const form = await until(() => notes() && notes().querySelector(".note-form .note-on"), 5000);
+          if (!form) return { stage: "no form" };
+          const on = form.querySelector("span").textContent;
+          put(notes().querySelector(".note-form textarea"), "Should this step happen before the seats are reserved?");
+          button(notes().querySelector(".note-form"), "Leave note").click();
+          const card = await until(() => cards().find((each) => each.querySelector(".note-on") && each.querySelector(".note-on span").textContent.startsWith("On the step")), 10000);
+          // Its Show goes back to that step.
+          const show = card && button(card.querySelector(".note-on"), "Show");
+          if (show) show.click();
+          const back = await until(() => text("#inspector h2") === step, 5000);
+          return { on, step, went: Boolean(back) };
+        `);
+        const anchored = [];
+        for (const file of await noteFiles()) {
+          const note = await readNoteFile(file);
+          if (note.on) anchored.push(note.on);
+        }
+        report.anchorsOnDisk = {
+          lines: anchored.find((on: { lines?: number[] }) => on.lines)?.lines ?? null,
+          text: anchored.find((on: { text?: string }) => on.text !== undefined)?.text ?? null,
+          execution: anchored.find((on: { execution?: string }) => on.execution)?.execution ?? null,
+        };
+
+        // A problem Fragmentor reports on a block, flagged for the agent from
+        // the block's own panel.
+        const outboxFile = path.join(check.application, "blocks", "tickets", "outbox", "block.json");
+        const outboxBefore = await readFile(outboxFile, "utf8");
+        await writeFile(outboxFile, JSON.stringify({ ...JSON.parse(outboxBefore), code: "src/outbox-nowhere.ts" }, null, 2), "utf8");
+        await run("problemFlagged", `${notesSection}
+          node("outbox").click();
+          await heading("Outbox");
+          const flag = await until(() => [...document.querySelectorAll("#inspector .problem-line button")].find((b) => b.textContent === "Flag"), 10000);
+          if (!flag) return { offered: false };
+          flag.click();
+          const flagged = await until(() => document.querySelector("#inspector .problem-line .problem-flagged"), 10000);
+          const card = await until(() => cards().find((each) => each.querySelector(".note-problem")), 10000);
+          return {
+            offered: true,
+            flagged: Boolean(flagged),
+            problem: card ? card.querySelector(".note-problem").textContent : "",
+            redFlag: Boolean(document.querySelector('.block-box[data-id="outbox"][data-flagged="true"]')),
+          };
+        `);
+        await writeFile(outboxFile, outboxBefore, "utf8");
+
+        // Every command, in a window of its own, with the block picked out filled in.
+        await run("commandsListed", `${notesSection}
+          node("price-seat").click();
+          await heading("Price Seat");
+          document.getElementById("agent-commands").click();
+          const listed = await until(() => document.querySelectorAll("#overlay [data-command]").length > 0 ? [...document.querySelectorAll("#overlay [data-command]")] : null, 5000);
+          if (!listed) return { names: "" };
+          const review = listed.find((each) => each.dataset.command === "review");
+          const result = {
+            title: text("#overlay .window-head h2"),
+            names: listed.map((each) => each.dataset.command).join(" "),
+            review: review ? [...review.querySelectorAll(".note-phrase-words")].map((c) => c.textContent).join(" | ") : "",
+            slash: review ? text('#overlay [data-command="review"] .command-usage') : "",
+          };
+          document.querySelector("#overlay .window-close").click();
+          return result;
+        `);
+        await capture(window, "self-check-commands");
 
         // An execution written down in the messenger: picked, drawn over the
         // whole application, stepped through, and followed inside.

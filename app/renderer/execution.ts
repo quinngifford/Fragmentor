@@ -255,12 +255,18 @@ function step(into: boolean): void {
   if (next === null || !shown?.trace || !ui.execution) return;
   ui.execution.at = next;
 
-  const event = shown.trace.events[next]!;
   showStep();
-  // Stepping in shows a step a fold has hidden, by unfolding what hides it,
-  // which is the one thing about stepping that changes the drawing.
+  arrive(shown.trace.events[next]!, into);
+}
+
+/**
+ * Shows the step just landed on: unfolding whatever hides it when asked to,
+ * which is the one thing about stepping that changes the drawing, and
+ * bringing the blocks it joins into view.
+ */
+function arrive(event: TraceEvent, unfold: boolean): void {
   let unfolded = false;
-  if (into) {
+  if (unfold) {
     for (const address of addressesOf(event)) {
       const segments = address.path.split("/");
       for (let depth = 1; depth <= segments.length; depth += 1) {
@@ -268,7 +274,6 @@ function step(into: boolean): void {
       }
     }
   }
-
   notify({ redraw: unfolded || ui.shows === "flow" });
   paintExecution();
   const mark = currentMark();
@@ -293,6 +298,25 @@ function play(): void {
     step(false);
   }, PLAY_MS);
   renderBar();
+}
+
+/**
+ * Goes to one step of an execution from anywhere: a note left on that step.
+ * The step is found by its id, which outlives steps added before it, and
+ * whatever folds hide it are opened. False when the execution or the step is
+ * no longer there.
+ */
+export function goToStep(executionId: string, stepId: string): boolean {
+  const execution = ui.snapshot?.executions.find((each) => each.id === executionId);
+  const events = execution?.declared?.events ?? [];
+  const at = events.findIndex((each) => each.id === stepId);
+  if (at === -1) return false;
+  stopPlaying();
+  ui.execution = { id: executionId, at };
+  ui.showInspector = true;
+  showStep();
+  arrive(events[at]!, true);
+  return true;
 }
 
 function jump(at: number): void {
