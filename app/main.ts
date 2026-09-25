@@ -1393,7 +1393,9 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       String(value("flagged", "offered")).startsWith("Flag this for your coding agent?") &&
         value("flagged", "flagged") === true &&
         value("flagged", "marked") === "agent 1" &&
-        value("flagged", "listed") === "The test “row A is double” fails." &&
+        value("flagged", "listed") === "ERROR:Test “row A is double”" &&
+        value("flagged", "outlined") === "rgb(227, 119, 140)" &&
+        value("flagged", "summary") === "View failed test" &&
         value("flaggedOnDisk", "count") === 1 &&
         value("flaggedOnDisk", "block") === "tickets/booking-api/pricing/price-seat" &&
         value("flaggedOnDisk", "text") === "The test “row A is double” fails." &&
@@ -1422,7 +1424,8 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("noteCommitted", "working") === false &&
         value("noteCommitted", "rerunTone") === "bad" &&
         value("noteCommitted", "rerunSaid") === "Ran it again: it still fails. output.price was 25, expected 50." &&
-        value("noteCommitted", "rerunOffers") === "Run it again | Tell your agent",
+        value("noteCommitted", "rerunOffers") === "Tell your agent" &&
+        value("noteCommitted", "retry") === true,
     ],
     [
       "comparing from the note runs the Versions comparison against the version before the commit",
@@ -1473,6 +1476,15 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("commandsListed", "names") === "notes review rebuild explain plan build cover" &&
         value("commandsListed", "review") === "fragmentor review | fragmentor review tickets/booking-api/pricing/price-seat" &&
         value("commandsListed", "slash") === "fragmentor review [block] · in Claude Code, /fragmentor-review",
+    ],
+    [
+      "an architecture block says what kind it is under what it does, the kind in its colour",
+      String(value("kindShown", "kind")).startsWith("DATABASE: ") &&
+        value("kindShown", "underResponsibility") === true &&
+        value("kindShown", "coloured") !== "" &&
+        value("errorShown", "shown") === true &&
+        value("errorShown", "open") === true &&
+        value("errorShown", "retry") === true,
     ],
     [
       "an execution is stepped through on the tree, one arrow at a time, and read end to end as its own drawing",
@@ -3103,10 +3115,11 @@ function attachSelfCheck(
           await heading("Price Seat");
           node("pricing").click();
           await heading("Pricing");
-          await until(editing, 10000);
+          // Coming back reads its versions again, which on a busy machine takes a while.
+          await until(editing, 20000);
           const kept = Boolean(editing()) && editing().querySelector("input").value === "Ten percent off from the fifth seat";
           await wait(300);
-          savedRow().scrollIntoView({ block: "center" });
+          if (savedRow()) savedRow().scrollIntoView({ block: "center" });
           return { prefilled, offers, focused, kept };
         `);
         await capture(window, "self-check-version-edit");
@@ -3501,7 +3514,10 @@ function attachSelfCheck(
             summary: text(".bench-window .case-summary"),
             marked: count("price-seat"),
             // The open ones: the resolved note is still unfolded from before.
-            listed: cards().filter((card) => card.dataset.waiting !== "none").map((card) => card.querySelector(".note-text").textContent).join(" | "),
+            listed: cards().filter((card) => card.dataset.waiting !== "none").map((card) => (card.querySelector(".note-error") || card.querySelector(".note-text")).textContent).join(" | "),
+            // A failure flagged for the agent is drawn as a failed run is, outlined in red.
+            outlined: getComputedStyle(document.querySelector('.block-box[data-id="price-seat"] .block-plate')).stroke,
+            summary: text("#inspector .note-run summary"),
           };
         `);
         await capture(window, "self-check-flagged");
@@ -3588,6 +3604,7 @@ function attachSelfCheck(
             rerunTone: rerun ? rerun.dataset.tone : "",
             rerunSaid: rerun ? rerun.querySelector("span").textContent : "",
             rerunOffers: rerun ? [...rerun.querySelectorAll("button")].map((b) => b.textContent).join(" | ") : "",
+            retry: Boolean([...cards().find((each) => each.querySelector(".note-commit")).querySelectorAll(".note-run button")].find((b) => b.textContent === "Retry test")),
           };
         `);
         await capture(window, "self-check-note-committed");
@@ -3738,7 +3755,7 @@ function attachSelfCheck(
             offered: true,
             flagged: Boolean(flagged),
             problem: card ? card.querySelector(".note-problem").textContent : "",
-            redFlag: Boolean(document.querySelector('.block-box[data-id="outbox"][data-flagged="true"]')),
+            redFlag: Boolean(document.querySelector('.block-box[data-id="outbox"][data-failing="true"]')),
           };
         `);
         await writeFile(outboxFile, outboxBefore, "utf8");
@@ -3761,6 +3778,37 @@ function attachSelfCheck(
           return result;
         `);
         await capture(window, "self-check-commands");
+
+        // How a failure flagged for the agent looks, with nothing over the
+        // drawing: the block outlined in red, and the note leading with the error.
+        await run("errorShown", `${notesSection}
+          const close = [...document.querySelectorAll(".bench-window .window-close")].find((each) => each.textContent === "✕");
+          if (close) close.click();
+          node("price-seat").click();
+          await heading("Price Seat");
+          const failed = await until(() => cards().find((each) => each.querySelector(".note-error") && each.dataset.waiting === "agent"), 5000);
+          if (!failed) return { shown: false };
+          const summary = failed.querySelector(".note-run summary");
+          if (summary) summary.click();
+          failed.scrollIntoView({ block: "start" });
+          await wait(1500);
+          const opened = failed.querySelector(".note-run[open]");
+          return { shown: true, open: Boolean(opened), retry: Boolean(opened && [...opened.querySelectorAll("button")].find((b) => b.textContent === "Retry test")) };
+        `);
+        await capture(window, "self-check-note-error");
+        await run("kindShown", `${notesSection}
+          node("tickets-db").click();
+          await heading("Tickets Database");
+          await wait(1500);
+          const kind = document.querySelector("#inspector .role-note");
+          const after = kind && kind.previousElementSibling;
+          return {
+            kind: kind ? kind.textContent : "",
+            underResponsibility: Boolean(after && after.classList.contains("responsibility")),
+            coloured: kind ? getComputedStyle(kind.querySelector(".role-note-kind")).color : "",
+          };
+        `);
+        await capture(window, "self-check-kind");
 
         // An execution written down in the messenger: picked, drawn over the
         // whole application, stepped through, and followed inside.

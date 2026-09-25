@@ -538,6 +538,7 @@ body[data-project="open"] .welcome { display: none; }
 
 /* What kind of thing a block stands for. Quiet: it explains, it does not warn. */
 .role-note { margin: 0; font-size: 12px; color: var(--ink-dim); }
+.role-note-kind { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; color: var(--role); }
 
 .planned-note {
   margin: 8px 0 0;
@@ -875,8 +876,17 @@ pre.code-view { max-height: 420px; overflow: auto; }
 }
 
 .block-box[data-run="done"] .block-plate { stroke: var(--signal-dim); stroke-width: 1.5; }
-/* A failure glows faintly red, so it is found at a glance on a large tree. */
-.block-box[data-run="failed"] .block-plate { stroke: var(--bad); stroke-width: 2; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--bad) 70%, transparent)); }
+/* A failure glows red, so it is found at a glance on a large tree: a run
+   that failed in the block, or a failure flagged there for the agent. It
+   wins over being picked out or pointed at, which would otherwise hide it. */
+.block-box[data-run="failed"] .block-plate,
+.block-box[data-failing="true"] .block-plate,
+.block-box[data-run="failed"] .block-body:hover .block-plate,
+.block-box[data-failing="true"] .block-body:hover .block-plate {
+  stroke: var(--bad);
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--bad) 80%, transparent));
+}
 .block-box[data-run="paused"] .block-plate { stroke: var(--effect); stroke-width: 2.5; }
 .block-box[data-run="stopped"] .block-plate { stroke: var(--pending); stroke-width: 1.5; stroke-dasharray: 4 3; }
 .block-box[data-run="stopped"] .run-note { fill: var(--pending); }
@@ -1717,7 +1727,7 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
 
 /* A run carried by a note, folded to one line until it is wanted. */
 .note-run { font-size: 11.5px; color: var(--ink-dim); }
-.note-run > summary { cursor: pointer; font-family: var(--mono); font-size: 11px; }
+.note-run > summary { cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--bad); }
 .note-run[open] { display: flex; flex-direction: column; gap: 6px; }
 .note-run pre.code { max-height: 200px; overflow: auto; white-space: pre-wrap; }
 .note-run ul { margin: 0; padding-left: 16px; }
@@ -1761,7 +1771,7 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
    failure there. Red is spent here because something is wrong. */
 .block-flag { display: none; pointer-events: bounding-box; }
 .block-box[data-run-flag="true"] .block-flag,
-.block-box[data-flagged="true"] .block-flag { display: inline; }
+.block-box[data-failing="true"] .block-flag { display: inline; }
 .block-flag-pole { fill: none; stroke: var(--bad); stroke-width: 1.5; stroke-linecap: round; }
 .block-flag-cloth { fill: var(--bad); stroke: var(--bad); stroke-width: 1; stroke-linejoin: round; }
 .block-box[data-run-flag="true"] .block-flag-cloth { filter: drop-shadow(0 0 3px color-mix(in srgb, var(--bad) 80%, transparent)); }
@@ -1779,7 +1789,11 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
 .note-on .run-btn { padding: 1px 7px; font-size: 10px; }
 .note-working { margin: 0; font-size: 11px; color: var(--ink); }
 .note-card[data-working="true"] { border-left-color: var(--ink); }
-.note-problem { margin: 0; padding-left: 8px; border-left: 2px solid var(--bad); font-family: var(--mono); font-size: 11px; color: var(--ink-dim); overflow-wrap: anywhere; }
+/* A note flagging something that went wrong says so first, in red. */
+.note-error { margin: 0; font-size: 12px; color: var(--bad); overflow-wrap: anywhere; }
+.note-error-word { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; margin-right: 4px; }
+.note-retry { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.note-retry .run-btn { padding: 2px 8px; font-size: 10.5px; }
 
 /* The commit an answer was made in, and what can be done with it. */
 .note-commit { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 11px; color: var(--ink-dim); }

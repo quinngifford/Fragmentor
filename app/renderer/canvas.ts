@@ -1028,8 +1028,8 @@ interface NoteMark {
   inside: boolean;
   /** Whether the agent has said it is working on any of them. */
   working: boolean;
-  /** Whether any flags a run that went wrong, or a problem Fragmentor reported. */
-  flagged: boolean;
+  /** Whether any, still with the agent, flags a run that went wrong or a problem Fragmentor reported. */
+  failing: boolean;
 }
 
 /**
@@ -1045,13 +1045,13 @@ function noteMarks(tree: Tree): Map<string, NoteMark> {
     if (note.waiting === null || !ui.snapshot?.blocks[note.block]) continue;
     const node = shownAt(tree, note.block);
     if (!node) continue;
-    const mark = marks.get(node.path) ?? { forAgent: 0, forPerson: 0, first: note.block, inside: false, working: false, flagged: false };
+    const mark = marks.get(node.path) ?? { forAgent: 0, forPerson: 0, first: note.block, inside: false, working: false, failing: false };
     if (note.block !== node.path) mark.inside = true;
     // Both are about what the agent still has to do: once it has answered,
     // the note is the person's to judge, and says how the run went again.
     if (note.waiting === "agent" && note.working !== undefined) mark.working = true;
     if (note.waiting === "agent" && note.messages.some((each) => each.from === "person" && (each.run !== undefined || each.problem !== undefined))) {
-      mark.flagged = true;
+      mark.failing = true;
     }
     if (note.waiting === "agent") mark.forAgent += 1;
     else mark.forPerson += 1;
@@ -1094,8 +1094,8 @@ function drawNoteMark(group: SVGGElement, mark: NoteMark): void {
 /**
  * A red flag at a block's corner, beside its count of notes: something went
  * wrong there. It shows while a run being watched went wrong in the block
- * itself, rather than only inside it, and while a note flags a run that went
- * wrong or a problem Fragmentor reported.
+ * itself, rather than only inside it, and while a note still with the agent
+ * flags a run that went wrong or a problem Fragmentor reported.
  * It is drawn on every block and shown by those two states, so a run can
  * raise it without drawing anything anew.
  */
@@ -1172,7 +1172,9 @@ function drawNode(node: TreeNode, layer: Element, arrivalDelay: number | null, n
   drawBlockButtons(group, block);
   if (node.hasParts) drawFold(group, node);
   if (notes) drawNoteMark(group, notes);
-  group.dataset.flagged = String(notes?.flagged ?? false);
+  // A failure flagged for the agent is drawn as a failed run is, until the
+  // agent has answered it: outlined, glowing and flagged in red.
+  group.dataset.failing = String(notes?.failing ?? false);
   drawFlag(group);
 
   // Beside the block's name: where a run can be told to pause before it.
@@ -1351,7 +1353,7 @@ function renderLegend(drawn: boolean): void {
   planned.append(el("span", "legend-swatch fixed"), el("span", "legend-text", "planned, not built yet"));
   legend.append(planned);
 
-  const reset = el("button", "legend-reset", "Back to the defaults");
+  const reset = el("button", "legend-reset", "Reset to default");
   reset.type = "button";
   reset.addEventListener("click", () => {
     for (const role of ROLE_IDS) roleColours.set(role, null);

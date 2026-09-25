@@ -55,6 +55,8 @@ let flaggedRuns = new WeakSet<object>();
  * result, or why there is none, or that it is still running.
  */
 const reruns = new Map<string, { upTo: number; code: string; state: "running" | CaseResult | { error: string } }>();
+/** Flagged runs whose details the person has unfolded, by note and message, so drawing the note again keeps them open. */
+const openRuns = new Set<string>();
 /** Blocks whose resolved notes are unfolded. */
 const unfolded = new Set<string>();
 /** Which note the bar's Show went to last, so pressing it again goes on to the next. */
@@ -75,6 +77,7 @@ export function forgetNotes(): void {
   said.clear();
   reruns.clear();
   unfolded.clear();
+  openRuns.clear();
   flaggedRuns = new WeakSet();
   shownLast = -1;
 }
@@ -135,6 +138,20 @@ const cutTooMuch = (run: FlaggedRun) => (run.cut ?? []).some((part) => part === 
 function canRerun(blockPath: string, run: FlaggedRun): boolean {
   return Boolean(ui.snapshot?.blocks[blockPath]?.runnable) && !cutTooMuch(run);
 }
+
+/**
+ * The words a flag writes for the agent, when the person adds none of their
+ * own. The note says the same in red above what was run, so they are not
+ * shown twice.
+ */
+const FLAG_WORDS = {
+  run: (run: FlaggedRun) => (run.test === null ? "This went wrong when I ran it from the bench." : `The test “${run.test}” fails.`),
+  again: (run: FlaggedRun) => (run.test === null ? "It still goes wrong when I run it again." : `The test “${run.test}” still fails.`),
+  problem: "Fragmentor reports a problem here. Please fix it.",
+};
+
+/** What was run, as the person calls it: a test by its name, or the run they tried from the bench. */
+const runName = (run: FlaggedRun) => (run.test === null ? "Run from the bench" : `Test “${run.test}”`);
 
 /** Whether a run came out right: a test that passes, or a run with no expectation that finished and kept its promise. */
 const cameRight = (result: CaseResult) => result.status === "passed" || result.status === "unchecked";
@@ -262,8 +279,8 @@ async function flagRun(block: SnapshotBlock, run: FlaggedRun, outcome: object | 
     flagKey(block, run),
     (dir) =>
       answered
-        ? window.fragmentor.replyToNote(dir, answered.id, `The test “${run.test}” still fails.`, { run })
-        : window.fragmentor.addNote(dir, block.path, run.test === null ? "This went wrong when I ran it from the bench." : `The test “${run.test}” fails.`, { run }),
+        ? window.fragmentor.replyToNote(dir, answered.id, FLAG_WORDS.again(run), { run })
+        : window.fragmentor.addNote(dir, block.path, FLAG_WORDS.run(run), { run }),
     () => `Flagged for your agent. Tell it “${NOTES_PHRASE}” when you are ready.`,
     () => {
       if (outcome !== undefined) flaggedRuns.add(outcome);
@@ -342,7 +359,7 @@ export function problemFlag(blockPath: string, problem: string): HTMLElement | n
     event.stopPropagation();
     void write(
       key(blockPath, "problem"),
-      (dir) => window.fragmentor.addNote(dir, blockPath, "Fragmentor reports a problem here. Please fix it.", { problem }),
+      (dir) => window.fragmentor.addNote(dir, blockPath, FLAG_WORDS.problem, { problem }),
       () => `Flagged the problem on ${block.name} for your agent. Tell it “${NOTES_PHRASE}” when you are ready.`,
     );
   });
@@ -494,10 +511,34 @@ function openForm(block: Where, row: string): void {
   document.getElementById(`note-${block.path}-${row}`)?.focus();
 }
 
-/** A run flagged with a message: what was run, what was expected and what came back, and why it went wrong. */
-function runDetail(run: FlaggedRun): HTMLElement {
+/**
+ * A run flagged with a message, folded away: what was run, what was expected
+ * and what came back, and why it went wrong. What the note flags can be
+ * retried from here. It stays open, once opened, however often the note
+ * is drawn again.
+ */
+function runDetail(where: Where, note: SnapshotNote, at: number, run: FlaggedRun): HTMLElement {
   const detail = el("details", "note-run");
-  detail.append(el("summary", undefined, run.test === null ? "The run from the bench" : `The saved test “${run.test}”`));
+  const opened = `${note.id}#${at}`;
+  detail.open = openRuns.has(opened);
+  detail.addEventListener("toggle", () => {
+    if (detail.open) openRuns.add(opened);
+    else openRuns.delete(opened);
+  });
+  detail.append(el("summary", undefined, run.test === null ? "View failed run" : "View failed test"));
+  // Whichever of them is opened, it runs the newest, which is the one to run again.
+  if (note.status === "open" && canRerun(where.path, runOf(note) ?? run)) {
+    const retry = el("div", "note-retry");
+    const running = reruns.get(note.id)?.state === "running";
+    retry.append(
+      button(running ? "Retrying…" : run.test === null ? "Retry run" : "Retry test", "Run it again, as it was flagged, and say below how it went. The block's saved tests are not touched.", () => {
+        rerun(note);
+        redrawSection();
+      }, "run-btn"),
+    );
+    if (running) retry.querySelector("button")!.disabled = true;
+    detail.append(retry);
+  }
   const shown = (label: string, value: unknown) => {
     const part = subsection(label);
     part.append(el("pre", "code", JSON.stringify(value, null, 2) ?? "nothing"));
@@ -561,38 +602,31 @@ function commitLine(where: Where, hash: string, subject: string): HTMLElement {
  * whether what the person flagged is put right, so they need not take the
  * agent's word for it. Still wrong, it offers to say so on the note.
  */
-function rerunLine(where: Where, note: SnapshotNote, run: FlaggedRun): HTMLElement {
+function rerunLine(where: Where, note: SnapshotNote, run: FlaggedRun): HTMLElement | null {
   const line = el("div", "note-rerun");
   // A result about code that has since changed says nothing about the code now.
   const kept = reruns.get(note.id);
   const done = kept && (kept.state === "running" || kept.code === codeNow()) ? kept : undefined;
-  const again = button("Run it again", "Run what this note flags again, as it was flagged.", () => {
-    rerun(note);
-    redrawSection();
-  }, "run-btn");
 
-  if (done === undefined) {
-    line.append(el("span", undefined, "What this note flags can be run again."), again);
-    return line;
-  }
+  if (done === undefined) return null;
   if (done.state === "running") {
-    line.append(el("span", undefined, "Running what this note flags again…"));
+    line.append(el("span", undefined, run.test === null ? "Running it again…" : "Running the test again…"));
     return line;
   }
   if ("error" in done.state) {
     line.dataset.tone = "bad";
-    line.append(el("span", undefined, `It could not be run again: ${done.state.error}`), again);
+    line.append(el("span", undefined, `It could not be run again: ${done.state.error}`));
     return line;
   }
   const result = done.state;
   if (cameRight(result)) {
     line.dataset.tone = "good";
-    line.append(el("span", undefined, run.test === null ? "Ran it again: it finishes now, and keeps its promise." : `Ran it again: “${run.test}” passes now.`), again);
+    line.append(el("span", undefined, run.test === null ? "Ran it again: it finishes now, and keeps its promise." : `Ran it again: “${run.test}” passes now.`));
     return line;
   }
   line.dataset.tone = "bad";
   const problems = result.differences.length > 0 ? result.differences : [result.error ?? "It failed."];
-  line.append(el("span", undefined, `Ran it again: it still fails. ${[...problems, ...result.inputProblems].join(" ")}`), again);
+  line.append(el("span", undefined, `Ran it again: it still fails. ${[...problems, ...result.inputProblems].join(" ")}`));
   if (note.waiting === "person" && ui.snapshot?.blocks[where.path]) {
     const still: FlaggedRun = {
       test: run.test,
@@ -607,7 +641,7 @@ function rerunLine(where: Where, note: SnapshotNote, run: FlaggedRun): HTMLEleme
       button("Tell your agent", "Reply that it still fails, with this run, which gives the note back to your agent.", () => {
         void write(
           key(where.path, note.id),
-          (dir) => window.fragmentor.replyToNote(dir, note.id, "It still fails when I run it again.", { run: still }),
+          (dir) => window.fragmentor.replyToNote(dir, note.id, FLAG_WORDS.again(run), { run: still }),
           () => `Told your agent it still fails. Tell it “${NOTES_PHRASE}” when you are ready.`,
         );
       }, "run-btn"),
@@ -628,21 +662,36 @@ function noteCard(block: Where, note: SnapshotNote, gone = false): HTMLElement {
   if (note.on) card.append(anchorLine(note.on));
   if (card.dataset.working) card.append(el("p", "note-working", `Your agent started on this at ${when(note.working!)}.`));
 
-  for (const message of note.messages) {
+  note.messages.forEach((message, at) => {
     const line = el("div", "note-message");
     line.dataset.from = message.from;
-    line.append(el("span", "note-from", fromWord(message)), el("p", "note-text", message.text));
-    if (message.problem) line.append(el("p", "note-problem", message.problem));
-    if (message.run) line.append(runDetail(message.run));
+    line.append(el("span", "note-from", fromWord(message)));
+    // Something that went wrong says so first, in red. The words a flag
+    // writes for the agent say the same, so only the person's own are shown.
+    const error = (words: string) => {
+      const said = el("p", "note-error");
+      said.append(el("span", "note-error-word", "ERROR:"), document.createTextNode(words));
+      return said;
+    };
+    if (message.run) line.append(error(`${runName(message.run)}${at > 0 ? " still fails" : ""}`));
+    if (message.problem) {
+      const said = error(message.problem);
+      said.classList.add("note-problem");
+      line.append(said);
+    }
+    const flagWords = [message.run ? FLAG_WORDS.run(message.run) : "", message.run ? FLAG_WORDS.again(message.run) : "", message.problem ? FLAG_WORDS.problem : ""];
+    if (!flagWords.includes(message.text)) line.append(el("p", "note-text", message.text));
+    if (message.run) line.append(runDetail(block, note, at, message.run));
     if (message.commit) line.append(commitLine(block, message.commit.hash, message.commit.subject));
     card.append(line);
-  }
+  });
 
   // Once the agent has answered a note flagging a run, what was flagged is
   // run again, so whether it is put right is seen rather than taken on trust.
   const run = runOf(note);
   if (run && note.status === "open") {
-    if (canRerun(block.path, run)) card.append(rerunLine(block, note, run));
+    const result = canRerun(block.path, run) ? rerunLine(block, note, run) : null;
+    if (result) card.append(result);
     else if (cutTooMuch(run)) card.append(el("p", "bench-note", "What this note flags was too large to keep whole, so it cannot be run again as it was."));
   }
 

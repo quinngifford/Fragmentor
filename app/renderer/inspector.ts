@@ -603,6 +603,19 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
 
   panel.append(el("p", "responsibility", block.responsibility));
 
+  // A block that is not code says what kind of thing it is, under what it
+  // does, with the kind in its own colour as the badge above has it. It is a
+  // quiet line rather than the dashed box a planned block gets: a database is
+  // not a warning about anything, and what Fragmentor does not do with it is
+  // already said by the sections it has none of.
+  if (block.architecture) {
+    const kind = el("p", "role-note");
+    const word = el("span", "role-note-kind", `${ROLES[block.role].label}:`);
+    word.dataset.role = block.role;
+    kind.append(word, document.createTextNode(` ${ROLES[block.role].description}`));
+    panel.append(kind);
+  }
+
   if (block.planned) {
     panel.append(
       el(
@@ -619,12 +632,6 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   // What the person and the agent have asked each other about the block comes
   // before what the block is, because it is what is waiting to be done.
   panel.append(notesSection(block));
-
-  // A block that is not code says what kind of thing it is. It is a quiet
-  // line rather than the dashed box a planned block gets: a database is not a
-  // warning about anything, and what Fragmentor does not do with it is
-  // already said by the sections it has none of.
-  if (block.architecture) panel.append(el("p", "role-note", ROLES[block.role].description));
 
   // The same sections, in the same order, whatever kind of block this is: its
   // notes, then what it can be used through, what it reaches, where its code is, how to set it
