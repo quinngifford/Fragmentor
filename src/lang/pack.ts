@@ -28,6 +28,64 @@ export interface ContractRequest {
   bound?: Record<string, PortType>;
 }
 
+/**
+ * A place in the project that code leads to: a name that another file
+ * declares or exports.
+ */
+export interface Target {
+  /** Relative to the project, with forward slashes. */
+  file: string;
+  /**
+   * The name used. `*` is the whole module used as a value, such as a
+   * namespace handed on whole, and null is an import that only runs the file.
+   */
+  name: string | null;
+}
+
+/** What one stretch of code uses: in other files, in its own file, and what could not be read. */
+export interface Uses {
+  targets: Target[];
+  /** Names declared at the top of the same file. */
+  local: string[];
+  /** Why something it reaches could not be followed, in words, such as `a dynamic import in src/x.ts`. */
+  notChecked: string[];
+}
+
+/**
+ * What one file's code reaches, cut up the way blocks point at code: by the
+ * names declared at its top level, and the rest.
+ *
+ * Imports of the language's built-ins and of installed packages are already
+ * left out, because what a package does is the package's business, and every
+ * target is a file inside the project.
+ */
+export interface FileReach {
+  /** Each top-level function, class or variable, by name. */
+  declarations: Map<string, Uses>;
+  /** Top-level statements, and imports that only run a file. */
+  rest: Uses;
+  /**
+   * Names the file exports without declaring them: another of its own names
+   * under a new one, or a name passed on from another file. Null for one
+   * passed on from a package.
+   */
+  exports: Map<string, { local: string } | Target | null>;
+  /** Files every export of which is passed on, as `export * from` does. */
+  exportsAll: string[];
+}
+
+/** How a pack reads what code reaches, for comparing it with what the diagram says. */
+export interface ReachReader {
+  /** Whether a project file is this language's code, a test of it, or neither. */
+  fileKind(file: string): "code" | "test" | null;
+  /**
+   * Starts one reading of a project, which reads each file handed to it by
+   * its path relative to the project and its text. What a reading learns about
+   * the disk on the way is kept only while it lasts.
+   */
+  reading(projectDir: string): (file: string, text: string) => FileReach;
+}
+
 export interface LanguagePack {
   /** Stored in fragmentor.json. */
   id: string;
@@ -70,6 +128,9 @@ export interface LanguagePack {
 
   /** Whether `fragmentor check` can typecheck code in this language yet. */
   canCheck: boolean;
+
+  /** How to read what this language's code reaches. A pack without it cannot say. */
+  reach?: ReachReader;
 }
 
 const packs = new Map<string, LanguagePack>();

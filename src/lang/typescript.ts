@@ -6,6 +6,7 @@ import type { PortType } from "../model/types.js";
 import { camelCase, pascalCase } from "./naming.js";
 import { registerPack } from "./pack.js";
 import type { ContractRequest, LanguagePack } from "./pack.js";
+import { typescriptReach } from "./typescriptReach.js";
 
 /**
  * TypeScript, validated with zod.
@@ -153,6 +154,7 @@ export const typescriptPack: LanguagePack = {
 
   canRun: true,
   canCheck: true,
+  reach: typescriptReach,
 };
 
 registerPack(typescriptPack);

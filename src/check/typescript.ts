@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
-import { builtinModules, createRequire } from "node:module";
+import { createRequire } from "node:module";
 import path from "node:path";
 import ts from "typescript";
+import { importsOnlyTypes, isBuiltin } from "../lang/typescriptReach.js";
 import type { BlockCode } from "../project/code.js";
 import type { LoadedBlock, Project } from "../project/project.js";
 
@@ -52,12 +53,6 @@ const OPTIONS: ts.CompilerOptions = {
   paths: { zod: [zodDir] },
 };
 
-const BUILTINS = new Set(builtinModules);
-
-function isBuiltin(specifier: string): boolean {
-  return specifier.startsWith("node:") || BUILTINS.has(specifier.split("/")[0]!);
-}
-
 /** A bare name such as `lodash` or `@scope/tool`, as opposed to a path. */
 function isPackage(specifier: string): boolean {
   return !specifier.startsWith(".") && !specifier.startsWith("/") && !path.isAbsolute(specifier);
@@ -72,21 +67,6 @@ function packageName(specifier: string): string {
 function at(file: string, source: ts.SourceFile, position: number): Omit<CodeProblem, "message"> {
   const { line, character } = source.getLineAndCharacterOfPosition(position);
   return { file, line: line + 1, column: character + 1 };
-}
-
-/** True when an import brings in types only, and so disappears when compiled. */
-function importsOnlyTypes(statement: ts.ImportDeclaration): boolean {
-  const clause = statement.importClause;
-  if (!clause) return false; // `import "x"` runs x
-  if (clause.isTypeOnly) return true;
-  if (clause.name) return false;
-  const bindings = clause.namedBindings;
-  return (
-    bindings !== undefined &&
-    ts.isNamedImports(bindings) &&
-    bindings.elements.length > 0 &&
-    bindings.elements.every((element) => element.isTypeOnly)
-  );
 }
 
 function importProblems(

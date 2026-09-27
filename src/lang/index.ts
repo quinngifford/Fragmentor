@@ -8,5 +8,5 @@ import "./typescript.js";
 import "./python.js";
 
 export { getPack, isKnownLanguage, knownLanguages, normaliseLanguage, registerPack } from "./pack.js";
-export type { ContractRequest, LanguagePack } from "./pack.js";
+export type { ContractRequest, FileReach, LanguagePack, ReachReader, Target, Uses } from "./pack.js";
 export { camelCase, pascalCase, snakeCase } from "./naming.js";
