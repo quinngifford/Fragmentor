@@ -2,7 +2,18 @@
 
 ## Current focus
 
-**Separating architecture from execution.** The block tree now means containment only: what a system is made of, and what owns what. Runtime behaviour is moving into executions: a trigger, the conditions it happens under, and the trace of everything that followed across the whole architecture. `PROJECT.md` describes the model. The work happens on the `execution-model` branch, in phases, each ending with the tests and the self-check passing.
+**Six features to make Fragmentor sellable**, decided on 2026-09-27 and planned in the git-ignored `scratch/plans/`, where `PROGRAMME.md` gives the order, the checkpoints and every decision still open:
+
+1. **First run on a real codebase.** Real agents trying the guide on open-source repos, then fixing what they get wrong. Already known: every typed block's `contract.ts` imports zod, which breaks the buyer's own `tsc` on a repo that compiles every `.ts` file. A **Hold this block to its contract** action gives existing code a clickable path to being checked.
+2. **Recorded traces.** **Record** on the execution bar, with each written-down step marked seen or not seen.
+3. **Architecture rules and verified access.** Code that reaches what the diagram does not say, and rules the person makes by clicking.
+4. **Changes.** What the architecture did since you last looked, read from git.
+5. **Python.** Checked, run and tested like TypeScript.
+6. **Export.** One read-only HTML page of the tree and its executions.
+
+The work happens on `block-notes`, the trunk, each effort on a short-lived branch off it. `checkpoint/pre-programme` marks where it started.
+
+What came before this is the redesign separating architecture from execution. The block tree means containment only; runtime behaviour is in executions: a trigger, the conditions it happens under, and the trace of everything that followed. `PROJECT.md` describes the model. Its phases:
 
 1. **Done: the trace kernel, on its own.** `src/model/trace.ts` holds addresses, the three kinds of event (interaction, return, effect), entered and activated, `place`/`placeEvent`, which say where an event is drawn given how much of the architecture is showing, `travelOf`, which says which way a step runs so that every drawing of it points the same way, and stepping that passes over what a folded block hides. `src/project/executions.ts` reads `executions/<name>.json`: a trigger, starting store contents, an optional trace an agent wrote (always kept as `declared`), and optional expectations. `src/run/expect.ts` evaluates expectations against any trace.
 2. **Done: the wired model is gone.** There are no wires, no `each`, no list of children and no generated composite code. A block's parts are the folders inside it. Every function's code is the agent's, and calls whichever other functions it needs directly. Contracts are optional. A `component` role covers groups of parts that are not called. The five old examples are replaced by `examples/tickets`.
@@ -10,8 +21,8 @@
 4. **Done: the canvas rebuilt around the tree**, and looked at. After a first look the person asked for the architecture to be one top-down tree with the whole system on it, blocks small with their details in windows, an execution stepped through one arrow at a time, and a separate drawing of each execution from beginning to end. All of that is built, reviewed and seen; the person called it "absolutely fantastic".
 5. **Done: what the agent is told.** There are no modes, every function block says where its code is, and one guide replaces two. Described under "One model" below.
 6. **Decided against: saving a trace from a test run.** A saved test stays what it is — values in, values out — and nothing records a trace from running one. What is left of the phase after it is the question below.
-7. **Open: what becomes of a watched run.** It is the one place two things still say the same thing twice: a watched run already produces a call tree and the effects a run left behind, which is what a trace is made of, on a bar of its own beside the execution stepper. Whether it becomes a recorded execution, or stays what it is, is the person's to decide.
-8. Then: breakpoints over traces, documentation and a simplification pass.
+7. **Open: what becomes of a watched run.** It is the one place two things still say the same thing twice: a watched run already produces a call tree and the effects a run left behind, which is what a trace is made of, on a bar of its own beside the execution stepper. Whether it becomes a recorded execution, or stays what it is, is the person's to decide, once they have seen Record.
+8. Then: breakpoints over traces, documentation and a simplification pass. None of the six features includes breakpoints over traces.
 
 ## One model, and where the code lives
 
@@ -21,7 +32,7 @@ Asked right after the rebuilt canvas was approved — what has to change in what
 - **What Fragmentor does with a block's code is a fact about that block.** It writes the contract of a function block whose ports are written as types, in a language there is a pack for, into the block's own folder. **Code that imports that contract is typechecked against it, run, benched and tested; code that does not is drawn and read.** The import is the binding, because nothing else could hold a function to a shape it never mentions. `src/project/code.ts` is where that is worked out, once, for everything that asks.
 - **`fragmentor check` says which blocks are drawn rather than checked, and why** — words, no pack, or an import that is not there — because a block it is quietly not checking would be worse than one it says it cannot.
 - **`mode` is gone from `fragmentor.json`**, and a manifest still carrying it is told what became of it. The new-project questions lose the one about Fragmentor's role over the code. A language written the way a person writes it ("TypeScript") is read as the pack it means.
-- **One guide.** `src/codegen/guide.md` with `guide.ts` replaces `guide-structured.md` and `guide-visual.md`. Contracts, running and testing are one section that says when they apply; executions are taught in every project rather than only where the diagram described existing code. It runs to about 260 lines for a TypeScript project and about 215 where nothing can be generated, against 213 and 197 for the two it replaced. `guide.test.ts` still writes the worked example into a temporary project and runs the check and the tests over it, so the guide cannot teach something that fails.
+- **One guide.** `src/codegen/guide.md` with `guide.ts` replaces `guide-structured.md` and `guide-visual.md`. Contracts, running and testing are one section that says when they apply; executions are taught in every project rather than only where the diagram described existing code. It runs to about 310 lines for a TypeScript project, with the notes and commands since added to it, against 213 and 197 for the two it replaced; `guide.test.ts` holds it under 316, and under 270 where nothing can be generated. `guide.test.ts` still writes the worked example into a temporary project and runs the check and the tests over it, so the guide cannot teach something that fails.
 - **`examples/tickets` keeps its code under `src/booking/`**, which is what the new rule is for, and `examples/messenger` needed no change but its manifest: its blocks already pointed at code, and none of that code imports a contract, so all of it is drawn.
 
 What is still open, for whoever picks this up:
@@ -52,7 +63,7 @@ What is still open, for whoever picks this up:
 - **`examples/messenger`**, a chat application described as it stands, none of whose code imports a contract, so all of it is drawn: a client with its UI and state, an API with a router and `auth` and `messaging` components, workers, and infrastructure holding a PostgreSQL database and a queue, pointing at real TypeScript under `src/`. Five executions are written down (sending a message, logging in, logging out, delivering a notification off the queue, and a scheduled clean-up), each step saying what it is and which function makes it, each with expectations its own trace meets.
 - **`examples/tickets`.** A box office, a REST API, a PostgreSQL database, an outbox queue and a planned reminders job, with its code under `src/booking/` and each block pointing at it. Inside the API, `book-seats` and `cancel-booking` both use `find-event`, which therefore sits beside them; a `pricing` component holds `price-seat` and `refund-for`; `reserve` is used only by `book-seats` and sits inside it. Booking turns a request away early when it cannot be met, prices each seat at once, writes two tables and sends a confirmation. Thirteen tests pass.
 - **A mark in every block's corner** saying what kind of thing it is, in the block's own colour: angle brackets for a function, a frame holding boxes for a component, a cylinder for a database, a person for a client.
-- **Colour and arrangement.** Hue says which world a thing belongs to, from most yours to least; dashed means not built yet and nothing else. **By block**, the default, gives every block a colour of its own; **by kind** uses the vocabulary, with a legend that lists every kind, marks the ones on screen, and folds away. A kind's colour is changed from the legend and one block's from the inspector, remembered in the browser profile. A diagram reads left to right from whoever sets the system going, with stores and queues underneath what reaches them.
+- **Colour and arrangement.** Hue says which world a thing belongs to, from most yours to least; dashed means not built yet and nothing else. **By block**, the default, gives every block a colour of its own; **by kind** uses the vocabulary, with a legend that lists every kind, marks the ones on screen, and folds away. A kind's colour is changed from the legend and one block's from the inspector, remembered in the browser profile. A block's parts are drawn in the order of their folder names; nothing orders them by role, and no block can be dragged, which `PROJECT.md`'s section on arrangement still describes.
 - **A question tree when a project is created**, asking where you are starting from, whether to plan first, how finely to divide the work and optionally the language, and writing the answers into `fragmentor.json`. `fragmentor init` does the same for an agent. Once the project exists, a window says what to send the agent first, from those answers as written — `fragmentor rebuild` for code already there, `fragmentor plan <what you want to build>` to plan first and `fragmentor make <what you want to build>` to build straight away — with the folder to open it in, every other command, and where to find them again. The empty canvas says the same until the agent defines a system.
 - **The application menu.** **New Project…**, **Open Project…** and **Close Project** are under File; View › **Commands** opens the commands for the agent, and View › **Reload Project** (Ctrl+R) reads the project from disk again, in place of reloading the page, which would drop back to the start screen. There is no **Generate code**: the agent's `fragmentor check` rewrites the contracts, the guide and the slash commands every time it runs, and nothing in the window needs the contracts current, since running and testing strip them.
 - **Planned architecture.** A block with `"planned": true` is drawn greyed out with a dashed edge and a `PLANNED` label, its types may be words, nothing about it is an error, and nothing is generated, checked or run for it. Planning spreads downward only. A contract Fragmentor wrote for a block that is now planned is taken away; no code is ever touched, because none of it is Fragmentor's.
@@ -136,19 +147,17 @@ What is still open, for whoever picks this up:
 
 ## Current checkpoint
 
-- `block-versions`: a block's versions from git, compared, swapped and undone, branched from `execution-model`.
-- `execution-model`: the redesign, with phases 1 to 5 done. `checkpoint/pre-one-mode` is the state before modes went; `checkpoint/pre-tree-view` is the state before the canvas was rebuilt around the tree.
-- `main`: the last state of the wired model.
-- Tags, newest first: `checkpoint/pre-one-mode`, `checkpoint/pre-execution-model` (where the redesign branched off), `checkpoint/pre-store-capability`, `checkpoint/pre-triggers`, `checkpoint/pre-subtypes`, `checkpoint/pre-connection-colours`, `checkpoint/pre-architecture-blocks`, `checkpoint/pre-planned-blocks`, `checkpoint/pre-inspector-ui` and `checkpoint/pre-modes`.
-- Every test passes, as does `npm run check:app`. The line-ending failure that stood for a long time went with the generated composite code it checked.
+- `block-notes`: the trunk, holding everything: notes, commands, versions and the redesign. Every other branch is already in it. `checkpoint/pre-programme` tags it as the six features begin.
+- `block-versions` and `execution-model`: earlier stages of the same line, kept as they were. `checkpoint/pre-one-mode` is the state before modes went; `checkpoint/pre-tree-view` is the state before the canvas was rebuilt around the tree.
+- `main`: the last state of the wired model, 38 commits behind the trunk. Whether to move it forward is open.
+- Tags, newest first: `checkpoint/pre-programme`, `checkpoint/pre-one-mode`, `checkpoint/pre-execution-model` (where the redesign branched off), `checkpoint/pre-store-capability`, `checkpoint/pre-triggers`, `checkpoint/pre-subtypes`, `checkpoint/pre-connection-colours`, `checkpoint/pre-architecture-blocks`, `checkpoint/pre-planned-blocks`, `checkpoint/pre-inspector-ui` and `checkpoint/pre-modes`.
+- All 455 tests pass, as do both typechecks, `npm run check:examples` and `npm run check:app`. `src/run/versions.test.ts` has failed now and then and passed when run again alone.
 - **The colour palettes in `app/renderer/state.ts` are the person's own**, edited by hand: `DEFAULT_ROLE_COLOURS` and `BLOCK_PALETTE`. Do not tidy or re-pick them. The one entry added since, `component`, was chosen to sit beside the function green and is the person's to change.
 
 ## Next major steps
 
-1. **Phases 3 to 6 of the redesign**, listed under "Current focus".
-2. **Run the guide with a real agent**, plan-first included, in an empty folder and over a codebase that already exists, and tighten `FRAGMENTOR.md` wherever the agent goes wrong.
-3. Show everything `fragmentor check` finds in the application, code problems included.
-4. Decide how Python blocks import one another, so they can be run and watched.
+1. **The six features**, in the order `scratch/plans/PROGRAMME.md` gives, starting with trials of the guide by real agents on real repos, against a copy of Fragmentor frozen for the length of the trials.
+2. Not in any of the six, and not yet decided: showing everything `fragmentor check` finds in the application, code problems included; breakpoints over traces; and how a buyer installs Fragmentor without typing `npm install` and `npm link`.
 
 ## Status-file rule
 
