@@ -70,8 +70,8 @@ export interface FileReach {
    * passed on from a package.
    */
   exports: Map<string, { local: string } | Target | null>;
-  /** Files every export of which is passed on, as `export * from` does. */
-  exportsAll: string[];
+  /** Files every export of which is passed on, as `export * from` does. Null for a package's. */
+  exportsAll: (string | null)[];
 }
 
 /** How a pack reads what code reaches, for comparing it with what the diagram says. */

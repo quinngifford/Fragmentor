@@ -178,7 +178,7 @@ function isFile(file: string): Promise<boolean> {
 }
 
 /** Windows and macOS keep names' capitals but, by default, find a file whatever the capitals asked for. */
-const IGNORES_CASE = process.platform === "win32" || process.platform === "darwin";
+export const IGNORES_CASE = process.platform === "win32" || process.platform === "darwin";
 
 /**
  * Two names for one file on a disk that ignores case, or null.

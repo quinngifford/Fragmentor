@@ -113,6 +113,54 @@ describe("the forms of import it follows", () => {
     expect(pairs(await reachOf())).toEqual(["app/a -> app/db", "app/b -> app/db"]);
   });
 
+  it("finds a paths alias kept in a config the project's tsconfig only refers to, as Vite sets one up", async () => {
+    await block("app/db", part("database", "src/lib/db.ts"));
+    await source("src/lib/db.ts", "export const db = 1;\n");
+    await source("tsconfig.json", JSON.stringify({ files: [], references: [{ path: "./tsconfig.app.json" }, { path: "./tsconfig.node.json" }] }));
+    await source("tsconfig.app.json", JSON.stringify({ compilerOptions: { module: "ESNext", moduleResolution: "bundler", paths: { "@/*": ["./src/*"] } }, include: ["src"] }));
+    await source("tsconfig.node.json", JSON.stringify({ compilerOptions: { module: "ESNext", moduleResolution: "bundler" }, include: ["vite.config.ts"] }));
+    await block("app/a", fn("src/a.ts#a"));
+    await source("src/a.ts", 'import { db } from "@/lib/db";\nimport { nope } from "@/lib/missing";\nexport function a() { return db + nope; }\n');
+
+    const reach = await reachOf();
+    expect(reach.edges).toEqual([{ from: "app/a", to: "app/db", evidence: "db from src/lib/db.ts", approximate: false }]);
+    expect(reach.notChecked).toEqual({ "app/a": ['an import of "@/lib/missing" in src/a.ts that could not be found'] });
+  });
+
+  it("reads the same reach when the project is opened through a link to its folder", async () => {
+    await withDatabase();
+    await source("tsconfig.json", JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }));
+    await block("app/a", fn("src/a.ts#a"));
+    await block("app/b", fn("src/b.ts#b"));
+    await source("src/a.ts", 'import { db } from "./db";\nexport function a() { return db; }\n');
+    await source("src/b.ts", 'import { open } from "@/db";\nexport function b() { return open(); }\n');
+    const link = `${dir}-link`;
+    await symlink(dir, link, "junction");
+    try {
+      const reach = await reachOf(link);
+      expect(pairs(reach)).toEqual(["app/a -> app/db", "app/b -> app/db"]);
+      expect(reach).toEqual(await reachOf());
+    } finally {
+      await rm(link, { recursive: true, force: true });
+    }
+  });
+
+  it("follows a name through the index file a block points at to the block, though no block owns the file declaring it", async () => {
+    await block("app/client", part("client", "src/client/index.ts"));
+    await source("src/client/index.ts", 'export { dispatch } from "./state";\nexport * from "./view";\n');
+    await source("src/client/state.ts", "export function dispatch() { return 1; }\n");
+    await source("src/client/view.ts", "export function paint() { return 1; }\n");
+    await block("app/a", fn("src/a.ts#a"));
+    await source("src/a.ts", 'import { dispatch, paint } from "./client/index";\nexport function a() { return dispatch() + paint(); }\n');
+
+    const reach = await reachOf();
+    expect(reach.edges).toEqual([
+      { from: "app/a", to: "app/client", evidence: "dispatch from src/client/state.ts", approximate: false },
+      { from: "app/a", to: "app/client", evidence: "paint from src/client/view.ts", approximate: false },
+    ]);
+    expect(reach.notChecked).toEqual({});
+  });
+
   it("follows a workspace package linked into node_modules to the project's own source", async () => {
     await withDatabase();
     await source("packages/shared/package.json", JSON.stringify({ name: "@acme/shared", main: "index.ts", types: "index.ts" }));
@@ -177,6 +225,42 @@ describe("what it leaves out", () => {
 
     const reach = await reachOf();
     expect(reach.edges).toEqual([]);
+    expect(reach.notChecked).toEqual({});
+  });
+
+  it("says nothing about stylesheets, images and data a component imports, which are not code", async () => {
+    await withDatabase();
+    await source("tsconfig.json", JSON.stringify({ compilerOptions: { module: "ESNext", moduleResolution: "bundler", resolveJsonModule: true, jsx: "react-jsx" } }));
+    await block("app/ui", part("client", "src/ui"));
+    await block("app/page", fn("src/page/Page.tsx#Page"));
+    const imports =
+      'import "./App.css";\nimport styles from "./App.module.css";\nimport logo from "./logo.svg";\nimport icon from "./icon.png?url";\nimport data from "../data.json";\nimport { db } from "../db";\n';
+    await source("src/ui/App.tsx", `${imports}export function App() { return <img src={logo + icon} className={styles.a} data-x={data.a + db.rows.size} />; }\n`);
+    await source("src/page/Page.tsx", `${imports}export function Page() { return <img src={logo + icon} className={styles.a} data-x={data.a + db.rows.size} />; }\n`);
+    await source("src/ui/App.css", "body {}\n");
+    await source("src/ui/App.module.css", ".a {}\n");
+    await source("src/ui/logo.svg", "<svg/>\n");
+    await source("src/data.json", '{ "a": 1 }\n');
+
+    expect(await reachOf()).toEqual({
+      edges: [
+        { from: "app/page", to: "app/db", evidence: "db from src/db.ts", approximate: false },
+        { from: "app/ui", to: "app/db", evidence: "db from src/db.ts", approximate: false },
+      ],
+      notChecked: {},
+      unpointed: [],
+      systemsRead: { app: true },
+    });
+  });
+
+  it("says nothing about a name a barrel passes on from a package", async () => {
+    await withDatabase();
+    await source("src/index.ts", 'export * from "node:path";\nexport * from "./db";\n');
+    await block("app/a", fn("src/a.ts#a"));
+    await source("src/a.ts", 'import { join, db } from "./index";\nexport function a() { return join("a") + db; }\n');
+
+    const reach = await reachOf();
+    expect(reach.edges).toEqual([{ from: "app/a", to: "app/db", evidence: "db from src/db.ts", approximate: false }]);
     expect(reach.notChecked).toEqual({});
   });
 
@@ -293,11 +377,20 @@ describe("what it says it could not read", () => {
     });
   });
 
-  it("lists an import of the project's own code that leads nowhere", async () => {
+  it("lists an import of the project's own code that leads nowhere, even through an alias no tsconfig declares", async () => {
     await block("app/a", fn("src/a.ts#a"));
-    await source("src/a.ts", 'import { gone } from "./gone";\nexport function a() { return gone; }\n');
+    await source(
+      "src/a.ts",
+      'import { gone } from "./gone";\nimport { lost } from "@/lost";\nimport { away } from "~/away";\nexport function a() { return [gone, lost, away]; }\n',
+    );
 
-    expect((await reachOf()).notChecked).toEqual({ "app/a": ['an import of "./gone" in src/a.ts that could not be found'] });
+    expect((await reachOf()).notChecked).toEqual({
+      "app/a": [
+        'an import of "./gone" in src/a.ts that could not be found',
+        'an import of "@/lost" in src/a.ts that could not be found',
+        'an import of "~/away" in src/a.ts that could not be found',
+      ],
+    });
   });
 
   it("counts the whole file for a method pointer, marked approximate, and says why", async () => {
@@ -319,6 +412,19 @@ describe("what it says it could not read", () => {
     await source("src/a.ts", 'import * as glue from "./glue";\nexport function a() { return Object.keys(glue); }\n');
 
     expect((await reachOf()).edges).toEqual([{ from: "app/a", to: "app/db", evidence: "db from src/db.ts", approximate: true }]);
+  });
+
+  it("counts a namespace handed on whole as reaching every block in its file, the ones pointing at functions approximately", async () => {
+    await block("app/lib", part("component", "src/lib.ts"));
+    await block("app/other", fn("src/lib.ts#other"));
+    await source("src/lib.ts", "export function one() { return 1; }\nexport function other() { return 2; }\n");
+    await block("app/a", fn("src/a.ts#a"));
+    await source("src/a.ts", 'import * as lib from "./lib";\nexport function a() { return Object.keys(lib); }\n');
+
+    expect((await reachOf()).edges).toEqual([
+      { from: "app/a", to: "app/lib", evidence: "all of src/lib.ts", approximate: false },
+      { from: "app/a", to: "app/other", evidence: "all of src/lib.ts", approximate: true },
+    ]);
   });
 
   it("says a file it cannot read could not be read, rather than failing", async () => {

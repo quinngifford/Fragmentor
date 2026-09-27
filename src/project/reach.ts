@@ -4,6 +4,7 @@ import { isGeneratedSource } from "../codegen/emit.js";
 import type { FileReach, ReachReader, Target, Uses } from "../lang/index.js";
 import { packFor } from "./code.js";
 import type { BlockCode } from "./code.js";
+import { IGNORES_CASE, under } from "./history.js";
 import { LARGEST_SHOWN } from "./project.js";
 import type { Project } from "./project.js";
 
@@ -55,10 +56,7 @@ export interface ProjectReach {
 }
 
 /** Windows and macOS find a file whatever the case it is written in, so a pointer written differently still covers it. */
-const IGNORES_CASE = process.platform === "win32" || process.platform === "darwin";
 const fold = (file: string): string => (IGNORES_CASE ? file.toLowerCase() : file);
-
-const within = (blockPath: string, ancestor: string): boolean => blockPath === ancestor || blockPath.startsWith(`${ancestor}/`);
 
 /** A block's pointer, as the owner of the code it covers. */
 interface Owner {
@@ -169,8 +167,12 @@ export async function readProjectReach(project: Project, code: Map<string, Block
     }
   };
 
-  /** Where a name used from a file is really declared, through any files that only pass it on. Null when it is nowhere to be found. */
-  const definition = (target: Target, reader: ReachReader, seen = new Set<string>()): Target | "outside" | null => {
+  /**
+   * Where a name used from a file is really declared, through any files that
+   * only pass it on, which are added to `through` nearest first. Null when it
+   * is nowhere to be found.
+   */
+  const definition = (target: Target, reader: ReachReader, through: string[], seen = new Set<string>()): Target | "outside" | null => {
     if (target.name === null || target.name === "*") return target;
     const found = source(target.file, reader);
     if (found === null) return "outside";
@@ -180,15 +182,25 @@ export async function readProjectReach(project: Project, code: Map<string, Block
     seen.add(key);
     const passed = found.exports.get(target.name);
     if (passed === null) return "outside";
+    let declared: Target | "outside" | null = null;
     if (passed !== undefined) {
-      if (!("local" in passed)) return definition(passed, reader, seen);
-      return found.declarations.has(passed.local) ? { file: target.file, name: passed.local } : null;
+      if ("local" in passed) return found.declarations.has(passed.local) ? { file: target.file, name: passed.local } : null;
+      declared = definition(passed, reader, through, seen);
+    } else {
+      for (const file of found.exportsAll) {
+        if (file !== null) declared = definition({ file, name: target.name }, reader, through, seen);
+        if (declared !== null) break;
+      }
+      // A name no file of the project passes on may be a package's, passed on whole.
+      if (declared === null && found.exportsAll.includes(null)) return "outside";
     }
-    for (const file of found.exportsAll) {
-      const each = definition({ file, name: target.name }, reader, seen);
-      if (each !== null) return each;
-    }
-    return null;
+    if (declared !== null && declared !== "outside") through.unshift(target.file);
+    return declared;
+  };
+
+  const addEdge = (from: string, to: string, evidence: string, approximate: boolean) => {
+    const key = `${from}\n${to}\n${evidence}`;
+    if (!approximate || !edges.has(key)) edges.set(key, { from, to, evidence, approximate });
   };
 
   /** Every name any block's code was followed into, to tell what nothing accounts for. */
@@ -209,7 +221,8 @@ export async function readProjectReach(project: Project, code: Map<string, Block
     };
 
     const follow = (target: Target, approximate: boolean): void => {
-      const found = definition(target, reader);
+      const through: string[] = [];
+      const found = definition(target, reader, through);
       if (found === "outside") return;
       if (found === null) note(reacher, `"${target.name}" in ${target.file} could not be found, so all of ${target.file} is counted`);
       const at = found ?? { file: target.file, name: "*" };
@@ -222,14 +235,26 @@ export async function readProjectReach(project: Project, code: Map<string, Block
 
       const read = source(at.file, reader);
       if (read === null) return;
-      const owner = ownerOf(at.file, at.name === "*" ? null : at.name);
-      if (owner !== undefined && !within(reacher, owner.path)) {
+      let owner = ownerOf(at.file, at.name === "*" ? null : at.name);
+      if (owner === undefined || under(owner.path, reacher)) {
+        // A name declared where no other block's pointer reaches, but passed on
+        // by a file that is some block's, such as the index a block points at,
+        // is that block's: it is what the code imported from.
+        owner = through.map((file) => restOwner(file)).find((each) => each !== undefined && !under(each.path, reacher)) ?? owner;
+      }
+      if (owner !== undefined && !under(owner.path, reacher)) {
         // Its own parts reach what they reach themselves.
-        if (!within(owner.path, reacher)) {
+        if (!under(reacher, owner.path)) {
           const evidence =
             at.name === null ? `an import that runs ${at.file}` : at.name === "*" ? `all of ${at.file}` : `${at.name} from ${at.file}`;
-          const edgeKey = `${reacher}\n${owner.path}\n${evidence}`;
-          if (!rough || !edges.has(edgeKey)) edges.set(edgeKey, { from: reacher, to: owner.path, evidence, approximate: rough });
+          addEdge(reacher, owner.path, evidence, rough);
+          // A module handed on whole may have any of its functions called, so
+          // the blocks pointing at them are reached too, though perhaps not.
+          if (at.name === "*") {
+            for (const each of bySymbol.values()) {
+              if (fold(each.file) === fold(at.file) && !under(each.path, reacher) && !under(reacher, each.path)) addEdge(reacher, each.path, evidence, true);
+            }
+          }
         }
         return;
       }

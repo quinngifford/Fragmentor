@@ -330,14 +330,19 @@ function parseText(fileName: string, text: string): Parsed {
 
 const BUNDLER: ts.CompilerOptions = { module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler };
 
-/** Each tsconfig read, with the time it was last changed, so an edit to it is noticed. */
-const configs = new Map<string, { changed: number; options: ts.CompilerOptions }>();
+/** What a tsconfig.json gives: its compiler options, `extends` and all, and the configs it refers to. */
+interface Config {
+  options: ts.CompilerOptions;
+  references: string[];
+}
 
-/** The compiler options a tsconfig.json gives, `extends` and all. */
-function configOptions(configPath: string): ts.CompilerOptions {
+/** Each tsconfig read, with the time it was last changed, so an edit to it is noticed. */
+const configs = new Map<string, { changed: number; config: Config }>();
+
+function readConfig(configPath: string): Config {
   const changed = statSync(configPath).mtimeMs;
   const known = configs.get(configPath);
-  if (known?.changed === changed) return known.options;
+  if (known?.changed === changed) return known.config;
   // Only the options are wanted. Listing the files the config covers would walk
   // the whole project, which on a large one costs more than everything else.
   const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
@@ -345,14 +350,29 @@ function configOptions(configPath: string): ts.CompilerOptions {
     readDirectory: () => [],
     onUnRecoverableConfigFileDiagnostic: () => {},
   });
-  const options = parsed?.options ?? BUNDLER;
-  configs.set(configPath, { changed, options });
-  return options;
+  const config = {
+    options: parsed?.options ?? BUNDLER,
+    references: (parsed?.projectReferences ?? []).map((reference) => ts.resolveProjectReferencePath(reference)),
+  };
+  configs.set(configPath, { changed, config });
+  return config;
 }
 
-/** Whether a specifier names a place in the project rather than a package: a path, a `paths` alias or a subpath import. */
+/**
+ * Files a bundler lets code import that are not code: stylesheets, images,
+ * fonts, media and data. Nearly every component imports some, and none of
+ * them reaches anything, so they are passed over without a word.
+ */
+const NOT_CODE = /\.(css|scss|sass|less|styl|pcss|svg|png|jpe?g|gif|webp|avif|ico|bmp|tiff?|woff2?|ttf|otf|eot|mp3|mp4|webm|ogg|wav|flac|json|jsonc|json5|ya?ml|toml|csv|txt|md|html?|xml|graphql|gql)$/i;
+
+/**
+ * Whether a specifier names a place in the project rather than a package: a
+ * path, a `paths` alias or a subpath import. `@/` and `~/` are always aliases,
+ * because no package can be called that, so one that leads nowhere is said
+ * to lead nowhere even where no tsconfig declares it.
+ */
 function namesAPlace(specifier: string, options: ts.CompilerOptions): boolean {
-  if (specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("#") || path.isAbsolute(specifier)) return true;
+  if (/^[./#~]|^@\//.test(specifier) || path.isAbsolute(specifier)) return true;
   return Object.keys(options.paths ?? {}).some((pattern) => {
     const star = pattern.indexOf("*");
     return star === -1 ? specifier === pattern : specifier.startsWith(pattern.slice(0, star)) && specifier.endsWith(pattern.slice(star + 1));
@@ -371,7 +391,8 @@ function remembering<T>(work: (key: string) => T): (key: string) => T {
 }
 
 /**
- * Resolves imports for one reading of a project.
+ * Resolves imports for one reading of a project, from files named by their
+ * real path, the project's folder with every link in it followed.
  *
  * Where an import leads is a file of the project, somewhere outside it (a
  * built-in, a package, or code beyond the project folder), or nowhere that
@@ -384,8 +405,7 @@ function remembering<T>(work: (key: string) => T): (key: string) => T {
  * only. By the next one a file may have been added or removed, which changes
  * where an import leads without the importing file changing at all.
  */
-function resolving(projectDir: string): (fileName: string, specifier: string) => Resolved {
-  const root = realpathSync.native(projectDir);
+function resolving(root: string): (fileName: string, specifier: string) => Resolved {
   const host: ts.ModuleResolutionHost = {
     fileExists: remembering((file) => ts.sys.fileExists(file)),
     directoryExists: remembering((dir) => ts.sys.directoryExists(dir)),
@@ -394,20 +414,35 @@ function resolving(projectDir: string): (fileName: string, specifier: string) =>
     getCurrentDirectory: () => ts.sys.getCurrentDirectory(),
     getDirectories: (dir) => ts.sys.getDirectories(dir),
   };
-  const configIn = remembering((dir) => ts.findConfigFile(dir, host.fileExists) ?? "");
-  const optionsOf = remembering((configPath) => (configPath === "" ? BUNDLER : configOptions(configPath)));
+  const configAt = remembering(readConfig);
+  // A tsconfig that only refers to others, as Vite's does, leaves the options
+  // that matter, its `paths` above all, to those others, so each is tried in turn.
+  const optionsIn = remembering((dir): ts.CompilerOptions[] => {
+    const configPath = ts.findConfigFile(dir, host.fileExists);
+    if (configPath === undefined) return [BUNDLER];
+    const config = configAt(configPath);
+    return [config.options, ...config.references.filter(host.fileExists).map((each) => configAt(each).options)];
+  });
+
+  const resolveWith = (specifier: string, fileName: string, options: ts.CompilerOptions) =>
+    ts.resolveModuleName(specifier, fileName, options, host).resolvedModule ??
+    // Code run by a bundler or tsx often imports in ways its tsconfig would
+    // not allow, and it still means the file it names.
+    (options.moduleResolution === ts.ModuleResolutionKind.Bundler
+      ? undefined
+      : ts.resolveModuleName(specifier, fileName, { ...options, ...BUNDLER }, host).resolvedModule);
 
   const resolve = (fileName: string, specifier: string): Resolved => {
-    if (isBuiltin(specifier)) return "outside";
-    const options = optionsOf(configIn(path.dirname(fileName)));
-    const found =
-      ts.resolveModuleName(specifier, fileName, options, host).resolvedModule ??
-      // Code run by a bundler or tsx often imports in ways its tsconfig would
-      // not allow, and it still means the file it names.
-      (options.moduleResolution === ts.ModuleResolutionKind.Bundler
-        ? undefined
-        : ts.resolveModuleName(specifier, fileName, { ...options, ...BUNDLER }, host).resolvedModule);
-    if (!found) return namesAPlace(specifier, options) ? "missing" : "outside";
+    // A bundler's query, such as `?url` or `?raw`, is not part of the file's name.
+    if (isBuiltin(specifier) || NOT_CODE.test(specifier.replace(/\?.*$/, ""))) return "outside";
+    const tried = optionsIn(path.dirname(fileName));
+    let found: ts.ResolvedModuleFull | undefined;
+    for (const options of tried) {
+      found = resolveWith(specifier, fileName, options);
+      if (found) break;
+    }
+    if (!found) return tried.some((options) => namesAPlace(specifier, options)) ? "missing" : "outside";
+    if (found.extension === ts.Extension.Json) return "outside";
     // Judged by where the file really is, not by `isExternalLibraryImport`,
     // which the compiler sets for a workspace package linked into
     // node_modules even though its source is the project's own.
@@ -444,9 +479,14 @@ function resolveUses(raw: RawUses, file: string, resolve: (specifier: string) =>
 
 /** Starts one reading of a project, which reads each file handed to it. */
 function reading(projectDir: string): (file: string, text: string) => FileReach {
-  const resolveFrom = resolving(projectDir);
+  // The compiler follows links when it finds a package but not when it finds
+  // a path, so a project opened through a link, a short name or a linked temp
+  // folder is read from where it really is, or its own files would all seem
+  // to lie outside it.
+  const root = realpathSync.native(projectDir);
+  const resolveFrom = resolving(root);
   return (file, text) => {
-    const fileName = path.resolve(projectDir, file);
+    const fileName = path.resolve(root, file);
     const parsed = parse(fileName, text);
     const resolve = (specifier: string) => resolveFrom(fileName, specifier);
 
@@ -464,10 +504,11 @@ function reading(projectDir: string): (file: string, text: string) => FileReach 
       if (found !== "missing") exports.set(name, found === "outside" ? null : { file: found.file, name: entry.name });
     }
 
-    const exportsAll: string[] = [];
+    const exportsAll: FileReach["exportsAll"] = [];
     for (const specifier of parsed.exportsAll) {
       const found = resolve(specifier);
-      if (typeof found === "object") exportsAll.push(found.file);
+      if (found === "outside") exportsAll.push(null);
+      else if (found !== "missing") exportsAll.push(found.file);
     }
 
     return { declarations, rest: resolveUses(parsed.rest, file, resolve), exports, exportsAll };
