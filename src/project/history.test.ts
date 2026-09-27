@@ -643,10 +643,10 @@ describe("a saved version", () => {
       `${PRICING}/notes.txt`,
       `${PRICING}/price-seat/block.json`,
       `${PRICING}/price-seat/cases.json`,
-      `${PRICING}/price-seat/contract.ts`,
+      `${PRICING}/price-seat/contract.d.ts`,
       `${PRICING}/refund-for/block.json`,
       `${PRICING}/refund-for/cases.json`,
-      `${PRICING}/refund-for/contract.ts`,
+      `${PRICING}/refund-for/contract.d.ts`,
       "src/booking/price-seat.ts",
       "src/booking/refund-for.ts",
     ]);

@@ -237,7 +237,7 @@ describe("the guide", () => {
 
   it("makes the contract's own file, and what binds code to it, plain", () => {
     const guide = guides.TypeScript!;
-    expect(guide).toContain("blocks/<the block>/contract.ts");
+    expect(guide).toContain("blocks/<the block>/contract.d.ts");
     expect(guide).toContain("**Importing that contract is what binds your code to it.**");
     expect(guide).toContain('from "../../blocks/price-orders/report-totals/contract.js"');
   });

@@ -19,7 +19,7 @@ import type { Project } from "../project/project.js";
  * Only the files whose blocks are held to a contract are compiled: they are the
  * ones written to be called with a value and `caps`. A block imports its
  * contract with `import type`, which disappears when the types are stripped, so
- * the schema library never has to be resolved to run anything.
+ * the contract itself, which holds nothing else, is never needed to run anything.
  */
 
 const HARNESS = "harness.cjs";

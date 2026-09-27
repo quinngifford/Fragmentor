@@ -3144,7 +3144,7 @@ function attachSelfCheck(
         const porcelain = await gitIn(check.application)("status", "--porcelain", "--untracked-files=all");
         report.swappedOnDisk = {
           partCode: afterSwap.has("src/booking/seat-discount.ts"),
-          partContract: afterSwap.has("blocks/tickets/booking-api/pricing/seat-discount/contract.ts"),
+          partContract: afterSwap.has("blocks/tickets/booking-api/pricing/seat-discount/contract.d.ts"),
           callsPart: Buffer.from(afterSwap.get("src/booking/price-seat.ts") ?? "", "base64").toString("utf8").includes("seatDiscount"),
           nothingElse: [...new Set([...beforeSwap.keys(), ...afterSwap.keys()])]
             .filter((file) => !plan.test(file))

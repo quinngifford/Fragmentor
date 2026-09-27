@@ -49,14 +49,14 @@ The person leaves notes on blocks in Fragmentor — something to change, fix, lo
 ## Files
 
 ```text
-fragmentor.json         the project                           you fill in goal and systems
-blocks/<system>/        a system's top block                  a block's parts are the folders inside it
-  block.json            the block                             you write
-  contract.ts           its types                             generated
-  cases.json            its tests                             you write, for a block Fragmentor runs
-blocks/capabilities.ts  the capability interfaces             generated
-src/…                   the code                              you write, wherever it belongs
-executions/<name>.json  one thing that sets the system going  you write
+fragmentor.json           the project                           you fill in goal and systems
+blocks/<system>/          a system's top block                  a block's parts are the folders inside it
+  block.json              the block                             you write
+  contract.d.ts           its types                             generated
+  cases.json              its tests                             you write, for a block Fragmentor runs
+blocks/capabilities.d.ts  the capability interfaces             generated
+src/…                     the code                              you write, wherever it belongs
+executions/<name>.json    one thing that sets the system going  you write
 ```
 
 Everything Fragmentor writes is inside `blocks/`. **The code is yours, wherever it belongs in the codebase** — a block's folder says where the block sits in the architecture, never where its code sits on disk. A block's id is its folder name, in kebab-case. Never edit a generated file.
@@ -194,7 +194,7 @@ A block that calls another passes it its own `caps`, so it declares every capabi
 
 ## Contracts
 
-Where a function block's inputs and outputs are written as types, Fragmentor writes them into `blocks/<the block>/contract.ts`, beside its `block.json`, along with the capabilities it asks for. A block whose ports are words gets none, and is drawn rather than checked or run.
+Where a function block's inputs and outputs are written as types, Fragmentor writes them into `blocks/<the block>/contract.d.ts`, beside its `block.json`, along with the capabilities it asks for. A block whose ports are words gets none, and is drawn rather than checked or run.
 
 **Importing that contract is what binds your code to it.** Code that imports it is typechecked against it, can be run from the window with values you type, and can have saved tests; code that does not is drawn and read. This is `report-totals`, in `src/pricing/report-totals.ts`:
 

@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod/v4";
 import { blockDir } from "../project/project.js";
+import type { BoundStore } from "../project/stores.js";
 
 /**
  * Saved tests for a block.
@@ -85,6 +86,33 @@ export async function readCases(
   }
 
   return { cases: parsed.data as TestCase[], problem: null };
+}
+
+/**
+ * What is wrong with where a block's saved tests put rows: a key that is not
+ * the address of any store entry in the project, which a run passes over, so
+ * the rows would never be there and the test would say nothing about why. Each
+ * names the entry it could have meant, from the stores the block reads first.
+ *
+ * `entries` is every store entry of the project, by its full address, and
+ * `reached` the stores this block reads through its ports.
+ */
+export function storeKeyProblems(cases: TestCase[], entries: string[], reached: BoundStore[]): string[] {
+  const own = reached.filter((store) => store.seedable);
+  const meant = (key: string) => {
+    const like =
+      own.find((store) => store.port === key || store.entry === key || store.target.endsWith(key))?.target ??
+      entries.find((entry) => entry.endsWith(key) || entry.endsWith(`.${key}`));
+    const named = like ? [like] : own.length > 0 ? own.map((store) => store.target) : entries;
+    return named.length === 0
+      ? "This project draws no store, so there is nowhere for rows to go."
+      : `Key its rows by the full address of the store entry, ${named.map((target) => `"${target}"`).join(" or ")}.`;
+  };
+  return cases.flatMap((testCase) =>
+    Object.keys(testCase.stores ?? {})
+      .filter((key) => !entries.includes(key))
+      .map((key) => `The test "${testCase.name}" gives rows for "${key}", which is not a store entry in this project, so the run would never see them. ${meant(key)}`),
+  );
 }
 
 /** A block's saved tests. A file that cannot be read should not stop a block being opened. */

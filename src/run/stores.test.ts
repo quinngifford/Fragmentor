@@ -175,7 +175,7 @@ describe("a block reaching a store", () => {
     const project = await loadProject(dir);
     const contract = project.byPath.get("ledger/settle")!;
     const { readFile } = await import("node:fs/promises");
-    const source = await readFile(path.join(contract.dir, "contract.ts"), "utf8");
+    const source = await readFile(path.join(contract.dir, "contract.d.ts"), "utf8");
 
     expect(source).toContain(`accounts: Store<{ id: string; name: string; owing: number }>;`);
     expect(source).toContain(`receipts: Queue<{ id: string; paid: number }>;`);

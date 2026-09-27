@@ -74,7 +74,7 @@ function contractPathOf(project: Project, node: LoadedBlock, pack: LanguagePack 
   return `${dir}/${pack.contractFile}`;
 }
 
-/** The path one project file writes to reach another, as an import: `../../blocks/app/log-in/contract.ts`. */
+/** The path one project file writes to reach another, as an import: `../../blocks/app/log-in/contract.d.ts`. */
 function relativeFrom(fromFile: string, toFile: string): string {
   const relative = path.posix.relative(path.posix.dirname(fromFile), toFile);
   return relative.startsWith(".") ? relative : `./${relative}`;
@@ -139,7 +139,12 @@ export async function readBlockCode(project: Project, node: LoadedBlock): Promis
   // Finding the name is forgiving; calling it cannot be. A file that only
   // mentions the name is one the runner would refuse.
   const declared = location.text !== null && functionName !== null && declaresSymbol(location.text, functionName);
-  const bound = specifier !== null && location.text !== null && declared && location.text.includes(specifier);
+  const imports = specifier !== null && location.text !== null && location.text.includes(specifier);
+  // A method, `Class.method`, is called on an object, never on its own with a
+  // value and `caps`, so nothing can run it even where its file imports the
+  // contract. It is drawn like any other code that is not held to one.
+  const method = functionName?.includes(".") ?? false;
+  const bound = imports && declared && !method;
 
   return {
     pointer,
@@ -157,7 +162,9 @@ export async function readBlockCode(project: Project, node: LoadedBlock): Promis
             ? `${location.file} does not declare ${functionName ?? "this block's function"}, so there is nothing for Fragmentor to call`
             : bound
               ? null
-              : `${location.file} does not import ${specifier}, so Fragmentor draws this code rather than checking or running it`,
+              : imports
+                ? `${functionName} is a method, and Fragmentor can only call a function on its own, with a value and \`caps\`, so it draws this code rather than running it`
+                : `${location.file} does not import its contract, so Fragmentor draws this code as it stands rather than checking or running it`,
     ),
     functionName,
   };

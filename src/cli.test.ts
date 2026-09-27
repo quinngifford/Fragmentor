@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -85,8 +85,37 @@ describe("the fragmentor command", () => {
 
     const result = fragmentor(["check"], path.join(dir, "blocks", "tickets", "booking-api", "pricing"));
     expect(result.output).toContain("tickets: typechecks against its contracts");
+    expect(result.output).toContain("6 blocks that are not called, so Fragmentor only draws them:");
     expect(result.output).toContain("Result: no errors");
     expect(result.status).toBe(0);
+  }, 30_000);
+
+  it("counts one block that is not called as one", async () => {
+    expect(fragmentor(["init", "--granularity=3", "--language=typescript"], dir).status).toBe(0);
+    const manifest = JSON.parse(await readFile(path.join(dir, "fragmentor.json"), "utf8")) as { systems: unknown[] };
+    manifest.systems.push({ rootBlock: "app" });
+    await writeFile(path.join(dir, "fragmentor.json"), JSON.stringify(manifest), "utf8");
+    await mkdir(path.join(dir, "blocks", "app"), { recursive: true });
+    await writeFile(path.join(dir, "blocks", "app", "block.json"), JSON.stringify({ role: "service", responsibility: "The app.", code: "src" }), "utf8");
+    await mkdir(path.join(dir, "src"));
+
+    const result = fragmentor(["check"], dir);
+    expect(result.output).toContain("1 block that is not called, so Fragmentor only draws it:");
+    expect(result.status).toBe(0);
+  }, 30_000);
+
+  it("explains a phrase for the agent typed as a command, without failing", () => {
+    const result = fragmentor(["rebuild"], dir);
+    expect(result.status).toBe(0);
+    expect(result.output).toContain('"fragmentor rebuild" is something you ask your coding agent to do, not a command to run here.');
+    expect(result.output).toContain("/fragmentor-rebuild");
+    expect(result.output).toContain("the Commands section of FRAGMENTOR.md");
+    expect(result.output).not.toContain("Unknown command");
+
+    // Anything else is still unknown.
+    const unknown = fragmentor(["rebuilt"], dir);
+    expect(unknown.status).toBe(1);
+    expect(unknown.output).toContain('Unknown command "rebuilt"');
   }, 30_000);
 
   it("fails on a problem with the diagram and says what it is", async () => {

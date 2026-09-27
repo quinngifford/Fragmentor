@@ -826,10 +826,21 @@ function declarationPatterns(name: string): RegExp[] {
  * Fragmentor cannot parse should still open the code somewhere useful. Calling
  * one is not: a block whose file only mentions the name — in the path of an
  * import, say — is a block the runner would refuse, so nothing offers to run it.
+ *
+ * A dotted name such as `Service.find` is a method: the class has to be
+ * declared, and the method declared on a line after it. Where the class ends
+ * is not worked out, which no language-blind reading could do.
  */
 export function declaresSymbol(text: string, symbol: string): boolean {
-  const patterns = declarationPatterns(escapeForPattern(symbol));
-  return text.split("\n").some((line) => patterns.some((pattern) => pattern.test(line)));
+  const lines = text.split("\n");
+  let from = 0;
+  for (const part of symbol.split(".").filter(Boolean)) {
+    const patterns = declarationPatterns(escapeForPattern(part));
+    const at = lines.findIndex((line, i) => i >= from && patterns.some((pattern) => pattern.test(line)));
+    if (at === -1) return false;
+    from = at + 1;
+  }
+  return from > 0;
 }
 
 /**

@@ -107,9 +107,9 @@ describe("projectSnapshot", () => {
     await emitProject(await loadProject(dir));
 
     const after = (await projectSnapshot(dir)).blocks["double-it"]!;
-    expect(after.sources.contract).toContain("export const doubleItInput");
+    expect(after.sources.contract).toContain("export type DoubleItInput");
     expect(after.implemented).toBe(true);
-    expect(after.files).toEqual({ code: "src/double-it.ts", contract: "blocks/double-it/contract.ts" });
+    expect(after.files).toEqual({ code: "src/double-it.ts", contract: "blocks/double-it/contract.d.ts" });
   });
 
   it("reports diagnostics rather than throwing, so a broken project still opens", async () => {

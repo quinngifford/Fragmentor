@@ -87,21 +87,40 @@ describe("the pack registry", () => {
 describe("the TypeScript pack", () => {
   const pack = getPack("typescript");
 
+  /** What is left of a file once its types are taken out: nothing, for a contract. */
+  const valuesIn = (source: string) =>
+    ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, removeComments: true } })
+      .outputText.replace("export {};", "")
+      .trim();
+
   it("names things the way TypeScript does", () => {
     expect(pack.functionName("score-posting")).toBe("scorePosting");
     expect(pack.typeName("score-posting", "Input")).toBe("ScorePostingInput");
-    expect(pack.contractFile).toBe("contract.ts");
+    // A declaration file, which a codebase's own build takes in without ever writing it out.
+    expect(pack.contractFile).toBe("contract.d.ts");
+    expect(pack.capabilitiesFile).toBe("capabilities.d.ts");
   });
 
-  it("writes a contract that compiles", () => {
+  it("writes a contract of types only, which needs no package and compiles to nothing", () => {
     const source = pack.contractSource({ block: scorePosting, blockPath: "rank-jobs/score-posting" });
 
     expect(typeScriptErrors(source)).toEqual([]);
-    expect(source).toContain("export const scorePostingInput = z.object({");
-    expect(source).toContain("salary: z.number().optional()");
-    expect(source).toContain('z.enum(["remote", "onsite"])');
-    expect(source).toContain("export interface ScorePostingCaps {");
-    expect(source).toContain("  files: FileSystem;");
+    expect(source).toContain('export type ScorePostingInput = {\n  posting: { title: string; salary?: number; mode: "remote" | "onsite" };\n  keywords: string[];\n};');
+    expect(source).toContain("export type ScorePostingOutput = {\n  score: number;\n  reasons: string[];\n};");
+    expect(source).toContain('import type { FileSystem } from "../../capabilities.js";');
+    expect(source).toContain("export interface ScorePostingCaps {\n  /** Reads the cache. */\n  files: FileSystem;\n}");
+    expect(source).not.toContain("zod");
+    expect(valuesIn(source)).toBe("");
+  });
+
+  it("carries a port's description, where an editor shows it", () => {
+    const described = blockFromFile(
+      { responsibility: "Say hello.", inputs: { name: { type: "string", description: "Who to greet." } }, outputs: { greeting: "string" } },
+      "greet",
+    );
+    expect(pack.contractSource({ block: described, blockPath: "app/greet" })).toContain(
+      "export type GreetInput = {\n  /** Who to greet. */\n  name: string;\n};",
+    );
   });
 
   it("declares capabilities as interfaces", () => {
@@ -110,11 +129,13 @@ describe("the TypeScript pack", () => {
     expect(source).toContain("export interface FileSystem {");
     expect(source).toContain("readFile(path: string): Promise<string>;");
     expect(source).toContain("writeFile(path: string, contents: string): Promise<void>;");
+    expect(valuesIn(source)).toBe("");
   });
 
   it("says what a block's code imports to be held to its contract", () => {
-    // What is compiled and run is JavaScript, so that is what an import names.
-    expect(pack.contractSpecifier("../../blocks/rank-jobs/score-posting/contract.ts")).toBe(
+    // What is compiled and run is JavaScript, so that is what an import names,
+    // and TypeScript finds the declaration file behind it.
+    expect(pack.contractSpecifier("../../blocks/rank-jobs/score-posting/contract.d.ts")).toBe(
       "../../blocks/rank-jobs/score-posting/contract.js",
     );
   });
@@ -123,8 +144,8 @@ describe("the TypeScript pack", () => {
     const source = pack.contractSource({ block: clearCache, blockPath: "app/clear-cache" });
 
     expect(typeScriptErrors(source)).toEqual([]);
-    expect(source).toContain("export const clearCacheInput = z.object({});");
-    expect(source).toContain("export const clearCacheOutput = z.void();");
+    expect(source).toContain("export type ClearCacheInput = {};");
+    expect(source).toContain("export type ClearCacheOutput = void;");
   });
 });
 

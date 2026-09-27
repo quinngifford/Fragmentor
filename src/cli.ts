@@ -4,7 +4,8 @@ import { checkProject } from "./check/check.js";
 import type { CheckReport } from "./check/check.js";
 import { startProject, writeAgentFiles } from "./codegen/emit.js";
 import type { NewProjectSettings } from "./codegen/emit.js";
-import { CLAUDE_FILE, GUIDE_FILE } from "./codegen/guide.js";
+import { COMMANDS } from "./codegen/commands.js";
+import { CLAUDE_FILE, GUIDE_FILE, skillName } from "./codegen/guide.js";
 import { getPack, isKnownLanguage } from "./lang/index.js";
 import { readAllCode } from "./project/code.js";
 import { loadExecutions } from "./project/executions.js";
@@ -223,7 +224,10 @@ function formatReport(report: CheckReport): string {
 
   if (report.architecture.length > 0) {
     lines.push("", "Architecture");
-    lines.push(`  ${plural(report.architecture.length, "block")} that are not called, so have no code of their own:`);
+    // Some of them point at code, such as the module a service is, so all
+    // that is said of them is that nothing of theirs is run.
+    const one = report.architecture.length === 1;
+    lines.push(`  ${plural(report.architecture.length, "block")} that ${one ? "is" : "are"} not called, so Fragmentor only draws ${one ? "it" : "them"}:`);
     lines.push(...report.architecture.map((blockPath) => `    ${blockPath}`));
   }
 
@@ -796,6 +800,19 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === "help" || command === "--help" || command === "-h") {
     console.log(USAGE);
+    return 0;
+  }
+
+  // One of the phrases the person types to their agent, typed into a shell
+  // instead. It is not a mistake worth failing over, only a wrong window.
+  const phrase = COMMANDS.find((each) => each.name === command);
+  if (phrase) {
+    console.log(
+      `"fragmentor ${phrase.name}" is something you ask your coding agent to do, not a command to run here. ` +
+        `Type it to your agent, or in Claude Code choose /${skillName(phrase)}.\n\n` +
+        `What it does: ${phrase.summary}\n\n` +
+        `An agent given it follows the Commands section of ${GUIDE_FILE}.`,
+    );
     return 0;
   }
 

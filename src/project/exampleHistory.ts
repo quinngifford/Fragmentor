@@ -53,7 +53,7 @@ export async function commitExampleHistory(projectDir: string): Promise<{ older:
   const discount = path.join(pricing, "seat-discount");
 
   const shipped = new Map<string, Buffer>();
-  for (const file of [path.join(code, "price-seat.ts"), ...["block.json", "cases.json", "contract.ts"].map((name) => path.join(priceSeat, name))]) {
+  for (const file of [path.join(code, "price-seat.ts"), ...["block.json", "cases.json", "contract.d.ts"].map((name) => path.join(priceSeat, name))]) {
     shipped.set(file, await readFile(file));
   }
   const asShipped = async () => {

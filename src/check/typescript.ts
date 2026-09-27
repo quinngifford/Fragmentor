@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { importsOnlyTypes, isBuiltin } from "../lang/typescriptReach.js";
 import type { BlockCode } from "../project/code.js";
@@ -15,9 +15,7 @@ import type { LoadedBlock, Project } from "../project/project.js";
  * report hundreds of things about code Fragmentor was only ever asked to draw.
  *
  * What is compiled is typechecked against those contracts, so a function that
- * returns the wrong shape fails here before anything runs. Contracts import
- * zod, which a project may well not have installed, so the checker lends it
- * Fragmentor's copy.
+ * returns the wrong shape fails here before anything runs.
  *
  * What each block imports is checked as well, because the test runner compiles
  * a system's bound files into a folder of its own and runs it from there:
@@ -36,8 +34,6 @@ export interface CodeProblem {
   message: string;
 }
 
-const zodDir = path.dirname(createRequire(import.meta.url).resolve("zod/package.json"));
-
 const OPTIONS: ts.CompilerOptions = {
   target: ts.ScriptTarget.ES2022,
   module: ts.ModuleKind.ESNext,
@@ -45,13 +41,107 @@ const OPTIONS: ts.CompilerOptions = {
   strict: true,
   noEmit: true,
   skipLibCheck: true,
-  // The language and nothing else. A block reaches the outside world through
-  // its capabilities, so neither Node's globals nor the browser's belong here
-  // — and `console` in particular would corrupt the test runner's output.
+  // The language, the few standard globals below, and nothing else. A block
+  // reaches the outside world through its capabilities, so neither Node's
+  // globals nor the browser's belong here — and `console` in particular would
+  // corrupt the test runner's output.
   lib: ["lib.es2022.d.ts"],
   types: [],
-  paths: { zod: [zodDir] },
 };
+
+/**
+ * The few standard globals that only compute, which a block has when it runs
+ * as it would anywhere else, declared as the web platform has them. None of
+ * them reaches outside the process, which is what keeps the rest out.
+ */
+const STANDARD_GLOBALS = `
+interface URLSearchParams {
+  readonly size: number;
+  append(name: string, value: string): void;
+  delete(name: string, value?: string): void;
+  get(name: string): string | null;
+  getAll(name: string): string[];
+  has(name: string, value?: string): boolean;
+  set(name: string, value: string): void;
+  sort(): void;
+  toString(): string;
+  forEach(callback: (value: string, key: string, parent: URLSearchParams) => void): void;
+  entries(): IterableIterator<[string, string]>;
+  keys(): IterableIterator<string>;
+  values(): IterableIterator<string>;
+  [Symbol.iterator](): IterableIterator<[string, string]>;
+}
+declare var URLSearchParams: {
+  prototype: URLSearchParams;
+  new (init?: string[][] | Record<string, string> | string | URLSearchParams): URLSearchParams;
+};
+interface URL {
+  hash: string;
+  host: string;
+  hostname: string;
+  href: string;
+  readonly origin: string;
+  password: string;
+  pathname: string;
+  port: string;
+  protocol: string;
+  search: string;
+  readonly searchParams: URLSearchParams;
+  username: string;
+  toString(): string;
+  toJSON(): string;
+}
+declare var URL: {
+  prototype: URL;
+  new (url: string | URL, base?: string | URL): URL;
+  canParse(url: string | URL, base?: string | URL): boolean;
+};
+interface TextEncoder {
+  readonly encoding: string;
+  encode(input?: string): Uint8Array;
+  encodeInto(source: string, destination: Uint8Array): { read: number; written: number };
+}
+declare var TextEncoder: { prototype: TextEncoder; new (): TextEncoder };
+interface TextDecoder {
+  readonly encoding: string;
+  readonly fatal: boolean;
+  readonly ignoreBOM: boolean;
+  decode(input?: ArrayBuffer | ArrayBufferView, options?: { stream?: boolean }): string;
+}
+declare var TextDecoder: {
+  prototype: TextDecoder;
+  new (label?: string, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
+};
+interface AbortSignal {
+  readonly aborted: boolean;
+  readonly reason: any;
+  throwIfAborted(): void;
+  addEventListener(type: "abort", listener: () => void): void;
+  removeEventListener(type: "abort", listener: () => void): void;
+}
+interface AbortController {
+  readonly signal: AbortSignal;
+  abort(reason?: any): void;
+}
+declare var AbortController: { prototype: AbortController; new (): AbortController };
+declare function structuredClone<T>(value: T, options?: { transfer?: unknown[] }): T;
+`;
+
+/** Where the checker says those globals are declared. Nothing is written there. */
+const STANDARD_GLOBALS_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fragmentor-standard-globals.d.ts");
+
+/** A compiler host that reads the project from disk, and those globals from the text above. */
+function hostWithStandardGlobals(): ts.CompilerHost {
+  const host = ts.createCompilerHost(OPTIONS);
+  const getSourceFile = host.getSourceFile.bind(host);
+  const fileExists = host.fileExists.bind(host);
+  host.getSourceFile = (fileName, language, ...rest) =>
+    path.resolve(fileName) === STANDARD_GLOBALS_FILE
+      ? ts.createSourceFile(fileName, STANDARD_GLOBALS, language)
+      : getSourceFile(fileName, language, ...rest);
+  host.fileExists = (fileName) => path.resolve(fileName) === STANDARD_GLOBALS_FILE || fileExists(fileName);
+  return host;
+}
 
 /** A bare name such as `lodash` or `@scope/tool`, as opposed to a path. */
 function isPackage(specifier: string): boolean {
@@ -124,7 +214,7 @@ export function checkSystemCode(project: Project, rootBlock: string, code: Map<s
   const callable = new Set([...files.keys()].map((file) => file.replace(/\.ts$/, ".js")));
 
   const relative = (fileName: string) => path.relative(project.dir, fileName).split(path.sep).join("/");
-  const program = ts.createProgram([...files.keys()], OPTIONS);
+  const program = ts.createProgram([...files.keys(), STANDARD_GLOBALS_FILE], OPTIONS, hostWithStandardGlobals());
 
   const problems: CodeProblem[] = ts.getPreEmitDiagnostics(program).map((diagnostic) => {
     const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");

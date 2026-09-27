@@ -6,9 +6,9 @@ export { typesEqual } from "./typesEqual.js";
  * The type language used to describe what flows through a port.
  *
  * This is deliberately smaller than TypeScript's type system. It has to serve
- * three masters at once: it is stored in block.json, it is compiled to a zod
- * schema for runtime checking, and it is rendered as an input form in the test
- * bench. A construct that cannot be drawn as a form control does not belong
+ * three masters at once: it is stored in block.json, it is written out as a
+ * language's types and checked against at run time, and it is rendered as an
+ * input form in the test bench. A construct that cannot be drawn as a form control does not belong
  * here. Anything richer lives inside a function's own code.
  */
 export type PortType =

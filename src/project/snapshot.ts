@@ -13,12 +13,12 @@ import { EXECUTIONS_DIR, architectureOf, checkExecution, loadExecutions } from "
 import type { TriggerKind } from "./executions.js";
 import { formatAddress } from "../model/trace.js";
 import type { Trace } from "../model/trace.js";
-import type { CodeLocation, Granularity, Project, ProjectDiagnostic, Start } from "./project.js";
+import type { CodeLocation, Granularity, LoadedBlock, Project, ProjectDiagnostic, Start } from "./project.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
-import { boundStores, describeBound } from "./stores.js";
+import { boundStores, describeBound, storeEntries } from "./stores.js";
 import { NOTES_DIR, loadNotes, waitingOn } from "./notes.js";
 import type { Note, NoteAuthor } from "./notes.js";
-import { readCases } from "../run/cases.js";
+import { readCases, storeKeyProblems } from "../run/cases.js";
 import type { TestCase } from "../run/cases.js";
 
 /**
@@ -374,9 +374,13 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
   // diagram's own, rather than a block silently appearing to have no tests or
   // no code.
   const fileProblems: ProjectDiagnostic[] = [];
-  const casesFor = async (blockPath: string) => {
+  const entries = storeEntries(project);
+  const casesFor = async (blockPath: string, node: LoadedBlock) => {
     const saved = await readCases(projectDir, blockPath);
     if (saved.problem) fileProblems.push({ severity: "error", blockPath, message: saved.problem });
+    for (const message of storeKeyProblems(saved.cases, entries, boundStores(project, node))) {
+      fileProblems.push({ severity: "error", blockPath, message });
+    }
     return saved.cases;
   };
 
@@ -482,7 +486,7 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
       implemented: found.location !== null,
       runnable: found.bound && (pack?.canRun ?? false),
       drawnBecause: found.drawnBecause,
-      cases: found.bound && (pack?.canRun ?? false) ? await casesFor(blockPath) : [],
+      cases: found.bound && (pack?.canRun ?? false) ? await casesFor(blockPath, node) : [],
       code: where,
     };
   }

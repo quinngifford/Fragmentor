@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadCases, saveCases } from "./cases.js";
+import { loadCases, saveCases, storeKeyProblems } from "./cases.js";
+import type { BoundStore } from "../project/stores.js";
 import { compareValues } from "./compare.js";
 import { runCases } from "./run.js";
 
@@ -113,5 +114,44 @@ describe("running saved tests", () => {
 
   it("has nothing to run when a block has no tests", async () => {
     expect(await runCases(dir, block)).toEqual([]);
+  });
+});
+
+describe("storeKeyProblems", () => {
+  const store = (port: string, target: string, seedable = true): BoundStore => ({
+    port,
+    capability: seedable ? "Store" : "Queue",
+    target,
+    resourceName: "Shop Database",
+    entry: target.split(".").at(-1)!,
+    shape: null,
+    seedable,
+  });
+  const orders = store("orders", "shop/shop-db.orders");
+  const customers = store("customers", "shop/shop-db.customers");
+  const entries = ["shop/shop-db.orders", "shop/shop-db.customers", "shop/archive.orders"];
+
+  it("says nothing of rows given to a store entry of the project, or of a test with none", () => {
+    const cases = [{ name: "a", input: {}, stores: { "shop/shop-db.orders": {}, "shop/archive.orders": {} } }, { name: "b", input: {} }];
+    expect(storeKeyProblems(cases, entries, [orders])).toEqual([]);
+  });
+
+  it("names the entry a key most looks like, the block's own first, or every one the block reads", () => {
+    const problems = storeKeyProblems(
+      [{ name: "a", input: {}, stores: { orders: {}, "archive.orders": {}, "shop/elsewhere.rows": {} } }],
+      entries,
+      [orders, customers],
+    );
+    expect(problems).toEqual([
+      expect.stringMatching(/^The test "a" gives rows for "orders", which is not a store entry in this project.*"shop\/shop-db.orders"\.$/),
+      expect.stringMatching(/"archive.orders".*entry, "shop\/archive.orders"\.$/),
+      expect.stringMatching(/"shop\/elsewhere.rows".*"shop\/shop-db.orders" or "shop\/shop-db.customers"\.$/),
+    ]);
+  });
+
+  it("says so when the project draws no store at all", () => {
+    expect(storeKeyProblems([{ name: "a", input: {}, stores: { orders: {} } }], [], [])).toEqual([
+      expect.stringContaining("This project draws no store, so there is nowhere for rows to go."),
+    ]);
   });
 });

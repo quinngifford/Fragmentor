@@ -46,6 +46,14 @@ export function storeTarget(resourcePath: string, entry: string): string {
   return `${resourcePath}.${entry}`;
 }
 
+/** Every entry of every store the project draws, by the name a run keeps it under. */
+export function storeEntries(project: Project): string[] {
+  const stores = CAPABILITIES.Store?.reaches ?? [];
+  return [...project.byPath.values()].flatMap((node) =>
+    stores.includes(node.block.role) ? Object.keys(node.block.exposes).map((entry) => storeTarget(node.path, entry)) : [],
+  );
+}
+
 /**
  * The bound ports of one block. A port whose access cannot be resolved is left
  * out rather than guessed at: `check` reports it, and a run that invented a

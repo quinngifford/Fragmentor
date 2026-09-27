@@ -136,23 +136,62 @@ describe("checkProject", () => {
     ]);
   }, 30_000);
 
-  it("reports an import that would typecheck but could not run", async () => {
-    // The schema is a value, so the runner would have to load contract.js and zod.
+  it("reports a value imported from a contract, which holds only types", async () => {
+    // A schema contracts used to hold, which there is no longer any file to run.
     await writeFile(
       code("price-seat.ts"),
       `import { priceSeatInput } from "${CONTRACT}";\n${HEADER}\n\n${SIGNATURE} {\n  return { price: priceSeatInput.parse(input).fullPrice };\n}\n`,
       "utf8",
     );
 
-    const report = await checkProject(dir);
-    expect(report.errorCount).toBe(1);
-    expect(report.systems[0]!.codeProblems).toEqual([
-      expect.objectContaining({
-        file: PRICE_SEAT,
-        line: 1,
-        message: expect.stringContaining(`imports values from "${CONTRACT}"`),
-      }),
+    const problems = (await checkProject(dir)).systems[0]!.codeProblems;
+    expect(problems).toContainEqual(
+      expect.objectContaining({ file: PRICE_SEAT, line: 1, message: expect.stringContaining(`imports values from "${CONTRACT}"`) }),
+    );
+    expect(problems).toContainEqual(expect.objectContaining({ file: PRICE_SEAT, line: 1, message: expect.stringContaining("priceSeatInput") }));
+  }, 30_000);
+
+  it("lets block code use the standard globals it has when it runs, and nothing of Node's", async () => {
+    await writeFile(
+      code("price-seat.ts"),
+      [
+        HEADER,
+        ``,
+        `${SIGNATURE} {`,
+        `  const url = new URL("https://example.com/seat?price=" + input.fullPrice);`,
+        `  const price = Number(new URLSearchParams(url.search).get("price"));`,
+        `  const bytes = new TextEncoder().encode(String(price));`,
+        `  const same = structuredClone({ price: Number(new TextDecoder().decode(bytes)) });`,
+        `  new AbortController().signal.throwIfAborted();`,
+        `  return { price: same.price };`,
+        `}`,
+        ``,
+      ].join("\n"),
+      "utf8",
+    );
+    expect((await checkProject(dir)).systems[0]!.codeProblems).toEqual([]);
+    const ran = await runBlock({ projectDir: dir, blockPath: "tickets/booking-api/pricing/price-seat", input: { fullPrice: 25, seat: 1 } });
+    expect(ran.output).toEqual({ price: 25 });
+
+    await writeFile(code("price-seat.ts"), `${HEADER}\n\n${SIGNATURE} {\n  process.exit(1);\n  return { price: input.fullPrice };\n}\n`, "utf8");
+    expect((await checkProject(dir)).systems[0]!.codeProblems).toEqual([
+      expect.objectContaining({ file: PRICE_SEAT, line: 4, message: expect.stringContaining("process") }),
     ]);
+  }, 30_000);
+
+  it("will not run a block pointed at a method, and says why in words", async () => {
+    await writeFile(
+      code("price-seat.ts"),
+      `${HEADER}\n\nexport class Pricing {\n  async priceSeat(input: PriceSeatInput, caps: PriceSeatCaps): Promise<PriceSeatOutput> {\n    return { price: input.fullPrice };\n  }\n}\n`,
+      "utf8",
+    );
+    const blockFile = file("pricing", "price-seat", "block.json");
+    const settings = JSON.parse(await readFile(blockFile, "utf8")) as { code: string };
+    await writeFile(blockFile, JSON.stringify({ ...settings, code: `${PRICE_SEAT}#Pricing.priceSeat` }), "utf8");
+
+    const ran = await runBlock({ projectDir: dir, blockPath: "tickets/booking-api/pricing/price-seat", input: { fullPrice: 25, seat: 1 } });
+    expect(ran.ok).toBe(false);
+    expect(ran.error).toContain("Pricing.priceSeat is a method, and Fragmentor can only call a function on its own");
   }, 30_000);
 
   it("refuses a helper file that is not a block, which is what a block is for", async () => {
@@ -249,8 +288,7 @@ describe("checkProject", () => {
   }, 30_000);
 
   it("reports a package the project has not installed, which the runner would not find", async () => {
-    // zod typechecks, because the checker lends contracts Fragmentor's copy,
-    // but a block that uses it itself needs the project to have it.
+    // Contracts need no package, so none is lent: zod is the project's to install like any other.
     await writeFile(
       code("price-seat.ts"),
       `${HEADER}\nimport { z } from "zod";\n\n${SIGNATURE} {\n  return { price: z.number().parse(input.fullPrice) };\n}\n`,
@@ -258,9 +296,45 @@ describe("checkProject", () => {
     );
 
     const report = await checkProject(dir);
-    expect(report.systems[0]!.codeProblems).toEqual([
+    expect(report.systems[0]!.codeProblems).toContainEqual(
       expect.objectContaining({ line: 2, message: expect.stringContaining('imports "zod", which is not installed in the project') }),
+    );
+  }, 30_000);
+
+  it("refuses rows a test gives a store the block does not read, naming the one it could have meant", async () => {
+    const cases = file("find-event", "cases.json");
+    const saved = JSON.parse(await readFile(cases, "utf8")) as { stores?: Record<string, unknown> }[];
+    // Keyed by the capability port's name, which the run would pass over.
+    const rows = Object.values(saved.find((each) => each.stores)!.stores!)[0];
+    saved.push({ name: "keyed by the port", input: { eventId: "e-1" }, stores: { events: rows } } as never);
+    saved.push({ name: "keyed by nothing", input: { eventId: "e-1" }, stores: { "tickets/nowhere.rows": {} } } as never);
+    // A store this block does not read is still a store: nothing wrong is said of it.
+    saved.push({ name: "keyed by another table", input: { eventId: "e-1" }, stores: { "tickets/tickets-db.bookings": {} } } as never);
+    await writeFile(cases, JSON.stringify(saved), "utf8");
+
+    const report = await checkProject(dir);
+    expect(report.errorCount).toBe(2);
+    expect(report.problems.map((problem) => [problem.severity, problem.blockPath, problem.message])).toEqual([
+      [
+        "error",
+        "tickets/booking-api/find-event",
+        'The test "keyed by the port" gives rows for "events", which is not a store entry in this project, so the run would never see them. Key its rows by the full address of the store entry, "tickets/tickets-db.events".',
+      ],
+      [
+        "error",
+        "tickets/booking-api/find-event",
+        'The test "keyed by nothing" gives rows for "tickets/nowhere.rows", which is not a store entry in this project, so the run would never see them. Key its rows by the full address of the store entry, "tickets/tickets-db.events".',
+      ],
     ]);
+  }, 30_000);
+
+  it("says one thing of an access that names nothing, not one more for each test that seeds its store", async () => {
+    const blockFile = file("find-event", "block.json");
+    const block = JSON.parse(await readFile(blockFile, "utf8")) as { access: string[] };
+    await writeFile(blockFile, JSON.stringify({ ...block, access: ["events reads tickets-db.venues"] }), "utf8");
+
+    const report = await checkProject(dir);
+    expect(report.problems).toEqual([expect.objectContaining({ message: expect.stringContaining('exposes no table called "venues"') })]);
   }, 30_000);
 
   it("reports a tests file it cannot read, rather than the tests silently vanishing", async () => {
@@ -287,11 +361,11 @@ describe("checkProject", () => {
   }, 30_000);
 
   it("regenerates contracts from the diagram before checking the code against them", async () => {
-    const contract = file("find-event", "contract.ts");
+    const contract = file("find-event", "contract.d.ts");
     await writeFile(contract, "// stale\n", "utf8");
 
     expect((await checkProject(dir)).errorCount).toBe(0);
-    expect(await readFile(contract, "utf8")).toContain("export const findEventInput");
+    expect(await readFile(contract, "utf8")).toContain("export type FindEventInput");
   }, 30_000);
 
   it("passes a project whose blocks say where their code will be, before any of it is written", async () => {
