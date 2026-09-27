@@ -6,9 +6,12 @@ import path from "node:path";
 import { z } from "zod/v4";
 import { blockIdPattern, parseBlockFile } from "../model/block.js";
 import { isArchitecture } from "../model/roles.js";
+import { loadExecutions } from "./executions.js";
 import { blockDir, loadProject } from "./project.js";
 import type { LoadedBlock, Project } from "./project.js";
 import { resolveInside } from "./safePath.js";
+import { projectSnapshot } from "./snapshot.js";
+import type { ProjectSnapshot } from "./snapshot.js";
 
 /**
  * A block's earlier versions, and putting one back.
@@ -36,6 +39,9 @@ import { resolveInside } from "./safePath.js";
  * complaint is only ever quoted inside a sentence of ours. Every path is
  * relative to the project folder, so a project in a subfolder of its
  * repository needs nothing special.
+ *
+ * The whole project as it was at a commit is read here too, with the same
+ * readers, so what changed since then can be told.
  */
 
 type GitResult = { code: number; out: Buffer; err: string } | { missing: true };
@@ -260,15 +266,20 @@ async function onIndexCopy<T>(dir: string, work: (env: Record<string, string>) =
  * a version: a link or a nested repository is not something a swap can write.
  */
 async function treeFiles(dir: string, commit: string, specs: string[]): Promise<string[]> {
+  return (await treeBlobs(dir, commit, specs)).map((each) => each.file);
+}
+
+/** The same files, each with the object git keeps its bytes in, which reads faster than asking for it by path. */
+async function treeBlobs(dir: string, commit: string, specs: string[]): Promise<{ file: string; object: string }[]> {
   const listed = await git(dir, ["ls-tree", "-r", "-z", commit, "--", ...specs]);
   if ("missing" in listed) throw new Error(NO_GIT);
   if (listed.code !== 0) throw new Error("That commit is not in this project's history.");
   return pathsIn(listed.out).flatMap((entry) => {
     // "<mode> <type> <object>\t<path>"
     const tab = entry.indexOf("\t");
-    const [mode, type] = entry.slice(0, tab).split(" ");
+    const [mode, type, object = ""] = entry.slice(0, tab).split(" ");
     const file = entry.slice(tab + 1);
-    return type === "blob" && (mode === "100644" || mode === "100755") && !noise(file) ? [file] : [];
+    return type === "blob" && (mode === "100644" || mode === "100755") && !noise(file) ? [{ file, object }] : [];
   });
 }
 
@@ -393,6 +404,12 @@ export interface BlockVersions {
   inUse: string[];
   /** When it is exactly as none of them, the row it was taken from and has changed since: the version swapped in, or else the latest commit. */
   changedFrom: string | null;
+  /**
+   * The commit row the block was on at the commit asked about as `since`: the
+   * newest of its versions made by then. Null when none was asked about, or
+   * when that is not a listed row, as when the block has moved since.
+   */
+  sinceVersion: string | null;
 }
 
 /**
@@ -416,6 +433,13 @@ export interface SwapPlan {
 
 /** What a swap put in place, as its record says: a commit as `log` gives it, or a saved version as it is listed. */
 type SwappedIn = BlockVersion | { saved: SavedVersion };
+
+/**
+ * A commit as the window names one: its whole hash, SHA-1 or SHA-256. Anything
+ * else, such as a value starting with "-" that git would read as an option, is
+ * refused before git sees it.
+ */
+const COMMIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 /** A commit as one line of `log` output, read by versionFrom. */
 const FORMAT = "--format=%H%x1f%cI%x1f%an%x1f%s";
@@ -443,15 +467,16 @@ async function loadBlock(projectDir: string, blockPath: string): Promise<{ proje
  * Whether git can give this project's versions: why not, as a sentence, or
  * whether it has any commits yet. One question settles it: 0 has commits, 1
  * has none yet, and anything else means there is no repository it can read.
+ * `subject` is what the sentence says comes from git: "Versions" or "Changes".
  */
-async function gitState(projectDir: string): Promise<{ unavailable: string } | { unavailable: null; hasCommits: boolean }> {
+async function gitState(projectDir: string, subject = "Versions"): Promise<{ unavailable: string } | { unavailable: null; hasCommits: boolean }> {
   const head = await git(projectDir, ["rev-parse", "--verify", "--quiet", "HEAD"]);
-  if ("missing" in head) return { unavailable: NO_GIT };
+  if ("missing" in head) return { unavailable: NO_GIT.replace("Versions", subject) };
   if (head.code !== 0 && head.code !== 1) {
     return {
       unavailable: (await insideRepositoryFolder(projectDir))
-        ? `Versions come from the project's git history, and git cannot read the repository holding this folder: ${firstLine(head.err)}`
-        : "Versions come from the project's git history, and this folder is not in a git repository yet. Ask your agent to put it under git and commit.",
+        ? `${subject} come from the project's git history, and git cannot read the repository holding this folder: ${firstLine(head.err)}`
+        : `${subject} come from the project's git history, and this folder is not in a git repository yet. Ask your agent to put it under git and commit.`,
     };
   }
   return { unavailable: null, hasCommits: head.code === 0 };
@@ -644,7 +669,8 @@ const leftSchema = z.object({ files: z.record(z.string(), z.string().nullable())
  * them. Whether a commit can still be read is left until it is compared or
  * swapped: reading every one here would cost two processes a commit.
  */
-export async function blockVersions(projectDir: string, blockPath: string): Promise<BlockVersions> {
+export async function blockVersions(projectDir: string, blockPath: string, since: string | null = null): Promise<BlockVersions> {
+  if (since !== null && !COMMIT.test(since)) throw new Error(`"${since}" is not a commit.`);
   // Undoing needs only the copy the swap kept, and the saved versions only
   // their files, so both are given whatever state git is in.
   const found = await pendingSwap(projectDir);
@@ -671,6 +697,7 @@ export async function blockVersions(projectDir: string, blockPath: string): Prom
     unreadable,
     inUse: [],
     changedFrom: null,
+    sinceVersion: null,
   });
 
   const state = await gitState(projectDir);
@@ -721,7 +748,16 @@ export async function blockVersions(projectDir: string, blockPath: string): Prom
   const latest = versions[0]?.commit ?? null;
   const inUse = await inUseNow(projectDir, specs, now.all, changed ? null : latest, pending, held);
   const changedFrom = inUse.length > 0 ? null : swapped === null ? latest : swapped.kind === "commit" ? swapped.commit : swapped.id;
-  return { unavailable: null, versions, more, changed, blocked, swapped, saved, unreadable, inUse, changedFrom };
+
+  // The newest commit by then that changed what the block is made of now is
+  // the version it was on then, when that is one of its rows.
+  let sinceVersion: string | null = null;
+  if (since !== null && hasCommits) {
+    const then = await git(projectDir, ["log", "-n", "1", "--format=%H", since, "--", ...specs]);
+    const hash = "missing" in then || then.code !== 0 ? "" : then.out.toString("utf8").trim();
+    sinceVersion = versions.some((version) => version.commit === hash) ? hash : null;
+  }
+  return { unavailable: null, versions, more, changed, blocked, swapped, saved, unreadable, inUse, changedFrom, sinceVersion };
 }
 
 /**
@@ -811,16 +847,49 @@ async function asStored(dir: string, files: string[]): Promise<Map<string, Buffe
     .filter(Boolean);
   if (ids.length !== files.length) throw new Error("Git could not read the block's files to save them.");
 
-  // "<object> blob <size>" on a line, then that many bytes, then a line end, for each.
-  const batch = outputOf(await git(dir, ["cat-file", "--batch"], {}, ids.map((id) => `${id}\n`).join("")));
+  const read = await readBatch(dir, ids);
+  files.forEach((file, i) => {
+    const bytes = read[i];
+    if (bytes === null || bytes === undefined) throw new Error("Git could not read the block's files to save them.");
+    stored.set(file, bytes);
+  });
+  return stored;
+}
+
+/**
+ * Files git holds, read in one process: each named as git names an object,
+ * such as `<commit>:./<path>` or a blob's id, and each given back as stored,
+ * or null where git has nothing by that name.
+ *
+ * Git answers each name with a line, "<object> blob <size>" followed by that
+ * many bytes and a line end, or "<name> missing". Anything else is refused
+ * rather than read on from, since one answer taken for the wrong size would
+ * make every file after it wrong.
+ */
+async function readBatch(dir: string, names: string[]): Promise<(Buffer | null)[]> {
+  if (names.length === 0) return [];
+  // A line end in a name would make two names of it.
+  if (names.some((name) => name.includes("\n"))) throw new Error("Git cannot be asked for a file whose name has a line end in it.");
+  const batch = outputOf(await git(dir, ["cat-file", "--batch"], {}, names.map((name) => `${name}\n`).join("")));
+  const read: (Buffer | null)[] = [];
   let at = 0;
-  for (const file of files) {
+  for (const name of names) {
     const end = batch.indexOf(0x0a, at);
-    const size = Number(batch.subarray(at, end).toString("latin1").split(" ")[2]);
-    stored.set(file, batch.subarray(end + 1, end + 1 + size));
+    const header = end === -1 ? "" : batch.subarray(at, end).toString("utf8");
+    if (header === `${name} missing`) {
+      read.push(null);
+      at = end + 1;
+      continue;
+    }
+    const blob = /^[0-9a-f]{40}(?:[0-9a-f]{24})? blob (\d+)$/.exec(header);
+    const size = blob === null ? -1 : Number(blob[1]);
+    if (size < 0 || end + 1 + size >= batch.length || batch[end + 1 + size] !== 0x0a) {
+      throw new Error(`Git's answer for ${name} could not be read as a file.`);
+    }
+    read.push(batch.subarray(end + 1, end + 1 + size));
     at = end + 1 + size + 1;
   }
-  return stored;
+  return read;
 }
 
 /** A file stored as git stores it, as this computer's checkout would write it. */
@@ -902,7 +971,7 @@ export async function planSwap(projectDir: string, blockPath: string, version: V
   // with "-" that git would read as an option, or one that would make a path
   // leading elsewhere, is refused before git or the disk sees it.
   if ("commit" in version) {
-    if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(version.commit)) throw new Error(`"${version.commit}" is not a commit.`);
+    if (!COMMIT.test(version.commit)) throw new Error(`"${version.commit}" is not a commit.`);
   } else if (!savedIdPattern.test(version.saved)) {
     throw new Error(`"${version.saved}" is not a saved version.`);
   }
@@ -1442,8 +1511,163 @@ export async function headCommit(projectDir: string): Promise<{ hash: string; su
  * with nothing, so everything in it is a change.
  */
 export async function commitTouchesBlock(projectDir: string, hash: string, blockPath: string): Promise<boolean> {
-  if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(hash)) throw new Error(`"${hash}" is not a commit.`);
+  if (!COMMIT.test(hash)) throw new Error(`"${hash}" is not a commit.`);
   const { specs } = await loadBlock(projectDir, blockPath);
   const changed = await git(projectDir, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--root", hash, "--", ...specs]);
   return pathsIn(outputOf(changed)).length > 0;
+}
+
+/** The project as it was at a commit, or why it cannot be read as it was. */
+export interface ProjectAt {
+  /** Null, with nothing unreadable, where the project did not exist yet at that commit: everything in it now is new since. */
+  snapshot: ProjectSnapshot | null;
+  /** Why the project as it was then cannot be read, as a sentence, or null. */
+  unreadable: string | null;
+}
+
+/**
+ * The project as it was at one commit, snapshotted the way it is snapshotted
+ * now, so the two can be compared.
+ *
+ * Its fragmentor.json, blocks and executions are read out of git into a folder
+ * of its own in the system's temporary folder, then the code its blocks and
+ * its executions' steps pointed at, and the snapshot is taken there: one way
+ * of reading a project, not a second one for the past. Nothing is written to
+ * the project or to git, and the folder is removed afterwards.
+ *
+ * Only files a pointer names are read. A pointer naming a folder gets the
+ * folder, empty, since all that is asked of one is that it is there, so a
+ * project whose code is `src` is never copied whole. A file that was not there
+ * at that commit is not there in the copy either, and the snapshot says so,
+ * as it would have said then.
+ *
+ * The snapshot is given the project's own folder, and no block carries the
+ * text of its code or contract, which is only ever shown from the project as
+ * it is now.
+ */
+export async function projectAt(projectDir: string, commit: string): Promise<ProjectAt> {
+  if (!COMMIT.test(commit)) throw new Error(`"${commit}" is not a commit.`);
+  const listed = await treeBlobs(projectDir, commit, ["fragmentor.json", "blocks", "executions"]);
+  if (!listed.some((each) => each.file === "fragmentor.json")) return { snapshot: null, unreadable: null };
+
+  const temp = await mkdtemp(path.join(tmpdir(), "fragmentor-at-"));
+  // Whatever is said about the copy is said about the project, never about a
+  // folder that is gone by the time anyone reads it.
+  const withoutTemp = (text: string) => {
+    let said = text;
+    for (const folder of [temp, temp.replace(/\\/g, "/")]) {
+      said = said.split(`${folder}\\`).join("").split(`${folder}/`).join("").split(folder).join("the project");
+    }
+    return said;
+  };
+  const copy = async (blobs: { file: string; object: string }[]) => {
+    const read = await readBatch(projectDir, blobs.map((each) => each.object));
+    await eightAtATime([...blobs.entries()], async ([i, { file }]) => {
+      const bytes = read[i];
+      if (bytes === null || bytes === undefined) return;
+      const to = resolveInside(temp, file);
+      await mkdir(path.dirname(to), { recursive: true });
+      await writeFile(to, bytes);
+    });
+  };
+
+  try {
+    await copy(listed);
+    let project: Project;
+    try {
+      project = await loadProject(temp);
+    } catch (error) {
+      return { snapshot: null, unreadable: await unreadableAt(temp, withoutTemp(messageOf(error))) };
+    }
+
+    const executions = await loadExecutions(temp).then(
+      (loaded) => loaded.executions,
+      () => [],
+    );
+    const pointers = unique(
+      [
+        ...[...project.byPath.values()].map((node) => pointerPath(node.block.code, node.block.planned)),
+        ...executions
+          .flatMap((execution) => [execution.trigger.code, ...(execution.declared?.events ?? []).map((event) => (event.type === "return" ? undefined : event.code))])
+          .map((code) => pointerPath(code, false)),
+      ].filter((pointer): pointer is string => pointer !== null),
+    );
+    // Listed from git first, so only what was there is asked for. Of what lies
+    // under a pointer naming a folder, only files other pointers name are read.
+    const found = await treeBlobs(projectDir, commit, outermost(pointers));
+    const named = new Set(pointers);
+    await copy(found.filter((each) => named.has(each.file)));
+    for (const pointer of pointers) {
+      if (found.some((each) => each.file.startsWith(`${pointer}/`))) await mkdir(resolveInside(temp, pointer), { recursive: true });
+    }
+
+    const snapshot = await projectSnapshot(temp, { atCommit: true });
+    for (const block of Object.values(snapshot.blocks)) block.sources = { code: null, contract: null };
+    return {
+      snapshot: {
+        ...snapshot,
+        dir: projectDir,
+        diagnostics: snapshot.diagnostics.map((each) => ({ ...each, blockPath: withoutTemp(each.blockPath), message: withoutTemp(each.message) })),
+      },
+      unreadable: null,
+    };
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Why a project read back from a commit into `folder` cannot be loaded, as a
+ * sentence. One written in a format Fragmentor has retired is only said to be
+ * that: how to bring it up to date is no help with a commit, which stays as
+ * it was.
+ */
+async function unreadableAt(folder: string, why: string): Promise<string> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await readFile(path.join(folder, "fragmentor.json"), "utf8"));
+  } catch {
+    raw = null;
+  }
+  const retired = raw !== null && typeof raw === "object" && ("mode" in raw || ("rootBlock" in raw && !("systems" in raw)));
+  return retired
+    ? "The project as it was then was written for an older Fragmentor, which this one no longer reads."
+    : `The project as it was then cannot be read: ${why}`;
+}
+
+/** What git says about the points a project can be compared with, where git can say anything. */
+export interface ChangePoints {
+  unavailable: null;
+  /** The newest commit, or null when nothing has been committed yet. */
+  head: { hash: string; subject: string; date: string; merge: boolean } | null;
+  /** Whether the commit asked about is still in the repository. */
+  baseKnown: boolean;
+  /** The commits since it that changed the project, newest first, at most 100 of them. */
+  since: BlockVersion[];
+  /** More than 100 are since it. */
+  more: boolean;
+}
+
+/**
+ * The newest commit, whether `base`, the commit the project was last compared
+ * with, is still there, and what was committed since it. A null base is before
+ * the first commit, so every commit is since it. A history rewritten since, by
+ * an amend or a rebase, can leave the base gone, and then nothing is said to
+ * be since it.
+ */
+export async function changePoints(projectDir: string, base: string | null): Promise<{ unavailable: string } | ChangePoints> {
+  if (base !== null && !COMMIT.test(base)) throw new Error(`"${base}" is not a commit.`);
+  const state = await gitState(projectDir, "Changes");
+  if (state.unavailable !== null) return { unavailable: state.unavailable };
+  if (!state.hasCommits) return { unavailable: null, head: null, baseKnown: base === null, since: [], more: false };
+
+  const known = base === null ? null : await git(projectDir, ["cat-file", "-e", `${base}^{commit}`]);
+  const baseKnown = known === null || (!("missing" in known) && known.code === 0);
+  const log = baseKnown
+    ? outputOf(await git(projectDir, ["log", "-n", "101", FORMAT, base === null ? "HEAD" : `${base}..HEAD`, "--", "."]))
+        .toString("utf8")
+        .split("\n")
+        .filter(Boolean)
+    : [];
+  return { unavailable: null, head: await headCommit(projectDir), baseKnown, since: log.slice(0, 100).map(versionFrom), more: log.length > 100 };
 }

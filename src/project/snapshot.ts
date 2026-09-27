@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { AccessVerb } from "../model/block.js";
@@ -128,6 +129,12 @@ export interface SnapshotCode {
   excerpt: string | null;
   /** The line number the excerpt starts at. */
   excerptStart: number;
+  /**
+   * A fingerprint of the whole file, line endings aside, so a change anywhere
+   * in it is noticed between two snapshots. Null where the file was not read:
+   * a folder, or a file too large to show.
+   */
+  hash: string | null;
 }
 
 export interface SnapshotBlock {
@@ -243,7 +250,7 @@ async function readIfPresent(filePath: string): Promise<string | null> {
 const EXCERPT_LINES = 60;
 
 function excerptOf(pointer: string, location: CodeLocation): SnapshotCode {
-  if (location.text === null) return { pointer, file: location.file, line: location.line, excerpt: null, excerptStart: 1 };
+  if (location.text === null) return { pointer, file: location.file, line: location.line, excerpt: null, excerptStart: 1, hash: null };
   const lines = location.text.split("\n");
   const start = Math.max(1, (location.line ?? 1) - 2);
   return {
@@ -252,6 +259,9 @@ function excerptOf(pointer: string, location: CodeLocation): SnapshotCode {
     line: location.line,
     excerpt: lines.slice(start - 1, start - 1 + EXCERPT_LINES).join("\n"),
     excerptStart: start,
+    // The text was read with its line endings made LF, so a checkout that
+    // converts them changes nothing here.
+    hash: createHash("sha1").update(location.text, "utf8").digest("hex"),
   };
 }
 
@@ -347,7 +357,14 @@ async function notesOf(project: Project, problems: ProjectDiagnostic[]): Promise
   return loaded.notes.map((note) => ({ ...note, waiting: waitingOn(note) }));
 }
 
-export async function projectSnapshot(projectDir: string): Promise<ProjectSnapshot> {
+/**
+ * `atCommit` is for the project as it was at a commit, read back into a folder
+ * holding only its blocks, its executions and the code they point at. Its
+ * notes are not part of what it was, so they are left out rather than read
+ * from a folder that has none, and so is anything else that needs the rest of
+ * the project's folder.
+ */
+export async function projectSnapshot(projectDir: string, { atCommit = false }: { atCommit?: boolean } = {}): Promise<ProjectSnapshot> {
   const project = await loadProject(projectDir);
   const code = await readAllCode(project);
   const blocks: Record<string, SnapshotBlock> = {};
@@ -471,7 +488,7 @@ export async function projectSnapshot(projectDir: string): Promise<ProjectSnapsh
 
   // Read before the snapshot is put together, because its problems go into the list below.
   const executions = await executionsOf(project, fileProblems);
-  const notes = await notesOf(project, fileProblems);
+  const notes = atCommit ? [] : await notesOf(project, fileProblems);
 
   return {
     dir: project.dir,

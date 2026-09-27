@@ -2,19 +2,39 @@ import { appendFile, chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, rename
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   applyPlan,
   blockVersions,
+  changePoints,
   commitTouchesBlock,
   deleteSavedVersion,
   editSavedVersion,
   headCommit,
+  projectAt,
   saveVersion,
   swapToVersion,
   undoLastSwap,
 } from "./history.js";
 import { commitExampleHistory, filesOf, gitIn } from "./exampleHistory.js";
+import { addNote } from "./notes.js";
+import { projectSnapshot } from "./snapshot.js";
+
+/**
+ * Every file written into a copy of the project as it was at a commit, so a
+ * test can say what was never copied there. Everything is written as usual.
+ */
+const copied = vi.hoisted(() => [] as string[]);
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    writeFile: (...args: Parameters<typeof actual.writeFile>) => {
+      if (String(args[0]).includes("fragmentor-at-")) copied.push(String(args[0]));
+      return actual.writeFile(...args);
+    },
+  };
+});
 
 /**
  * A block's versions come from a real git repository here, because what is
@@ -1146,5 +1166,188 @@ describe("whether a commit changed a block", () => {
 
     await expect(commitTouchesBlock(dir, "-x", priceSeat)).rejects.toThrow('"-x" is not a commit.');
     await expect(commitTouchesBlock(dir, newer, "tickets/nowhere")).rejects.toThrow("There is no block at tickets/nowhere.");
+  }, 30_000);
+});
+
+describe("the project as it was at a commit", () => {
+  it("is read from git as it was then, and as the working copy reads when nothing has changed since", async () => {
+    const { dir, older, newer } = await ticketsHistory();
+
+    const then = await projectAt(dir, older);
+    expect(then.unreadable).toBeNull();
+    expect(then.snapshot!.dir).toBe(dir);
+    expect(then.snapshot!.blocks[`${pricing}/seat-discount`]).toMatchObject({ name: "Seat Discount", implemented: true, runnable: true });
+
+    // A note is not part of what the project was, and code text is only ever shown from the project now.
+    await addNote(dir, priceSeat, "person", "Why ten percent?");
+    const atNewer = (await projectAt(dir, newer)).snapshot!;
+    const now = await projectSnapshot(dir);
+    expect(Object.keys(atNewer.blocks)).toEqual(Object.keys(now.blocks));
+    for (const [blockPath, block] of Object.entries(now.blocks)) {
+      expect(atNewer.blocks[blockPath]).toEqual({ ...block, sources: { code: null, contract: null } });
+    }
+    expect(atNewer.executions).toEqual(now.executions);
+    expect(atNewer.diagnostics).toEqual(now.diagnostics);
+    expect(now.notes).toHaveLength(1);
+    expect(atNewer.notes).toEqual([]);
+  }, 30_000);
+
+  it("is nothing from before the project was there", async () => {
+    const repo = await scratch();
+    const git = gitIn(repo);
+    await git("init", "--quiet");
+    await put(repo, "README.md", "Nothing yet.\n");
+    await git("add", "--all");
+    await git("commit", "--quiet", "-m", "Start");
+    const before = await head(git);
+    await cp(path.join(examples, "tickets"), repo, { recursive: true });
+
+    expect(await projectAt(repo, before)).toEqual({ snapshot: null, unreadable: null });
+  }, 30_000);
+
+  it("says in a sentence when it cannot be read as it was, never naming the folder it was read into", async () => {
+    const { dir, git } = await ticketsHistory();
+    const manifest = JSON.parse(await text(dir, "fragmentor.json"));
+    await put(dir, "fragmentor.json", JSON.stringify({ ...manifest, mode: "build" }));
+    await git("commit", "--quiet", "-am", "An older kind of project");
+    expect(await projectAt(dir, await head(git))).toEqual({
+      snapshot: null,
+      unreadable: "The project as it was then was written for an older Fragmentor, which this one no longer reads.",
+    });
+
+    await put(dir, "fragmentor.json", JSON.stringify(manifest));
+    await put(dir, `${PRICING}/price-seat/block.json`, "{ not json");
+    await git("commit", "--quiet", "-am", "A half-written block");
+    const broken = await projectAt(dir, await head(git));
+    expect(broken.snapshot).toBeNull();
+    expect(broken.unreadable).toMatch(
+      /^The project as it was then cannot be read: Could not read the block definition at blocks.tickets.booking-api.pricing.price-seat.block\.json: /,
+    );
+    expect(broken.unreadable).not.toContain(tmpdir());
+    expect(broken.unreadable).not.toContain("fragmentor-at-");
+  }, 30_000);
+
+  it("is asked for only by a whole commit hash, which git never sees otherwise", async () => {
+    const { dir, newer } = await ticketsHistory();
+    await expect(projectAt(dir, "-x")).rejects.toThrow('"-x" is not a commit.');
+    await expect(projectAt(dir, newer.slice(0, 7))).rejects.toThrow(`"${newer.slice(0, 7)}" is not a commit.`);
+    await expect(projectAt(dir, "HEAD")).rejects.toThrow('"HEAD" is not a commit.');
+    await expect(projectAt(dir, "0".repeat(40))).rejects.toThrow("That commit is not in this project's history.");
+  }, 30_000);
+
+  it("copies only the code its pointers name, and a folder they name as the folder alone", async () => {
+    const dir = await scratch();
+    await cp(path.join(examples, "messenger"), dir, { recursive: true });
+    // Code no block points at, inside the folder the system points at.
+    await put(dir, "src/api/unused.ts", "export const unused = true;\n");
+    const git = gitIn(dir);
+    await git("init", "--quiet");
+    await git("add", "--all");
+    await git("commit", "--quiet", "-m", "The example");
+
+    copied.splice(0);
+    const then = (await projectAt(dir, await head(git))).snapshot!;
+    expect(then.diagnostics.filter((each) => each.message.includes("points at code that is not there"))).toEqual([]);
+    expect(then.diagnostics).toEqual((await projectSnapshot(dir)).diagnostics);
+    expect(then.blocks.app).toMatchObject({ implemented: true, code: { file: "src", hash: null } });
+
+    // Each path as it is inside the copy.
+    const inCopy = copied.map((file) => file.slice(file.indexOf("fragmentor-at-")).split(/[\\/]/).slice(1).join("/"));
+    expect(inCopy.filter((file) => file.startsWith("src/")).sort()).toEqual([
+      "src/api/auth.ts",
+      "src/api/messaging/notifyRecipient.ts",
+      "src/api/messaging/saveMessage.ts",
+      "src/api/router.ts",
+      "src/client/state.ts",
+      "src/client/ui/chatView.ts",
+      "src/client/ui/loginForm.ts",
+      "src/client/ui/sendButton.ts",
+      "src/infrastructure/db.ts",
+      "src/infrastructure/queue.ts",
+      "src/server.ts",
+      "src/workers/cleanUp.ts",
+      "src/workers/delivery.ts",
+    ]);
+  }, 30_000);
+
+  it("says code deleted by then was not there, as the working copy says, and reads the rest", async () => {
+    const { dir, git } = await ticketsHistory();
+    await git("rm", "--quiet", "--", "src/booking/find-event.ts");
+    await git("commit", "--quiet", "-m", "Lose Find Event's code");
+
+    const then = (await projectAt(dir, await head(git))).snapshot!;
+    const now = await projectSnapshot(dir);
+    expect(then.diagnostics).toEqual(now.diagnostics);
+    expect(
+      then.diagnostics.some((each) => each.blockPath === "tickets/booking-api/find-event" && each.message.includes("points at code that is not there")),
+    ).toBe(true);
+    expect(then.blocks[priceSeat]!.code).toEqual(now.blocks[priceSeat]!.code);
+  }, 30_000);
+
+  it("leaves nothing behind in the temporary folder, read or not", async () => {
+    const { dir, git, newer } = await ticketsHistory();
+    await put(dir, `${PRICING}/price-seat/block.json`, "{ not json");
+    await git("commit", "--quiet", "-am", "A half-written block");
+    const broken = await head(git);
+
+    // A temporary folder of its own, so nothing else running is looked at.
+    const own = await scratch();
+    const saved = { TEMP: process.env.TEMP, TMP: process.env.TMP, TMPDIR: process.env.TMPDIR };
+    Object.assign(process.env, { TEMP: own, TMP: own, TMPDIR: own });
+    try {
+      expect(tmpdir()).toBe(own);
+      expect((await projectAt(dir, newer)).snapshot).not.toBeNull();
+      expect((await projectAt(dir, broken)).unreadable).not.toBeNull();
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+    expect(await readdir(own)).toEqual([]);
+  }, 30_000);
+});
+
+describe("the points a project can be compared with", () => {
+  it("are the newest commit and what was committed since the one asked about", async () => {
+    const { dir, older, newer } = await ticketsHistory();
+
+    const since = await changePoints(dir, older);
+    expect(since).toMatchObject({ unavailable: null, head: { hash: newer }, baseKnown: true, more: false });
+    expect("since" in since && since.since.map((each) => each.commit)).toEqual([newer]);
+
+    const all = await changePoints(dir, null);
+    expect("since" in all && all.since.map((each) => each.commit)).toEqual([newer, older]);
+  }, 30_000);
+
+  it("say when the commit asked about is gone, and refuse one that is not a commit", async () => {
+    const { dir } = await ticketsHistory();
+    expect(await changePoints(dir, "0".repeat(40))).toMatchObject({ unavailable: null, baseKnown: false, since: [] });
+    await expect(changePoints(dir, "-x")).rejects.toThrow('"-x" is not a commit.');
+  }, 30_000);
+
+  it("are nothing yet in a repository with no commits, and a sentence without one", async () => {
+    const outside = await scratch();
+    expect((await changePoints(outside, null)).unavailable).toMatch(/^Changes come from/);
+    await gitIn(outside)("init", "--quiet");
+    expect(await changePoints(outside, null)).toEqual({ unavailable: null, head: null, baseKnown: true, since: [], more: false });
+  }, 30_000);
+});
+
+describe("the version a block was on at a commit", () => {
+  it("is the row in use then, or none when the block has moved since", async () => {
+    const { dir, git, older, newer } = await ticketsHistory();
+    expect((await blockVersions(dir, pricing)).sinceVersion).toBeNull();
+    expect((await blockVersions(dir, pricing, older)).sinceVersion).toBe(older);
+    expect((await blockVersions(dir, pricing, newer)).sinceVersion).toBe(newer);
+    // The newer commit did not change Refund For, so it was still on the older one.
+    expect((await blockVersions(dir, refundFor, newer)).sinceVersion).toBe(older);
+
+    await rename(path.join(dir, PRICING, "refund-for"), path.join(dir, PRICING, "refund"));
+    await git("add", "--all", "--", ".");
+    await git("commit", "--quiet", "-m", "Call it Refund");
+    expect((await blockVersions(dir, `${pricing}/refund`, older)).sinceVersion).toBeNull();
+
+    await expect(blockVersions(dir, pricing, "-x")).rejects.toThrow('"-x" is not a commit.');
   }, 30_000);
 });
