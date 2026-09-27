@@ -350,3 +350,56 @@ describe("notes, from the agent's side", () => {
     expect(result.output).toContain("Result: no errors.");
   }, 30_000);
 });
+
+describe.skipIf(!hasGit)("what changed since the last commit", () => {
+  const blockFile = () => path.join(dir, "blocks", "tickets", "booking-api", "pricing", "price-seat", "block.json");
+
+  beforeEach(async () => {
+    await cp(tickets, dir, { recursive: true });
+  });
+
+  async function committed(): Promise<void> {
+    const git = gitIn(dir);
+    await git("init", "--quiet");
+    await git("add", "--all", "--", ".");
+    await git("commit", "--quiet", "-m", "The example as it ships");
+  }
+
+  it("is nothing straight after a commit, and each block changed since, in words, after an edit", async () => {
+    await committed();
+    const unchanged = fragmentor(["diff"], dir);
+    expect(unchanged.status).toBe(0);
+    expect(unchanged.output).toMatch(/^No changes since the last commit, [0-9a-f]{7} "The example as it ships"\./);
+
+    const block = JSON.parse(await readFile(blockFile(), "utf8")) as { responsibility: string };
+    await writeFile(blockFile(), JSON.stringify({ ...block, responsibility: "Price one seat, less a tenth from the fifth." }, null, 2), "utf8");
+    // From elsewhere, naming the project.
+    const edited = fragmentor(["diff", "--project", dir], repo);
+    expect(edited.status).toBe(0);
+    expect(edited.output).toContain(
+      [
+        "Changed",
+        "  tickets/booking-api/pricing/price-seat  Price Seat",
+        "      responsibility changed: Price one seat, less a tenth from the fifth.",
+      ].join("\n"),
+    );
+  }, 30_000);
+
+  it("calls everything new before the first commit", async () => {
+    await gitIn(dir)("init", "--quiet");
+    const result = fragmentor(["diff"], dir);
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Changes since before the first commit:\n\nNew\n  tickets  Tickets");
+  }, 30_000);
+
+  it("says why it cannot say, without git or given anything to compare", async () => {
+    const noGit = fragmentor(["diff"], dir);
+    expect(noGit.status).toBe(1);
+    expect(noGit.output).toMatch(/^Changes come from/);
+
+    await committed();
+    const given = fragmentor(["diff", "HEAD~1"], dir);
+    expect(given.status).toBe(1);
+    expect(given.output).toContain("fragmentor diff takes nothing but --project, and was given HEAD~1.");
+  }, 30_000);
+});

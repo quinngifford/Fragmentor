@@ -8,7 +8,10 @@ import { CLAUDE_FILE, GUIDE_FILE } from "./codegen/guide.js";
 import { getPack, isKnownLanguage } from "./lang/index.js";
 import { readAllCode } from "./project/code.js";
 import { loadExecutions } from "./project/executions.js";
-import { commitTouchesBlock, headCommit } from "./project/history.js";
+import { changesBetween, changesText } from "./project/changes.js";
+import { changePoints, commitTouchesBlock, headCommit, projectAt } from "./project/history.js";
+import { projectSnapshot } from "./project/snapshot.js";
+import type { ProjectSnapshot } from "./project/snapshot.js";
 import { NOTES_DIR, addNote, describeRun, isNoteWithin, loadNotes, markWorking, noteById, replyToNote, waitingOn } from "./project/notes.js";
 import type { Note, NoteCommit } from "./project/notes.js";
 import { evaluate } from "./run/expect.js";
@@ -48,6 +51,8 @@ Commands:
                          rather than acted on, and goes straight after the id.
   note <block-path> <text>
                          Leave a note on a block for the person to read in Fragmentor.
+  diff                   Say what changed since the last commit, in Fragmentor's words: which blocks are new,
+                         built, moved, changed or removed, and which executions changed.
 
 init uses the current folder; the others use the nearest folder, from here upwards, that holds fragmentor.json.
 --project names a folder instead. Everything after a note's block path or id is its text, but for --no-commit
@@ -679,6 +684,42 @@ async function note(dir: string, blockPath: string | undefined, words: string[])
 }
 
 /* -------------------------------------------------------------------------- */
+/* diff                                                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The project as it is on disk compared with its last commit, which is what
+ * the agent has done since. Before the first commit, everything is new.
+ */
+async function diff(dir: string): Promise<number> {
+  const points = await changePoints(dir, null);
+  if (points.unavailable !== null) {
+    console.log(points.unavailable);
+    return 1;
+  }
+  let now: ProjectSnapshot;
+  try {
+    now = await projectSnapshot(dir);
+  } catch (error) {
+    console.log(`The project in ${dir} could not be read.\n\n${messageOf(error)}\n\nRun \`fragmentor check\` for details.`);
+    return 1;
+  }
+
+  const head = points.head;
+  if (head === null) {
+    console.log(changesText(changesBetween(null, now), "since before the first commit"));
+    return 0;
+  }
+  const then = await projectAt(dir, head.hash);
+  if (then.unreadable !== null) {
+    console.log(`Cannot compare with the last commit, ${head.hash.slice(0, 7)} "${head.subject}". ${then.unreadable}`);
+    return 1;
+  }
+  console.log(changesText(changesBetween(then.snapshot, now), `since the last commit, ${head.hash.slice(0, 7)} "${head.subject}"`));
+  return 0;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Entry                                                                       */
 /* -------------------------------------------------------------------------- */
 
@@ -724,7 +765,7 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === "init") return init(path.resolve(project ?? process.cwd()), options);
 
-  if (["check", "test", "notes", "working", "reply", "note"].includes(command ?? "")) {
+  if (["check", "test", "notes", "working", "reply", "note", "diff"].includes(command ?? "")) {
     const dir = project ? path.resolve(project) : await findProject(process.cwd());
     if (!dir || !(await exists(manifestPath(dir)))) {
       console.log(
@@ -740,6 +781,11 @@ async function main(argv: string[]): Promise<number> {
     if (command === "test") return test(dir, rest.map(asPath));
     if (command === "reply") return reply(dir, rest[0], rest.slice(1));
     if (command === "note") return note(dir, rest[0] === undefined ? undefined : asPath(rest[0]), rest.slice(1));
+    if (command === "diff") {
+      if (rest.length === 0) return diff(dir);
+      console.log(`fragmentor diff takes nothing but --project, and was given ${rest.join(" ")}.`);
+      return 1;
+    }
     if (rest.length > 1) {
       console.log(`fragmentor ${command} takes one ${command === "working" ? "note's id" : "block path at most"}, and was given ${rest.length}.`);
       return 1;
