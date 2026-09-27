@@ -9,6 +9,6 @@ disable-model-invocation: true
 
 The person asked: `fragmentor plan $ARGUMENTS`
 
-Work out where what the person describes belongs, and add it as blocks with `"planned": true`: what each is responsible for, where it sits, and the connections worked out so far. Change the blocks already there only to show where the new ones join them, and write no code. Run `fragmentor check`, then say in the chat what you drew and anything that is the person's to decide, and wait: `fragmentor build` is how they ask you to build it.
+Work out where what the person describes belongs, and add it as blocks with `"planned": true`: what each is responsible for, where it sits, and the connections worked out so far. Change the blocks already there only to show where the new ones join them, and write no code. Run `fragmentor check` and commit the plan, then say in the chat what you drew and anything that is the person's to decide, and wait: `fragmentor build` is how they ask you to build it.
 
 FRAGMENTOR.md says how this project is worked on; follow it.

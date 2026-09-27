@@ -139,12 +139,27 @@ describe("the guide", () => {
     // phrase of Fragmentor's own asks for, with a line asking it to say when
     // it starts on a note, so the person sees what is being worked on, is
     // the whole of what has been allowed to add to these numbers.
-    expect(guides.TypeScript!.split("\n").length).toBeLessThan(316);
+    //
+    // Then the first real agents to follow it, on real codebases and empty
+    // folders, each had to find out the same few things by trial and error:
+    // what to write first, where `planned` goes, when executions are written,
+    // how a test seeds a store, what tests the code Fragmentor does not run,
+    // and, where the folder already held code, how that code is described and
+    // held to a contract. Saying so cost the lines and characters below, a
+    // little of it paid back by trimming. Lines alone let a guide grow by
+    // lengthening them, so the characters are held too.
+    const within = (guide: string, lines: number, characters: number) => {
+      expect(guide.split("\n").length).toBeLessThan(lines);
+      expect(guide.length).toBeLessThan(characters);
+    };
+    within(guides.TypeScript!, 316, 31_000);
+    within(agentGuide(project({ start: "plan" })), 318, 31_300);
+    within(agentGuide(project({ existingCode: true })), 323, 32_000);
     // Nothing is generated or run without a pack, so contracts and block
     // testing fall away, and so does a note flagging a failed run. What is
     // left still teaches executions, notes and the commands, which is why
     // this is not much smaller than it was.
-    expect(guides["in a language there is no pack for"]!.split("\n").length).toBeLessThan(270);
+    expect(guides["in a language there is no pack for"]!.split("\n").length).toBeLessThan(271);
   });
 
   it("tells an agent about every capability, and how to check and test its work", () => {
@@ -155,8 +170,8 @@ describe("the guide", () => {
     expect(guide).toContain("readFile(path: string) → string");
   });
 
-  it("asks for a commit each time a block is finished, because those commits are its versions", () => {
-    for (const guide of Object.values(guides)) expect(guide).toContain("Commit each time a block is finished and passes");
+  it("asks for a commit each time a block is built, because those commits are its versions", () => {
+    for (const guide of Object.values(guides)) expect(guide).toContain("Commit each block you build as soon as it passes");
   });
 
   it("asks for the versions the person saves to be committed and left alone", () => {
@@ -403,7 +418,10 @@ describe("the guide says where the project starts", () => {
   it("asks for the architecture as a plan first when that is what the person chose", () => {
     const planning = agentGuide(project({ start: "plan" }));
     expect(planning).toContain("**This project starts as a plan.**");
-    expect(planning).toContain('Give every block `"planned": true` to begin with');
+    expect(planning).toContain("with `\"planned\": true` on each system's top block");
+    // Planning spreads down, so it goes on the top of what is planned, and building has to take it off above.
+    expect(planning).toContain("Set it on the top block of what is planned");
+    expect(planning).toContain("Building a block takes `planned` off it and off every block holding it");
     expect(agentGuide(project({ start: "build" }))).not.toContain("starts as a plan");
   });
 
@@ -415,7 +433,72 @@ describe("the guide says where the project starts", () => {
 
     const planning = agentGuide(project({ start: "plan" }));
     expect(planning).toContain("wait for them to agree before you write any code");
+    // The agent cannot show anyone anything; the person looks in Fragmentor.
+    expect(planning).toContain("Tell the person to look at the diagram in Fragmentor");
+    expect(planning).not.toContain("Show the person");
     expect(planning).not.toContain("Carry straight on");
+  });
+
+  it("has every agent write the top of the tree first, and the blocks before the code", () => {
+    for (const guide of [agentGuide(project()), agentGuide(project({ existingCode: true })), agentGuide(project({ start: "plan" }))]) {
+      const first = guide.split("\n").find((line) => line.startsWith("1. "))!;
+      // The top block comes before the entry in `systems` that names it, which could not be read without it.
+      expect(first.indexOf("top `block.json`")).toBeGreaterThan(-1);
+      expect(first.indexOf("top `block.json`")).toBeLessThan(first.indexOf("`systems`"));
+      expect(first).toContain("before its code, so the person watches the structure arrive");
+      // Executions come with what starts them, and a plan has none.
+      expect(guide).toContain("each with the block that starts it, once that block is built. A plan has none.");
+    }
+  });
+
+  it("tells an agent in a folder of code that the code is described, and never to change it by the way", () => {
+    const guide = agentGuide(project({ existingCode: true }));
+    for (const told of ["Carry straight on to the code", "writing whatever is not there yet", "import it and write the block's tests", "You design the blocks, write the code"]) {
+      expect(guide).not.toContain(told);
+    }
+    expect(guide).toContain("Code that was already here is described, not changed: it is drawn rather than checked or run, and that is the expected outcome");
+    expect(guide).toContain("## Code that was already here");
+    expect(guide).toContain("`file#Class.method`");
+    expect(guide).toContain("the step's `code` is the file alone, and an operation such a handler answers leaves out `block`");
+    expect(guide).toContain("its `access` line has no port");
+    expect(guide).toContain("is for code being built");
+    // New code is held to its contract, and so is old code once the person asks, through a function of its own.
+    expect(guide).toContain("New code the person asks for is written against its contract wherever it is a function of its own.");
+    expect(guide).toContain("When the person asks you to hold a block to its contract, add to the file its code is in a small exported function");
+
+    // A project written from nothing is still told to write its code, and gets none of this.
+    const make = agentGuide(project());
+    expect(make).toContain("Point each block at its code, writing whatever is not there yet. Where Fragmentor writes a contract, import it and write the block's tests.");
+    expect(make).toContain("You design the blocks, write the code");
+    expect(make).not.toContain("## Code that was already here");
+    // Where nothing can be held to a contract, there is no contract to hold existing code to.
+    expect(agentGuide(project({ language: "Go", existingCode: true }))).not.toContain("hold a block to its contract");
+  });
+
+  it("has a rebuild commit once and only Fragmentor's files, and a plan committed once written", () => {
+    const rebuild = COMMANDS.find((command) => command.name === "rebuild")!;
+    expect(rebuild.summary).toContain("none of your code");
+    expect(rebuild.steps).toContain("then commit once, with only Fragmentor's files: `fragmentor.json`, `FRAGMENTOR.md`, `blocks/`, `executions/`, `.fragmentor/` and `.claude/skills/`.");
+    expect(COMMANDS.find((command) => command.name === "plan")!.steps).toContain("commit the plan");
+    // And the guide says the same, rather than asking for a commit per block of a rebuild.
+    for (const guide of Object.values({ make: agentGuide(project()), rebuild: agentGuide(project({ existingCode: true })) })) {
+      expect(guide).toContain("A rebuild or a plan commits once, when it is done.");
+    }
+  });
+
+  it("tells an agent in an empty folder how to set up a TypeScript project, and needs no package for contracts", () => {
+    const guide = agentGuide(project());
+    expect(guide).toContain('Start it with a `package.json` holding `"type": "module"` and a `tsconfig.json`, and tell the person how to run the entry point.');
+    expect(guide).not.toContain("zod");
+    expect(agentGuide(project({ language: "python" }))).not.toContain("tsconfig.json");
+    expect(agentGuide(project({ existingCode: true }))).not.toContain("tsconfig.json");
+  });
+
+  it("says how saved tests seed stores and compare results, and what tests the rest of the code", () => {
+    const guide = agentGuide(project());
+    expect(guide).toContain("A test gives the stores rows before it runs under `stores`, keyed by the store entry's full address and then by row key");
+    expect(guide).toContain("`expected` is compared whole, so leave it out where the result depends on `Random`");
+    expect(guide).toContain("is tested by the project's own tests and typechecked by its own typecheck, run beside `fragmentor test`: Fragmentor does not typecheck it.");
   });
 
   it("explains planned blocks", () => {

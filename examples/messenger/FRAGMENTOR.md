@@ -2,19 +2,19 @@
 
 # Working in this Fragmentor project
 
-The person you work with sees this project in Fragmentor as a diagram of **blocks**: the parts of the system, each drawn inside the part it belongs to. You design the blocks, write the code, and keep the two saying the same thing. Fragmentor draws the diagram, checks that it holds together, writes each function block's types, checks the code against them, and runs the block and its tests.
+The person you work with sees this project in Fragmentor as a diagram of **blocks**: the parts of the system, each drawn inside the part it belongs to. You draw the blocks from the code that is here, keep them true as it changes, and write whatever new code the person asks for. Fragmentor draws the diagram, checks that it holds together, writes each function block's types, checks the code against them, and runs the block and its tests.
 
-**This folder already held code**, and the diagram describes it. Map what is there into blocks, each pointing at the code it stands for, and keep them true as the code changes. Never restructure the program to make the diagram tidier; the diagram follows the code, and the person will say when they want the code changed.
+**This folder already held code**, and the diagram describes it. Map what is there into blocks, each pointing at the code it stands for, and keep them true as the code changes. Code that was already here is described, not changed: it is drawn rather than checked or run, and that is the expected outcome. Never restructure the program to make the diagram tidier; the diagram follows the code, and the person will say when they want the code changed.
 
 ## How to work
 
-1. Fill in `goal` and `systems` in `fragmentor.json`. Then write a `block.json` for every block, keeping any the person already wrote.
+1. Write each system's top `block.json`, then its entry in `systems` and the `goal` in `fragmentor.json`, then the blocks under it a level at a time, keeping any the person already wrote. Write each block as soon as you know it, before its code, so the person watches the structure arrive rather than all of it at the end.
 2. Run `fragmentor check` and fix everything it reports.
-3. Carry straight on to the code. They can watch the diagram fill in as you work, and will say if they want the shape changed, so do not stop to ask for agreement.
-4. Point each block at its code, writing whatever is not there yet. Where Fragmentor writes a contract, import it and write the block's tests.
-5. Write down what happens when something sets the system going, under `executions/`.
+3. Do not stop to ask for agreement: the person will say if they want the shape changed.
+4. Point each block at the code it stands for, as **Code that was already here** below says.
+5. Write down what happens when something sets the system going, under `executions/`: each with the block that starts it, once that block is built. A plan has none.
 6. Run `fragmentor check` and `fragmentor test` until it passes.
-7. Commit each time a block is finished and passes: its folder under `blocks/` and the code it points at, together, with a message saying what the block does now. Each commit is a version of the block that the person can compare with today's and go back to; going back rewrites the block's folder and the code it points at as they were then. The versions the person saves by name are kept in `.fragmentor/versions/`: commit them with everything else, and never change or delete them.
+7. Commit each block you build as soon as it passes: its folder under `blocks/` and the code it points at, together, with a message saying what the block does now. Each commit is a version of the block that the person can compare with today's and go back to. A rebuild or a plan commits once, when it is done. The versions the person saves by name are kept in `.fragmentor/versions/`: commit them with everything else, and never change or delete them.
 
 When the design changes, change the `block.json` files first, then the code. If the `fragmentor` command is not found, ask the person to run `npm link` once in Fragmentor's folder.
 
@@ -24,11 +24,11 @@ The person sets you going with a few fixed phrases, each starting with `fragment
 
 - **`fragmentor notes [block]`** — Run `fragmentor notes`, or `fragmentor notes <block-path>`, and work through what it lists, as the **Notes** section of FRAGMENTOR.md says.
 - **`fragmentor review [block]`** — Run `fragmentor check`, then read each block in scope beside its code. Does its responsibility say what the code does? Is it inside what owns it, and a shared part beside what uses it? Is it the right size for the granularity, or should it be split or merged? Does `code` point at the right function, and do `access`, `capabilities` and `exposes` say what the code really reaches? Do the executions through it still match the code? Is a planned block in fact built? Leave a note with `fragmentor note` on each block that needs changing, saying what you would change and why, and change nothing. Finish with a few lines in the chat: how many notes you left, and whether the rest looks right. The notes the person answers come back to you through `fragmentor notes`.
-- **`fragmentor rebuild [block]`** — Read the code behind every block in scope as it is now — with no diagram yet, the whole codebase — and rewrite the blocks to match: responsibilities, parts, code pointers, ports, access, capabilities and exposed entries, adding blocks for code that has none and taking away blocks whose code is gone. Bring the executions through them up to date. Change no code: where it looks wrong, leave a note. Keep what the person wrote, and planned blocks, unless the code shows them wrong, and move a block's notes with it when it moves. Run `fragmentor check` and `fragmentor test`, commit, and say in the chat what changed.
+- **`fragmentor rebuild [block]`** — Read the code behind every block in scope as it is now — with no diagram yet, the whole codebase — and rewrite the blocks to match: responsibilities, parts, code pointers, ports, access, capabilities and exposed entries, adding blocks for code that has none and taking away blocks whose code is gone. Bring the executions through them up to date. Change no code: where it looks wrong, leave a note. Keep what the person wrote, and planned blocks, unless the code shows them wrong, and move a block's notes with it when it moves. Run `fragmentor check` and `fragmentor test`, then commit once, with only Fragmentor's files: `fragmentor.json`, `FRAGMENTOR.md`, `blocks/`, `executions/`, `.fragmentor/` and `.claude/skills/`. Say in the chat what changed.
 - **`fragmentor explain <what>`** — Answer in the chat, for someone who has not read the code: what it is for, how it works step by step and which functions do each part, what it reads and writes, which executions pass through it, and anything surprising. Name blocks as the diagram names them. Change nothing.
-- **`fragmentor plan <what>`** — Work out where what the person describes belongs, and add it as blocks with `"planned": true`: what each is responsible for, where it sits, and the connections worked out so far. Change the blocks already there only to show where the new ones join them, and write no code. Run `fragmentor check`, then say in the chat what you drew and anything that is the person's to decide, and wait: `fragmentor build` is how they ask you to build it.
-- **`fragmentor build [block]`** — Build every planned block in scope, the deepest first: take `planned` off, give it real types, write its code, its tests and the executions through it, run `fragmentor check` and `fragmentor test` until they pass, and commit each block as it passes. Leave a note on any block where the plan turned out to be wrong.
-- **`fragmentor make <what>`** — Work out where what the person describes belongs, and build it straight away rather than drawing it as a plan to be agreed first, whichever way this project began: `fragmentor plan` is how they ask for a plan. Add its blocks, and for each write its code, its tests and the executions through it, run `fragmentor check` and `fragmentor test` until they pass, and commit it as it passes. Change the blocks and code already there only as far as the new ones need. Say in the chat what you built.
+- **`fragmentor plan <what>`** — Work out where what the person describes belongs, and add it as blocks with `"planned": true`: what each is responsible for, where it sits, and the connections worked out so far. Change the blocks already there only to show where the new ones join them, and write no code. Run `fragmentor check` and commit the plan, then say in the chat what you drew and anything that is the person's to decide, and wait: `fragmentor build` is how they ask you to build it.
+- **`fragmentor build [block]`** — Build every planned block in scope, the deepest first: take `planned` off it and off every block holding it, give it real types, write its code, its tests and the executions it starts, run `fragmentor check` and `fragmentor test` until they pass, and commit each block as it passes. Leave a note on any block where the plan turned out to be wrong.
+- **`fragmentor make <what>`** — Work out where what the person describes belongs, and build it straight away rather than drawing it as a plan to be agreed first, whichever way this project began: `fragmentor plan` is how they ask for a plan. Add its blocks, and for each write its code, its tests and the executions it starts, run `fragmentor check` and `fragmentor test` until they pass, and commit it as it passes. Change the blocks and code already there only as far as the new ones need. Say in the chat what you built.
 - **`fragmentor cover [block]`** — For each block in scope, add saved tests for the cases that matter, with their values pinned: ordinary ones, the edges, and what should be turned away. Add an execution for anything that sets it going and has none. Run `fragmentor test`, and keep only what passes. Change no code: where a test shows a bug, do not keep it with the saved tests, and leave a note on the block with `fragmentor note` saying what fails, with its input, what it should give and what it gives. Commit, and say in the chat what you added and what you found.
 
 ## Notes
@@ -106,7 +106,7 @@ A function block, `report-totals`:
 - `inputs` and `outputs` map a port name such as `grandTotal` to its type, or to `{ "type": ..., "description": ... }`. Leave either out when the function takes or returns nothing.
 - `capabilities` names the effects the block needs, described below.
 - `pinnedAsLeaf: true` means the person wants the block kept as one piece. Never put blocks inside it.
-- `planned: true` marks a block as part of the plan rather than of the program. It is drawn greyed out, has no `code`, its port types may be plain words such as `"the scored postings"`, and Fragmentor asks nothing of it. Everything inside a planned block is planned too. Take it off when you build the block, and give it real types then.
+- `planned: true` marks a block as part of the plan rather than of the program. It is drawn greyed out, has no `code`, its port types may be plain words such as `"the scored postings"`, and Fragmentor asks nothing of it. Set it on the top block of what is planned, since everything inside a planned block is planned too. Building a block takes `planned` off it and off every block holding it, so give their other parts not built yet `planned` of their own; give what you build real types.
 
 ## The rest of the system
 
@@ -121,7 +121,7 @@ Not every block is a function. A database, a queue, another team's service, the 
 - **`"structure"`** — Data the program holds in memory rather than keeps outside itself: an index, a cache, a table of state that several blocks read. Subtypes: `dictionary`, `array`, `set`, `LRU cache`.
 - **`"client"`** — Who or what sets the system going, and where data first comes from: a browser, a mobile app, a command-line tool, a scheduled job. Subtypes: `browser`, `mobile app`, `command-line tool`.
 
-Say what it is exactly with `subtype`, in whatever words fit: `"subtype": "Dictionary"`, `"subtype": "REST API"`, `"subtype": "S3 bucket"`. It is only a label — the block is drawn the same as any other of its role — but a diagram reading `DATA STRUCTURE: Dictionary` says more than one reading `DATA STRUCTURE`.
+Say what it is exactly with `subtype`, in whatever words fit: `"subtype": "Dictionary"`, `"subtype": "REST API"`, `"subtype": "S3 bucket"`. It is only a label, shown beside the role.
 
 A block with a role is not called, so it has no `inputs`, `outputs` or `capabilities`. It says what it offers with `exposes`, and blocks say what they reach with `access`. It may have `code`, pointing at the module that stands for it, and may be left without one when it lives outside this codebase.
 
@@ -234,7 +234,9 @@ Every block Fragmentor runs has tests, in a `cases.json` beside its `block.json`
 ]
 ```
 
-Leave out `expected` to record what the block returns without checking it. A block's test runs everything it calls. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.
+`expected` is compared whole, so leave it out where the result depends on `Random`: the test then records what the block returns without checking it. A test gives the stores rows before it runs under `stores`, keyed by the store entry's full address and then by row key: `"stores": { "shop/orders-db.orders": { "A-1": {…} } }`. A block's test runs everything it calls. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.
+
+Code Fragmentor does not run — a block it draws, or code outside the blocks such as the entry point or a server — is tested by the project's own tests and typechecked by its own typecheck, run beside `fragmentor test`: Fragmentor does not typecheck it.
 
 ## Executions
 
@@ -305,8 +307,15 @@ The blocks say what exists. Also write down what happens: for each thing that se
 - `fragmentor test` holds each execution to its own expectations, which catches a file that contradicts itself and cannot catch one that is wrong about the code, since both halves are your reading of it.
 - This is documentation: it is shown as written by you, never as something observed. Keep it true to the code, and change it when the code changes.
 
+## Code that was already here
+
+- A function block's inputs are named after the function's parameters, and its one output is what the function returns. Where the code reaches a store directly, such as through an ORM client or a file, its `access` line has no port. Giving an operation and its block the same shape, field for field, is for code being built.
+- Point at a method as `file#Class.method`. Where no named function makes a step, such as top-level script code or an anonymous route handler, the step's `code` is the file alone, and an operation such a handler answers leaves out `block`.
+- New code the person asks for is written against its contract wherever it is a function of its own. A small addition inside existing code follows the code around it, and stays drawn.
+- When the person asks you to hold a block to its contract, add to the file its code is in a small exported function that takes a value and `caps`, imports the contract and calls that code, and point the block at it. The existing code and whatever calls it stay as they are. The file is then held to the import rules above; where it cannot be, tell the person rather than change the code.
+
 ## Granularity: level 3
 
 Try for three to five parts per block, each with one clear responsibility, down to functions of somewhere around 30 to 80 lines. A step too small to be its own function is a line of code, not a block.
 
-These are aims rather than rules. Reach for that size, but a block that has to be bigger or smaller to make sense is the right block: never split one responsibility in two, or press two together, to hit a number. Fragmentor does not check any of it, except that the diagram may be at most 5 levels deep, counting a system's top block, which it warns about.
+These are aims rather than rules: a block that has to be bigger or smaller to make sense is the right block, so never split one responsibility in two, or press two together, to hit a number. Fragmentor checks only that the diagram is at most 5 levels deep, counting a system's top block.

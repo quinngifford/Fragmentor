@@ -9,6 +9,6 @@ disable-model-invocation: true
 
 The person asked: `fragmentor make $ARGUMENTS`
 
-Work out where what the person describes belongs, and build it straight away rather than drawing it as a plan to be agreed first, whichever way this project began: `fragmentor plan` is how they ask for a plan. Add its blocks, and for each write its code, its tests and the executions through it, run `fragmentor check` and `fragmentor test` until they pass, and commit it as it passes. Change the blocks and code already there only as far as the new ones need. Say in the chat what you built.
+Work out where what the person describes belongs, and build it straight away rather than drawing it as a plan to be agreed first, whichever way this project began: `fragmentor plan` is how they ask for a plan. Add its blocks, and for each write its code, its tests and the executions it starts, run `fragmentor check` and `fragmentor test` until they pass, and commit it as it passes. Change the blocks and code already there only as far as the new ones need. Say in the chat what you built.
 
 FRAGMENTOR.md says how this project is worked on; follow it.

@@ -418,7 +418,9 @@ function contractsSection(pack: LanguagePack | null): string {
     compactJson(workedExample.cases["price-orders/price-order"]),
     "```",
     "",
-    "Leave out `expected` to record what the block returns without checking it. A block's test runs everything it calls. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.",
+    "`expected` is compared whole, so leave it out where the result depends on `Random`: the test then records what the block returns without checking it. A test gives the stores rows before it runs under `stores`, keyed by the store entry's full address and then by row key: `\"stores\": { \"shop/orders-db.orders\": { \"A-1\": {…} } }`. A block's test runs everything it calls. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.",
+    "",
+    "Code Fragmentor does not run — a block it draws, or code outside the blocks such as the entry point or a server — is tested by the project's own tests and typechecked by its own typecheck, run beside `fragmentor test`: Fragmentor does not typecheck it.",
   );
 
   return lines.join("\n");
@@ -434,22 +436,51 @@ const ENTRY_POINTS =
  * rather than asking the agent to work out which case it is in. An agent
  * follows an instruction better than a condition.
  */
-function startingPoint(manifest: Manifest): string {
+function startingPoint(manifest: Manifest, pack: LanguagePack | null): string {
   const parts: string[] = [];
 
+  // An empty folder has nothing to build or run TypeScript with until the
+  // agent sets it up, which agents starting from nothing had to work out.
+  const setUp =
+    pack?.id === "typescript"
+      ? ' Start it with a `package.json` holding `"type": "module"` and a `tsconfig.json`, and tell the person how to run the entry point.'
+      : "";
   parts.push(
     manifest.existingCode
-      ? "**This folder already held code**, and the diagram describes it. Map what is there into blocks, each pointing at the code it stands for, and keep them true as the code changes. Never restructure the program to make the diagram tidier; the diagram follows the code, and the person will say when they want the code changed."
-      : `**This folder started empty**, so the program is yours to write. Lay the code out however suits it — a layout that echoes the architecture helps whoever reads both, but nothing requires it — and point each block at the code you wrote. ${ENTRY_POINTS}`,
+      ? "**This folder already held code**, and the diagram describes it. Map what is there into blocks, each pointing at the code it stands for, and keep them true as the code changes. Code that was already here is described, not changed: it is drawn rather than checked or run, and that is the expected outcome. Never restructure the program to make the diagram tidier; the diagram follows the code, and the person will say when they want the code changed."
+      : `**This folder started empty**, so the program is yours to write. Lay the code out however suits it — a layout that echoes the architecture helps whoever reads both, but nothing requires it — and point each block at the code you wrote. ${ENTRY_POINTS}${setUp}`,
   );
 
   if (manifest.start === "plan") {
     parts.push(
-      '**This project starts as a plan.** Give every block `"planned": true` to begin with, so the whole architecture can be seen and argued with before any of it is built. Once the person agrees, take `"planned"` off one block at a time and build that block, rather than starting all of them at once.',
+      '**This project starts as a plan.** Draw the whole architecture first, with `"planned": true` on each system\'s top block, so it can be seen and argued with before any of it is built. Once the person agrees, build one block at a time rather than starting all of them at once.',
     );
   }
 
   return parts.join("\n\n");
+}
+
+/**
+ * How code that was already in the folder is drawn, which is not how code is
+ * written for Fragmentor: every agent describing an existing codebase met the
+ * same questions, and answered them by trial and error. Only a project that
+ * started from code has it.
+ */
+function existingCodeSection(manifest: Manifest, pack: LanguagePack | null): string {
+  if (!manifest.existingCode) return "";
+  const lines = [
+    "## Code that was already here",
+    "",
+    "- A function block's inputs are named after the function's parameters, and its one output is what the function returns. Where the code reaches a store directly, such as through an ORM client or a file, its `access` line has no port. Giving an operation and its block the same shape, field for field, is for code being built.",
+    "- Point at a method as `file#Class.method`. Where no named function makes a step, such as top-level script code or an anonymous route handler, the step's `code` is the file alone, and an operation such a handler answers leaves out `block`.",
+  ];
+  if (pack?.canRun) {
+    lines.push(
+      "- New code the person asks for is written against its contract wherever it is a function of its own. A small addition inside existing code follows the code around it, and stays drawn.",
+      "- When the person asks you to hold a block to its contract, add to the file its code is in a small exported function that takes a value and `caps`, imports the contract and calls that code, and point the block at it. The existing code and whatever calls it stay as they are. The file is then held to the import rules above; where it cannot be, tell the person rather than change the code.",
+    );
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -461,9 +492,18 @@ function startingPoint(manifest: Manifest): string {
  * build does not want the agent stopping to ask.
  */
 function reviewStep(manifest: Manifest): string {
-  return manifest.start === "plan"
-    ? "Show the person the diagram and wait for them to agree before you write any code. This project starts as a plan, so the architecture is theirs to settle first."
+  if (manifest.start === "plan") {
+    return "Tell the person to look at the diagram in Fragmentor, and wait for them to agree before you write any code. This project starts as a plan, so the architecture is theirs to settle first.";
+  }
+  return manifest.existingCode
+    ? "Do not stop to ask for agreement: the person will say if they want the shape changed."
     : "Carry straight on to the code. They can watch the diagram fill in as you work, and will say if they want the shape changed, so do not stop to ask for agreement.";
+}
+
+/** Where the code comes from: the folder, or the agent. */
+function codeStep(manifest: Manifest, pack: LanguagePack | null): string {
+  if (manifest.existingCode) return "Point each block at the code it stands for, as **Code that was already here** below says.";
+  return `Point each block at its code, writing whatever is not there yet.${pack?.canRun ? " Where Fragmentor writes a contract, import it and write the block's tests." : ""}`;
 }
 
 function languageRule(manifest: Manifest, chosen: ReturnType<typeof guideLanguage>): string {
@@ -506,10 +546,14 @@ export function agentGuide(manifest: Manifest): string {
   const pack = chosen.pack;
 
   return fill(template(), {
+    yourPart: manifest.existingCode
+      ? "You draw the blocks from the code that is here, keep them true as it changes, and write whatever new code the person asks for."
+      : "You design the blocks, write the code, and keep the two saying the same thing.",
     fragmentorRole: fragmentorRole(pack, chosen.named),
-    startingPoint: startingPoint(manifest),
+    startingPoint: startingPoint(manifest, pack),
     reviewStep: reviewStep(manifest),
-    testStep: pack?.canRun ? " Where Fragmentor writes a contract, import it and write the block's tests." : "",
+    codeStep: codeStep(manifest, pack),
+    existingCode: existingCodeSection(manifest, pack),
     testCommand: " and `fragmentor test`",
     commands: COMMANDS.map((command) => `- **\`${usageOf(command)}\`** — ${command.steps}`).join("\n"),
     // Only a block Fragmentor runs can have a run go wrong for the person to flag.

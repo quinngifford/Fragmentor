@@ -55,9 +55,9 @@ export const COMMANDS: readonly AgentCommand[] = [
     optional: true,
     title: "Redraw from the code",
     summary:
-      "Brings the diagram, or one block and its parts, back in line with the code as it is now, and draws it from the code where there is none yet. It changes the blocks, not the code.",
+      "Brings the diagram, or one block and its parts, back in line with the code as it is now, and draws it from the code where there is none yet. It changes the blocks, and none of your code.",
     steps:
-      "Read the code behind every block in scope as it is now — with no diagram yet, the whole codebase — and rewrite the blocks to match: responsibilities, parts, code pointers, ports, access, capabilities and exposed entries, adding blocks for code that has none and taking away blocks whose code is gone. Bring the executions through them up to date. Change no code: where it looks wrong, leave a note. Keep what the person wrote, and planned blocks, unless the code shows them wrong, and move a block's notes with it when it moves. Run `fragmentor check` and `fragmentor test`, commit, and say in the chat what changed.",
+      "Read the code behind every block in scope as it is now — with no diagram yet, the whole codebase — and rewrite the blocks to match: responsibilities, parts, code pointers, ports, access, capabilities and exposed entries, adding blocks for code that has none and taking away blocks whose code is gone. Bring the executions through them up to date. Change no code: where it looks wrong, leave a note. Keep what the person wrote, and planned blocks, unless the code shows them wrong, and move a block's notes with it when it moves. Run `fragmentor check` and `fragmentor test`, then commit once, with only Fragmentor's files: `fragmentor.json`, `FRAGMENTOR.md`, `blocks/`, `executions/`, `.fragmentor/` and `.claude/skills/`. Say in the chat what changed.",
   },
   {
     name: "explain",
@@ -75,7 +75,7 @@ export const COMMANDS: readonly AgentCommand[] = [
     title: "Plan a change",
     summary: "Draws what you describe as planned blocks, greyed out on the diagram, for you to look over before anything is built.",
     steps:
-      "Work out where what the person describes belongs, and add it as blocks with `\"planned\": true`: what each is responsible for, where it sits, and the connections worked out so far. Change the blocks already there only to show where the new ones join them, and write no code. Run `fragmentor check`, then say in the chat what you drew and anything that is the person's to decide, and wait: `fragmentor build` is how they ask you to build it.",
+      "Work out where what the person describes belongs, and add it as blocks with `\"planned\": true`: what each is responsible for, where it sits, and the connections worked out so far. Change the blocks already there only to show where the new ones join them, and write no code. Run `fragmentor check` and commit the plan, then say in the chat what you drew and anything that is the person's to decide, and wait: `fragmentor build` is how they ask you to build it.",
   },
   {
     name: "build",
@@ -84,7 +84,7 @@ export const COMMANDS: readonly AgentCommand[] = [
     title: "Build planned blocks",
     summary: "Builds the planned blocks, or one and its parts, with their code, tests and executions, one block at a time.",
     steps:
-      "Build every planned block in scope, the deepest first: take `planned` off, give it real types, write its code, its tests and the executions through it, run `fragmentor check` and `fragmentor test` until they pass, and commit each block as it passes. Leave a note on any block where the plan turned out to be wrong.",
+      "Build every planned block in scope, the deepest first: take `planned` off it and off every block holding it, give it real types, write its code, its tests and the executions it starts, run `fragmentor check` and `fragmentor test` until they pass, and commit each block as it passes. Leave a note on any block where the plan turned out to be wrong.",
   },
   {
     name: "make",
@@ -94,7 +94,7 @@ export const COMMANDS: readonly AgentCommand[] = [
     summary:
       "Designs and builds what you describe straight away: its blocks, their code, tests and executions, with no plan to agree first.",
     steps:
-      "Work out where what the person describes belongs, and build it straight away rather than drawing it as a plan to be agreed first, whichever way this project began: `fragmentor plan` is how they ask for a plan. Add its blocks, and for each write its code, its tests and the executions through it, run `fragmentor check` and `fragmentor test` until they pass, and commit it as it passes. Change the blocks and code already there only as far as the new ones need. Say in the chat what you built.",
+      "Work out where what the person describes belongs, and build it straight away rather than drawing it as a plan to be agreed first, whichever way this project began: `fragmentor plan` is how they ask for a plan. Add its blocks, and for each write its code, its tests and the executions it starts, run `fragmentor check` and `fragmentor test` until they pass, and commit it as it passes. Change the blocks and code already there only as far as the new ones need. Say in the chat what you built.",
   },
   {
     name: "cover",

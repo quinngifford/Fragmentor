@@ -2,19 +2,19 @@
 
 # Working in this Fragmentor project
 
-The person you work with sees this project in Fragmentor as a diagram of **blocks**: the parts of the system, each drawn inside the part it belongs to. You design the blocks, write the code, and keep the two saying the same thing. {{fragmentorRole}}
+The person you work with sees this project in Fragmentor as a diagram of **blocks**: the parts of the system, each drawn inside the part it belongs to. {{yourPart}} {{fragmentorRole}}
 
 {{startingPoint}}
 
 ## How to work
 
-1. Fill in `goal` and `systems` in `fragmentor.json`. Then write a `block.json` for every block, keeping any the person already wrote.
+1. Write each system's top `block.json`, then its entry in `systems` and the `goal` in `fragmentor.json`, then the blocks under it a level at a time, keeping any the person already wrote. Write each block as soon as you know it, before its code, so the person watches the structure arrive rather than all of it at the end.
 2. Run `fragmentor check` and fix everything it reports.
 3. {{reviewStep}}
-4. Point each block at its code, writing whatever is not there yet.{{testStep}}
-5. Write down what happens when something sets the system going, under `executions/`.
+4. {{codeStep}}
+5. Write down what happens when something sets the system going, under `executions/`: each with the block that starts it, once that block is built. A plan has none.
 6. Run `fragmentor check`{{testCommand}} until it passes.
-7. Commit each time a block is finished and passes: its folder under `blocks/` and the code it points at, together, with a message saying what the block does now. Each commit is a version of the block that the person can compare with today's and go back to; going back rewrites the block's folder and the code it points at as they were then. The versions the person saves by name are kept in `.fragmentor/versions/`: commit them with everything else, and never change or delete them.
+7. Commit each block you build as soon as it passes: its folder under `blocks/` and the code it points at, together, with a message saying what the block does now. Each commit is a version of the block that the person can compare with today's and go back to. A rebuild or a plan commits once, when it is done. The versions the person saves by name are kept in `.fragmentor/versions/`: commit them with everything else, and never change or delete them.
 
 When the design changes, change the `block.json` files first, then the code. If the `fragmentor` command is not found, ask the person to run `npm link` once in Fragmentor's folder.
 
@@ -77,7 +77,7 @@ A function block, `report-totals`:
 - `inputs` and `outputs` map a port name such as `grandTotal` to its type, or to `{ "type": ..., "description": ... }`. Leave either out when the function takes or returns nothing.
 - `capabilities` names the effects the block needs, described below.
 - `pinnedAsLeaf: true` means the person wants the block kept as one piece. Never put blocks inside it.
-- `planned: true` marks a block as part of the plan rather than of the program. It is drawn greyed out, has no `code`, its port types may be plain words such as `"the scored postings"`, and Fragmentor asks nothing of it. Everything inside a planned block is planned too. Take it off when you build the block, and give it real types then.
+- `planned: true` marks a block as part of the plan rather than of the program. It is drawn greyed out, has no `code`, its port types may be plain words such as `"the scored postings"`, and Fragmentor asks nothing of it. Set it on the top block of what is planned, since everything inside a planned block is planned too. Building a block takes `planned` off it and off every block holding it, so give their other parts not built yet `planned` of their own; give what you build real types.
 
 ## The rest of the system
 
@@ -85,7 +85,7 @@ Not every block is a function. A database, a queue, another team's service, the 
 
 {{roles}}
 
-Say what it is exactly with `subtype`, in whatever words fit: `"subtype": "Dictionary"`, `"subtype": "REST API"`, `"subtype": "S3 bucket"`. It is only a label — the block is drawn the same as any other of its role — but a diagram reading `DATA STRUCTURE: Dictionary` says more than one reading `DATA STRUCTURE`.
+Say what it is exactly with `subtype`, in whatever words fit: `"subtype": "Dictionary"`, `"subtype": "REST API"`, `"subtype": "S3 bucket"`. It is only a label, shown beside the role.
 
 A block with a role is not called, so it has no `inputs`, `outputs` or `capabilities`. It says what it offers with `exposes`, and blocks say what they reach with `access`. It may have `code`, pointing at the module that stands for it, and may be left without one when it lives outside this codebase.
 
@@ -149,8 +149,10 @@ The blocks say what exists. Also write down what happens: for each thing that se
 - `fragmentor test` holds each execution to its own expectations, which catches a file that contradicts itself and cannot catch one that is wrong about the code, since both halves are your reading of it.
 - This is documentation: it is shown as written by you, never as something observed. Keep it true to the code, and change it when the code changes.
 
+{{existingCode}}
+
 ## Granularity: level {{level}}
 
 {{granularity}} A step too small to be its own function is a line of code, not a block.
 
-These are aims rather than rules. Reach for that size, but a block that has to be bigger or smaller to make sense is the right block: never split one responsibility in two, or press two together, to hit a number. Fragmentor does not check any of it, except that the diagram may be at most {{maxDepth}} levels deep, counting a system's top block, which it warns about.
+These are aims rather than rules: a block that has to be bigger or smaller to make sense is the right block, so never split one responsibility in two, or press two together, to hit a number. Fragmentor checks only that the diagram is at most {{maxDepth}} levels deep, counting a system's top block.

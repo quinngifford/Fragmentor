@@ -9,6 +9,6 @@ disable-model-invocation: true
 
 The person asked: `fragmentor build $ARGUMENTS`
 
-Build every planned block in scope, the deepest first: take `planned` off, give it real types, write its code, its tests and the executions through it, run `fragmentor check` and `fragmentor test` until they pass, and commit each block as it passes. Leave a note on any block where the plan turned out to be wrong.
+Build every planned block in scope, the deepest first: take `planned` off it and off every block holding it, give it real types, write its code, its tests and the executions it starts, run `fragmentor check` and `fragmentor test` until they pass, and commit each block as it passes. Leave a note on any block where the plan turned out to be wrong.
 
 FRAGMENTOR.md says how this project is worked on; follow it.

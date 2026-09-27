@@ -109,6 +109,7 @@ describe("the fragmentor command", () => {
     expect(result.status).toBe(0);
     expect(result.output).toContain('"fragmentor rebuild" is something you ask your coding agent to do, not a command to run here.');
     expect(result.output).toContain("/fragmentor-rebuild");
+    expect(result.output).toContain("none of your code");
     expect(result.output).toContain("the Commands section of FRAGMENTOR.md");
     expect(result.output).not.toContain("Unknown command");
 
