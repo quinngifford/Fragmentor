@@ -144,9 +144,19 @@ function declaredWithin(node: ts.Node): string[] {
       }
     }
   };
+  // A `var` anywhere in a function's body belongs to the whole function, not the block it is written in.
+  const hoisted = (inner: ts.Node): void => {
+    if (ts.isFunctionLike(inner) || ts.isClassLike(inner)) return;
+    if (ts.isVariableDeclarationList(inner) && (inner.flags & ts.NodeFlags.BlockScoped) === 0) {
+      for (const each of inner.declarations) names.push(...bindingNames(each.name));
+    }
+    ts.forEachChild(inner, hoisted);
+  };
   if (ts.isFunctionLike(node)) {
     for (const parameter of node.parameters) names.push(...bindingNames(parameter.name));
     if (ts.isFunctionExpression(node) && node.name) names.push(node.name.text);
+    const body = (node as { body?: ts.Node }).body;
+    if (body !== undefined && ts.isBlock(body)) ts.forEachChild(body, hoisted);
   } else if (ts.isClassExpression(node) && node.name) {
     names.push(node.name.text);
   } else if (ts.isBlock(node) || ts.isModuleBlock(node)) {
@@ -164,7 +174,7 @@ function declaredWithin(node: ts.Node): string[] {
 /** Whether an identifier stands for a value there, rather than naming a property, a declaration or a label. */
 function isReference(id: ts.Identifier): boolean {
   const parent = id.parent;
-  if (ts.isShorthandPropertyAssignment(parent)) return parent.name === id;
+  if (ts.isShorthandPropertyAssignment(parent)) return parent.name === id || parent.objectAssignmentInitializer === id;
   const named = parent as unknown as { name?: ts.Node; propertyName?: ts.Node; label?: ts.Node };
   return named.name !== id && named.propertyName !== id && named.label !== id;
 }
@@ -190,9 +200,18 @@ function parseText(fileName: string, text: string): Parsed {
   const sideEffects: string[] = [];
 
   const declare = (name: string, node: ts.Node, statement: ts.Statement, kind: OutlineDeclaration["kind"]) => {
-    declared.set(name, [...(declared.get(name) ?? []), node]);
+    const earlier = declared.get(name) ?? [];
+    declared.set(name, [...earlier, node]);
+    // An overloaded function is one declaration, from its first signature to its body.
+    const last = earlier[earlier.length - 1];
+    if (last !== undefined && ts.isFunctionDeclaration(last) && ts.isFunctionDeclaration(node)) {
+      const entry = outlined.declarations.filter((each) => each.name === name).pop()!;
+      entry.end = statement.end;
+      entry.exported ||= isExported(statement);
+      return;
+    }
     const start = statement.getStart(source);
-    outlined.declarations.push({ name, kind, start, end: statement.end, line: lineOf(start), exported: isExported(statement) });
+    outlined.declarations.push({ name, kind, start, end: statement.end, line: lineOf(start), exported: ts.isExportAssignment(statement) || isExported(statement) });
   };
 
   for (const statement of source.statements) {
@@ -277,6 +296,8 @@ function parseText(fileName: string, text: string): Parsed {
   const usesOf = (roots: ts.Node[]): RawUses => {
     const uses: RawUses = { imports: [], local: [], dynamic: [] };
     const visit = (node: ts.Node, hidden: ReadonlySet<string>): void => {
+      // `make<string>` without a call is a value given type arguments; only the arguments are types.
+      if (ts.isExpressionWithTypeArguments(node) && !ts.isHeritageClause(node.parent)) return visit(node.expression, hidden);
       // Types disappear when compiled, so nothing named only in one is reached.
       if (ts.isTypeNode(node) || ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) return;
       if (ts.isHeritageClause(node)) {

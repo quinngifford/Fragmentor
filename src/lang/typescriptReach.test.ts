@@ -67,6 +67,21 @@ describe("which names a function uses", () => {
     expect(targetsOf(text, "c")).toEqual([]);
   });
 
+  it("sees a var declared in a nested block hide an import for the whole function", () => {
+    const text = 'import { db } from "./db";\nexport function a(flag: boolean) { if (flag) { var db = 2; } return db; }\n';
+    expect(targetsOf(text, "a")).toEqual([]);
+  });
+
+  it("counts a function given type arguments without being called, and a default in a destructuring", () => {
+    const text =
+      'import { db, other } from "./db";\n' +
+      "export function a() { const g = db<string>; return g; }\n" +
+      "export function b(o: object) { let x; ({ x = other } = o as { x?: number }); return x; }\n";
+
+    expect(targetsOf(text, "a")).toEqual([{ file: "db.ts", name: "db" }]);
+    expect(targetsOf(text, "b")).toEqual([{ file: "db.ts", name: "other" }]);
+  });
+
   it("names the same-file functions a function calls, for following", () => {
     const text = "function helper() { return 1; }\nfunction unused() { return 2; }\nexport function a() { return helper(); }\n";
     expect(read(text).declarations.get("a")?.local).toEqual(["helper"]);
@@ -84,7 +99,7 @@ describe("which names a function uses", () => {
 
   it("records what a file passes on from elsewhere, and under what name", () => {
     const text =
-      'import { db } from "./db";\nexport { db as database };\nexport { other as second } from "./db";\nexport * from "./db";\n' +
+      'import { db } from "./db";\nexport { db as database };\nexport { other as second } from "./db";\nexport * from "./db";\nexport * from "node:os";\n' +
       'export { readFile } from "node:fs";\nfunction local() { return 1; }\nexport default local;\n';
     const reach = read(text);
     expect(reach.exports).toEqual(
@@ -95,7 +110,7 @@ describe("which names a function uses", () => {
         ["default", { local: "local" }],
       ]),
     );
-    expect(reach.exportsAll).toEqual(["db.ts"]);
+    expect(reach.exportsAll).toEqual(["db.ts", null]);
   });
 });
 
@@ -130,10 +145,22 @@ describe("the outline", () => {
       { name: "add", kind: "function", line: 7, exported: true },
       { name: "handler", kind: "function", line: 8, exported: true },
       { name: "Cart", kind: "class", line: 10, exported: false },
-      { name: "default", kind: "default", line: 11, exported: false },
+      { name: "default", kind: "default", line: 11, exported: true },
     ]);
     const add = found.declarations[0]!;
     expect(text.slice(add.start, add.end)).toBe("export function add() {}");
+  });
+
+  it("outlines an overloaded function once, from its first signature to its body", () => {
+    const text = "export function f(x: string): string;\nexport function f(x: number): number;\nexport function f(x: unknown) { return x; }\nfunction g() {}\n";
+    const found = outline(path.join(dir, "o.ts"), text);
+
+    expect(found.declarations.map(({ name, line, exported }) => ({ name, line, exported }))).toEqual([
+      { name: "f", line: 1, exported: true },
+      { name: "g", line: 4, exported: false },
+    ]);
+    const f = found.declarations[0]!;
+    expect(text.slice(f.start, f.end)).toBe(text.slice(0, text.indexOf("\nfunction g")));
   });
 
   it("reads the file again when its text changes, and not before", () => {
