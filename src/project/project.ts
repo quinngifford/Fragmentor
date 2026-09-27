@@ -446,6 +446,57 @@ export function resolveAccess(project: Project, blockPath: string, resource: str
   return undefined;
 }
 
+/** Long enough for any real chain, short enough that a loop in the diagram cannot hang whoever follows it. */
+const MOST_ROUTE_STEPS = 12;
+
+/**
+ * What actually runs when one entry happens, as every step of the way there.
+ *
+ * A button on a client calls an operation on a service; that operation says
+ * which block answers it; and that block is code, with a contract and a test
+ * bench. Following those two links end to end turns "this button" into "this
+ * function", which is the whole reason for saying which entry does the
+ * reaching rather than only that two blocks are connected.
+ *
+ * The route starts where it is asked from and ends at a function block, or
+ * wherever the links run out. Empty when there is no block at `blockPath`.
+ */
+export function answeringRoute(project: Project, blockPath: string, entry: string | null): { path: string; entry: string | null }[] {
+  const route: { path: string; entry: string | null }[] = [];
+  let at = project.byPath.get(blockPath);
+  let atEntry = entry;
+
+  while (at && route.length < MOST_ROUTE_STEPS) {
+    route.push({ path: at.path, entry: atEntry });
+    const here = at;
+    const hereEntry = atEntry;
+    at = undefined;
+
+    // A function block is where it ends: that is the code that runs.
+    if (!isArchitecture(here.block.role) || hereEntry === null) break;
+
+    // An operation that names the block answering it leads straight into code.
+    const answering = here.block.exposes[hereEntry]?.block;
+    if (answering) {
+      at = project.byPath.get(`${here.path}/${answering}`);
+      atEntry = null;
+      if (at) continue;
+    }
+
+    // Otherwise this entry may call another block's entry, and on it goes.
+    for (const each of here.block.access) {
+      const next = each.from === hereEntry ? resolveAccess(project, here.path, each.resource) : undefined;
+      if (next) {
+        at = next;
+        atEntry = each.entry;
+        break;
+      }
+    }
+  }
+
+  return route;
+}
+
 /**
  * Whether an operation and the block answering it are the same shape.
  *

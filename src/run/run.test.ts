@@ -1,6 +1,7 @@
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runBlock, runCases, startRun } from "./run.js";
 import type { RunEvent } from "./run.js";
@@ -420,4 +421,64 @@ describe("watching a run", () => {
     const heldTidier = callsIn(events).find((call) => call.block === "files/without-blanks")!;
     expect(heldTidier.parent).toBe(firstReader.id);
   }, 30_000);
+});
+
+describe("watching a run that uses stores", () => {
+  const tickets = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "examples", "tickets");
+  let dir: string;
+  const request = () => ({
+    projectDir: dir,
+    blockPath: "tickets/booking-api/book-seats",
+    input: { eventId: "gig", seats: 5, email: "ada@example.com" },
+    stores: { "tickets/tickets-db.events": { gig: { id: "gig", name: "Night Gig", seatsLeft: 10, price: 25 } } },
+  });
+
+  beforeAll(async () => {
+    dir = await mkdtemp(path.join(tmpdir(), "fragmentor-run-stores-"));
+    await cp(tickets, dir, { recursive: true });
+  });
+
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("reports every read, write and send as the call that made it", async () => {
+    const events: RunEvent[] = [];
+    const result = await runBlock({ ...request(), onEvent: (event) => events.push(event) });
+    expect(result.ok).toBe(true);
+
+    const reserve = callsIn(events).find((call) => call.block === "tickets/booking-api/book-seats/reserve")!;
+    const finder = callsIn(events).find((call) => call.block === "tickets/booking-api/find-event")!;
+    const stores = events.flatMap((event) => (event.type === "store" ? [[event.parent, event.op, event.target, event.key ?? null]] : []));
+    expect(stores).toEqual([
+      [finder.id, "read", "tickets/tickets-db.events", "gig"],
+      [reserve.id, "write", "tickets/tickets-db.events", "gig"],
+      [reserve.id, "write", "tickets/tickets-db.bookings", "gig-10"],
+      [reserve.id, "send", "tickets/outbox.confirmations", null],
+    ]);
+    // Calls and store uses share one count, so every event has an id of its own.
+    const ids = events.flatMap((event) => (event.type === "call" || event.type === "store" ? [event.id] : []));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(result.truncated).toBeUndefined();
+  }, 30_000);
+
+  it("adds nothing to a run nobody is watching", async () => {
+    const result = await runBlock(request());
+    expect(result.ok).toBe(true);
+    expect(Object.keys(result).sort()).toEqual(["durationMs", "inputProblems", "logs", "ok", "output", "outputProblems", "stores"]);
+  }, 30_000);
+});
+
+describe("a run too long to record whole", () => {
+  it("carries on past the most calls recorded, and says it was cut short", async () => {
+    // Each file is read and tidied, two calls apiece, so this is well past 2000.
+    const paths = Array<string>(1100).fill("a.txt");
+    const events: RunEvent[] = [];
+    const result = await runBlock({ projectDir, blockPath: "files/count-lines", input: { paths }, onEvent: (event) => events.push(event) });
+
+    expect(result.ok).toBe(true);
+    expect((result.output as { counts: number[] }).counts).toHaveLength(1100);
+    expect(result.truncated).toBe(true);
+    expect(callsIn(events).length).toBe(2000);
+  }, 60_000);
 });

@@ -84,6 +84,8 @@ export interface RunOutcome {
   durationMs: number;
   /** True when the run was stopped before it finished. */
   stopped?: boolean;
+  /** True when a watched run made more calls than are recorded, so not all of it was heard. */
+  truncated?: boolean;
 }
 
 export type CaseStatus = "passed" | "failed" | "unchecked" | "error";
@@ -136,39 +138,43 @@ async function load(projectDir: string): Promise<Loaded> {
 }
 
 /**
- * Everything needed to run a block, or the reason it cannot be run.
+ * Why a block cannot be run, or null when it can.
  *
  * Fragmentor calls a block with a value and `caps` and holds what comes back to
  * its contract, so the only code it can run is code written to be called that
  * way — which is the code that imports its contract. Anything else is drawn and
  * read, and says so here rather than failing inside the harness.
  */
-function prepare({ project, code }: Loaded, blockPath: string): Prepared | { error: string } {
+export function whyNotRunnable(project: Project, code: Map<string, BlockCode>, blockPath: string): string | null {
   const node = project.byPath.get(blockPath);
-  if (!node) return { error: `There is no block at ${blockPath}.` };
+  if (!node) return `There is no block at ${blockPath}.`;
 
   const system = systemOf(project, blockPath);
-  if (!system) return { error: `${blockPath} does not belong to any system in this project.` };
+  if (!system) return `${blockPath} does not belong to any system in this project.`;
 
   const pack = packFor(project, blockPath);
   if (pack === null) {
-    return {
-      error: `Fragmentor has no language pack for ${system.language || "this system's language"}, so it draws this code but cannot run it.`,
-    };
+    return `Fragmentor has no language pack for ${system.language || "this system's language"}, so it draws this code but cannot run it.`;
   }
-  if (!pack.canRun) {
-    return { error: `Fragmentor cannot run ${pack.displayName} blocks yet, so this one can only be read.` };
-  }
+  if (!pack.canRun) return `Fragmentor cannot run ${pack.displayName} blocks yet, so this one can only be read.`;
 
   const own = code.get(blockPath)!;
-  if (own.problem !== null) {
-    return { error: `"${node.block.name}" points at code that is not there: ${own.problem}` };
-  }
-  if (!own.bound) {
-    return { error: own.drawnBecause ?? `Fragmentor does not hold "${node.block.name}" to a contract, so it cannot run it.` };
-  }
+  if (own.problem !== null) return `"${node.block.name}" points at code that is not there: ${own.problem}`;
+  if (!own.bound) return own.drawnBecause ?? `Fragmentor does not hold "${node.block.name}" to a contract, so it cannot run it.`;
+  return null;
+}
 
-  return { project, node, system, pack, code };
+/** Everything needed to run a block, or the reason it cannot be run. */
+function prepare({ project, code }: Loaded, blockPath: string): Prepared | { error: string } {
+  const why = whyNotRunnable(project, code, blockPath);
+  if (why !== null) return { error: why };
+  return {
+    project,
+    node: project.byPath.get(blockPath)!,
+    system: systemOf(project, blockPath)!,
+    pack: packFor(project, blockPath)!,
+    code,
+  };
 }
 
 interface Watching {
@@ -270,6 +276,7 @@ async function executeOnce(
       logs: result.logs,
       durationMs,
       ...(result.stopped ? { stopped: true } : {}),
+      ...(result.truncated ? { truncated: true } : {}),
     };
   }
 
@@ -284,6 +291,7 @@ async function executeOnce(
     stores: result.stores ?? {},
     logs: result.logs,
     durationMs,
+    ...(result.truncated ? { truncated: true } : {}),
   };
 }
 

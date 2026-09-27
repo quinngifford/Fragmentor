@@ -149,6 +149,21 @@ describe("evaluating expectations against a trace", () => {
     ]);
   });
 
+  it("never counts a call that threw as having given back what was expected", () => {
+    const call: Interaction = { type: "interaction", id: "call", cause: null, from: a("app/api"), to: a("app/auth/logout"), kind: "call" };
+    const threw: Trace = {
+      source: "recorded",
+      execution: "x",
+      events: [call, { type: "return", id: "call.returned", of: "call", from: call.from, to: call.to, error: "There is no session." }],
+    };
+    // Even an expectation that asks for nothing in particular to come back.
+    expect(evaluate(threw, expecting({ interactions: [{ to: a("app/auth/logout"), response: {} }] })).failures).toEqual([
+      "An interaction to app/auth/logout happened, but not as expected: it threw instead: There is no session.",
+    ]);
+    // It still happened, which is all an expectation without a response asks.
+    expect(evaluate(threw, expecting({ interactions: [{ to: a("app/auth/logout") }] })).passed).toBe(true);
+  });
+
   it("checks an effect's detail partially", () => {
     expect(evaluate(logout, expecting({ effects: [{ kind: "response", detail: { redirect: "/home" } }] })).failures).toEqual([
       'A "response" effect happened, but not as expected: detail.redirect was "/login", expected "/home".',

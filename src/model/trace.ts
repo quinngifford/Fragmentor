@@ -104,6 +104,11 @@ export interface Return {
   from: Address | null;
   to: Address;
   response?: unknown;
+  /**
+   * What was thrown, when the call ended by throwing instead of answering.
+   * Only a recorded trace knows: a trace written down says what came back.
+   */
+  error?: string;
 }
 
 /**
@@ -145,9 +150,11 @@ export interface Trace {
   execution: string;
   /**
    * Every event, in the order it happened, starting with the trigger.
-   * Nothing is ever left out of a recorded trace. A declared one has only
-   * what its agent wrote down: a call finishes in it only where the agent
-   * said what came back.
+   * A recorded trace holds everything the run could see: the calls between
+   * the blocks Fragmentor ran, and what they did to the stores it stood in
+   * for. What it could not see is said beside it, never filled in from the
+   * diagram. A declared one has only what its agent wrote down: a call
+   * finishes in it only where the agent said what came back.
    */
   events: TraceEvent[];
   /** What each store held when the run ended, by target. Only a recorded run knows. */

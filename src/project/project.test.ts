@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  answeringRoute,
   blockDir,
   createProject,
   loadProject,
@@ -704,5 +705,32 @@ describe("an operation and the block that answers it", () => {
       outputs: { found: { type: { kind: "text", text: "how many" } } },
     });
     expect(found.filter((message) => message.includes("answers it"))).toEqual([]);
+  });
+
+  it("follows a client's entry through the operation it calls to the block answering it", async () => {
+    await writeService(owner, handler);
+    await writeBlock(
+      blockDir(dir, "orders-app/orders-page"),
+      makeBlock({
+        id: "orders-page",
+        role: "client",
+        exposes: { showOrders: { accepts: t.object({ owner: t.string }), returns: null } },
+        access: [{ from: "showOrders", verb: "calls", resource: "orders-api", entry: "listOrders" }],
+      }),
+    );
+    const project = await loadProject(dir);
+
+    expect(answeringRoute(project, "orders-app/orders-page", "showOrders")).toEqual([
+      { path: "orders-app/orders-page", entry: "showOrders" },
+      { path: "orders-app/orders-api", entry: "listOrders" },
+      { path: "orders-app/orders-api/load-orders", entry: null },
+    ]);
+    // A function block is already where it ends.
+    expect(answeringRoute(project, "orders-app/orders-api/load-orders", null)).toEqual([
+      { path: "orders-app/orders-api/load-orders", entry: null },
+    ]);
+    // A route that runs out of links ends where they do, and a missing block has none.
+    expect(answeringRoute(project, "orders-app/orders-page", null)).toEqual([{ path: "orders-app/orders-page", entry: null }]);
+    expect(answeringRoute(project, "orders-app/nothing", "showOrders")).toEqual([]);
   });
 });

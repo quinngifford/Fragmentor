@@ -10,7 +10,8 @@
 // block or a package prints can be mistaken for a report. Fragmentor sends one
 // "start" message holding everything needed, and the harness answers with a
 // "result" — and, when the run is traced, with an event for every block call
-// along the way.
+// along the way and every read, write, remove and send on the stores it was
+// given.
 //
 // Tracing wraps every function in the system before anything runs. Code
 // reaches another block through that block module's exports at the moment it
@@ -69,16 +70,25 @@ const CAPABILITIES = {
     Object.assign(state.rows, copy(port.seed) ?? {});
     return {
       async read(key) {
-        return Object.hasOwn(state.rows, String(key)) ? copy(state.rows[String(key)]) : null;
+        const row = Object.hasOwn(state.rows, String(key)) ? copy(state.rows[String(key)]) : null;
+        reportStore(port.target, "read", String(key), row);
+        return row;
       },
       async list() {
-        return Object.values(state.rows).map(copy);
+        const rows = Object.values(state.rows).map(copy);
+        reportStore(port.target, "list", undefined, rows);
+        return rows;
       },
       async write(key, row) {
         state.rows[String(key)] = copy(row);
+        reportStore(port.target, "write", String(key), row);
       },
+      // What a remove took away is read first, so a run can be seen to have
+      // removed the row it meant to, and not merely to have asked.
       async remove(key) {
+        const removed = Object.hasOwn(state.rows, String(key)) ? state.rows[String(key)] : null;
         delete state.rows[String(key)];
+        reportStore(port.target, "remove", String(key), removed);
       },
     };
   },
@@ -87,6 +97,7 @@ const CAPABILITIES = {
     return {
       async send(message) {
         state.sent.push(copy(message));
+        reportStore(port.target, "send", undefined, message);
       },
     };
   },
@@ -159,7 +170,7 @@ function send(message) {
 /* Tracing                                                                     */
 /* -------------------------------------------------------------------------- */
 
-/** Past this many calls a run carries on, but stops being recorded. */
+/** Past this many calls and store uses a run carries on, but stops being recorded, and says so. */
 const MOST_CALLS_RECORDED = 2000;
 /** A value larger than this, as JSON, is described rather than sent. */
 const LARGEST_VALUE_RECORDED = 200000;
@@ -178,7 +189,32 @@ function recordable(value) {
 /** The call the code running now belongs to, carried across awaits. */
 const within = new AsyncLocalStorage();
 const started = Date.now();
+/** Block calls and store uses so far, counted together, so each has an id of its own. */
 let calls = 0;
+/** Whether anyone is watching: set once the run starts. */
+let tracing = false;
+
+/**
+ * What a block did to a store or a queue, reported after it was done, as the
+ * call that was running did it. A stand-in store is the one place a run's
+ * reads and writes can be seen, so a recording of the run learns them here.
+ */
+function reportStore(target, op, key, value) {
+  // A port that is a way into nothing on the diagram has nowhere to be drawn.
+  if (!tracing || target === undefined) return;
+  const id = ++calls;
+  if (id > MOST_CALLS_RECORDED) return;
+  send({
+    type: "store",
+    id,
+    parent: within.getStore() ?? null,
+    target,
+    op,
+    ...(key === undefined ? {} : { key }),
+    value: recordable(value),
+    at: Date.now() - started,
+  });
+}
 
 let breakpoints = new Set();
 let stepping = false;
@@ -270,6 +306,7 @@ async function run(spec) {
   projectDir = spec.projectDir;
   copyOf = spec.copyOf ?? null;
   breakpoints = new Set(spec.breakpoints || []);
+  tracing = Boolean(spec.trace);
   const caps = buildCapabilities(spec.capabilities);
 
   if (spec.trace) {
@@ -295,8 +332,11 @@ async function run(spec) {
 }
 
 function report(result) {
+  // A run that went past the most calls recorded carried on unseen, and
+  // whoever reads the recording has to know it is not the whole run.
+  const truncated = calls > MOST_CALLS_RECORDED ? { truncated: true } : {};
   try {
-    send({ type: "result", ...result, stores: storeEffects(), logs });
+    send({ type: "result", ...result, stores: storeEffects(), logs, ...truncated });
   } catch (error) {
     send({
       type: "result",
@@ -304,6 +344,7 @@ function report(result) {
       error: `The block returned something that cannot be sent back: ${messageOf(error)}`,
       stores: storeEffects(),
       logs,
+      ...truncated,
     });
   }
 }

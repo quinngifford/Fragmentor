@@ -70,12 +70,12 @@ export interface ExpectationResult {
 
 const nameOf = (address: Address | null) => (address === null ? "outside" : formatAddress(address));
 
-function describeWanted(wanted: InteractionExpectation): string {
+export function describeWanted(wanted: InteractionExpectation): string {
   const what = wanted.kind ? `A ${wanted.kind}` : "An interaction";
   return `${what}${wanted.from ? ` from ${formatAddress(wanted.from)}` : ""}${wanted.to ? ` to ${formatAddress(wanted.to)}` : ""}`;
 }
 
-function describeWantedEffect(wanted: EffectExpectation): string {
+export function describeWantedEffect(wanted: EffectExpectation): string {
   return `${wanted.kind ? `A "${wanted.kind}" effect` : "An effect"}${wanted.at ? ` at ${formatAddress(wanted.at)}` : ""}`;
 }
 
@@ -103,10 +103,13 @@ function carriedDifferences(interaction: Interaction, returned: Return | undefin
     );
   }
   if (wanted.response !== undefined) {
+    // A call that threw gave nothing back, whatever was expected of it.
     differences.push(
-      ...(returned?.response === undefined
-        ? ["nothing came back."]
-        : compareValues(returned.response, wanted.response, "response", true)),
+      ...(returned?.error !== undefined
+        ? [`it threw instead: ${returned.error}`]
+        : returned?.response === undefined
+          ? ["nothing came back."]
+          : compareValues(returned.response, wanted.response, "response", true)),
     );
   }
   return differences;

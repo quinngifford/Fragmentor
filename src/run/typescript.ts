@@ -87,8 +87,17 @@ export type RunEvent =
   | { type: "call"; id: number; parent: number | null; block: string; input: unknown; at: number }
   | { type: "return"; id: number; output: unknown; at: number }
   | { type: "throw"; id: number; error: string; at: number }
+  /**
+   * A block using a store or a queue it was given, as the call `parent` was
+   * running: the row read (or null), the rows listed, the row written, the
+   * row a remove took away (or null), or the message sent. `target` is the
+   * name the run keeps the store under, `path.entry`.
+   */
+  | { type: "store"; id: number; parent: number | null; target: string; op: StoreOperation; key?: string; value: unknown; at: number }
   | { type: "paused"; id: number }
   | { type: "resumed"; id: number };
+
+export type StoreOperation = "read" | "list" | "write" | "remove" | "send";
 
 /** What a store was left holding, or a channel was given, by the time a run ended. */
 export type StoreEffect =
@@ -104,6 +113,8 @@ export interface HarnessResult {
   logs: string[];
   /** True when the run was stopped before it finished. */
   stopped?: boolean;
+  /** True when the run made more calls than are recorded, so what was heard of it is not all of it. */
+  truncated?: boolean;
 }
 
 export interface SpawnOptions {
@@ -208,6 +219,7 @@ export function startCompiledBlock(options: SpawnOptions): CompiledRun {
         error: typeof message.error === "string" ? message.error : undefined,
         stores: (message.stores as Record<string, StoreEffect> | undefined) ?? {},
         logs: Array.isArray(message.logs) ? (message.logs as string[]) : [],
+        ...(message.truncated === true ? { truncated: true } : {}),
       });
       return;
     }
