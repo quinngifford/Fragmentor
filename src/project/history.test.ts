@@ -17,6 +17,7 @@ import {
   undoLastSwap,
 } from "./history.js";
 import { commitExampleHistory, filesOf, gitIn } from "./exampleHistory.js";
+import { changesBetween } from "./changes.js";
 import { addNote } from "./notes.js";
 import { projectSnapshot } from "./snapshot.js";
 
@@ -1269,6 +1270,51 @@ describe("the project as it was at a commit", () => {
       "src/workers/delivery.ts",
     ]);
   }, 30_000);
+
+  it("reads code in a hidden folder, and a folder holding only a hidden file, as the working copy does", async () => {
+    const { dir, git } = await ticketsHistory();
+    await put(dir, "src/.generated/price-seat.ts", await text(dir, "src/booking/price-seat.ts"));
+    await rm(path.join(dir, "src/booking/price-seat.ts"));
+    const block = JSON.parse(await text(dir, `${PRICING}/price-seat/block.json`));
+    await put(dir, `${PRICING}/price-seat/block.json`, JSON.stringify({ ...block, code: "src/.generated/price-seat.ts#priceSeat" }));
+    // A folder made for code not written yet, kept in git by a file of its own.
+    const outbox = JSON.parse(await text(dir, "blocks/tickets/outbox/block.json"));
+    await put(dir, "blocks/tickets/outbox/block.json", JSON.stringify({ ...outbox, code: "src/outbox" }));
+    await put(dir, "src/outbox/.gitkeep", "");
+    await git("add", "--all");
+    await git("commit", "--quiet", "-m", "Generated code, and a folder for the outbox");
+
+    const then = (await projectAt(dir, await head(git))).snapshot!;
+    const now = await projectSnapshot(dir);
+    expect(now.blocks[priceSeat]).toMatchObject({ implemented: true, runnable: true });
+    expect(now.blocks["tickets/outbox"]).toMatchObject({ implemented: true });
+    expect(then.diagnostics).toEqual(now.diagnostics);
+    expect(changesBetween(then, now).blocks).toEqual([]);
+  }, 30_000);
+
+  it("reads a project whose blocks point at more files than a command line could name", async () => {
+    const dir = await scratch();
+    // Long paths, each in a folder of its own, so no pointer lies inside another.
+    const count = 400;
+    const file = (i: number) => `src/services/notifications/handlers/number-${i}/send-the-weekly-digest-email-to-every-subscriber.ts`;
+    await put(dir, "fragmentor.json", JSON.stringify({ name: "Digest", granularity: { level: 3, maxDepth: 6 }, systems: [{ rootBlock: "digest", language: "typescript" }] }));
+    await put(dir, "blocks/digest/block.json", JSON.stringify({ role: "component", responsibility: "Send the digests." }));
+    for (let i = 0; i < count; i++) {
+      await put(dir, `blocks/digest/send-${i}/block.json`, JSON.stringify({ responsibility: `Send digest ${i}.`, code: `${file(i)}#send${i}` }));
+      await put(dir, file(i), `export function send${i}() {}
+`);
+    }
+    expect(Array.from({ length: count }, (_, i) => file(i)).join(" ").length).toBeGreaterThan(32_767);
+    const git = gitIn(dir);
+    await git("init", "--quiet");
+    await git("add", "--all");
+    await git("commit", "--quiet", "-m", "Four hundred digests");
+
+    const then = (await projectAt(dir, await head(git))).snapshot!;
+    expect(Object.keys(then.blocks)).toHaveLength(count + 1);
+    expect(Object.values(then.blocks).filter((block) => block.path !== "digest" && !block.implemented)).toEqual([]);
+    expect(then.diagnostics).toEqual((await projectSnapshot(dir)).diagnostics);
+  }, 120_000);
 
   it("says code deleted by then was not there, as the working copy says, and reads the rest", async () => {
     const { dir, git } = await ticketsHistory();

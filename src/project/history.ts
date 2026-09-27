@@ -269,8 +269,12 @@ async function treeFiles(dir: string, commit: string, specs: string[]): Promise<
   return (await treeBlobs(dir, commit, specs)).map((each) => each.file);
 }
 
-/** The same files, each with the object git keeps its bytes in, which reads faster than asking for it by path. */
-async function treeBlobs(dir: string, commit: string, specs: string[]): Promise<{ file: string; object: string }[]> {
+/**
+ * The same files, each with the object git keeps its bytes in, which reads
+ * faster than asking for it by path. `withNoise` keeps what noise() would
+ * leave out, for code a block points at, which is the project's wherever it is.
+ */
+async function treeBlobs(dir: string, commit: string, specs: string[], withNoise = false): Promise<{ file: string; object: string }[]> {
   const listed = await git(dir, ["ls-tree", "-r", "-z", commit, "--", ...specs]);
   if ("missing" in listed) throw new Error(NO_GIT);
   if (listed.code !== 0) throw new Error("That commit is not in this project's history.");
@@ -279,7 +283,7 @@ async function treeBlobs(dir: string, commit: string, specs: string[]): Promise<
     const tab = entry.indexOf("\t");
     const [mode, type, object = ""] = entry.slice(0, tab).split(" ");
     const file = entry.slice(tab + 1);
-    return type === "blob" && (mode === "100644" || mode === "100755") && !noise(file) ? [{ file, object }] : [];
+    return type === "blob" && (mode === "100644" || mode === "100755") && (withNoise || !noise(file)) ? [{ file, object }] : [];
   });
 }
 
@@ -1592,14 +1596,17 @@ export async function projectAt(projectDir: string, commit: string): Promise<Pro
           .map((code) => pointerPath(code, false)),
       ].filter((pointer): pointer is string => pointer !== null),
     );
-    // Listed from git first, so only what was there is asked for. Of what lies
-    // under a pointer naming a folder, only files other pointers name are read.
-    const found = await treeBlobs(projectDir, commit, outermost(pointers));
+    // Listed from git first, so only what was there is asked for, by the
+    // folders at the top of the project the pointers are in: one pathspec for
+    // each pointer would make a command line longer than Windows allows once
+    // a project has a few hundred. Of what is listed, only files a pointer
+    // names are read, and a folder is there if anything at all is in it, even
+    // only a hidden `.gitkeep`.
+    const found = pointers.length === 0 ? [] : await treeBlobs(projectDir, commit, unique(pointers.map((pointer) => pointer.split("/")[0]!)), true);
     const named = new Set(pointers);
     await copy(found.filter((each) => named.has(each.file)));
-    for (const pointer of pointers) {
-      if (found.some((each) => each.file.startsWith(`${pointer}/`))) await mkdir(resolveInside(temp, pointer), { recursive: true });
-    }
+    const folders = new Set(found.flatMap((each) => steps(each.file).slice(0, -1)));
+    for (const pointer of pointers) if (folders.has(pointer)) await mkdir(resolveInside(temp, pointer), { recursive: true });
 
     const snapshot = await projectSnapshot(temp, { atCommit: true });
     for (const block of Object.values(snapshot.blocks)) block.sources = { code: null, contract: null };
