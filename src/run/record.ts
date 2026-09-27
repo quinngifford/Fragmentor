@@ -11,6 +11,7 @@ import { loadExecutions } from "../project/executions.js";
 import type { Execution } from "../project/executions.js";
 import { storesForRun } from "../project/stores.js";
 import { startRun, whyNotRunnable } from "./run.js";
+import { boundBlocks } from "./typescript.js";
 import type { RunControl, RunEvent, RunOutcome } from "./run.js";
 
 /**
@@ -60,12 +61,9 @@ export function answeringBlock(project: Project, code: Map<string, BlockCode>, a
  */
 export function scopeOf(project: Project, code: Map<string, BlockCode>, block: string): RecordingScope {
   const root = systemOf(project, block)?.rootBlock;
-  const blocks: Record<string, string> = {};
-  for (const node of project.byPath.values()) {
-    const found = code.get(node.path);
-    const inSystem = root !== undefined && (node.path === root || node.path.startsWith(`${root}/`));
-    if (inSystem && found?.bound && found.location !== null) blocks[node.path] = `${found.location.file}#${found.functionName}`;
-  }
+  const blocks = Object.fromEntries(
+    (root === undefined ? [] : boundBlocks(project, root, code)).map((each) => [each.path, `${each.file}#${each.functionName}`]),
+  );
 
   const stores = [...new Set(storesForRun(project, block).map((store) => store.target))];
   const answers: string[] = [];
@@ -132,11 +130,14 @@ export async function recordExecution(
   if (outcome.inputProblems.length > 0) {
     return { couldNotRecord: [outcome.error, ...outcome.inputProblems].filter(Boolean).join(" ") };
   }
-  // A run whose first call never came back, and that nobody stopped, did not
-  // load, or ran out of time: there is nothing of it to show.
+  // A run whose first call was never heard did not load, or was stopped
+  // before it began; one whose first call never came back, and that nobody
+  // stopped, ran out of time. There is nothing of either to show.
   const first = heard.find((event) => event.type === "call" && event.parent === null);
   const ended = first !== undefined && heard.some((event) => (event.type === "return" || event.type === "throw") && event.id === first.id);
-  if (!ended && !outcome.stopped) return { couldNotRecord: outcome.error ?? "The run ended without saying why." };
+  if (first === undefined || (!ended && !outcome.stopped)) {
+    return { couldNotRecord: outcome.error ?? "The run ended without saying why." };
+  }
 
   return {
     execution,

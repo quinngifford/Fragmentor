@@ -161,11 +161,66 @@ describe("a trace that no longer says what the code does", () => {
     ]);
   }, 30_000);
 
+  it("is not recorded at all when it is stopped before it starts", async () => {
+    const recorded = await recordExecution(dir, "book-seats", { started: (control) => control.stop() });
+    expect(recorded).toEqual({ couldNotRecord: expect.any(String) });
+  }, 30_000);
+
   it("is not recorded at all when its payload no longer fits the code", async () => {
     const file = JSON.parse(original);
     delete file.trigger.payload.email;
     await writeFile(path.join(dir, BOOK_SEATS), JSON.stringify(file), "utf8");
     const recorded = await recordExecution(dir, "book-seats");
     expect(recorded).toEqual({ couldNotRecord: expect.stringContaining("input.email") });
+  }, 30_000);
+});
+
+describe("recording blocks whose code shares a file", () => {
+  let together: string;
+
+  // Tickets with reserve's code moved into book-seats.ts, and nothing else changed.
+  beforeAll(async () => {
+    together = await mkdtemp(path.join(tmpdir(), "fragmentor-record-"));
+    await cp(path.join(examples, "tickets"), together, { recursive: true });
+    const [bookSeats, reserve] = ["book-seats.ts", "reserve.ts"].map((file) => path.join(together, "src", "booking", file));
+    const [caller, called] = await Promise.all([readFile(bookSeats!, "utf8"), readFile(reserve!, "utf8")]);
+    const [importLine, ...body] = called.split(/\r?\n/);
+    const rest = caller.replace(/import \{ reserve \} from "\.\/reserve\.js";\r?\n/, "");
+    await writeFile(bookSeats!, [importLine, rest, ...body].join("\n"), "utf8");
+    await rm(reserve!);
+    const blockFile = path.join(together, "blocks", "tickets", "booking-api", "book-seats", "reserve", "block.json");
+    const block = JSON.parse(await readFile(blockFile, "utf8"));
+    await writeFile(blockFile, JSON.stringify({ ...block, code: "src/booking/book-seats.ts#reserve" }), "utf8");
+  });
+
+  afterAll(async () => {
+    await rm(together, { recursive: true, force: true });
+  });
+
+  it("contradicts nothing written down that it could not hear", async () => {
+    const recorded = await recordExecution(together, "book-seats");
+    if (!("trace" in recorded)) throw new Error(JSON.stringify(recorded));
+    const found = check(recorded);
+
+    // The call into reserve is made inside the file, so it is not heard, and what reserve did is heard as book seats'.
+    expect(recorded.trace.events.some((event) => event.type === "interaction" && event.to.path.endsWith("/reserve"))).toBe(false);
+    expect(found.expectations.failures).toEqual([]);
+    expect(found.steps.filter((step) => step.verdict === "not-seen")).toEqual([]);
+    expect(found.unwrittenCount).toBe(0);
+    expect(found.expectations.setAside.map((each) => each.expectation)).toContain(
+      "A write from tickets/booking-api/book-seats/reserve to tickets/tickets-db.bookings",
+    );
+  }, 30_000);
+
+  it("does not count reserve as left alone because the call into it was not heard", async () => {
+    const file = path.join(together, BOOK_SEATS);
+    const execution = JSON.parse(await readFile(file, "utf8"));
+    await writeFile(file, JSON.stringify({ ...execution, expect: { never: ["tickets/booking-api/book-seats/reserve"] } }), "utf8");
+    const recorded = await recordExecution(together, "book-seats");
+    if (!("trace" in recorded)) throw new Error(JSON.stringify(recorded));
+    expect(check(recorded).expectations).toEqual({
+      failures: [],
+      setAside: [{ expectation: "Nothing happens in tickets/booking-api/book-seats/reserve", why: expect.stringContaining("share src/booking/book-seats.ts") }],
+    });
   }, 30_000);
 });

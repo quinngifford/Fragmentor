@@ -220,12 +220,33 @@ describe("holding written steps to a recording", () => {
     ]);
   });
 
-  it("cannot check a call between two blocks in one file", () => {
-    const together = { ...scope, blocks: { ...scope.blocks, [PRICE]: "src/booking/book-seats.ts#priceSeat" } };
-    const check = checkRecording(written({ trace: [step(BOOK, PRICE, "call", { payload: { seat: 9 } })] }), trace, together, true);
-    expect(check.steps.map(({ verdict, reason }) => [verdict, reason])).toEqual([
-      ["unchecked", `${BOOK} and ${PRICE} are both in src/booking/book-seats.ts, and a call inside one file is not seen.`],
+  it("still holds a row read by its key when the same block also lists the store", () => {
+    const both = recordedTrace("x", scope, [
+      ...heard.slice(0, 3),
+      { type: "store", id: 10, parent: 2, target: "tickets/tickets-db.events", op: "list", value: [gig] },
+    ], outcome);
+    expect(verdicts({ trace: [read({ id: "gig" })] }, true, both)).toEqual(["seen"]);
+    // The list names no row, so it cannot stand in for a read of the wrong one.
+    expect(verdicts({ trace: [read({ id: "other" })] }, true, both)).toEqual([
+      [
+        "not-seen",
+        'A read from tickets/booking-api/find-event to tickets/tickets-db.events happened, but not as expected: payload.key was "gig", expected "other".',
+      ],
     ]);
+  });
+
+  it("needs a recorded step of its own for each step written down", () => {
+    const find = step(BOOK, FIND, "call", { payload: { eventId: "gig" } });
+    expect(verdicts({ trace: [find, find] })).toEqual([
+      "seen",
+      [
+        "not-seen",
+        `A call from ${BOOK} to ${FIND} happened once, which is not enough for every expectation asking for it.`,
+      ],
+    ]);
+    // Both price calls were made, so both can be written down.
+    const price = step(BOOK, PRICE, "call");
+    expect(verdicts({ trace: [price, price] })).toEqual(["seen", "seen"]);
   });
 
   it("does not call a step missing from a run that did not finish a contradiction", () => {
@@ -314,8 +335,84 @@ describe("holding expectations to a recording", () => {
     ]);
   });
 
+  it("does not meet a read written with the wrong key because the block also listed the store", () => {
+    const both = recordedTrace("x", scope, [
+      ...heard.slice(0, 3),
+      { type: "store", id: 10, parent: 2, target: "tickets/tickets-db.events", op: "list", value: [gig] },
+    ], outcome);
+    const read = (id: string) => ({ interactions: [{ from: FIND, to: "tickets/tickets-db.events", kind: "read", payload: { id } }] });
+    expect(expecting(read("gig"), true, both).failures).toEqual([]);
+    expect(expecting(read("other"), true, both).failures).toHaveLength(1);
+  });
+
   it("says which starting rows the run had no way to hold", () => {
     const given = { "tickets/tickets-db.events": { gig }, "tickets/tickets-db.refunds": {} };
     expect(checkRecording(written({ given }), trace, scope, true).notSeeded).toEqual(["tickets/tickets-db.refunds"]);
+  });
+});
+
+describe("blocks whose code shares a file", () => {
+  // Reserve's code moved into book-seats.ts. Book seats then calls it inside
+  // the file, so the harness never hears the call, and hears what reserve does
+  // as book seats' own.
+  const together: RecordingScope = { ...scope, blocks: { ...scope.blocks, [RESERVE]: "src/booking/book-seats.ts#reserve" } };
+  const inOneFile = recordedTrace(
+    "book-seats",
+    together,
+    heard.flatMap((event) => (event.id === 6 ? [] : event.type === "store" && event.parent === 6 ? [{ ...event, parent: 1 }] : [event])),
+    outcome,
+  );
+  const sharing = `${BOOK} and ${RESERVE} share src/booking/book-seats.ts, and a call inside one file is not heard, so what one of them does may be heard as another's.`;
+  const expecting = (expect: object, from: Trace = inOneFile) => checkRecording(written({ expect }), from, together, true).expectations;
+
+  it("cannot check a step either one takes, whether or not it was heard", () => {
+    const check = checkRecording(
+      written({
+        trace: [
+          step(BOOK, RESERVE, "call", { payload: { seats: 9 } }),
+          step(RESERVE, "tickets/tickets-db.events", "write"),
+          step(BOOK, "tickets/tickets-db.events", "write"),
+          step(RESERVE, "tickets/tickets-db.bookings", "write"),
+          step(RESERVE, "tickets/outbox.confirmations", "send"),
+        ],
+      }),
+      inOneFile,
+      together,
+      true,
+    );
+    expect(check.steps.map(({ verdict, reason }) => [verdict, reason])).toEqual(Array(5).fill(["unchecked", sharing]));
+    // What reserve did, heard as book seats', is what the steps written for reserve account for.
+    expect(check.unwrittenCount).toBe(4);
+  });
+
+  it("sets aside what a block sharing a file was expected to do or not do, rather than failing or meeting it", () => {
+    expect(
+      expecting({
+        entered: [RESERVE],
+        never: [RESERVE],
+        interactions: [{ from: RESERVE, to: "tickets/tickets-db.bookings", kind: "write" }],
+      }),
+    ).toEqual({
+      failures: [],
+      setAside: [
+        { expectation: `Something crosses into ${RESERVE}`, why: sharing },
+        { expectation: `A write from ${RESERVE} to tickets/tickets-db.bookings`, why: sharing },
+        { expectation: `Nothing happens in ${RESERVE}`, why: sharing },
+      ],
+    });
+  });
+
+  it("still counts a call into such a block that was heard, and what reached a store", () => {
+    // Called through its export, as another file would, reserve is heard.
+    expect(expecting({ entered: [RESERVE] }, trace)).toEqual({ failures: [], setAside: [] });
+    expect(expecting({ never: [BOOK] }).failures).toHaveLength(1);
+    expect(
+      expecting({
+        effects: [
+          { kind: "row-changed", at: "tickets/tickets-db.events", detail: { seatsLeft: 8 } },
+          { kind: "response", at: "tickets/booking-api.bookSeats", detail: { booked: true } },
+        ],
+      }),
+    ).toEqual({ failures: [], setAside: [] });
   });
 });

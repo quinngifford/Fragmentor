@@ -36,6 +36,24 @@ export interface CompiledSystem {
   dispose(): Promise<void>;
 }
 
+/**
+ * The blocks of one system whose code is held to a contract, and where it is.
+ * They are what a run compiles and stands in for, so they are all it hears.
+ */
+export function boundBlocks(
+  project: Project,
+  systemRoot: string,
+  code: Map<string, BlockCode>,
+): { path: string; file: string; functionName: string | null }[] {
+  return [...project.byPath.values()].flatMap((node) => {
+    if (node.path !== systemRoot && !node.path.startsWith(`${systemRoot}/`)) return [];
+    const found = code.get(node.path);
+    return found?.bound && found.location !== null
+      ? [{ path: node.path, file: found.location.file, functionName: found.functionName }]
+      : [];
+  });
+}
+
 /** Compiles the code of every block in one system that is held to a contract. */
 export async function compileSystem(
   project: Project,
@@ -51,14 +69,10 @@ export async function compileSystem(
   const files = new Map<string, string>();
   const written = new Set<string>();
 
-  for (const node of project.byPath.values()) {
-    if (node.path !== systemRoot && !node.path.startsWith(`${systemRoot}/`)) continue;
-    const found = code.get(node.path);
-    if (!found?.bound || found.location === null) continue;
-
-    const source = found.location.file;
+  for (const block of boundBlocks(project, systemRoot, code)) {
+    const source = block.file;
     const target = path.join(dir, ...source.replace(/\.ts$/, ".js").split("/"));
-    files.set(node.path, target);
+    files.set(block.path, target);
     if (written.has(source)) continue;
     written.add(source);
 
