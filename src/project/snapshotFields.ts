@@ -83,8 +83,9 @@ export const blockFields: FieldTable<SnapshotBlock> = {
   sources: ignoredPrivate,
   // Its system's.
   language: ignored,
-  // The same as its code's file and pointer.
-  files: ignored,
+  // What it points at, where its code is not there to say so. Its contract
+  // is found from its code.
+  files: compared,
   implemented: compared,
   runnable: compared,
   drawnBecause: compared,

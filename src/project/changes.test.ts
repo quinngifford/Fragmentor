@@ -201,6 +201,50 @@ describe("what changed between two snapshots", () => {
     ]);
   });
 
+  it("does not call a system started afresh the old one renamed for one part it kept", async () => {
+    // The database is kept, found by its name; everything else of the shop is gone.
+    const changes = changesBetween(
+      before,
+      await snapshotOf({
+        "fragmentor.json": { name: "Shop", granularity: { level: 3 }, systems: [{ rootBlock: "analytics", language: "typescript" }] },
+        "blocks/analytics/block.json": { role: "component", responsibility: "Count page views." },
+        "blocks/analytics/shop-db/block.json": shop["blocks/shop/shop-db/block.json"],
+        "blocks/analytics/views/block.json": { role: "component", responsibility: "Every view." },
+      }),
+    );
+    expect(kinds(changes)).toEqual([
+      ["new", "analytics"],
+      ["moved", "analytics/shop-db"],
+      ["new", "analytics/views"],
+      ["removed", "shop"],
+    ]);
+    expect(find(changes, "analytics/shop-db")).toMatchObject({ from: "shop/shop-db", by: "same name" });
+    expect(find(changes, "shop")).toMatchObject({ removedParts: 5, lines: ["and 5 parts of it"] });
+  });
+
+  it("counts a part removed once, on the part it was in where that part moved away", async () => {
+    // The api goes, its pricing moves out of it, and a price inside the pricing goes too.
+    const files = shopWith({}, { "blocks/shop/api/pricing": "blocks/shop/pricing" });
+    for (const file of ["blocks/shop/api/block.json", "blocks/shop/api/checkout/block.json", "blocks/shop/pricing/discount/block.json", "executions/buy.json"]) {
+      delete files[file];
+    }
+    const changes = changesBetween(before, await snapshotOf(files));
+    expect(kinds(changes)).toEqual([
+      ["changed", "shop"],
+      ["removed", "shop/api"],
+      ["removed", "shop/api/pricing/discount"],
+      ["moved", "shop/pricing"],
+    ]);
+    expect(find(changes, "shop/api")).toMatchObject({ removedParts: 1, lines: ["and 1 part of it"] });
+    expect(find(changes, "shop/pricing")).toMatchObject({ removedParts: 1, lines: ["part removed: Discount"] });
+  });
+
+  it("says a block was pointed elsewhere when its code is not there on either side", async () => {
+    const pointed = (code: string) => shopWith({ "blocks/shop/api/checkout/block.json": { ...checkout, code } });
+    const changes = changesBetween(await snapshotOf(pointed("src/old.ts#checkout")), await snapshotOf(pointed("src/new.ts#checkout")));
+    expect(find(changes, "shop/api/checkout")?.lines).toEqual(["now points at src/new.ts#checkout, was src/old.ts#checkout"]);
+  });
+
   it("follows a database into a new group, with its readers reworded and its executions unchanged", async () => {
     const execution = shop["executions/buy.json"] as { trace: { to: string }[] };
     const changes = changesBetween(
@@ -292,6 +336,17 @@ describe("what changed between two snapshots", () => {
       "output id added: string",
     ]);
     expect(find(changes, "shop/shop-db")?.lines).toEqual(["orders: field note added: string, optional"]);
+  });
+
+  it("says when an operation starts giving back what it takes", async () => {
+    const offering = (save: object) =>
+      snapshotOf(
+        shopWith({
+          "blocks/shop/shop-db/block.json": { role: "database", responsibility: "Every order.", exposes: { save: { accepts: "{ id: string }", ...save } } },
+        }),
+      );
+    const changes = changesBetween(await offering({}), await offering({ returns: "{ id: string }" }));
+    expect(find(changes, "shop/shop-db")?.lines).toEqual(["save now gives back { id: string }, was nothing"]);
   });
 
   it("tells a block pointed at other code from its code being changed, and names the others sharing a file", async () => {
@@ -423,7 +478,8 @@ describe("the fields a change is made of", () => {
     children: (then) => (then.blocks["tickets/booking-api"]!.children = []),
     sources: (then) => (then.blocks[priceSeat]!.sources = { code: "other", contract: null }),
     language: (then) => (then.blocks[findEvent]!.language = "python"),
-    files: (then) => (then.blocks[findEvent]!.files = { code: "other.ts", contract: "" }),
+    // A group whose code is not there on either side, since only then is its pointer not also its code's.
+    files: (then) => (then.blocks["tickets/booking-api"]!.files = { code: "src/other", contract: "" }),
     implemented: (then) => (then.blocks[priceSeat]!.implemented = false),
     runnable: (then) => (then.blocks[priceSeat]!.runnable = false),
     drawnBecause: (then) => (then.blocks[priceSeat]!.drawnBecause = "some reason"),

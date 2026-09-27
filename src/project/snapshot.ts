@@ -359,10 +359,11 @@ async function notesOf(project: Project, problems: ProjectDiagnostic[]): Promise
 
 /**
  * `atCommit` is for the project as it was at a commit, read back into a folder
- * holding only its blocks, its executions and the code they point at. Its
- * notes are not part of what it was, so they are left out rather than read
- * from a folder that has none, and so is anything else that needs the rest of
- * the project's folder.
+ * holding only its blocks, its executions and the code they point at. It is
+ * where whatever needs the rest of the project's folder is skipped. Today that
+ * is only its notes, which are not part of what it was and which the folder
+ * has none of anyway, so it changes nothing yet; what reads more of the
+ * project, such as what its code reaches, is skipped here when it comes.
  */
 export async function projectSnapshot(projectDir: string, { atCommit = false }: { atCommit?: boolean } = {}): Promise<ProjectSnapshot> {
   const project = await loadProject(projectDir);

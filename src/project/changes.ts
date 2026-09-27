@@ -16,7 +16,7 @@ import type { ProjectSnapshot, SnapshotAccess, SnapshotBlock, SnapshotExecution,
  * is unambiguous: the block's own path, then its parent's move, then the code
  * it points at, then its id and role, each only where exactly one block on
  * each side has it, and last a system's root, where one went, one came, and
- * the parts of the one are found in the other. Anything else is honestly
+ * most of the parts of the one are found in the other. Anything else is honestly
  * removed plus new. Once blocks
  * are paired, what the older side says about where things are is read as
  * where they went, so a move does not also show as a change to every block
@@ -140,12 +140,18 @@ function pairBlocks(then: Record<string, SnapshotBlock>, now: Record<string, Sna
   );
 
   // A system renamed has nothing of its own to know it by: it is the one
-  // system gone and the one come, when its parts are found in the new one.
+  // system gone and the one come, when most of its parts are found in the new
+  // one. One part kept, such as a database, by a system started afresh beside
+  // it does not make the new system the old one renamed.
   const goneRoot = unpaired().filter((each) => parentOf(each) === null);
   const newRoot = Object.keys(now).filter((each) => parentOf(each) === null && !taken.has(each));
-  if (goneRoot.length === 1 && newRoot.length === 1 && [...pairs].some(([from, { to }]) => parentOf(from) === goneRoot[0] && parentOf(to) === newRoot[0])) {
-    join(goneRoot[0]!, newRoot[0]!, "its parts went with it");
-    carry();
+  if (goneRoot.length === 1 && newRoot.length === 1) {
+    const parts = Object.keys(then).filter((each) => parentOf(each) === goneRoot[0]);
+    const went = parts.filter((each) => pairs.get(each) !== undefined && parentOf(pairs.get(each)!.to) === newRoot[0]);
+    if (went.length * 2 > parts.length) {
+      join(goneRoot[0]!, newRoot[0]!, "its parts went with it");
+      carry();
+    }
   }
 
   // A part found by its code before its group was found by name still went
@@ -244,6 +250,8 @@ function exposedLines(then: SnapshotExposed[], now: SnapshotExposed[]): string[]
       // of its own, as a table's is not.
       const alsoTakes = (each: SnapshotExposed) => (each.returns === null || each.accepts === each.returns ? "" : (each.accepts ?? "nothing"));
       if (alsoTakes(old) !== alsoTakes(entry)) takes();
+      // Nor do they say whether anything comes back at all.
+      if ((old.returns === null) !== (entry.returns === null)) gives();
       const columns = new Map(old.fields.map((field) => [field.name, field]));
       for (const field of entry.fields) {
         const was = columns.get(field.name);
@@ -302,7 +310,10 @@ function codeLines(then: SnapshotBlock, block: SnapshotBlock, now: Record<string
   if (then.implemented !== block.implemented) {
     lines.push(block.implemented ? `its code is there now: ${block.code?.pointer ?? block.files.code}` : `its code is not there any more: ${block.files.code}`);
   }
-  if (then.code !== null && block.code !== null) {
+  if (then.code === null && block.code === null) {
+    // Code that is not there on either side is still looked for where the block points.
+    if (then.files.code !== block.files.code) lines.push(`now points at ${block.files.code || "nothing"}, was ${then.files.code || "nothing"}`);
+  } else if (then.code !== null && block.code !== null) {
     if (then.code.pointer !== block.code.pointer) {
       lines.push(`now points at ${block.code.pointer}, was ${then.code.pointer}`);
     } else if (then.code.hash !== block.code.hash) {
@@ -420,7 +431,13 @@ export function changesBetween(then: ProjectSnapshot | null, now: ProjectSnapsho
     // A part of a removed block goes with it, and is counted on its row.
     if (parent !== null && parent in was && !pairs.has(parent)) continue;
     if (parent !== null && pairs.has(parent)) removedFrom.set(parent, [...(removedFrom.get(parent) ?? []), was[blockPath]!.name]);
-    const parts = Object.keys(was).filter((each) => each.startsWith(`${blockPath}/`) && !pairs.has(each)).length;
+    // Only parts nothing between them and it was kept: one inside a part that
+    // moved away has a row of its own, or is counted on the one it moved with.
+    const goesWith = (each: string) => {
+      for (let at: string = each; at !== blockPath; at = parentOf(at)!) if (pairs.has(at)) return false;
+      return true;
+    };
+    const parts = Object.keys(was).filter((each) => each.startsWith(`${blockPath}/`) && goesWith(each)).length;
     blocks.push({
       path: blockPath,
       name: was[blockPath]!.name,
