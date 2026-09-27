@@ -1094,6 +1094,20 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("structured", "benchThere") === true,
     ],
     [
+      "Escape closes the window over the drawing before the bench, Ctrl-click adds to the selection, an arrow opens as a dependency, and the zoom buttons zoom",
+      value("controls", "windowOpened") === true &&
+        value("controls", "benchBefore") === true &&
+        value("controls", "windowFirst") === true &&
+        value("controls", "benchNext") === true &&
+        value("controls", "several") === "2 blocks selected" &&
+        value("controls", "arrow") === "dependency" &&
+        value("controls", "zoomedIn") === true,
+    ],
+    [
+      "a step's page opens the function that makes it",
+      value("stepping", "codeOpened") === true,
+    ],
+    [
       "seats are booked from the box office without naming the block that answers: the database is written and the confirmation goes on a queue",
       value("fromTheTop", "offered") === true &&
         value("fromTheTop", "label") === "Run bookSeats" &&
@@ -2729,6 +2743,52 @@ function attachSelfCheck(
         `);
         await capture(window, "self-check-structured");
 
+        // The controls that are only ever pressed, never looked at: Escape,
+        // Ctrl-click, a click on an arrow and the zoom buttons. The bench is
+        // on book-seats from the step above, and the dependencies are shown.
+        await run("controls", `
+          const escape = () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+          const press = (id, ctrlKey) =>
+            document.querySelector('.block-box[data-id="' + id + '"]').dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, ctrlKey }));
+
+          // Escape closes what is most in the way: the window over the
+          // drawing first, then the bench beside it.
+          document.querySelector('.block-box[data-id="booking-api"] .block-button').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          const windowOpened = Boolean(await until(() => !document.getElementById("overlay").hidden, 3000));
+          const benchBefore = Boolean(document.querySelector(".bench-window"));
+          escape();
+          await wait(300);
+          const windowFirst = document.getElementById("overlay").hidden && Boolean(document.querySelector(".bench-window"));
+          escape();
+          await wait(300);
+          const benchNext = !document.querySelector(".bench-window");
+
+          // Ctrl-click adds a block to what is selected.
+          press("book-seats", false);
+          await wait(300);
+          press("cancel-booking", true);
+          await wait(400);
+          const several = text("#inspector h2");
+
+          // An arrow is a dependency, and has a page of its own.
+          document.querySelector(".access-group").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+          await wait(400);
+          const arrow = text("#inspector .insp-id");
+
+          const zoom = text("#zoom-level");
+          document.getElementById("zoom-in").click();
+          await wait(300);
+          const zoomedIn = text("#zoom-level") !== zoom;
+          document.getElementById("zoom-fit").click();
+          await wait(400);
+
+          // Back where the step above left it, for the one below.
+          press("book-seats", false);
+          await wait(500);
+          await openBench();
+          return { windowOpened, benchBefore, windowFirst, benchNext, several, arrow, zoomedIn };
+        `);
+
         // Seeding a store and running through it. The bench is on book-seats
         // from the step above, which reads the events through a Store port.
         await run("store", `
@@ -4090,7 +4150,17 @@ function attachSelfCheck(
           const page = [...document.querySelectorAll("#inspector .port-row")]
             .map((row) => [...row.children].map((cell) => cell.textContent.replace(/Show$/, "").trim()).join(" "))
             .join(" | ");
-          return { reaches, page, stepped, back };
+
+          // The function behind the step, opened from its page and put away again.
+          const openCode = [...document.querySelectorAll("#inspector .btn")].find((b) => b.textContent === "Open the code");
+          let codeOpened = false;
+          if (openCode) {
+            openCode.click();
+            codeOpened = Boolean(await until(() => document.querySelector("#overlay pre.window-code"), 3000));
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+            await wait(300);
+          }
+          return { reaches, page, stepped, back, codeOpened };
         `);
         await capture(window, "self-check-giving-back");
 
