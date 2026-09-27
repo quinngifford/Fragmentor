@@ -765,7 +765,7 @@ export interface CodeLocation {
 }
 
 /** Past this, a file is not read to find a name in it or to show it. */
-const LARGEST_SHOWN = 2_000_000;
+export const LARGEST_SHOWN = 2_000_000;
 
 /**
  * Finds what a block's `code` points at: `src/pricing.ts`, `src/pricing/` or
