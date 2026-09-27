@@ -179,7 +179,8 @@ function followWhenSettled(watch: Watch): void {
 
 /** How long to linger on an event: long enough to see a block light up. */
 function pace(event: RunEvent): number {
-  if (event.type === "paused" || event.type === "resumed") return 0;
+  // What a call did to a store lights nothing here, so it takes no time.
+  if (event.type === "paused" || event.type === "resumed" || event.type === "store") return 0;
   return event.type === "call" ? 280 : 140;
 }
 
