@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { GUIDE_FILE, SKILLS_DIR, agentGuide, architectureExample, compactJson, executionExample, workedExample } from "./guide.js";
+import { GUIDE_FILE, SKILLS_DIR, agentGuide, architectureExample, compactJson, workedExample } from "./guide.js";
 import { COMMANDS, firstStep } from "./commands.js";
 import { writeAgentFiles } from "./emit.js";
 import { blockFromFile } from "../model/block.js";
@@ -16,6 +16,9 @@ import { evaluate } from "../run/expect.js";
 import { casesSchema } from "../run/cases.js";
 import { runCases } from "../run/run.js";
 import { checkProject } from "../check/check.js";
+import { checkRecording } from "../model/recorded.js";
+import { writeWorkedExample } from "../project/exampleHistory.js";
+import { recordExecution } from "../run/record.js";
 
 let dir: string;
 
@@ -43,12 +46,6 @@ async function writeBlocks(blocks: Record<string, unknown>): Promise<void> {
     await mkdir(blockDir(dir, blockPath), { recursive: true });
     await writeFile(path.join(blockDir(dir, blockPath), "block.json"), JSON.stringify(file, null, 2), "utf8");
   }
-}
-
-async function writeSource(file: string, source: string): Promise<void> {
-  const target = path.join(dir, ...file.split("/"));
-  await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, source, "utf8");
 }
 
 /** A Python that can parse a file, or nothing if the machine has none. */
@@ -317,8 +314,7 @@ describe("the worked example", () => {
     for (const cases of Object.values(workedExample.cases)) expect(casesSchema.safeParse(cases).success).toBe(true);
   });
 
-  it("checks and passes its tests when an agent follows it to the letter", async () => {
-    // The project exactly as the guide shows it.
+  it("checks cleanly before any code is written, which is where an agent starts", async () => {
     await writeFile(manifestPath(dir), JSON.stringify(workedExample.manifest, null, 2), "utf8");
     await writeBlocks(workedExample.blocks);
 
@@ -330,50 +326,14 @@ describe("the worked example", () => {
       "price-orders/price-order",
       "price-orders/report-totals",
     ]);
+  });
 
-    // The code the guide shows, plus the two blocks it leaves to the reader,
-    // each in the file its block points at.
-    await writeSource(workedExample.codeFile, workedExample.code);
-    await writeSource(
-      "src/pricing/price-order.ts",
-      `import type { PriceOrderInput, PriceOrderOutput, PriceOrderCaps } from "../../blocks/price-orders/price-order/contract.js";
-
-export async function priceOrder(input: PriceOrderInput, caps: PriceOrderCaps): Promise<PriceOrderOutput> {
-  return { total: input.order.lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0) };
-}
-`,
-    );
-    await writeSource(
-      "src/pricing/load-orders.ts",
-      `import type { LoadOrdersInput, LoadOrdersOutput, LoadOrdersCaps } from "../../blocks/price-orders/load-orders/contract.js";
-
-export async function loadOrders(input: LoadOrdersInput, caps: LoadOrdersCaps): Promise<LoadOrdersOutput> {
-  return { orders: JSON.parse(await caps.files.readFile(input.path)) };
-}
-`,
-    );
-
-    for (const [blockPath, cases] of Object.entries(workedExample.cases)) {
-      await writeFile(path.join(blockDir(dir, blockPath), "cases.json"), JSON.stringify(cases), "utf8");
-    }
-    await writeFile(
-      path.join(dir, "orders.json"),
-      JSON.stringify([
-        { id: "A-1", lines: [{ quantity: 2, unitPrice: 3.5 }, { quantity: 1, unitPrice: 10 }] },
-        { id: "A-2", lines: [] },
-      ]),
-      "utf8",
-    );
-    await writeFile(
-      path.join(blockDir(dir, "price-orders/report-totals"), "cases.json"),
-      JSON.stringify([{ name: "prices a file of orders", input: { path: "orders.json" }, expected: { totals: [17, 0], grandTotal: 17 } }]),
-      "utf8",
-    );
-    // And what happens when it is set going, exactly as the guide shows it,
-    // including the expectations it shows: a trace that did not meet the ones
-    // printed beside it would teach an agent to write a file that fails.
-    await mkdir(path.join(dir, "executions"));
-    await writeFile(path.join(dir, "executions", "report-totals.json"), JSON.stringify(executionExample), "utf8");
+  it("checks and passes its tests when an agent follows it to the letter", async () => {
+    // The project exactly as the guide shows it, with the code it shows and
+    // the two blocks it leaves to the reader, and what happens when it is set
+    // going, including the expectations it shows: a trace that did not meet
+    // the ones printed beside it would teach an agent to write a file that fails.
+    await writeWorkedExample(dir, "typescript");
     const { executions, problems } = await loadExecutions(dir);
     expect(problems).toEqual([]);
     expect(evaluate(executions[0]!.declared!, executions[0]!.expect!).failures).toEqual([]);
@@ -393,6 +353,31 @@ export async function loadOrders(input: LoadOrdersInput, caps: LoadOrdersCaps): 
       ["passed", []],
     ]);
     expect((await runCases(dir, "price-orders/report-totals")).map((r) => [r.status, r.differences])).toEqual([["passed", []]]);
+  }, 30_000);
+
+  it("writes down an execution that a recording of its code can be held to", async () => {
+    await writeWorkedExample(dir, "typescript");
+    const recorded = await recordExecution(dir, "report-totals");
+    if (!("trace" in recorded)) throw new Error(JSON.stringify(recorded));
+    const found = checkRecording(recorded.execution, recorded.trace, recorded.scope, recorded.complete);
+
+    expect(found.expectations).toEqual({ failures: [], setAside: [] });
+    expect(found.unwrittenCount).toBe(0);
+    // The one step it does not see is the guide's own mistake: it writes the
+    // order priced as its id, where the code passes the whole order. That is
+    // corrected with the change that has `fragmentor test` record
+    // executions, which alters what the guide says, so it waits until the
+    // guide may change; until then this says exactly what is wrong.
+    expect(found.steps).toEqual([
+      { id: "#1", verdict: "seen", reason: null },
+      {
+        id: "#2",
+        verdict: "not-seen",
+        reason:
+          'A call from price-orders/report-totals to price-orders/price-order happened, but not as expected: payload.order was an object, expected "A-1".',
+      },
+      { id: "#3", verdict: "seen", reason: null },
+    ]);
   }, 30_000);
 
   it.skipIf(!python)("shows a Python project its own contract file", () => {

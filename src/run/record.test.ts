@@ -1,0 +1,171 @@
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { checkRecording } from "../model/recorded.js";
+import { loadProject } from "../project/project.js";
+import { readAllCode } from "../project/code.js";
+import { answeringBlock, recordExecution } from "./record.js";
+import type { Recorded } from "./record.js";
+
+/**
+ * Recording the Tickets example for real: its code imports its contracts, so
+ * every one of its executions leads to code Fragmentor can run. These are what
+ * say a recording agrees with a trace that is right, and catches one that is
+ * wrong.
+ */
+
+const examples = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "examples");
+const BOOK_SEATS = path.join("executions", "book-seats.json");
+
+let dir: string;
+let original: string;
+
+beforeAll(async () => {
+  dir = await mkdtemp(path.join(tmpdir(), "fragmentor-record-"));
+  await cp(path.join(examples, "tickets"), dir, { recursive: true });
+  original = await readFile(path.join(dir, BOOK_SEATS), "utf8");
+});
+
+afterEach(async () => {
+  await writeFile(path.join(dir, BOOK_SEATS), original, "utf8");
+});
+
+afterAll(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
+
+async function record(id: string): Promise<Recorded> {
+  const recorded = await recordExecution(dir, id);
+  if (!("trace" in recorded)) throw new Error(JSON.stringify(recorded));
+  return recorded;
+}
+
+const check = (recorded: Recorded) => checkRecording(recorded.execution, recorded.trace, recorded.scope, recorded.complete);
+
+/** book-seats.json with its written steps changed. */
+async function drift(change: (steps: Record<string, unknown>[]) => void) {
+  const file = JSON.parse(original);
+  change(file.trace);
+  await writeFile(path.join(dir, BOOK_SEATS), JSON.stringify(file), "utf8");
+}
+
+describe("the code an execution leads to", () => {
+  it("follows a button through the operation it calls to the block that answers it", async () => {
+    const project = await loadProject(dir);
+    const code = await readAllCode(project);
+    expect(answeringBlock(project, code, { path: "tickets/box-office", entry: "bookSeats" })).toEqual({
+      block: "tickets/booking-api/book-seats",
+    });
+    expect(answeringBlock(project, code, { path: "tickets/booking-api/find-event", entry: null })).toEqual({
+      block: "tickets/booking-api/find-event",
+    });
+    expect(answeringBlock(project, code, { path: "tickets/outbox", entry: "confirmations" })).toEqual({
+      why: "Nothing on the diagram says which code answers tickets/outbox.confirmations.",
+    });
+  });
+
+  it("says why code that does not import its contract cannot be recorded", async () => {
+    const messenger = await loadProject(path.join(examples, "messenger"));
+    const found = answeringBlock(messenger, await readAllCode(messenger), { path: "app/client/ui/send-button", entry: null });
+    expect(found).toEqual({ why: expect.stringContaining('"Send Button" answers app/client/ui/send-button, but cannot be recorded:') });
+    expect("why" in found && found.why).toContain("does not import");
+  });
+});
+
+describe("recording the Tickets executions", () => {
+  it.each(["book-seats", "booking-turned-away", "cancel-booking", "cancel-without-the-event"])(
+    "%s agrees with everything written down that it could see",
+    async (id) => {
+      const recorded = await record(id);
+      const found = check(recorded);
+
+      expect(recorded.complete).toBe(true);
+      expect(found.expectations.failures).toEqual([]);
+      expect(found.steps.filter((step) => step.verdict === "not-seen")).toEqual([]);
+      expect(found.unwrittenCount).toBe(0);
+      expect(found.notSeeded).toEqual([]);
+      // Each operation's response is what its block returned, so it is checked, not set aside.
+      expect(found.expectations.setAside.filter((each) => each.expectation.includes("response"))).toEqual([]);
+      // What it cannot see is only the two hops before the block it ran, and what happens on the page.
+      expect(found.steps.filter((step) => step.verdict === "unchecked").map((step) => step.id)).toEqual([
+        "#1",
+        "#2",
+        `#${found.steps.length}`,
+      ]);
+    },
+    30_000,
+  );
+
+  it("records what booking seats really did, stores included", async () => {
+    const { trace } = await record("book-seats");
+    const interactions = trace.events.flatMap((event) =>
+      event.type === "interaction" ? [`${event.kind} ${event.to.path}${event.to.entry ? `.${event.to.entry}` : ""}`] : [],
+    );
+    expect(interactions).toEqual([
+      "trigger tickets/booking-api/book-seats",
+      "call tickets/booking-api/find-event",
+      "read tickets/tickets-db.events",
+      ...Array<string>(5).fill("call tickets/booking-api/pricing/price-seat"),
+      "call tickets/booking-api/book-seats/reserve",
+      "write tickets/tickets-db.events",
+      "write tickets/tickets-db.bookings",
+      "send tickets/outbox.confirmations",
+    ]);
+    expect(trace.state?.["tickets/tickets-db.bookings"]).toEqual({
+      "gig-10": { id: "gig-10", eventId: "gig", email: "ada@example.com", seats: 5, total: 122.5 },
+    });
+  }, 30_000);
+});
+
+describe("a trace that no longer says what the code does", () => {
+  it("is caught when a step names the wrong block as where it comes from", async () => {
+    await drift((steps) => {
+      steps.find((step) => step.kind === "read")!.from = "tickets/booking-api/book-seats";
+    });
+    const found = check(await record("book-seats"));
+    expect(found.steps.filter((step) => step.verdict === "not-seen")).toEqual([
+      {
+        id: "#4",
+        verdict: "not-seen",
+        reason: "A read from tickets/booking-api/book-seats to tickets/tickets-db.events never happened.",
+      },
+    ]);
+    // And the read the code really made is written down nowhere now.
+    expect(found.unwrittenCount).toBe(1);
+  }, 30_000);
+
+  it("is caught when a step the code takes is left out", async () => {
+    await drift((steps) => {
+      steps.splice(steps.findIndex((step) => step.to === "tickets/booking-api/pricing/price-seat"), 1);
+    });
+    const found = check(await record("book-seats"));
+    expect(found.steps.filter((step) => step.verdict === "not-seen")).toEqual([]);
+    expect(found.unwrittenCount).toBe(5);
+  }, 30_000);
+
+  it("is caught when a step says the wrong total", async () => {
+    await drift((steps) => {
+      const write = steps.find((step) => step.to === "tickets/tickets-db.bookings")!;
+      write.payload = { ...(write.payload as object), total: 125 };
+    });
+    const found = check(await record("book-seats"));
+    expect(found.steps.filter((step) => step.verdict === "not-seen")).toEqual([
+      {
+        id: "#9",
+        verdict: "not-seen",
+        reason:
+          "A write from tickets/booking-api/book-seats/reserve to tickets/tickets-db.bookings happened, but not as expected: payload.total was 122.5, expected 125.",
+      },
+    ]);
+  }, 30_000);
+
+  it("is not recorded at all when its payload no longer fits the code", async () => {
+    const file = JSON.parse(original);
+    delete file.trigger.payload.email;
+    await writeFile(path.join(dir, BOOK_SEATS), JSON.stringify(file), "utf8");
+    const recorded = await recordExecution(dir, "book-seats");
+    expect(recorded).toEqual({ couldNotRecord: expect.stringContaining("input.email") });
+  }, 30_000);
+});
