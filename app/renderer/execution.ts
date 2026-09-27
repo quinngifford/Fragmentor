@@ -2,12 +2,14 @@ import { addressesOf, nextStep, placeEvent, travelOf } from "../../src/model/tra
 import type { Address, InteractionKind, Trace, TraceEvent, View } from "../../src/model/trace.js";
 import type { SnapshotExecution } from "../../src/project/snapshot.js";
 import type { TriggerKind } from "../../src/project/executions.js";
-import { applyExecutionMark, keepInView, onFlowWanted, onStepChosen, treeInView } from "./canvas.js";
+import type { NoteAnchor } from "../../src/project/notes.js";
+import { applyExecutionMark, keepInView, onFlowWanted, onStepChosen, revealBlock, treeInView } from "./canvas.js";
 import type { ExecutionMark } from "./canvas.js";
 import { buildFlow } from "./flow.js";
 import { shownAt } from "./tree.js";
-import { selectedExecution, ui } from "./state.js";
-import { el } from "./dom.js";
+import { requireSnapshot, selectedExecution, ui } from "./state.js";
+import { el, section } from "./dom.js";
+import { codeBlock } from "./highlight.js";
 
 /**
  * An execution on the tree.
@@ -466,6 +468,145 @@ function updateBar(built: NonNullable<typeof bar>, shown: ReturnType<typeof pick
   const trigger = step.execution.trigger.kind;
   steps.caption.textContent = describeStep(step.event, trigger);
   steps.caption.title = describeStep(step.event, trigger, 4000);
+}
+
+/* -------------------------------------------------------------------------- */
+/* The step's own page                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One step of an execution: what it is, which blocks it joins, what it
+ * carried, and the code that makes it happen.
+ *
+ * The step is the thing being read while someone is stepping through, so it
+ * has a page of its own rather than a line in the bar above the tree.
+ */
+export function stepPage(
+  panel: HTMLElement,
+  actions: {
+    noteOn?: (blockPath: string, on: NoteAnchor) => void;
+    openCode?: (pointer: string, title: string) => void;
+    problemsListed?: boolean;
+  },
+): boolean {
+  const { noteOn, openCode, problemsListed } = actions;
+  const step = currentStep();
+  if (!step) return false;
+  const snapshot = requireSnapshot();
+  const { event, execution } = step;
+  const trigger = execution.trigger.kind;
+
+  const head = el("div", "insp-head");
+  head.append(
+    el("h2", undefined, `Step ${step.at + 1} of ${step.trace.events.length}`),
+    el("div", "insp-id", `${execution.name} · ${step.trace.source}`),
+  );
+  panel.append(head);
+
+  // What the agent said about this step, and failing that, what it does.
+  const said = event.type === "return" ? undefined : event.description;
+  panel.append(el("p", "responsibility", said ?? describeStep(event, trigger, 400)));
+  if (said) panel.append(el("p", "bench-note", describeStep(event, trigger, 400)));
+
+  // A note on a step goes on the block the step leaves, whose code makes it,
+  // as the guide tells the agent a step's code is.
+  const ends = event.type === "effect" ? null : (travelOf(event) ?? event);
+  const leaves = event.type === "effect" ? event.at : (ends?.from ?? ends?.to ?? null);
+  if (noteOn && leaves && snapshot.blocks[leaves.path]) {
+    const note = el("button", "btn quiet tiny", "Leave a note on this step");
+    note.title = `A note for your coding agent about this step, on ${snapshot.blocks[leaves.path]!.name}.`;
+    note.addEventListener("click", () =>
+      noteOn(leaves.path, { execution: execution.id, step: event.id, description: said ?? describeStep(event, trigger, 200) }),
+    );
+    panel.append(note);
+  }
+
+  // "Where", not "between": an effect happens at one block rather than
+  // between two, and this is the section that says so for both.
+  const where = section("Where");
+  const list = el("div", "ports");
+  let missing = false;
+  const place = (label: string, address: { path: string; entry: string | null } | null) => {
+    const row = el("div", "port-row");
+    row.append(el("div", "pname", label));
+    if (address === null) {
+      row.append(el("div", "ptype", "outside the system"));
+    } else {
+      if (!snapshot.blocks[address.path]) missing = true;
+      const block = snapshot.blocks[address.path];
+      const where = el("div", "pwhere");
+      where.append(
+        el("span", "ptype", address.entry === null ? (block?.name ?? address.path) : `${block?.name ?? address.path} · ${address.entry}`),
+      );
+      const show = el("button", "btn quiet tiny", "Show");
+      show.addEventListener("click", () => revealBlock(address.path));
+      where.append(show);
+      row.append(where);
+    }
+    list.append(row);
+  };
+
+  if (event.type === "effect") {
+    place("at", event.at);
+  } else {
+    // The same way round as the arrow on the drawing and the words under it:
+    // an answer leaves whoever was called and arrives at whoever asked.
+    const runs = travelOf(event) ?? event;
+    place("from", runs.from);
+    place("to", runs.to);
+    const kind = el("div", "port-row");
+    kind.append(el("div", "pname", "kind"), el("div", "ptype", event.type === "return" ? "gives back" : event.kind));
+    list.append(kind);
+  }
+  where.append(list);
+  panel.append(where);
+
+  // Nothing is drawn for a step whose block has been taken out of the
+  // project, and the tree saying nothing would be the only sign of it.
+  if (missing) {
+    panel.append(
+      el(
+        "p",
+        "bench-note bad",
+        `This step names a block that is not in the project, so there is nothing to draw it between.${problemsListed ? " The problems list says which." : ""}`,
+      ),
+    );
+  }
+
+  const carried =
+    event.type === "effect" ? event.detail : event.type === "return" ? event.response : event.payload;
+  if (carried !== undefined) {
+    const what = section(event.type === "return" ? "What came back" : "What it carried");
+    what.append(codeBlock(JSON.stringify(carried, null, 2) ?? "", "json"));
+    panel.append(what);
+  }
+
+  // An answer comes back out of the call it answers, so that call's function
+  // is the one it returns from.
+  const answers = event.type === "return" ? step.trace.events.find((each) => each.id === event.of) : undefined;
+  const pointer = event.type === "return" ? (answers?.type === "interaction" ? answers.code : undefined) : event.code;
+  const code = section("Code");
+  if (pointer === undefined) {
+    code.append(el("p", "bench-note", "This step does not say which function makes it."));
+  } else {
+    code.append(el("div", "code-where", pointer));
+    code.append(
+      el("p", "bench-note", event.type === "return" ? "The function this answer comes back from." : "The function that makes this step."),
+    );
+    if (openCode) {
+      const open = el("button", "btn", "Open the code");
+      open.addEventListener("click", () => openCode(pointer, `Step ${step.at + 1}: ${execution.name}`));
+      code.append(open);
+    }
+  }
+  panel.append(code);
+
+  if (step.trace.source === "declared") {
+    panel.append(
+      el("p", "bench-note", "Written down by the agent from reading the code. Fragmentor has not seen it run."),
+    );
+  }
+  return true;
 }
 
 /** A project was opened: nothing about the last one's executions carries over. */

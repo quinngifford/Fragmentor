@@ -1,14 +1,11 @@
 import type { SnapshotBlock, SnapshotCode } from "../../src/project/snapshot.js";
 import type { ProjectDiagnostic } from "../../src/project/project.js";
 import { blockColours, requireSnapshot, selectedBlock, ui, viewSettings } from "./state.js";
-import { ROLES } from "../../src/model/roles.js";
-import { interfaceSection, reachesSection } from "./detail.js";
+import { accessPanel, blockAbout, blockHead, interfaceSection, multiPanel, reachesSection } from "./detail.js";
 import type { EntryRoute } from "./detail.js";
 import { accessArrows, blockColour, hasCode, hasDetails, revealBlock, treeInView } from "./canvas.js";
 import { openBlockWindow, openCodeAt } from "./popup.js";
-import { STEP_LINK, currentStep, describeStep } from "./execution.js";
-import { travelOf } from "../../src/model/trace.js";
-import type { AccessArrow } from "./canvas.js";
+import { STEP_LINK, stepPage } from "./execution.js";
 import { openBenchWindow } from "./benchpanel.js";
 import { versionBadge, versionsSection } from "./versions.js";
 import { noteOn, notesSection, problemFlag, projectNotesSection } from "./notes.js";
@@ -288,13 +285,6 @@ function blockColourControl(block: SnapshotBlock): HTMLElement | null {
   return row;
 }
 
-/** Named and coloured the way the block is drawn on the canvas. */
-function roleBadge(block: SnapshotBlock): HTMLElement {
-  const badge = el("span", "badge role", block.roleLabel.toLowerCase());
-  badge.dataset.role = block.role;
-  return badge;
-}
-
 /** One step of what happens when an entry is triggered. */
 interface Step {
   block: SnapshotBlock;
@@ -389,193 +379,11 @@ function routesOf(leads: Leads[]): EntryRoute[] {
   }));
 }
 
-/**
- * One step of an execution: what it is, which blocks it joins, what it
- * carried, and the code that makes it happen.
- *
- * The step is the thing being read while someone is stepping through, so it
- * has a page of its own rather than a line in the bar above the tree.
- */
-function stepPanel(panel: HTMLElement): boolean {
-  const step = currentStep();
-  if (!step) return false;
-  const snapshot = requireSnapshot();
-  const { event, execution } = step;
-  const trigger = execution.trigger.kind;
-
-  const head = el("div", "insp-head");
-  head.append(
-    el("h2", undefined, `Step ${step.at + 1} of ${step.trace.events.length}`),
-    el("div", "insp-id", `${execution.name} · ${step.trace.source}`),
-  );
-  panel.append(head);
-
-  // What the agent said about this step, and failing that, what it does.
-  const said = event.type === "return" ? undefined : event.description;
-  panel.append(el("p", "responsibility", said ?? describeStep(event, trigger, 400)));
-  if (said) panel.append(el("p", "bench-note", describeStep(event, trigger, 400)));
-
-  // A note on a step goes on the block the step leaves, whose code makes it,
-  // as the guide tells the agent a step's code is.
-  const ends = event.type === "effect" ? null : (travelOf(event) ?? event);
-  const leaves = event.type === "effect" ? event.at : (ends?.from ?? ends?.to ?? null);
-  if (leaves && snapshot.blocks[leaves.path]) {
-    const note = el("button", "btn quiet tiny", "Leave a note on this step");
-    note.title = `A note for your coding agent about this step, on ${snapshot.blocks[leaves.path]!.name}.`;
-    note.addEventListener("click", () =>
-      noteOn(leaves.path, { execution: execution.id, step: event.id, description: said ?? describeStep(event, trigger, 200) }),
-    );
-    panel.append(note);
-  }
-
-  // "Where", not "between": an effect happens at one block rather than
-  // between two, and this is the section that says so for both.
-  const where = section("Where");
-  const list = el("div", "ports");
-  let missing = false;
-  const place = (label: string, address: { path: string; entry: string | null } | null) => {
-    const row = el("div", "port-row");
-    row.append(el("div", "pname", label));
-    if (address === null) {
-      row.append(el("div", "ptype", "outside the system"));
-    } else {
-      if (!snapshot.blocks[address.path]) missing = true;
-      const block = snapshot.blocks[address.path];
-      const where = el("div", "pwhere");
-      where.append(
-        el("span", "ptype", address.entry === null ? (block?.name ?? address.path) : `${block?.name ?? address.path} · ${address.entry}`),
-      );
-      const show = el("button", "btn quiet tiny", "Show");
-      show.addEventListener("click", () => revealBlock(address.path));
-      where.append(show);
-      row.append(where);
-    }
-    list.append(row);
-  };
-
-  if (event.type === "effect") {
-    place("at", event.at);
-  } else {
-    // The same way round as the arrow on the drawing and the words under it:
-    // an answer leaves whoever was called and arrives at whoever asked.
-    const runs = travelOf(event) ?? event;
-    place("from", runs.from);
-    place("to", runs.to);
-    const kind = el("div", "port-row");
-    kind.append(el("div", "pname", "kind"), el("div", "ptype", event.type === "return" ? "gives back" : event.kind));
-    list.append(kind);
-  }
-  where.append(list);
-  panel.append(where);
-
-  // Nothing is drawn for a step whose block has been taken out of the
-  // project, and the tree saying nothing would be the only sign of it.
-  if (missing) {
-    panel.append(
-      el("p", "bench-note bad", "This step names a block that is not in the project, so there is nothing to draw it between. The problems list says which."),
-    );
-  }
-
-  const carried =
-    event.type === "effect" ? event.detail : event.type === "return" ? event.response : event.payload;
-  if (carried !== undefined) {
-    const what = section(event.type === "return" ? "What came back" : "What it carried");
-    what.append(codeBlock(JSON.stringify(carried, null, 2) ?? "", "json"));
-    panel.append(what);
-  }
-
-  // An answer comes back out of the call it answers, so that call's function
-  // is the one it returns from.
-  const answers = event.type === "return" ? step.trace.events.find((each) => each.id === event.of) : undefined;
-  const pointer = event.type === "return" ? (answers?.type === "interaction" ? answers.code : undefined) : event.code;
-  const code = section("Code");
-  if (pointer === undefined) {
-    code.append(el("p", "bench-note", "This step does not say which function makes it."));
-  } else {
-    code.append(el("div", "code-where", pointer));
-    code.append(
-      el("p", "bench-note", event.type === "return" ? "The function this answer comes back from." : "The function that makes this step."),
-    );
-    const open = el("button", "btn", "Open the code");
-    open.addEventListener("click", () => void openCodeAt(pointer, `Step ${step.at + 1}: ${execution.name}`));
-    code.append(open);
-  }
-  panel.append(code);
-
-  if (step.trace.source === "declared") {
-    panel.append(
-      el("p", "bench-note", "Written down by the agent from reading the code. Fragmentor has not seen it run."),
-    );
-  }
-  return true;
-}
-
-/** One dependency arrow picked out on the tree. */
-function accessPanel(panel: HTMLElement, arrow: AccessArrow): void {
-  const snapshot = requireSnapshot();
-  const source = snapshot.blocks[arrow.source];
-  const target = snapshot.blocks[arrow.target];
-
-  const head = el("div", "insp-head");
-  head.append(el("h2", undefined, `${source?.name ?? arrow.source} and ${target?.name ?? arrow.target}`));
-  head.append(el("div", "insp-id", "dependency"));
-  panel.append(head);
-
-  panel.append(
-    el(
-      "p",
-      "responsibility",
-      "Something this block is able to reach. It says nothing about what happens, or when: that is what an execution shows.",
-    ),
-  );
-
-  // The same two headings a block's own panel uses: what this reaches, and the
-  // interface it reaches it through.
-  const reaches = section("Reaches");
-  const list = el("div", "ports");
-  for (const access of arrow.entries) {
-    const row = el("div", "port-row cap");
-    row.append(el("div", "pname", access.verb));
-    row.append(el("div", "ptype", access.entry === null ? "the whole thing" : access.entry));
-    list.append(row);
-  }
-  reaches.append(list);
-  panel.append(reaches);
-
-  if (target?.architecture) {
-    const shape = interfaceSection(target);
-    shape.append(el("p", "bench-note", `What ${target.name} offers, whoever reaches it.`));
-    panel.append(shape);
-  }
-}
-
 function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
-  const head = el("div", "insp-head");
-  head.append(el("h2", undefined, block.name), el("div", "insp-id", block.path));
-
-  const badges = el("div", "badges");
-  // For a database or a queue, what it is matters more than whether it has
-  // blocks inside it, so the role takes the first badge.
-  badges.append(roleBadge(block));
-  // What state a block is in: whether the code it points at is there, and
-  // whether Fragmentor holds that code to a contract or only draws it. A block
-  // that names no code at all — a service, a group of parts — says nothing,
-  // because "not code" of a service was worse than saying nothing.
-  const state = block.planned
-    ? "planned"
-    : block.code === null
-      ? null
-      : !block.implemented
-        ? "code not found"
-        : block.runnable
-          ? "checked and runnable"
-          : "drawn";
-  if (state) badges.append(el("span", `badge state${block.planned ? " planned" : ""}`, state));
-  if (block.language) badges.append(el("span", "badge", block.language));
+  const { head, badges } = blockHead(block);
   // Which version the block is on, from the list its Versions section reads,
   // so it is seen without scrolling to the bottom of the panel.
   badges.append(versionBadge(block));
-  head.append(badges);
 
   // Coloured block by block, this is where a block's colour is chosen; the
   // legend is where a kind's colour is chosen, and it is showing instead.
@@ -601,30 +409,7 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   if (windows.childElementCount > 0) head.append(windows);
   panel.append(head);
 
-  panel.append(el("p", "responsibility", block.responsibility));
-
-  // A block that is not code says what kind of thing it is, under what it
-  // does, with the kind in its own colour as the badge above has it. It is a
-  // quiet line rather than the dashed box a planned block gets: a database is
-  // not a warning about anything, and what Fragmentor does not do with it is
-  // already said by the sections it has none of.
-  if (block.architecture) {
-    const kind = el("p", "role-note");
-    const word = el("span", "role-note-kind", `${ROLES[block.role].label}:`);
-    word.dataset.role = block.role;
-    kind.append(word, document.createTextNode(` ${ROLES[block.role].description}`));
-    panel.append(kind);
-  }
-
-  if (block.planned) {
-    panel.append(
-      el(
-        "p",
-        "planned-note",
-        "Planned: part of the architecture rather than of the program. Its ports say what is meant to flow rather than what does, its wiring can be as loose as the plan is, and Fragmentor generates, checks and runs nothing for it.",
-      ),
-    );
-  }
+  panel.append(...blockAbout(block));
 
   const problems = problemsSection(requireSnapshot().diagnostics.filter((d) => d.blockPath === block.path), false);
   if (problems) panel.append(problems);
@@ -726,33 +511,6 @@ function benchButton(
   return node;
 }
 
-function multiPanel(panel: HTMLElement): void {
-  const snapshot = requireSnapshot();
-  const keys = [...ui.selection];
-  const head = el("div", "insp-head");
-  head.append(el("h2", undefined, `${keys.length} blocks selected`), el("div", "insp-id", keys.join(", ")));
-  panel.append(head);
-
-  const tree = treeInView();
-  const between = tree
-    ? [...accessArrows(tree).values()].filter((arrow) => ui.selection.has(arrow.source) && ui.selection.has(arrow.target))
-    : [];
-  if (between.length > 0) {
-    const node = section("Reaches");
-    const list = el("div", "ports");
-    for (const arrow of between) {
-      const row = el("div", "port-row");
-      row.append(el("div", "pname", `${snapshot.blocks[arrow.source]?.name} → ${snapshot.blocks[arrow.target]?.name}`));
-      row.append(el("div", "ptype", arrow.entries.map((entry) => entry.text).join(", ")));
-      list.append(row);
-    }
-    node.append(list);
-    panel.append(node);
-  }
-
-  panel.append(el("p", "bench-note", "Ctrl-click a block to add or remove it from the selection."));
-}
-
 export function renderInspector(): void {
   const panel = document.getElementById("inspector");
   if (!panel) return;
@@ -779,7 +537,7 @@ function build(panel: HTMLElement): void {
 
   // The step being stepped through is what someone reading it wants, and it
   // gives way as soon as they pick something else out.
-  if (ui.selectedLink === STEP_LINK && stepPanel(panel)) return;
+  if (ui.selectedLink === STEP_LINK && stepPage(panel, { noteOn, openCode: (p, t) => void openCodeAt(p, t), problemsListed: true })) return;
 
   const tree = treeInView();
 

@@ -1,7 +1,6 @@
 import type { MenuCommand, ProjectLoad } from "../ipc.js";
 import { firstStep } from "../../src/codegen/commands.js";
 import {
-  COLOUR_BY,
   INSPECTOR_WIDTH,
   forgetBlocks,
   rememberInspectorWidth,
@@ -9,11 +8,8 @@ import {
   roleColours,
   selectedBlock,
   ui,
-  viewSettings,
 } from "./state.js";
-import type { ColourBy } from "./state.js";
 import {
-  applyDependencies,
   clearCanvas,
   onBlockWindow,
   onNotesPicked,
@@ -25,10 +21,10 @@ import {
   resetArrivals,
   revealBlock,
   setUpCanvasGestures,
+  setUpZoomBar,
   showCanvasMessage,
   treeInView,
   watchCanvasSize,
-  zoomAbout,
 } from "./canvas.js";
 import { onInspectorChange, renderInspector } from "./inspector.js";
 import { onBenchChange } from "./bench.js";
@@ -579,46 +575,6 @@ export function render(): void {
 /* Boot                                                                        */
 /* -------------------------------------------------------------------------- */
 
-/**
- * What a colour on the diagram means. The button says which way it is
- * showing now and moves to the other when it is pressed, so nothing has to be
- * opened to find out which way round it is.
- */
-function wireViewSettings(): void {
-  const labels: Record<ColourBy, string> = {
-    block: "Colour: by block",
-    role: "Colour: by kind",
-  };
-
-  const colour = element("colour-by");
-  const show = () => {
-    colour.textContent = labels[viewSettings.colourBy];
-  };
-
-  colour.addEventListener("click", () => {
-    const at = COLOUR_BY.indexOf(viewSettings.colourBy);
-    viewSettings.setColourBy(COLOUR_BY[(at + 1) % COLOUR_BY.length]!);
-    show();
-    render();
-  });
-
-  // What each block reaches is a standing fact rather than something that
-  // happened, and can be put away to leave the blocks, or an execution, alone.
-  const dependencies = element("show-dependencies");
-  const showDependencies = () => {
-    dependencies.textContent = ui.showDependencies ? "Dependencies: shown" : "Dependencies: hidden";
-    dependencies.setAttribute("aria-pressed", String(ui.showDependencies));
-  };
-  dependencies.addEventListener("click", () => {
-    ui.setShowDependencies(!ui.showDependencies);
-    showDependencies();
-    applyDependencies();
-  });
-
-  show();
-  showDependencies();
-}
-
 /** The commands for the agent, with the block picked out, if there is one, filled in. */
 async function showCommands(): Promise<void> {
   openCommandsWindow(selectedBlock()?.path ?? null);
@@ -655,20 +611,7 @@ function wireToolbar(): void {
   // The chosen colours go onto the document itself, so every block, line,
   // badge and swatch of a kind follows from one place.
   roleColours.apply();
-  wireViewSettings();
-
-  element("zoom-in").addEventListener("click", () => {
-    const rect = element("canvas-svg").getBoundingClientRect();
-    zoomAbout(rect.width / 2, rect.height / 2, 1.2);
-  });
-  element("zoom-out").addEventListener("click", () => {
-    const rect = element("canvas-svg").getBoundingClientRect();
-    zoomAbout(rect.width / 2, rect.height / 2, 1 / 1.2);
-  });
-  element("zoom-fit").addEventListener("click", () => {
-    ui.userAdjusted = false;
-    fitToView(true);
-  });
+  setUpZoomBar();
 }
 
 function reportFailure(error: unknown): void {
@@ -722,8 +665,10 @@ try {
   watchCanvasSize();
   setUpWatching();
   setUpWindows(() => {
+    if (!benchWindowIsOpen()) return false;
     closeBenchWindow();
     render();
+    return true;
   });
   setUpExecutions();
   onBlockWindow(openBlockWindow);

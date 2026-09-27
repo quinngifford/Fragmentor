@@ -3,7 +3,8 @@ import { BOX_H, BOX_W, buildTree, busY, shownAt, spineX } from "./tree.js";
 import type { Tree, TreeNode } from "./tree.js";
 import { boxOfStep, buildFlow } from "./flow.js";
 import type { Flow, FlowBox } from "./flow.js";
-import { BLOCK_PALETTE, blockColours, requireSnapshot, roleColours, ui, viewSettings } from "./state.js";
+import { BLOCK_PALETTE, COLOUR_BY, blockColours, requireSnapshot, roleColours, ui, viewSettings } from "./state.js";
+import type { ColourBy } from "./state.js";
 import { el } from "./dom.js";
 import { ROLES, ROLE_IDS } from "../../src/model/roles.js";
 import type { Role } from "../../src/model/roles.js";
@@ -1288,6 +1289,12 @@ function attachNodeBehaviour(group: SVGGElement, node: TreeNode): void {
   });
 }
 
+let legendReadOnly = false;
+/** For a page that shows the colours without offering to change them: the swatches do nothing, and there is nothing to reset. */
+export function makeLegendReadOnly(): void {
+  legendReadOnly = true;
+}
+
 /**
  * What the colours mean, and where they are changed.
  *
@@ -1338,6 +1345,7 @@ function renderLegend(drawn: boolean): void {
     swatch.type = "color";
     swatch.value = roleColours.get(role);
     swatch.title = `${ROLES[role].label}: ${ROLES[role].description}`;
+    if (legendReadOnly) swatch.disabled = true;
     swatch.addEventListener("input", () => {
       roleColours.set(role, swatch.value);
     });
@@ -1352,6 +1360,7 @@ function renderLegend(drawn: boolean): void {
   planned.dataset.here = String(blocks.some((block) => block.planned));
   planned.append(el("span", "legend-swatch fixed"), el("span", "legend-text", "planned, not built yet"));
   legend.append(planned);
+  if (legendReadOnly) return;
 
   const reset = el("button", "legend-reset", "Reset to default");
   reset.type = "button";
@@ -1427,4 +1436,58 @@ export function watchCanvasSize(): void {
   new ResizeObserver(() => {
     if (!ui.userAdjusted) fitToView();
   }).observe(element("canvas-wrap"));
+}
+
+/**
+ * The buttons over the drawing: what a colour on the diagram means, whether
+ * dependencies are drawn, and the zoom. The colour button says which way it is
+ * showing now and moves to the other when it is pressed, so nothing has to be
+ * opened to find out which way round it is.
+ */
+export function setUpZoomBar(): void {
+  const labels: Record<ColourBy, string> = {
+    block: "Colour: by block",
+    role: "Colour: by kind",
+  };
+
+  const colour = element("colour-by");
+  const show = () => {
+    colour.textContent = labels[viewSettings.colourBy];
+  };
+
+  colour.addEventListener("click", () => {
+    const at = COLOUR_BY.indexOf(viewSettings.colourBy);
+    viewSettings.setColourBy(COLOUR_BY[(at + 1) % COLOUR_BY.length]!);
+    show();
+    notify({ redraw: true });
+  });
+
+  // What each block reaches is a standing fact rather than something that
+  // happened, and can be put away to leave the blocks, or an execution, alone.
+  const dependencies = element("show-dependencies");
+  const showDependencies = () => {
+    dependencies.textContent = ui.showDependencies ? "Dependencies: shown" : "Dependencies: hidden";
+    dependencies.setAttribute("aria-pressed", String(ui.showDependencies));
+  };
+  dependencies.addEventListener("click", () => {
+    ui.setShowDependencies(!ui.showDependencies);
+    showDependencies();
+    applyDependencies();
+  });
+
+  show();
+  showDependencies();
+
+  element("zoom-in").addEventListener("click", () => {
+    const rect = element("canvas-svg").getBoundingClientRect();
+    zoomAbout(rect.width / 2, rect.height / 2, 1.2);
+  });
+  element("zoom-out").addEventListener("click", () => {
+    const rect = element("canvas-svg").getBoundingClientRect();
+    zoomAbout(rect.width / 2, rect.height / 2, 1 / 1.2);
+  });
+  element("zoom-fit").addEventListener("click", () => {
+    ui.userAdjusted = false;
+    fitToView(true);
+  });
 }
