@@ -66,6 +66,19 @@ describe("the code an execution leads to", () => {
     });
   });
 
+  it("says an operation with no block, as an anonymous handler leaves it, is why, rather than a fault", async () => {
+    const project = await loadProject(dir);
+    const code = await readAllCode(project);
+    delete project.byPath.get("tickets/booking-api")!.block.exposes.bookSeats!.block;
+
+    expect(answeringBlock(project, code, { path: "tickets/booking-api", entry: "bookSeats" })).toEqual({
+      why: "its operation tickets/booking-api.bookSeats names no block that answers it, as with an anonymous handler.",
+    });
+    expect(answeringBlock(project, code, { path: "tickets/box-office", entry: "bookSeats" })).toEqual({
+      why: "it leads to the operation tickets/booking-api.bookSeats, which names no block that answers it, as with an anonymous handler.",
+    });
+  });
+
   it("says why code that does not import its contract cannot be recorded", async () => {
     const messenger = await loadProject(path.join(examples, "messenger"));
     const found = answeringBlock(messenger, await readAllCode(messenger), { path: "app/client/ui/send-button", entry: null });

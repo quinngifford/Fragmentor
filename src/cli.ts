@@ -343,8 +343,10 @@ async function test(dir: string, requested: string[]): Promise<number> {
   const code = await readAllCode(project);
   const counts = { passed: 0, failed: 0, error: 0, unchecked: 0, skipped: 0 };
   const untested: string[] = [];
-  /** Blocks with no code to run: a plan, or a block that is not called. */
-  const inThePlan: string[] = [];
+  /** Blocks with no code to run yet. */
+  const planned: string[] = [];
+  /** Blocks that are not called, so nothing of theirs is run, whether or not they point at code. */
+  const notCalled: string[] = [];
   /** Blocks Fragmentor draws rather than runs, with the reason. */
   const drawn: string[] = [];
 
@@ -354,7 +356,7 @@ async function test(dir: string, requested: string[]): Promise<number> {
     // rather than failing to load.
     const node = project.byPath.get(blockPath);
     if (node && (node.block.planned || isArchitecture(node.block.role))) {
-      inThePlan.push(blockPath);
+      (node.block.planned ? planned : notCalled).push(blockPath);
       continue;
     }
 
@@ -394,7 +396,7 @@ async function test(dir: string, requested: string[]): Promise<number> {
 
   const ran = counts.passed + counts.failed + counts.error + counts.unchecked + counts.skipped;
   console.log("");
-  if (ran === 0 && untested.length === 0 && inThePlan.length === 0) {
+  if (ran === 0 && untested.length === 0 && planned.length === 0 && notCalled.length === 0) {
     console.log("There is nothing to test yet: this project has no blocks Fragmentor can run.");
   } else if (ran === 0 && untested.length > 0) {
     console.log("No block has saved tests yet. Add a cases.json beside a block.json; FRAGMENTOR.md describes the format.");
@@ -405,8 +407,15 @@ async function test(dir: string, requested: string[]): Promise<number> {
     console.log(`Result: ${summary.join(", ")}.`);
     if (untested.length > 0) console.log(`No tests yet: ${untested.join(", ")}`);
     // Said plainly, because a block with saved tests that quietly never runs
-    // reads as a test runner that lost them.
-    if (inThePlan.length > 0) console.log(`Not run, because they have no code: ${inThePlan.join(", ")}`);
+    // reads as a test runner that lost them. A block that is not called may
+    // still point at code, such as the module a service is, so it is said to
+    // be drawn, as the check says it, rather than to have no code.
+    const theyAre = (blocks: string[]) => (blocks.length === 1 ? "it is" : "they are");
+    if (planned.length > 0) console.log(`Not run, because ${theyAre(planned)} planned and not built yet: ${planned.join(", ")}`);
+    if (notCalled.length > 0) {
+      const them = notCalled.length === 1 ? "it" : "them";
+      console.log(`Not run, because ${theyAre(notCalled)} not called, so Fragmentor only draws ${them}: ${notCalled.join(", ")}`);
+    }
     for (const each of drawn) console.log(`Not run, because Fragmentor only draws this code: ${each}`);
   }
 
@@ -500,11 +509,21 @@ function recordingResult(recorded: Recorded): { failed: boolean; lines: string[]
     complete ? "" : "it made more calls than Fragmentor records, so not all of it was heard",
   ].filter(Boolean);
   const head = `  ${failed ? "FAILED" : "MET   "} ${execution.id}${notes.length > 0 ? `  (${notes.join("; ")})` : ""}`;
-  // A run that threw is worth knowing about even when nothing written down says otherwise.
-  if (!failed) return { failed, lines: [head, ...details(recorded.outcome.error ? [`The run ended in an error: ${recorded.outcome.error}`] : [])] };
 
   const described = new Map((execution.declared?.events ?? []).map((event) => [event.id, event.type === "return" ? undefined : event.description]));
   const stepName = (id: string) => (described.get(id) ? `The step "${described.get(id)}" (${id})` : `Step ${id}`);
+  // Each one is named, since a count alone left agents pinning values where
+  // no run could ever see them, sure they were being checked.
+  const notChecked = [
+    ...found.steps
+      .filter((step) => step.verdict !== "seen" && !notSeen.includes(step))
+      .map((step) => `${stepName(step.id)} could not be checked: ${step.reason}`),
+    ...found.expectations.setAside.map(({ expectation, why }) => `"${expectation}" could not be checked: ${why}`),
+  ];
+  // A run that threw is worth knowing about even when nothing written down says otherwise.
+  const error = recorded.outcome.error ? [`The run ended in an error: ${recorded.outcome.error}`] : [];
+  if (!failed) return { failed, lines: [head, ...details([...notChecked, ...error])] };
+
   return {
     failed,
     lines: [
@@ -512,8 +531,9 @@ function recordingResult(recorded: Recorded): { failed: boolean; lines: string[]
       ...details([
         ...found.expectations.failures,
         ...notSeen.map((step) => `${stepName(step.id)}: ${step.reason}`),
+        ...notChecked,
         ...(found.notSeeded.length > 0 ? [`It ran without the rows given for ${listed(found.notSeeded)}, since nothing it ran reaches them.`] : []),
-        ...(recorded.outcome.error ? [`The run ended in an error: ${recorded.outcome.error}`] : []),
+        ...error,
       ]),
     ],
   };
@@ -527,7 +547,10 @@ function writtenResult(execution: Execution, why: string): { failed: boolean; li
   const { failures } = evaluate(execution.declared, execution.expect);
   return {
     failed: failures.length > 0,
-    lines: [`  ${failures.length === 0 ? "MET   " : "FAILED"} ${execution.id}`, ...details([`not recorded: ${why}`, ...failures])],
+    lines: [
+      `  ${failures.length === 0 ? "MET   " : "FAILED"} ${execution.id}`,
+      ...details([`not recorded: ${why.replace(/\.$/, "")}; held to its own expectations`, ...failures]),
+    ],
   };
 }
 

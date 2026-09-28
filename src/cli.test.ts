@@ -169,6 +169,10 @@ describe("the fragmentor command", () => {
     const passing = fragmentor(["test"], dir);
     expect(passing.output).toContain("PASS   turns someone away when there are not enough seats left");
     expect(passing.status).toBe(0);
+    // A service may point at the module it is, so it is said to be drawn, not to have no code.
+    expect(passing.output).toContain("Not run, because it is planned and not built yet: tickets/reminders\n");
+    expect(passing.output).toContain("Not run, because they are not called, so Fragmentor only draws them: tickets, tickets/booking-api,");
+    expect(passing.output).not.toContain("no code");
 
     await writeFile(
       path.join(dir, "blocks", "tickets", "booking-api", "pricing", "price-seat", "cases.json"),
@@ -202,6 +206,14 @@ describe("executions, held to what their code does", () => {
       expect(result.output).toContain(`  MET    ${id}  (3 steps and 1 expectation could not be checked from this run)\n`);
     }
     expect(result.output).not.toContain("not recorded");
+    // Each is named beneath, with why, the hand-off to the block that ran among them.
+    const detail = " ".repeat(11);
+    expect(result.output).toContain(
+      `${detail}The step "The server that takes the request is not a block; all it does is hand it to the block that answers this operation." (#2) could not be checked: tickets/booking-api.bookSeats is not part of what ran.\n`,
+    );
+    expect(result.output).toContain(
+      `${detail}"Nothing happens in tickets/outbox.reminders" could not be checked: tickets/outbox.reminders is not part of what ran.\n`,
+    );
   }, 60_000);
 
   it("fails on a step the run contradicts, and names it, even with no saved tests", async () => {
@@ -242,7 +254,22 @@ describe("executions, held to what their code does", () => {
     expect(result.status).toBe(0);
     expect(result.output).toContain("  MET    log-in\n");
     expect(result.output).toContain('not recorded: "Login Form" answers app/client/ui/login-form, but cannot be recorded:');
+    expect(result.output).toContain("rather than checking or running it; held to its own expectations\n");
     expect(result.output).toContain("Those not recorded are held only to what their own file says must happen");
+  }, 60_000);
+
+  it("says an operation answered by an anonymous handler is not recorded, as expected rather than as a fault", async () => {
+    await cp(tickets, dir, { recursive: true });
+    const apiFile = path.join(dir, "blocks", "tickets", "booking-api", "block.json");
+    const api = JSON.parse(await readFile(apiFile, "utf8")) as { exposes: Record<string, { block?: string }> };
+    delete api.exposes.bookSeats!.block;
+    await writeFile(apiFile, JSON.stringify(api), "utf8");
+
+    const result = fragmentor(["test"], dir);
+    expect(result.output).toContain(
+      "  MET    book-seats\n           not recorded: it leads to the operation tickets/booking-api.bookSeats, which names no block that answers it, as with an anonymous handler; held to its own expectations\n",
+    );
+    expect(result.output).not.toContain("Nothing on the diagram says");
   }, 60_000);
 });
 

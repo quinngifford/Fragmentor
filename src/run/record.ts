@@ -37,6 +37,19 @@ export function answeringBlock(project: Project, code: Map<string, BlockCode>, a
   if (!last) return { why: `There is no block at ${address.path}.` };
 
   const node = project.byPath.get(last.path)!;
+  // An operation answered by an anonymous handler names no block, and that is
+  // the codebase's shape rather than a gap in the diagram, so it is said as
+  // one: agents reading the general sentence below took it for a fault.
+  const exposed = last.entry === null ? undefined : node.block.exposes[last.entry];
+  if (node.block.role === "service" && exposed !== undefined && exposed.block === undefined) {
+    const operation = formatAddress(last);
+    return {
+      why:
+        last.path === address.path
+          ? `its operation ${operation} names no block that answers it, as with an anonymous handler.`
+          : `it leads to the operation ${operation}, which names no block that answers it, as with an anonymous handler.`,
+    };
+  }
   if (isArchitecture(node.block.role)) {
     return {
       why:
