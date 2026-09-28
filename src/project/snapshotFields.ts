@@ -142,8 +142,9 @@ export const executionFields: FieldTable<SnapshotExecution> = {
   // starting rows can hold real data.
   given: ignoredPrivate,
   // Whether it says what must happen is compared as `expects`. What it says
-  // is checked by holding a recording to it, not listed as a change.
-  expect: ignored,
+  // is checked by holding a recording to it, not listed as a change, and the
+  // rows it wants left behind can hold real data as starting rows can.
+  expect: ignoredPrivate,
   // Both follow from its trigger and the diagram, and a page that runs
   // nothing records nothing.
   records: ignoredPrivate,

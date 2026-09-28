@@ -297,6 +297,26 @@ describe("holding expectations to a recording", () => {
     ]);
   });
 
+  it("meets an expectation it cannot fully see only with an event no other expectation has", () => {
+    const fromAnywhere = { to: "tickets/tickets-db.events", kind: "read" };
+    const aside = {
+      expectation: "A read to tickets/tickets-db.events",
+      why: "It does not say where it comes from, and not everything that could have made it ran.",
+    };
+    // The recording has one read of events, so only one of these can be met by it.
+    expect(expecting({ interactions: [fromAnywhere, fromAnywhere] })).toEqual({
+      met: ["A read to tickets/tickets-db.events"],
+      failures: [],
+      setAside: [aside],
+    });
+    // The one that can be judged has it first, whichever is written first.
+    expect(expecting({ interactions: [fromAnywhere, { from: FIND, ...fromAnywhere }] })).toEqual({
+      met: [`A read from ${FIND} to tickets/tickets-db.events`],
+      failures: [],
+      setAside: [aside],
+    });
+  });
+
   it("holds a remove written by its row's id to the key the code removed", () => {
     const removed = recordedTrace("x", scope, [
       heard[0]!,

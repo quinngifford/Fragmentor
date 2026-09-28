@@ -161,8 +161,27 @@ export function applyRunOverlay(overlay: RunOverlay | null): void {
     if (run) group.dataset.run = run.state;
     else delete group.dataset.run;
     group.dataset.runFlag = String(run?.flag ?? false);
-    const note = group.querySelector(".run-note");
+    const note = group.querySelector<SVGTextElement>(".run-note");
     if (note) note.textContent = run?.note ?? "";
+    const kind = group.querySelector<SVGTextElement>(".block-kind");
+    if (note && kind) makeRoomForNote(kind, note);
+  }
+}
+
+/**
+ * A note shares its line with the block's kind, and a long kind, such as a
+ * database's, would run into it until neither could be read. The kind gives
+ * way while the note is there, and comes back whole when it goes.
+ */
+function makeRoomForNote(kind: SVGTextElement, note: SVGTextElement): void {
+  const whole = (kind.dataset.whole ??= kind.textContent ?? "");
+  kind.textContent = whole;
+  if (!note.textContent) return;
+  const room = Number(note.getAttribute("x")) - note.getComputedTextLength() - 6 - Number(kind.getAttribute("x"));
+  let shown = whole;
+  while (shown.length > 1 && kind.getComputedTextLength() > room) {
+    shown = shown.slice(0, -1);
+    kind.textContent = `${shown.trimEnd()}…`;
   }
 }
 

@@ -253,6 +253,12 @@ function command(watch: Watch, instruction: RunCommand): void {
   void window.fragmentor.controlRun(watch.runId, instruction);
 }
 
+/** The person's own Stop, which a recording that never got going is not blamed for. */
+function stopByHand(watch: Watch): void {
+  if (watch.recording) watch.recording.stopped = true;
+  command(watch, { type: "stop" });
+}
+
 /**
  * The run has ended and been shown to the end. A recording is handed to the
  * execution bar now, once, rather than when the run ended, so the lighting
@@ -322,6 +328,10 @@ export async function runWatched(block: SnapshotBlock, input: unknown, stores: S
 function startWatching(blockPath: string): Watch {
   const previous = ui.watch;
   if (previous && !previous.outcome) command(previous, { type: "stop" });
+  // A recording made but not yet shown to the end is kept all the same: the
+  // run bar said it was being made.
+  const made = previous?.recording?.made;
+  if (previous?.recording && made) ui.recordings.set(previous.recording.execution, made);
   stopPlayback();
 
   const watch: Watch = {
@@ -351,7 +361,13 @@ const failedRun = (error: string): RunOutcome => ({ ok: false, error, inputProbl
 export async function recordWatched(execution: SnapshotExecution): Promise<void> {
   if (execution.records === null) return;
   const watch = startWatching(execution.records);
-  const recording: NonNullable<Watch["recording"]> = { execution: execution.id, name: execution.name, made: null, couldNotRecord: null };
+  const recording: NonNullable<Watch["recording"]> = {
+    execution: execution.id,
+    name: execution.name,
+    made: null,
+    couldNotRecord: null,
+    stopped: false,
+  };
   watch.recording = recording;
   const basis = basisOf(execution);
   renderRunBar();
@@ -367,8 +383,9 @@ export async function recordWatched(execution: SnapshotExecution): Promise<void>
   const made = result.ok ? result.value : { couldNotRecord: result.error };
   if ("couldNotRecord" in made) {
     recording.couldNotRecord = made.couldNotRecord;
-    // One made before is of code that can no longer be recorded as it was.
-    ui.recordings.delete(execution.id);
+    // One made before is of code that can no longer be recorded as it was,
+    // unless all that went wrong is that the person stopped this one early.
+    if (!recording.stopped) ui.recordings.delete(execution.id);
     watch.outcome = failedRun(made.couldNotRecord);
   } else {
     const { trace, scope, complete, outcome } = made;
@@ -455,11 +472,11 @@ function renderRunBar(): void {
     }
     buttons.push(
       barButton("Step", "Run until the next block starts", () => command(watch, { type: "resume", mode: "step" })),
-      barButton("Stop", "End the run here", () => command(watch, { type: "stop" })),
+      barButton("Stop", "End the run here", () => stopByHand(watch)),
     );
   } else if (!watch.outcome) {
     state.textContent = recording ? `Recording ${recording.name}…` : `Running ${name}…`;
-    buttons.push(barButton("Stop", "End the run here", () => command(watch, { type: "stop" })));
+    buttons.push(barButton("Stop", "End the run here", () => stopByHand(watch)));
   } else if (watch.played < watch.events.length) {
     state.textContent = `Showing how ${name} ran…`;
     buttons.push(barButton("Skip to the end", "Show the finished run at once", () => skip(watch)));
@@ -475,7 +492,10 @@ function renderRunBar(): void {
         : outcome.ok
           ? `${recorded}${name} finished in ${outcome.durationMs} ms`
           : `${recorded}${name} failed: ${outcome.error ?? "no reason was given"}`);
-    if (failed !== null) state.dataset.tone = "bad";
+    // Stopping a recording before it got going is the person's doing, not a fault.
+    if (failed !== null) {
+      if (!recording?.stopped) state.dataset.tone = "bad";
+    }
     else if (!outcome.stopped) state.dataset.tone = outcome.ok ? "good" : "bad";
     buttons.push(
       barButton("Replay", "Watch the run again", () => replay(watch)),

@@ -47,8 +47,9 @@ export interface Watch {
    * Set when the run is a recording of an execution: which one, and once the
    * run has ended, what came of it. It is handed to the execution bar only
    * when the playback has caught up, so the lighting is never cut short.
+   * `stopped` is whether the person pressed Stop.
    */
-  recording?: { execution: string; name: string; made: Recording | null; couldNotRecord: string | null };
+  recording?: { execution: string; name: string; made: Recording | null; couldNotRecord: string | null; stopped: boolean };
 }
 
 /**

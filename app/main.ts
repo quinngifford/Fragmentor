@@ -1272,12 +1272,13 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       (() => {
         type Recorded = {
           offered?: boolean;
-          before?: { written?: boolean; recordedOffered?: boolean };
+          before?: { reworded?: boolean; written?: boolean; recordedOffered?: boolean };
           running?: string;
           litFirst?: boolean;
           turned?: boolean;
+          storeNote?: { note?: string; clear?: boolean };
           first?: { count?: string; caption?: string; page?: string; noteOffered?: boolean; again?: boolean };
-          read?: { section?: boolean; red?: number; met?: string[] };
+          read?: { section?: boolean; startsFrom?: boolean; red?: number; met?: string[] };
           back?: { written?: boolean; count?: string };
           steps?: number;
           captions?: string[];
@@ -1288,11 +1289,14 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         const captions = recorded?.captions ?? [];
         return (
           recorded.offered === true &&
+          recorded.before?.reworded === true &&
           recorded.before?.written === true &&
           recorded.before?.recordedOffered === false &&
           /^Recording Book seats/.test(String(recorded.running)) &&
           recorded.litFirst === true &&
           recorded.turned === true &&
+          recorded.storeNote?.note === "read, written" &&
+          recorded.storeNote?.clear === true &&
           // Nobody pressed anything: Fragmentor ran the code answering the trigger.
           recorded.first?.count === "1 of 25" &&
           /^Fragmentor runs Book Seats with \{/.test(String(recorded.first?.caption)) &&
@@ -1312,6 +1316,8 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
           // What the execution says must happen, held to what ran: nothing failed,
           // and the service's response is judged by what its answering block returned.
           recorded.read?.section === true &&
+          // Recorded from the file as it is now, not as it was when the bar was built.
+          recorded.read?.startsFrom === true &&
           recorded.read?.red === 0 &&
           (recorded.read?.met ?? []).includes('A "response" effect at tickets/booking-api.bookSeats') &&
           recorded.back?.written === true &&
@@ -3262,13 +3268,24 @@ function attachSelfCheck(
         // Record runs it, lights up what it touches, stores included, and then
         // turns the bar to what Fragmentor saw, to be stepped through and
         // read as a flow like the steps written down.
+        //
+        // The agent first rewords what sets it going while it is on screen.
+        // The bar has no reason to be built again for that, and Record must
+        // still run what the file says now, or the recording would be of
+        // something else and let go of at once.
+        const bookSeatsFile = path.join(check.application, "executions", "book-seats.json");
+        const bookSeats = JSON.parse(await readFile(bookSeatsFile, "utf8"));
+        bookSeats.trigger.description = "Ada confirms five seats, in the agent's new words.";
+        await writeFile(bookSeatsFile, JSON.stringify(bookSeats, null, 2), "utf8");
         await run("recorded", `
           const button = (label) => [...document.querySelectorAll("#exec-bar .run-btn")].find((b) => b.textContent === label);
           const chip = (label) => [...document.querySelectorAll("#exec-bar .chip")].find((c) => c.textContent === label);
           const pressed = (label) => chip(label)?.getAttribute("aria-pressed") === "true";
+          button("Restart")?.click();
+          const reworded = Boolean(await until(() => text("#inspector .responsibility") === "Ada confirms five seats, in the agent's new words."));
           const record = button("Record");
           if (!record || record.disabled) return { offered: false };
-          const before = { written: pressed("Written down"), recordedOffered: chip("Recorded") ? !chip("Recorded").disabled : null };
+          const before = { reworded, written: pressed("Written down"), recordedOffered: chip("Recorded") ? !chip("Recorded").disabled : null };
 
           record.click();
           // Said at once, before the run has even started.
@@ -3279,6 +3296,11 @@ function attachSelfCheck(
           const litFirst = lit() && !pressed("Recorded");
           const turned = Boolean(await until(() => pressed("Recorded"), 30000));
           await wait(300);
+          // The database says what was done to it, clear of its long kind.
+          const db = document.querySelector('.block-box[data-id="tickets-db"]');
+          const kindBox = db.querySelector(".block-kind").getBBox();
+          const noteBox = db.querySelector(".run-note").getBBox();
+          const storeNote = { note: db.querySelector(".run-note").textContent, clear: kindBox.x + kindBox.width <= noteBox.x };
 
           const first = {
             count: text(".exec-count"),
@@ -3292,10 +3314,11 @@ function attachSelfCheck(
           const part = (title) => recording && [...recording.querySelectorAll(".subsection")].find((each) => each.querySelector("h5").textContent === title);
           const read = {
             section: Boolean(recording),
+            startsFrom: recording ? recording.textContent.includes("in place of what sets it going: Ada confirms five seats, in the agent's new words") : false,
             red: recording ? recording.querySelectorAll(".bench-note.bad").length : -1,
             met: part("Met") ? [...part("Met").querySelectorAll(".bench-note")].map((p) => p.textContent) : [],
           };
-          return { offered: true, before, running, litFirst, turned, first, read };
+          return { offered: true, before, running, litFirst, turned, storeNote, first, read };
         `);
         await capture(window, "self-check-recorded");
 

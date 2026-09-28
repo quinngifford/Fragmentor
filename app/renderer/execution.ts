@@ -1,6 +1,6 @@
 import { addressesOf, nextStep, placeEvent, travelOf } from "../../src/model/trace.js";
 import type { Address, InteractionKind, Trace, TraceEvent, View } from "../../src/model/trace.js";
-import { checkRecording } from "../../src/model/recorded.js";
+import { addressOf, checkRecording } from "../../src/model/recorded.js";
 import type { SnapshotExecution } from "../../src/project/snapshot.js";
 import type { TriggerKind } from "../../src/project/executions.js";
 import type { NoteAnchor } from "../../src/project/notes.js";
@@ -221,16 +221,16 @@ export function paintExecution(): void {
   renderBar();
 }
 
-/** Starts a recording of an execution. Only a window that can run code is given one. */
-let record: ((execution: SnapshotExecution) => void) | null = null;
+/** Starts a recording of an execution, which the window hands in as it starts. */
+let record: (execution: SnapshotExecution) => void = () => {};
 
 /**
  * Called once, as the window starts: the canvas asks for the flow when it is
  * showing one. `recordIt` is how the bar's Record button records, which this
  * module cannot do itself, since it asks nothing of the main process.
  */
-export function setUpExecutions(recordIt?: (execution: SnapshotExecution) => void): void {
-  record = recordIt ?? null;
+export function setUpExecutions(recordIt: (execution: SnapshotExecution) => void): void {
+  record = recordIt;
   onFlowWanted(() => {
     const step = currentStep();
     if (!step) return null;
@@ -471,25 +471,26 @@ function buildBar(
   if (!shown) return { key, select, steps: null };
 
   // Offered whatever is written down, and most of all where nothing is.
-  let recordButton: HTMLButtonElement | null = null;
-  if (record) {
-    const recordIt = record;
-    const { execution } = shown;
-    const runs = execution.records === null ? null : (ui.snapshot?.blocks[execution.records]?.name ?? execution.records);
-    recordButton = barButton(
-      shown.recording ? "Record again" : "Record",
-      runs === null
-        ? (execution.unrecordable ?? "")
-        : `Run ${runs} with what this execution starts from, and see what the code really does. Nothing is saved.`,
-      () => recordIt(execution),
-    );
-    recordButton.disabled = runs === null;
-    // Why not is said where it can be read, not only when the button is hovered.
-    if (execution.unrecordable) host.append(el("div", "exec-why", execution.unrecordable));
-  }
+  const { execution } = shown;
+  const runs = execution.records === null ? null : (ui.snapshot?.blocks[execution.records]?.name ?? execution.records);
+  const recordButton = barButton(
+    shown.recording ? "Record again" : "Record",
+    runs === null
+      ? (execution.unrecordable ?? "")
+      : `Run ${runs} with what this execution starts from, and see what the code really does. Nothing is saved.`,
+    // The file can change without the bar being built again, and a recording
+    // of what it said before would be let go of as soon as it was made.
+    () => {
+      const now = selectedExecution();
+      if (now) record(now);
+    },
+  );
+  recordButton.disabled = runs === null;
+  // Why not is said where it can be read, not only when the button is hovered.
+  if (execution.unrecordable) host.append(el("div", "exec-why", execution.unrecordable));
 
   if (!shown.trace) {
-    if (recordButton) controls.append(recordButton);
+    controls.append(recordButton);
     controls.append(el("span", "exec-count", "nothing written down for it yet"));
     return { key, select, steps: null };
   }
@@ -529,7 +530,7 @@ function buildBar(
     sources.append(chip);
   }
   controls.append(sources);
-  if (recordButton) controls.append(recordButton);
+  controls.append(recordButton);
 
   const steps: StepControls = {
     restart: barButton("Restart", "Back to what set it going", () => jump(0)),
@@ -717,9 +718,23 @@ export function stepPage(
 /** What sets an execution going, in words, with no full stop. */
 function triggerWords(execution: SnapshotExecution): string {
   if (execution.trigger.description) return execution.trigger.description.replace(/\.$/, "");
-  const dot = execution.trigger.at.indexOf(".");
-  const at = dot === -1 ? { path: execution.trigger.at, entry: null } : { path: execution.trigger.at.slice(0, dot), entry: execution.trigger.at.slice(dot + 1) };
-  return `${ARRIVALS[execution.trigger.kind]} ${nameOfPlace(at)}`;
+  return `${ARRIVALS[execution.trigger.kind]} ${nameOfPlace(addressOf(execution.trigger.at))}`;
+}
+
+/**
+ * Each recording held to the execution as it was last read. The page is drawn
+ * again at every step, and holding a long recording to it every time would
+ * slow stepping through it; a project read again gives the execution new
+ * objects, so the check is worked out again whenever the file changes.
+ */
+const checks = new WeakMap<Recording, { of: SnapshotExecution; check: ReturnType<typeof checkRecording> }>();
+
+function checkOf(execution: SnapshotExecution, recording: Recording): ReturnType<typeof checkRecording> {
+  const kept = checks.get(recording);
+  if (kept?.of === execution) return kept.check;
+  const check = checkRecording(execution, recording.trace, recording.scope, recording.complete);
+  checks.set(recording, { of: execution, check });
+  return check;
 }
 
 /**
@@ -727,12 +742,12 @@ function triggerWords(execution: SnapshotExecution): string {
  * the run ended, and what the execution says must happen held to it.
  *
  * What was written down can change after the recording was made, so this is
- * worked out again each time it is shown rather than kept.
+ * held to the execution as it is now, never as it was when the recording was made.
  */
 function recordingSection(execution: SnapshotExecution, recording: Recording): HTMLElement {
   const node = section("Recording");
   const runs = nameOfPlace({ path: recording.scope.runs, entry: null });
-  const check = checkRecording(execution, recording.trace, recording.scope, recording.complete);
+  const check = checkOf(execution, recording);
   const note = (text: string, bad = false) => el("p", bad ? "bench-note bad" : "bench-note", text);
 
   node.append(

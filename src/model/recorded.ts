@@ -75,7 +75,7 @@ const EFFECT_OF: Partial<Record<keyof typeof INTERACTION_OF, string>> = {
 const RECORDED_EFFECTS = ["row-changed", "row-removed", "message-published", "response"];
 
 /** Reads an address as it is written: the first dot, if any, is where the entry begins. */
-function addressOf(text: string): Address {
+export function addressOf(text: string): Address {
   const dot = text.indexOf(".");
   return dot === -1 ? { path: text, entry: null } : { path: text.slice(0, dot), entry: text.slice(dot + 1) };
 }
@@ -400,6 +400,13 @@ function checkExpectations(expected: Expectations, trace: Trace, scope: Recordin
   const met: string[] = [];
   /** Those judged together, in the order written, so each can be said to be met or not. */
   const inTurn: { expectation: string; alone: Expectations }[] = [];
+  /**
+   * Those the run could not see everything for, which can only be met. They
+   * are held after the judged ones, so an event one of those needs is never
+   * taken from it by something that could only ever be set aside. Each is
+   * set aside where it is written until it is found.
+   */
+  const ifFound: { expectation: string; alone: Expectations; aside: { expectation: string; why: string } }[] = [];
 
   /**
    * Judged with the others where the run saw everything that could have
@@ -410,8 +417,11 @@ function checkExpectations(expected: Expectations, trace: Trace, scope: Recordin
     if (why === null) {
       include();
       inTurn.push({ expectation, alone });
-    } else if (evaluate(trace, alone).passed) met.push(expectation);
-    else setAside.push({ expectation, why });
+    } else {
+      const aside = { expectation, why };
+      setAside.push(aside);
+      ifFound.push({ expectation, alone, aside });
+    }
   };
 
   for (const within of expected.entered) {
@@ -464,10 +474,11 @@ function checkExpectations(expected: Expectations, trace: Trace, scope: Recordin
 
   // The failures come from judging them all together, since two may want
   // one event. Which ones are met is found the way written steps are: each
-  // held to the recording with every one met before it.
+  // held to the recording with every one met before it. One that could not
+  // be judged needs an event of its own too, and without one stays set aside.
   let held = only({});
   const found: string[] = [];
-  for (const { expectation, alone } of inTurn) {
+  for (const { expectation, alone, aside } of [...inTurn.map((each) => ({ ...each, aside: null })), ...ifFound]) {
     const next: Expectations = {
       entered: [...held.entered, ...alone.entered],
       interactions: [...held.interactions, ...alone.interactions],
@@ -478,6 +489,7 @@ function checkExpectations(expected: Expectations, trace: Trace, scope: Recordin
     if (!evaluate(trace, next).passed) continue;
     held = next;
     found.push(expectation);
+    if (aside) setAside.splice(setAside.indexOf(aside), 1);
   }
   return { met: [...found, ...met], failures, setAside };
 }
