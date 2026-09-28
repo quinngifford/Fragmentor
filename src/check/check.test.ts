@@ -151,6 +151,22 @@ describe("checkProject", () => {
     expect(problems).toContainEqual(expect.objectContaining({ file: PRICE_SEAT, line: 1, message: expect.stringContaining("priceSeatInput") }));
   }, 30_000);
 
+  it("reports types imported from a contract without `import type`, which a build may keep as an import of a file that is not there", async () => {
+    // Under verbatimModuleSyntax, or Node running TypeScript, this stays as
+    // `import {} from ".../contract.js"`, and a contract has no .js to find.
+    // A file of the project's own types has one, so importing it so is fine.
+    await writeFile(code("seat-types.ts"), "export type Seat = { row: string };\n", "utf8");
+    await writeFile(
+      code("price-seat.ts"),
+      `import { type PriceSeatInput, type PriceSeatOutput, type PriceSeatCaps } from "${CONTRACT}";\nimport { type Seat } from "./seat-types.js";\n\nexport const seat: Seat | null = null;\n\n${SIGNATURE} {\n  return { price: input.fullPrice };\n}\n`,
+      "utf8",
+    );
+
+    expect((await checkProject(dir)).systems[0]!.codeProblems).toEqual([
+      expect.objectContaining({ file: PRICE_SEAT, line: 1, message: expect.stringContaining("import type {") }),
+    ]);
+  }, 30_000);
+
   it("lets block code use the standard globals it has when it runs, and nothing of Node's", async () => {
     await writeFile(
       code("price-seat.ts"),

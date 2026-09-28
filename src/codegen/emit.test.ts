@@ -193,6 +193,8 @@ describe("emitProject", () => {
     expect(result.written).toContain("blocks/double-it/contract.d.ts");
     expect(result.written).toContain("blocks/capabilities.d.ts");
     expect(await there(at("double-it/add-to-self/contract.ts"))).toBe(true);
+    // It is kept, and said to hide the contract written beside it.
+    expect(result.problems).toEqual([expect.stringContaining("blocks/double-it/add-to-self/contract.ts was not written by Fragmentor")]);
   });
 
   it("leaves a codebase's own build as it was, however much of the folder it compiles", async () => {

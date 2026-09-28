@@ -154,6 +154,12 @@ function packageName(specifier: string): string {
   return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
 }
 
+/** True when an import such as `./contract.js` leads to a `.d.ts` file and no code, as a contract does. */
+function declarationsOnly(imported: string): boolean {
+  const stem = imported.replace(/\.js$/, "");
+  return existsSync(`${stem}.d.ts`) && !existsSync(`${stem}.ts`);
+}
+
 function at(file: string, source: ts.SourceFile, position: number): Omit<CodeProblem, "message"> {
   const { line, character } = source.getLineAndCharacterOfPosition(position);
   return { file, line: line + 1, column: character + 1 };
@@ -173,11 +179,21 @@ function importProblems(
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
 
     const specifier = statement.moduleSpecifier.text;
-    if (importsOnlyTypes(statement)) continue;
+    if (statement.importClause?.isTypeOnly) continue;
     if (!isPackage(specifier) && callable.has(path.resolve(from, specifier))) continue;
     const where = at(file, source, statement.getStart(source));
 
-    if (isBuiltin(specifier)) {
+    if (importsOnlyTypes(statement)) {
+      // `import { type X }` is compiled away here, but a build with
+      // verbatimModuleSyntax, or Node running TypeScript, keeps it as an
+      // import of the file, and a contract is declarations with no file to run.
+      if (!isPackage(specifier) && declarationsOnly(path.resolve(from, specifier))) {
+        problems.push({
+          ...where,
+          message: `"${node.block.name}" imports types from "${specifier}" without \`import type\`. A build that keeps imports as written, such as Node running TypeScript, turns this into an import of a file that is not there, because that file holds only declarations. Write \`import type { … }\`.`,
+        });
+      }
+    } else if (isBuiltin(specifier)) {
       problems.push({
         ...where,
         message: `"${node.block.name}" imports "${specifier}", one of Node's built-in modules. A block reaches files, the network and the process only through its capabilities, so declare a capability instead.`,

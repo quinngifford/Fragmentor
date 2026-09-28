@@ -23,9 +23,13 @@ import { typescriptReach } from "./typescriptReach.js";
  * has no use for a schema here either.
  */
 
-/** A port's description, as the comment an editor shows beside it. */
+/**
+ * A port's description, as the comment an editor shows beside it. A `*` then
+ * `/` in it would end the comment early and break the file, so a backslash is
+ * put between them.
+ */
 function commented(description: string | undefined): string {
-  return description ? `  /** ${description} */\n` : "";
+  return description ? `  /** ${description.replaceAll("*/", "*\\/")} */\n` : "";
 }
 
 /** A block's ports as the object its code is handed, or hands back. */

@@ -123,6 +123,16 @@ describe("the TypeScript pack", () => {
     );
   });
 
+  it("keeps a description that says `*/` inside its comment, where it cannot end it early", () => {
+    const described = blockFromFile(
+      { responsibility: "Match paths.", inputs: { glob: { type: "string", description: "A pattern such as src/**/*.ts" } }, outputs: {} },
+      "match",
+    );
+    const source = pack.contractSource({ block: described, blockPath: "app/match" });
+    expect(typeScriptErrors(source)).toEqual([]);
+    expect(source).toContain("/** A pattern such as src/**\\/*.ts */");
+  });
+
   it("declares capabilities as interfaces", () => {
     const source = pack.capabilitiesSource();
     expect(typeScriptErrors(source)).toEqual([]);

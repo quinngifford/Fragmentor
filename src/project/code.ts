@@ -140,6 +140,10 @@ export async function readBlockCode(project: Project, node: LoadedBlock): Promis
   // mentions the name is one the runner would refuse.
   const declared = location.text !== null && functionName !== null && declaresSymbol(location.text, functionName);
   const imports = specifier !== null && location.text !== null && location.text.includes(specifier);
+  // The same file under another extension, which a codebase importing with
+  // `.ts` extensions may well write, and which Fragmentor does not take as the import.
+  const importsOtherwise =
+    !imports && specifier !== null && location.text !== null && location.text.includes(specifier.replace(/[.][^./]+$/, ""));
   // A method, `Class.method`, is called on an object, never on its own with a
   // value and `caps`, so nothing can run it even where its file imports the
   // contract. It is drawn like any other code that is not held to one.
@@ -164,7 +168,9 @@ export async function readBlockCode(project: Project, node: LoadedBlock): Promis
               ? null
               : imports
                 ? `${functionName} is a method, and Fragmentor can only call a function on its own, with a value and \`caps\`, so it draws this code rather than running it`
-                : `${location.file} does not import its contract, so Fragmentor draws this code as it stands rather than checking or running it`,
+                : importsOtherwise
+                  ? `${location.file} imports its contract, but not as "${specifier}", which is how Fragmentor knows to hold code to it, so it draws this code as it stands`
+                  : `${location.file} does not import its contract, so Fragmentor draws this code as it stands rather than checking or running it`,
     ),
     functionName,
   };

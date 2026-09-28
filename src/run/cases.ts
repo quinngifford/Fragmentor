@@ -101,8 +101,7 @@ export function storeKeyProblems(cases: TestCase[], entries: string[], reached: 
   const own = reached.filter((store) => store.seedable);
   const meant = (key: string) => {
     const like =
-      own.find((store) => store.port === key || store.entry === key || store.target.endsWith(key))?.target ??
-      entries.find((entry) => entry.endsWith(key) || entry.endsWith(`.${key}`));
+      own.find((store) => store.port === key || store.target.endsWith(key))?.target ?? entries.find((entry) => entry.endsWith(key));
     const named = like ? [like] : own.length > 0 ? own.map((store) => store.target) : entries;
     return named.length === 0
       ? "This project draws no store, so there is nowhere for rows to go."

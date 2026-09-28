@@ -229,6 +229,17 @@ export async function emitProject(project: Project, known?: Map<string, BlockCod
     await rm(target);
     removed.push(relative(target));
   };
+  /**
+   * A `.ts` file of someone's own, kept where a generated one would be taken
+   * away. TypeScript finds it before the `.d.ts` beside it, so code importing
+   * the contract would be checked against the wrong types.
+   */
+  const shadowing = async (target: string) => {
+    if ((await readIfPresent(target)) === null) return;
+    problems.push(
+      `${relative(target)} was not written by Fragmentor, and TypeScript reads it in place of the ${path.basename(target, ".ts")}.d.ts that Fragmentor writes beside it. Move or rename it.`,
+    );
+  };
 
   // The guide does not depend on the project being valid, and is most needed
   // when it is not, so it is kept current before anything can be refused, and
@@ -269,6 +280,7 @@ export async function emitProject(project: Project, known?: Map<string, BlockCod
       pack.contractSource({ block: node.block, blockPath: node.path, bound: boundShapes(project, node) }),
     );
     written_for.add(pack.id);
+    if (pack.id === "typescript") await shadowing(path.join(node.dir, FORMER_CONTRACT));
     // A contract in the language this system used to be written in describes
     // the same block in words that no longer apply to it.
     for (const each of knownLanguages()) {
@@ -285,6 +297,7 @@ export async function emitProject(project: Project, known?: Map<string, BlockCod
     if (written_for.has(pack.id)) await write(file, pack.capabilitiesSource());
     else await discard(file);
   }
+  if (written_for.has("typescript")) await shadowing(path.join(blocksRoot(project.dir), FORMER_CAPABILITIES));
 
   written.sort();
   removed.sort();

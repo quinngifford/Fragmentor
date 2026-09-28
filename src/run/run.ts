@@ -3,12 +3,12 @@ import type { PortType } from "../model/types.js";
 import { loadProject, systemOf } from "../project/project.js";
 import { packFor, readAllCode } from "../project/code.js";
 import type { BlockCode } from "../project/code.js";
-import { storesForRun } from "../project/stores.js";
+import { boundStores, storeEntries, storesForRun } from "../project/stores.js";
 import type { LoadedBlock, LoadedSystem, Project } from "../project/project.js";
 import type { LanguagePack } from "../lang/pack.js";
 import { compileSystem, startCompiledBlock } from "./typescript.js";
 import type { CompiledRun, CompiledSystem, RunEvent } from "./typescript.js";
-import { hasExpectation, loadCases } from "./cases.js";
+import { hasExpectation, loadCases, storeKeyProblems } from "./cases.js";
 import type { TestCase } from "./cases.js";
 import { compareValues } from "./compare.js";
 
@@ -386,26 +386,24 @@ export async function runManyCases(
       }
       const prepared = prepare(loaded, blockPath);
       if ("error" in prepared) {
-        results.set(
-          blockPath,
-          cases.map((testCase) => ({
-            name: testCase.name,
-            status: "error" as const,
-            differences: [],
-            inputProblems: [],
-            error: prepared.error,
-            logs: [],
-            durationMs: 0,
-          })),
-        );
+        results.set(blockPath, cases.map((testCase) => refused(testCase, prepared.error)));
         continue;
       }
 
       const root = prepared.system.rootBlock;
       if (!compiled.has(root)) compiled.set(root, await compileSystem(prepared.project, root, prepared.code));
+      const entries = storeEntries(prepared.project);
+      const reached = boundStores(prepared.project, prepared.node);
       const ran: CaseResult[] = [];
       for (const testCase of cases) {
-        ran.push(await runOneCase({ ...prepared, copyOf: options.copyOf }, compiled.get(root)!, blockPath, testCase));
+        // Rows a run would pass over leave the block reading an empty store,
+        // and the test failing on something that is not why.
+        const misplaced = storeKeyProblems([testCase], entries, reached);
+        ran.push(
+          misplaced.length > 0
+            ? refused(testCase, misplaced.join(" "))
+            : await runOneCase({ ...prepared, copyOf: options.copyOf }, compiled.get(root)!, blockPath, testCase),
+        );
       }
       results.set(blockPath, ran);
     }
@@ -413,6 +411,11 @@ export async function runManyCases(
   } finally {
     for (const each of compiled.values()) await each.dispose();
   }
+}
+
+/** A test that was not run, and why. */
+function refused(testCase: TestCase, error: string): CaseResult {
+  return { name: testCase.name, status: "error", differences: [], inputProblems: [], error, logs: [], durationMs: 0 };
 }
 
 async function runOneCase(

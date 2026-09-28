@@ -113,6 +113,19 @@ describe("what a block's code pointer leads to", () => {
     );
   });
 
+  it("says how to import a contract that the code imports under another name, which is not taken as holding it", async () => {
+    // A codebase that imports with `.ts` extensions may well write the contract's
+    // own file name; that typechecks, and Fragmentor would otherwise say there is no import.
+    await block("app/add", { ...ADD, code: "src/add.ts#add" });
+    await source("src/add.ts", BOUND.replace("contract.js", "contract.d.ts"));
+
+    const found = await codeOf("app/add");
+    expect(found.bound).toBe(false);
+    expect(found.drawnBecause).toBe(
+      'src/add.ts imports its contract, but not as "../blocks/app/add/contract.js", which is how Fragmentor knows to hold code to it, so it draws this code as it stands',
+    );
+  });
+
   it("finds a method pointed at as Class.method, declared inside its class", async () => {
     await block("app/add", { ...ADD, code: "src/maths.ts#Maths.add" });
     await source(

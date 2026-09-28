@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadProject, validateProject } from "../project/project.js";
 import { emitProject } from "../codegen/emit.js";
-import { runBlock } from "./run.js";
+import { runBlock, runCases } from "./run.js";
 
 /**
  * Reaching a store, for real.
@@ -113,6 +113,15 @@ describe("a block reaching a store", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.output).toEqual({ paid: 40 });
+  });
+
+  it("refuses a test that keys its rows by anything but a store entry, rather than running it without them", async () => {
+    const [result] = await runCases(dir, "ledger/settle", {
+      cases: [{ name: "settles by port name", input: { accountId: "acc-1" }, stores: { accounts: seeded["ledger/accounts-db.accounts"] } }],
+    });
+
+    expect(result!.status).toBe("error");
+    expect(result!.error).toContain('"ledger/accounts-db.accounts"');
   });
 
   it("reads an empty store when nothing was put there", async () => {
