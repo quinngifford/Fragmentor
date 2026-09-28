@@ -570,12 +570,13 @@ export const READABLE_SCALE = 0.6;
  * The camera that fits a drawing into a canvas of the given size.
  *
  * With nothing to start from, the whole drawing is shrunk until it is all in
- * view. Otherwise it is shrunk no further than READABLE_SCALE, and whichever
- * way it is still too big, it is shown from its top, and across from where it
- * starts: the top block of the first system, kept far enough in that the view
- * does not open on empty space beside the drawing.
+ * view. Otherwise it is shrunk no further than READABLE_SCALE, and a drawing
+ * still too big is shown from its top, just under whatever `clearAtTop`
+ * pixels the bars along the top of the canvas take, and across from where it
+ * starts: the top block of the first system, kept far enough in that the
+ * view does not open on empty space beside the drawing.
  */
-export function fittedCamera(bounds: Box, width: number, height: number, startsAt: number | null): Camera {
+export function fittedCamera(bounds: Box, width: number, height: number, startsAt: number | null, clearAtTop = 0): Camera {
   // Fitting shrinks the tree to make it visible; it never magnifies it, or a
   // project with one block in it would open absurdly zoomed in.
   const whole = Math.min(1, Math.max(SMALLEST_SCALE, Math.min(width / bounds.width, height / bounds.height)));
@@ -584,10 +585,9 @@ export function fittedCamera(bounds: Box, width: number, height: number, startsA
 
   const scale = READABLE_SCALE;
   const halfWide = width / 2 / scale;
-  const halfHigh = height / 2 / scale;
   return {
     cx: bounds.width <= 2 * halfWide ? centre.cx : Math.min(Math.max(startsAt, bounds.x + halfWide), bounds.x + bounds.width - halfWide),
-    cy: bounds.height <= 2 * halfHigh ? centre.cy : bounds.y + halfHigh,
+    cy: bounds.y + (height / 2 - clearAtTop) / scale,
     scale,
   };
 }
@@ -600,7 +600,9 @@ function fitCamera(): Camera | null {
 
   // A run drawn end to end starts at its left; the tree at its first system.
   const top = currentFlow ? null : currentTree?.roots[0];
-  return fittedCamera(bounds, width, height, top ? top.x + BOX_W / 2 : bounds.x);
+  const bars = document.querySelector(".canvas-top")?.getBoundingClientRect();
+  const clearAtTop = bars ? Math.max(0, bars.bottom - element("canvas-svg").getBoundingClientRect().top) : 0;
+  return fittedCamera(bounds, width, height, top ? top.x + BOX_W / 2 : bounds.x, clearAtTop);
 }
 
 /** Brings the tree into view: the whole of it once Fit has been pressed, and otherwise as much as can be read. */

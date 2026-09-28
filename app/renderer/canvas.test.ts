@@ -71,7 +71,9 @@ describe("fitting the drawing to the window", () => {
 
     expect(readable.scale).toBe(READABLE_SCALE);
     expect(onScreen(tree, "root", readable)).toBe(true);
-    // It is only too wide, so it is cut at the sides and nowhere else.
+    // Its top is at the top of the window, and it is only too wide, so it is
+    // cut at the sides and nowhere else.
+    expect((tree.nodes.get("root")!.y - readable.cy) * readable.scale + HIGH / 2).toBeLessThan(40);
     for (const node of tree.nodes.values()) {
       const y = (node.y - readable.cy) * readable.scale + HIGH / 2;
       expect(y >= 0 && y + BOX_H * readable.scale <= HIGH, node.path).toBe(true);
@@ -81,7 +83,7 @@ describe("fitting the drawing to the window", () => {
     for (const node of tree.nodes.keys()) expect(onScreen(tree, node, whole), node).toBe(true);
   });
 
-  it("shows what is too tall from its top, and what is too wide from where it starts, without running off its edge", () => {
+  it("shows what is too big from its top, and from where it starts across, without running off its edge", () => {
     const tall = fittedCamera({ x: 0, y: 0, width: 400, height: 5000 }, WIDE, HIGH, 200);
     expect(tall.scale).toBe(READABLE_SCALE);
     expect(tall.cy).toBe(HIGH / 2 / READABLE_SCALE);
@@ -89,6 +91,10 @@ describe("fitting the drawing to the window", () => {
 
     const wide = fittedCamera({ x: 0, y: 0, width: 8000, height: 300 }, WIDE, HIGH, 10);
     expect(wide.cx).toBe(WIDE / 2 / READABLE_SCALE);
-    expect(wide.cy).toBe(150);
+    expect(wide.cy).toBe(HIGH / 2 / READABLE_SCALE);
+
+    // Its top starts under the bars along the top of the canvas, not behind them.
+    const underBars = fittedCamera({ x: 0, y: 0, width: 8000, height: 300 }, WIDE, HIGH, 10, 60);
+    expect((0 - underBars.cy) * READABLE_SCALE + HIGH / 2).toBeCloseTo(60);
   });
 });
