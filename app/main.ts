@@ -3229,7 +3229,10 @@ function attachSelfCheck(
         await capture(window, "self-check-save-form");
 
         await run("saving", `${saveForm}
-          button(form(), "Save").click();
+          // The panel may be in the middle of being drawn afresh, so the form is waited for.
+          const save = await until(() => form() && button(form(), "Save"), 10000);
+          if (!save) return { stage: "no form to save from" };
+          save.click();
           const row = await until(savedRow, 15000);
           if (!row) return { stage: "not listed", said: text("#inspector .version-save .bench-note") };
           await wait(300);
