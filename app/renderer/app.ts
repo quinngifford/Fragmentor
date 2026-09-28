@@ -142,6 +142,7 @@ function show(load: ProjectLoad, opening: boolean): void {
     ui.selection.clear();
     ui.selectedLink = null;
     ui.userAdjusted = false;
+    ui.fitsWhole = false;
   } else {
     // Whatever was picked out, or folded away, may be gone from the project.
     for (const path of [...ui.selection]) if (!load.snapshot.blocks[path]) ui.selection.delete(path);
@@ -217,6 +218,7 @@ async function closeProject(): Promise<void> {
   ui.loadError = null;
   ui.waiting = false;
   ui.userAdjusted = false;
+  ui.fitsWhole = false;
   treeBefore = null;
 
   clearCanvas();

@@ -41,6 +41,7 @@ import type { FlaggedRun, Note, NoteAnchor } from "../src/project/notes.js";
 import { compareWithVersion } from "../src/run/versions.js";
 import type { VersionComparison } from "../src/run/versions.js";
 import { commitExampleHistory, filesOf, gitIn } from "../src/project/exampleHistory.js";
+import { READABLE_SCALE } from "./renderer/canvas.js";
 
 /**
  * The main process owns everything with side effects: the window, the disk,
@@ -67,7 +68,7 @@ function selfChecking(): boolean {
  */
 const selfCheck = selfChecking() ? prepareSelfCheck() : null;
 
-function prepareSelfCheck(): { root: string; projectDir: string; application: string; messenger: string; noCommands: string } {
+function prepareSelfCheck(): { root: string; projectDir: string; application: string; messenger: string; large: string; noCommands: string } {
   const root = mkdtempSync(path.join(tmpdir(), "fragmentor-self-check-"));
   const projectDir = path.join(root, "project");
   const userData = path.join(root, "user-data");
@@ -84,12 +85,49 @@ function prepareSelfCheck(): { root: string; projectDir: string; application: st
   // And one described from reading its code, with executions written down.
   const messenger = path.join(root, "messenger");
   cpSync(path.join(repoRoot, "examples", "messenger"), messenger, { recursive: true });
+  // And one as big as a mid-sized codebase drawn whole, which no window shows
+  // all of at a size its names can be read at.
+  const large = path.join(root, "large");
+  writeLargeProject(large);
 
   // Offered on the welcome screen as recent projects, which is how the check
   // opens them. Its own project is started from the menu instead.
-  writeFileSync(path.join(userData, "recent-projects.json"), JSON.stringify([application, messenger]));
+  writeFileSync(path.join(userData, "recent-projects.json"), JSON.stringify([application, messenger, large]));
   app.setPath("userData", userData);
-  return { root, projectDir, application, messenger, noCommands };
+  return { root, projectDir, application, messenger, large, noCommands };
+}
+
+/**
+ * A project of 111 blocks: a system of five areas, each of three modules of
+ * six parts. Only its shape matters, so every block is a component, with
+ * nothing to check or run.
+ */
+function writeLargeProject(dir: string): void {
+  const block = (blockPath: string, responsibility: string) => {
+    mkdirSync(path.join(dir, "blocks", blockPath), { recursive: true });
+    writeFileSync(path.join(dir, "blocks", blockPath, "block.json"), JSON.stringify({ role: "component", responsibility }));
+  };
+  block("large", "A system too big to be read whole on one screen.");
+  for (let area = 1; area <= 5; area += 1) {
+    block(`large/area-${area}`, `Area ${area} of the system.`);
+    for (let module = 1; module <= 3; module += 1) {
+      block(`large/area-${area}/module-${module}`, `Module ${module} of area ${area}.`);
+      for (let part = 1; part <= 6; part += 1) {
+        block(`large/area-${area}/module-${module}/part-${part}`, `Part ${part} of module ${module} of area ${area}.`);
+      }
+    }
+  }
+  writeFileSync(
+    path.join(dir, "fragmentor.json"),
+    JSON.stringify({
+      name: "Large",
+      goal: "Show a system bigger than the window.",
+      existingCode: false,
+      start: "build",
+      granularity: { level: 3, maxDepth: 4 },
+      systems: [{ rootBlock: "large", language: "typescript" }],
+    }),
+  );
 }
 
 function ok<T>(value: T): Result<T> {
@@ -1839,6 +1877,17 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         JSON.stringify(value("added", "arriving")) === JSON.stringify(["audit-log"]) &&
         value("added", "inTree") === true,
     ],
+    [
+      "a system bigger than the window opens readable at its top, and Fit shows all of it",
+      value("large", "opened") === true &&
+        value("large", "blocks") === 111 &&
+        // Read back from the page, where it passed through single precision.
+        Number(value("large", "scale")) >= READABLE_SCALE - 0.001 &&
+        value("large", "topInView") === true &&
+        value("large", "allInView") === false &&
+        Number(value("largeFitted", "scale")) < READABLE_SCALE &&
+        value("largeFitted", "allInView") === true,
+    ],
   ];
 
   return checks.filter(([, passed]) => !passed).map(([name]) => name);
@@ -1871,7 +1920,7 @@ async function capture(window: BrowserWindow, name: string): Promise<void> {
 // self-check exits explicitly, or a failed check would pass as a command.
 function attachSelfCheck(
   window: BrowserWindow,
-  check: { root: string; projectDir: string; application: string; messenger: string; noCommands: string },
+  check: { root: string; projectDir: string; application: string; messenger: string; large: string; noCommands: string },
 ): void {
   window.webContents.on("did-fail-load", (_event, code, description) => {
     console.error(`The window failed to load: ${description} (${code})`);
@@ -4455,6 +4504,43 @@ function attachSelfCheck(
           };
         `);
         await capture(window, "self-check-held");
+
+        // A system bigger than the window opens with its names readable and
+        // its top in view, the rest a drag away. Fit then shows all of it.
+        pick("close-project");
+        const scaleAndView = `
+          const canvas = document.getElementById("canvas-svg").getBoundingClientRect();
+          const inView = (box) => {
+            const at = box.querySelector(".block-plate").getBoundingClientRect();
+            return at.left >= canvas.left && at.top >= canvas.top && at.right <= canvas.right && at.bottom <= canvas.bottom;
+          };
+          const boxes = [...document.querySelectorAll("#node-layer .block-box")];
+          const scale = document.getElementById("viewport").transform.baseVal.consolidate().matrix.a;
+        `;
+        await run("large", `
+          await until(() => document.body.dataset.project !== "open");
+          const link = await until(() => [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.large)}));
+          if (!link) return { opened: false };
+          link.click();
+          if (!(await until(() => document.querySelector('.block-box[data-key="large"]')))) return { opened: false };
+          // Long enough for the first fit, which waits for the canvas to have a size.
+          await wait(1500);
+          ${scaleAndView}
+          return {
+            opened: true,
+            blocks: boxes.length,
+            scale,
+            topInView: inView(document.querySelector('.block-box[data-key="large"]')),
+            allInView: boxes.every(inView),
+          };
+        `);
+        await capture(window, "self-check-large");
+        await run("largeFitted", `
+          document.getElementById("zoom-fit").click();
+          await wait(1000);
+          ${scaleAndView}
+          return { scale, allInView: boxes.every(inView) };
+        `);
 
         console.log(JSON.stringify(report, null, 2));
 

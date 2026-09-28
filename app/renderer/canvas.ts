@@ -537,11 +537,16 @@ function treeBounds(): Box | null {
     return { x: -30, y: -30, width: currentFlow.width + 60, height: currentFlow.height + 90 };
   }
   if (!currentTree || currentTree.nodes.size === 0) return null;
+  return boundsOf(currentTree);
+}
+
+/** The room a tree takes, with a margin round it for what is drawn beside its boxes. */
+export function boundsOf(tree: Tree): Box {
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (const node of currentTree.nodes.values()) {
+  for (const node of tree.nodes.values()) {
     minX = Math.min(minX, node.x - 30);
     minY = Math.min(minY, node.y - 34);
     maxX = Math.max(maxX, node.x + BOX_W + 30);
@@ -550,18 +555,55 @@ function treeBounds(): Box | null {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
+/** The furthest out the drawing goes, by zooming or by Fit. */
+const SMALLEST_SCALE = 0.2;
+
+/**
+ * The furthest out a fit made on the person's behalf goes: the size at which
+ * a block's name can still be read. A large system is then bigger than the
+ * window, so it opens at its top, a drag away from the rest, rather than all
+ * of it in specks. Fit still shows everything, however small that makes it.
+ */
+export const READABLE_SCALE = 0.6;
+
+/**
+ * The camera that fits a drawing into a canvas of the given size.
+ *
+ * With nothing to start from, the whole drawing is shrunk until it is all in
+ * view. Otherwise it is shrunk no further than READABLE_SCALE, and whichever
+ * way it is still too big, it is shown from its top, and across from where it
+ * starts: the top block of the first system, kept far enough in that the view
+ * does not open on empty space beside the drawing.
+ */
+export function fittedCamera(bounds: Box, width: number, height: number, startsAt: number | null): Camera {
+  // Fitting shrinks the tree to make it visible; it never magnifies it, or a
+  // project with one block in it would open absurdly zoomed in.
+  const whole = Math.min(1, Math.max(SMALLEST_SCALE, Math.min(width / bounds.width, height / bounds.height)));
+  const centre = { cx: bounds.x + bounds.width / 2, cy: bounds.y + bounds.height / 2 };
+  if (startsAt === null || whole >= READABLE_SCALE) return { ...centre, scale: whole };
+
+  const scale = READABLE_SCALE;
+  const halfWide = width / 2 / scale;
+  const halfHigh = height / 2 / scale;
+  return {
+    cx: bounds.width <= 2 * halfWide ? centre.cx : Math.min(Math.max(startsAt, bounds.x + halfWide), bounds.x + bounds.width - halfWide),
+    cy: bounds.height <= 2 * halfHigh ? centre.cy : bounds.y + halfHigh,
+    scale,
+  };
+}
+
 function fitCamera(): Camera | null {
   const bounds = treeBounds();
   const { width, height } = canvasSize();
   if (!bounds || !width || !height) return null;
+  if (ui.fitsWhole) return fittedCamera(bounds, width, height, null);
 
-  // Fitting shrinks the tree to make it visible; it never magnifies it, or a
-  // project with one block in it would open absurdly zoomed in.
-  const scale = Math.min(1, Math.max(0.2, Math.min(width / bounds.width, height / bounds.height)));
-  return { cx: bounds.x + bounds.width / 2, cy: bounds.y + bounds.height / 2, scale };
+  // A run drawn end to end starts at its left; the tree at its first system.
+  const top = currentFlow ? null : currentTree?.roots[0];
+  return fittedCamera(bounds, width, height, top ? top.x + BOX_W / 2 : bounds.x);
 }
 
-/** Brings the whole tree into view. */
+/** Brings the tree into view: the whole of it once Fit has been pressed, and otherwise as much as can be read. */
 export function fitToView(animated = false): void {
   const target = fitCamera();
   if (!target) return;
@@ -1430,7 +1472,7 @@ export function setUpCanvasGestures(): void {
 }
 
 export function zoomAbout(px: number, py: number, factor: number): void {
-  const next = Math.min(3, Math.max(0.2, ui.zoom * factor));
+  const next = Math.min(3, Math.max(SMALLEST_SCALE, ui.zoom * factor));
   const scale = next / ui.zoom;
   ui.panX = px - (px - ui.panX) * scale;
   ui.panY = py - (py - ui.panY) * scale;
@@ -1496,6 +1538,7 @@ export function setUpZoomBar(): void {
   });
   element("zoom-fit").addEventListener("click", () => {
     ui.userAdjusted = false;
+    ui.fitsWhole = true;
     fitToView(true);
   });
 }

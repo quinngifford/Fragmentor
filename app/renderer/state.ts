@@ -99,6 +99,12 @@ export interface UiState {
   /** Once the view has been moved by hand, stop refitting it automatically. */
   userAdjusted: boolean;
   /**
+   * Whether Fit was pressed, so the refits that follow keep the whole tree in
+   * view rather than stopping where names can still be read. It lasts until
+   * a project is next drawn for the first time.
+   */
+  fitsWhole: boolean;
+  /**
    * Unsaved edits to a block's implementation, keyed by block path, with the
    * file as it was when editing began. That is how a change made on disk in
    * the meantime — usually by the agent — is pointed out rather than silently
@@ -242,6 +248,7 @@ export const ui: UiState = {
   codeTab: "code",
   bench: null,
   userAdjusted: false,
+  fitsWhole: false,
   edits: new Map(),
   benchInputs: new Map(),
   benchStores: new Map(),
