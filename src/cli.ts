@@ -422,7 +422,8 @@ async function test(dir: string, requested: string[]): Promise<number> {
 async function testExecutions(dir: string): Promise<number> {
   const { executions, problems } = await loadExecutions(dir);
   if (problems.length > 0) {
-    console.log(`\nExecutions\n  ERROR  ${problems.join("\n  ERROR  ")}`);
+    console.log("\nExecutions");
+    for (const { file, problems: found } of problems) console.log(`  ERROR  ${file}  ${found.join("\n         ")}`);
     return problems.length;
   }
   if (executions.length === 0) return 0;
@@ -483,7 +484,8 @@ function recordingResult(recorded: Recorded): { failed: boolean; lines: string[]
     complete ? "" : "it made more calls than Fragmentor records, so not all of it was heard",
   ].filter(Boolean);
   const head = `  ${failed ? "FAILED" : "MET   "} ${execution.id}${notes.length > 0 ? `  (${notes.join("; ")})` : ""}`;
-  if (!failed) return { failed, lines: [head] };
+  // A run that threw is worth knowing about even when nothing written down says otherwise.
+  if (!failed) return { failed, lines: [head, ...details(recorded.outcome.error ? [`The run ended in an error: ${recorded.outcome.error}`] : [])] };
 
   const described = new Map((execution.declared?.events ?? []).map((event) => [event.id, event.type === "return" ? undefined : event.description]));
   const stepName = (id: string) => (described.get(id) ? `The step "${described.get(id)}" (${id})` : `Step ${id}`);
