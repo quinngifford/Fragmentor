@@ -287,58 +287,7 @@ function blockColourControl(block: SnapshotBlock): HTMLElement | null {
   return row;
 }
 
-/** One step of what happens when an entry is triggered. */
-interface Step {
-  block: SnapshotBlock;
-  entry: string | null;
-}
-
-/** Long enough for any real chain, short enough that a loop cannot hang the panel. */
-const MOST_STEPS = 12;
-
-/**
- * What actually runs when one entry happens.
- *
- * A button on a client calls an operation on a service; that operation says
- * which block answers it; and that block is code, with a contract and a test
- * bench. Following those two links end to end turns "this button" into "this
- * function", which is the whole reason for saying which entry does the
- * reaching rather than only that two blocks are connected.
- *
- * Returns every step of the way, so the panel can show the route and not only
- * where it ends up.
- */
-function whatHappens(block: SnapshotBlock, entry: string): Step[] {
-  const snapshot = requireSnapshot();
-  const route: Step[] = [];
-  let at: Step | null = { block, entry };
-
-  while (at && route.length < MOST_STEPS) {
-    route.push(at);
-    const here: Step = at;
-    at = null;
-
-    // A function block is where it ends: that is the code that runs.
-    if (!here.block.architecture || here.entry === null) break;
-
-    // An operation that names the block answering it leads straight into code.
-    const exposed = here.block.exposes.find((each) => each.name === here.entry);
-    if (exposed?.block) {
-      const answering = snapshot.blocks[`${here.block.path}/${exposed.block}`];
-      if (answering) at = { block: answering, entry: null };
-      if (at) continue;
-    }
-
-    // Otherwise this entry may call another block's entry, and on it goes.
-    const call = here.block.access.find((each) => each.from === here.entry && each.resourcePath !== null);
-    const next = call?.resourcePath ? snapshot.blocks[call.resourcePath] : undefined;
-    if (next) at = { block: next, entry: call!.entry };
-  }
-
-  return route;
-}
-
-/** One of this block's entries, and what the walk above found at the end of it. */
+/** One of this block's entries, and where what happens when it is used ends up. */
 interface Leads {
   entry: string;
   /** The way there in words, for the entry's own row. */
@@ -350,15 +299,19 @@ interface Leads {
 /**
  * Where each of this block's entries leads.
  *
- * One walk answers two questions — where does this button go, and can it be
- * pressed — so the row saying where it leads and the button that runs it can
- * never disagree about the route.
+ * A button on a client calls an operation on a service; that operation says
+ * which block answers it; and that block is code, with a contract and a test
+ * bench. The kernel follows those links end to end, as it does to find the
+ * code a recording runs, and one route answers two questions here — where
+ * does this button go, and can it be pressed — so the row saying where it
+ * leads and the button that runs it can never disagree about it.
  */
 function entryLeads(block: SnapshotBlock): Leads[] {
   if (!block.architecture) return [];
+  const blocks = requireSnapshot().blocks;
 
   return block.exposes.flatMap((entry) => {
-    const rest = whatHappens(block, entry.name).slice(1);
+    const rest = entry.route.slice(1).map((step) => ({ block: blocks[step.path]!, entry: step.entry }));
     const last = rest.at(-1);
     if (!last) return [];
 

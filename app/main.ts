@@ -10,6 +10,8 @@ import type {
   FolderToStart,
   MenuCommand,
   ProjectLoad,
+  RecordRunRequest,
+  RecordedRun,
   Result,
   RunCommand,
   SaveCasesRequest,
@@ -23,7 +25,8 @@ import { guideLine, holdsFiles, pointAtGuide, settingsFrom, startProject, writeC
 import { GUIDE_FILE } from "../src/codegen/guide.js";
 import { resolveInside } from "../src/project/safePath.js";
 import { runCases, startRun } from "../src/run/run.js";
-import type { CaseResult, RunControl, RunOutcome } from "../src/run/run.js";
+import type { CaseResult, RunControl, RunEvent, RunOutcome } from "../src/run/run.js";
+import { recordExecution } from "../src/run/record.js";
 import { saveCases } from "../src/run/cases.js";
 import {
   blockVersions,
@@ -522,35 +525,72 @@ function registerHandlers(): void {
   const paths = (value: unknown): string[] =>
     Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 
+  /**
+   * Keeps a run steerable from the window that started it, and sends it that
+   * window's way event by event, until it ends. `start` begins the run, given
+   * where to send its events, and says how to steer it once it has begun.
+   */
+  async function watched<T>(
+    contents: Electron.WebContents,
+    runId: string,
+    start: (onEvent: (runEvent: RunEvent) => void, started: (control: RunControl) => void) => Promise<T>,
+  ): Promise<T> {
+    let stop = () => {};
+    try {
+      return await start(
+        (runEvent) => {
+          if (!contents.isDestroyed()) contents.send(CHANNELS.runEvent, runId, runEvent);
+        },
+        (control) => {
+          // A run held at a breakpoint would otherwise wait for ever on a
+          // page that has gone: closed, reloaded or crashed.
+          stop = () => control.stop();
+          contents.once("destroyed", stop);
+          contents.once("did-start-loading", stop);
+          contents.once("render-process-gone", stop);
+          liveRuns.set(runId, control);
+        },
+      );
+    } finally {
+      liveRuns.delete(runId);
+      contents.removeListener("destroyed", stop);
+      contents.removeListener("did-start-loading", stop);
+      contents.removeListener("render-process-gone", stop);
+    }
+  }
+
   ipcMain.handle(CHANNELS.watchRun, async (event, request: WatchRunRequest): Promise<Result<RunOutcome>> => {
     try {
-      const contents = event.sender;
-      const { control, outcome } = startRun({
-        projectDir: request.dir,
-        blockPath: request.blockPath,
-        input: request.input,
-        stores: request.stores ?? {},
-        breakpoints: paths(request.breakpoints),
-        onEvent: (runEvent) => {
-          if (!contents.isDestroyed()) contents.send(CHANNELS.runEvent, request.runId, runEvent);
-        },
-      });
+      return ok(
+        await watched(event.sender, request.runId, (onEvent, started) => {
+          const { control, outcome } = startRun({
+            projectDir: request.dir,
+            blockPath: request.blockPath,
+            input: request.input,
+            stores: request.stores ?? {},
+            breakpoints: paths(request.breakpoints),
+            onEvent,
+          });
+          started(control);
+          return outcome;
+        }),
+      );
+    } catch (error) {
+      return failed(error);
+    }
+  });
 
-      // A run held at a breakpoint would otherwise wait for ever on a page
-      // that has gone: closed, reloaded or crashed.
-      const stop = () => control.stop();
-      contents.once("destroyed", stop);
-      contents.once("did-start-loading", stop);
-      contents.once("render-process-gone", stop);
-      liveRuns.set(request.runId, control);
-      try {
-        return ok(await outcome);
-      } finally {
-        liveRuns.delete(request.runId);
-        contents.removeListener("destroyed", stop);
-        contents.removeListener("did-start-loading", stop);
-        contents.removeListener("render-process-gone", stop);
-      }
+  // What runs, and with what, is read from the execution's own file here:
+  // the window only names the execution.
+  ipcMain.handle(CHANNELS.recordRun, async (event, request: RecordRunRequest): Promise<Result<RecordedRun>> => {
+    try {
+      const recorded = await watched(event.sender, request.runId, (onEvent, started) =>
+        recordExecution(request.dir, String(request.execution), { onEvent, started, breakpoints: paths(request.breakpoints) }),
+      );
+      if ("why" in recorded) return ok({ couldNotRecord: recorded.why });
+      if ("couldNotRecord" in recorded) return ok(recorded);
+      const { outcome, trace, scope, complete } = recorded;
+      return ok({ outcome, trace, scope, complete });
     } catch (error) {
       return failed(error);
     }
@@ -1227,6 +1267,58 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         );
       })(),
     ],
+    [
+      "an execution whose code is held to its contract is recorded from the bar: it lights up, stores included, and is then stepped through and read as a flow",
+      (() => {
+        type Recorded = {
+          offered?: boolean;
+          before?: { written?: boolean; recordedOffered?: boolean };
+          running?: string;
+          litFirst?: boolean;
+          turned?: boolean;
+          first?: { count?: string; caption?: string; page?: string; noteOffered?: boolean; again?: boolean };
+          read?: { section?: boolean; red?: number; met?: string[] };
+          back?: { written?: boolean; count?: string };
+          steps?: number;
+          captions?: string[];
+          priceSeatBoxes?: number;
+          flowStarts?: string;
+        };
+        const recorded = { ...report["recorded"], ...report["recordedRead"], ...report["recordedBack"] } as Recorded;
+        const captions = recorded?.captions ?? [];
+        return (
+          recorded.offered === true &&
+          recorded.before?.written === true &&
+          recorded.before?.recordedOffered === false &&
+          /^Recording Book seats/.test(String(recorded.running)) &&
+          recorded.litFirst === true &&
+          recorded.turned === true &&
+          // Nobody pressed anything: Fragmentor ran the code answering the trigger.
+          recorded.first?.count === "1 of 25" &&
+          /^Fragmentor runs Book Seats with \{/.test(String(recorded.first?.caption)) &&
+          recorded.first?.page === "Book seats · recorded" &&
+          recorded.first?.noteOffered === false &&
+          recorded.first?.again === true &&
+          recorded.steps === 25 &&
+          captions[1]?.startsWith("Book Seats calls Find Event") === true &&
+          /^Find Event reads Tickets Database · events/.test(String(captions[2])) &&
+          captions.filter((caption) => caption.startsWith("Book Seats calls Price Seat")).length === 5 &&
+          captions.some((caption) => caption.startsWith("Reserve writes Tickets Database · bookings")) &&
+          captions.some((caption) => caption.startsWith("Reserve sends to Outbox · confirmations")) &&
+          // Each call into it is a box of its own, and an answer comes back out of one.
+          Number(recorded.priceSeatBoxes) >= 5 &&
+          captions.at(-2)?.startsWith("Book Seats gives back to Fragmentor") === true &&
+          recorded.flowStarts === "(outside)" &&
+          // What the execution says must happen, held to what ran: nothing failed,
+          // and the service's response is judged by what its answering block returned.
+          recorded.read?.section === true &&
+          recorded.read?.red === 0 &&
+          (recorded.read?.met ?? []).includes('A "response" effect at tickets/booking-api.bookSeats') &&
+          recorded.back?.written === true &&
+          recorded.back?.count === "1 of 20"
+        );
+      })(),
+    ],
     ["a new project starts a git repository, so its blocks have versions from the start", value("newRepo", "started") === true],
     [
       "every block's panel ends with its versions, the saved ones and then its git history, newest first, with no window of their own",
@@ -1580,7 +1672,9 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       "an execution is stepped through on the tree, one arrow at a time, and read end to end as its own drawing",
       value("execution", "opened") === true &&
         value("execution", "offered") === "clean-up-sessions deliver-a-notification log-in log-out send-a-message" &&
-        value("execution", "source") === "declared" &&
+        value("execution", "source") === "Written down" &&
+        value("execution", "recordDisabled") === true &&
+        /^"Send Button" answers app\/client\/ui\/send-button, but cannot be recorded: .*does not import its contract/.test(String(value("execution", "unrecordable"))) &&
         value("execution", "count") === "1 of 19" &&
         // What sets it going, in the agent's words, from outside the system.
         /Someone uses Send Button/.test(String(value("execution", "caption"))) &&
@@ -1829,8 +1923,9 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
     [
       "a block on screen shows what a run did anywhere inside it, whoever called it, and one it never touched stays dark",
       // Every block that holds something the run touched says so, up to the
-      // system itself; the handler it never called stays dark.
-      value("watched", "done") === "book-seats booking-api find-event price-seat pricing reserve tickets" &&
+      // system itself, and so does every store it read or wrote and the queue
+      // it sent to; the handler it never called stays dark.
+      value("watched", "done") === "book-seats booking-api find-event outbox price-seat pricing reserve tickets tickets-db" &&
         value("watched", "untouched") === true,
     ],
     [
@@ -3163,6 +3258,88 @@ function attachSelfCheck(
         `);
         await capture(window, "self-check-tight");
 
+        // Book seats recorded: its code is held to its contract, so pressing
+        // Record runs it, lights up what it touches, stores included, and then
+        // turns the bar to what Fragmentor saw, to be stepped through and
+        // read as a flow like the steps written down.
+        await run("recorded", `
+          const button = (label) => [...document.querySelectorAll("#exec-bar .run-btn")].find((b) => b.textContent === label);
+          const chip = (label) => [...document.querySelectorAll("#exec-bar .chip")].find((c) => c.textContent === label);
+          const pressed = (label) => chip(label)?.getAttribute("aria-pressed") === "true";
+          const record = button("Record");
+          if (!record || record.disabled) return { offered: false };
+          const before = { written: pressed("Written down"), recordedOffered: chip("Recorded") ? !chip("Recorded").disabled : null };
+
+          record.click();
+          // Said at once, before the run has even started.
+          const running = text("#run-bar");
+          // The database lights up while the run is being shown, before the bar turns to it.
+          const lit = () => Boolean(document.querySelector('.block-box[data-id="tickets-db"][data-run]'));
+          await until(() => lit() || pressed("Recorded"), 30000);
+          const litFirst = lit() && !pressed("Recorded");
+          const turned = Boolean(await until(() => pressed("Recorded"), 30000));
+          await wait(300);
+
+          const first = {
+            count: text(".exec-count"),
+            caption: text(".exec-caption-text"),
+            page: text("#inspector .insp-id"),
+            noteOffered: [...document.querySelectorAll("#inspector button")].some((b) => b.textContent === "Leave a note on this step"),
+            again: Boolean(button("Record again")),
+            runBar: text("#run-bar"),
+          };
+          const recording = [...document.querySelectorAll("#inspector .section")].find((each) => (each.querySelector("h4") || {}).textContent === "Recording");
+          const part = (title) => recording && [...recording.querySelectorAll(".subsection")].find((each) => each.querySelector("h5").textContent === title);
+          const read = {
+            section: Boolean(recording),
+            red: recording ? recording.querySelectorAll(".bench-note.bad").length : -1,
+            met: part("Met") ? [...part("Met").querySelectorAll(".bench-note")].map((p) => p.textContent) : [],
+          };
+          return { offered: true, before, running, litFirst, turned, first, read };
+        `);
+        await capture(window, "self-check-recorded");
+
+        await run("recordedRead", `
+          const button = (label) => [...document.querySelectorAll("#exec-bar .run-btn")].find((b) => b.textContent === label);
+          const chip = (label) => [...document.querySelectorAll("#exec-bar .chip")].find((c) => c.textContent === label);
+          // Every step of what ran, in the bar's own words.
+          const captions = [text(".exec-caption-text")];
+          for (let i = 0; i < 60 && button("Step into") && !button("Step into").disabled; i += 1) {
+            button("Step into").click();
+            await wait(60);
+            captions.push(text(".exec-caption-text"));
+          }
+
+          chip("Flow").click();
+          await until(() => document.querySelector(".flow-box"));
+          await wait(300);
+          document.getElementById("zoom-fit").click();
+          await wait(500);
+          const keys = [...document.querySelectorAll(".flow-box")].map((box) => box.dataset.key);
+          return {
+            steps: captions.length,
+            captions,
+            priceSeatBoxes: keys.filter((key) => key === "tickets/booking-api/pricing/price-seat").length,
+            flowStarts: keys[0],
+          };
+        `);
+        await capture(window, "self-check-recorded-flow");
+
+        // Back to the steps the agent wrote down, and the run taken off the diagram.
+        await run("recordedBack", `
+          const chip = (label) => [...document.querySelectorAll("#exec-bar .chip")].find((c) => c.textContent === label);
+          const pressed = (label) => chip(label)?.getAttribute("aria-pressed") === "true";
+          chip("Tree").click();
+          await wait(300);
+          chip("Written down").click();
+          await wait(300);
+          const back = { written: pressed("Written down"), count: text(".exec-count") };
+          const clear = [...document.querySelectorAll("#run-bar button")].find((b) => b.textContent === "Clear");
+          if (clear) clear.click();
+          await wait(200);
+          return { back };
+        `);
+
         // A block's versions, from the history the tickets copy was given at
         // the start: pricing as it ships, and an older pricing with a part of
         // its own that took a fifth off from the third seat.
@@ -4274,11 +4451,15 @@ function attachSelfCheck(
           const outside = outsideOn();
           await pick("send-a-message");
 
+          const record = [...document.querySelectorAll("#exec-bar .run-btn")].find((b) => b.textContent === "Record");
           return {
             opened: true,
             offered,
             outside,
-            source: text(".exec-source"),
+            source: text('.exec-source[aria-pressed="true"]'),
+            // Its code does not import its contract, so it cannot be recorded, and the bar says why.
+            recordDisabled: record ? record.disabled : "no Record button",
+            unrecordable: text("#exec-bar .exec-why"),
             count: text(".exec-count"),
             caption: text(".exec-caption-text"),
             // One arrow at a time, and nothing else laid over the tree.

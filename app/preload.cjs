@@ -21,6 +21,7 @@ const CHANNELS = {
   revealCode: "code:reveal",
   readCode: "code:read",
   watchRun: "run:start",
+  recordRun: "run:record",
   controlRun: "run:control",
   runEvent: "run:event",
   saveCases: "block:save-cases",
@@ -60,6 +61,7 @@ contextBridge.exposeInMainWorld("fragmentor", {
   revealCode: (dir, file) => ipcRenderer.invoke(CHANNELS.revealCode, dir, file),
   readCode: (dir, pointer) => ipcRenderer.invoke(CHANNELS.readCode, dir, pointer),
   watchRun: (request) => ipcRenderer.invoke(CHANNELS.watchRun, request),
+  recordRun: (request) => ipcRenderer.invoke(CHANNELS.recordRun, request),
   controlRun: (runId, command) => ipcRenderer.invoke(CHANNELS.controlRun, runId, command),
   onRunEvent: (callback) => {
     ipcRenderer.on(CHANNELS.runEvent, (_event, runId, runEvent) => callback(runId, runEvent));

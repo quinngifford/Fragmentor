@@ -269,13 +269,32 @@ describe("holding expectations to a recording", () => {
         effects: [{ kind: "response", at: "tickets/booking-api.bookSeats", detail: { booked: true } }],
         state: { "tickets/tickets-db.events": { gig: { seatsLeft: 8 } } },
       }),
-    ).toEqual({ failures: [], setAside: [] });
+    ).toEqual({
+      met: [
+        `Something crosses into ${RESERVE}`,
+        `A write from ${RESERVE} to tickets/tickets-db.bookings`,
+        'A "response" effect at tickets/booking-api.bookSeats',
+        "What tickets/tickets-db.events holds at the end",
+      ],
+      failures: [],
+      setAside: [],
+    });
     expect(expecting({ interactions: [{ from: RESERVE, to: "tickets/tickets-db.bookings", kind: "write", payload: { total: 55 } }] })).toEqual({
+      met: [],
       failures: [
         `A write from ${RESERVE} to tickets/tickets-db.bookings happened, but not as expected: payload.total was 50, expected 55.`,
       ],
       setAside: [],
     });
+  });
+
+  it("says one of two expectations wanting the same event is met, and fails the other", () => {
+    const write = { from: RESERVE, to: "tickets/tickets-db.bookings", kind: "write" };
+    const found = expecting({ interactions: [write, write] });
+    expect(found.met).toEqual([`A write from ${RESERVE} to tickets/tickets-db.bookings`]);
+    expect(found.failures).toEqual([
+      `A write from ${RESERVE} to tickets/tickets-db.bookings happened once, which is not enough for every expectation asking for it.`,
+    ]);
   });
 
   it("holds a remove written by its row's id to the key the code removed", () => {
@@ -290,6 +309,7 @@ describe("holding expectations to a recording", () => {
 
   it("sets aside what never happening proves nothing about, and never counts it as met", () => {
     expect(expecting({ never: ["tickets/outbox.reminders", "tickets/box-office"], effects: [{ kind: "ui-changed" }] })).toEqual({
+      met: [],
       failures: [],
       setAside: [
         { expectation: 'A "ui-changed" effect', why: 'Fragmentor does not record "ui-changed" effects.' },
@@ -306,6 +326,7 @@ describe("holding expectations to a recording", () => {
     ]);
     const quiet = recordedTrace("x", scope, heard.slice(0, 4), outcome);
     expect(expecting({ never: ["tickets/outbox"] }, true, quiet)).toEqual({
+      met: [],
       failures: [],
       setAside: [{ expectation: "Nothing happens in tickets/outbox", why: "Checked only for tickets/outbox.confirmations." }],
     });
@@ -315,8 +336,9 @@ describe("holding expectations to a recording", () => {
 
   it("meets what it finds even where it cannot see everything, and sets aside what it does not", () => {
     const fromAnywhere = { to: "tickets/tickets-db.events", kind: "read" };
-    expect(expecting({ interactions: [fromAnywhere] })).toEqual({ failures: [], setAside: [] });
+    expect(expecting({ interactions: [fromAnywhere] })).toEqual({ met: ["A read to tickets/tickets-db.events"], failures: [], setAside: [] });
     expect(expecting({ interactions: [{ ...fromAnywhere, kind: "remove" }] })).toEqual({
+      met: [],
       failures: [],
       setAside: [
         {
@@ -393,6 +415,7 @@ describe("blocks whose code shares a file", () => {
         interactions: [{ from: RESERVE, to: "tickets/tickets-db.bookings", kind: "write" }],
       }),
     ).toEqual({
+      met: [],
       failures: [],
       setAside: [
         { expectation: `Something crosses into ${RESERVE}`, why: sharing },
@@ -404,7 +427,7 @@ describe("blocks whose code shares a file", () => {
 
   it("still counts a call into such a block that was heard, and what reached a store", () => {
     // Called through its export, as another file would, reserve is heard.
-    expect(expecting({ entered: [RESERVE] }, trace)).toEqual({ failures: [], setAside: [] });
+    expect(expecting({ entered: [RESERVE] }, trace)).toEqual({ met: [`Something crosses into ${RESERVE}`], failures: [], setAside: [] });
     expect(expecting({ never: [BOOK] }).failures).toHaveLength(1);
     expect(
       expecting({
@@ -413,6 +436,10 @@ describe("blocks whose code shares a file", () => {
           { kind: "response", at: "tickets/booking-api.bookSeats", detail: { booked: true } },
         ],
       }),
-    ).toEqual({ failures: [], setAside: [] });
+    ).toEqual({
+      met: ['A "row-changed" effect at tickets/tickets-db.events', 'A "response" effect at tickets/booking-api.bookSeats'],
+      failures: [],
+      setAside: [],
+    });
   });
 });

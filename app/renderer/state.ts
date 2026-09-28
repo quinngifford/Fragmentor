@@ -1,6 +1,8 @@
 import type { ProjectSnapshot, SnapshotExecution } from "../../src/project/snapshot.js";
 import type { CaseResult, RunEvent, RunOutcome, StoreSeeds } from "../../src/run/run.js";
 import type { Role } from "../../src/model/roles.js";
+import type { Trace } from "../../src/model/trace.js";
+import type { RecordingScope } from "../../src/model/recorded.js";
 
 /**
  * What the interface is currently showing. Kernel types are imported for their
@@ -39,6 +41,32 @@ export interface Watch {
   outcome: RunOutcome | null;
   /** Which of a block's calls the inspector shows, when it was called more than once, by block path. */
   frames: Map<string, number>;
+  /** The stores and queues used in the run so far, by target, and how: `read`, `write`. */
+  stores: Map<string, Set<string>>;
+  /**
+   * Set when the run is a recording of an execution: which one, and once the
+   * run has ended, what came of it. It is handed to the execution bar only
+   * when the playback has caught up, so the lighting is never cut short.
+   */
+  recording?: { execution: string; name: string; made: Recording | null; couldNotRecord: string | null };
+}
+
+/**
+ * What Fragmentor saw when it ran the code an execution leads to. Held in
+ * this window only, never saved: it takes well under a second to make again,
+ * and one made again always describes the code as it is now.
+ */
+export interface Recording {
+  trace: Trace;
+  scope: RecordingScope;
+  /** False when the run was stopped, or made more calls than are recorded. */
+  complete: boolean;
+  stopped: boolean;
+  truncated: boolean;
+  /** When it was made, in milliseconds since 1970. */
+  at: number;
+  /** The trigger and starting rows it ran from: once either changes, it is no longer a recording of this execution. */
+  basis: string;
 }
 
 export interface UiState {
@@ -64,7 +92,9 @@ export interface UiState {
    * is showing. One step is on screen at a time; the whole of it at once is
    * a drawing of its own.
    */
-  execution: { id: string; at: number } | null;
+  execution: { id: string; at: number; trace: "declared" | "recorded" } | null;
+  /** The last recording of each execution, by id. */
+  recordings: Map<string, Recording>;
   /** The blocks picked out on the tree, by path. */
   selection: Set<string>;
   /** The line picked out on the diagram: an access reaching a database, a queue or a service. */
@@ -218,6 +248,7 @@ export const ui: UiState = {
     }
   },
   execution: null,
+  recordings: new Map(),
   selection: new Set(),
   selectedLink: null,
   zoom: 1,
@@ -282,6 +313,24 @@ export function forgetBlocks(root: string | null): void {
 export function selectedExecution(): SnapshotExecution | null {
   const id = ui.execution?.id;
   return ui.snapshot?.executions.find((each) => each.id === id) ?? null;
+}
+
+/** What a recording of this execution runs from, as `Recording.basis` holds it. */
+export function basisOf(execution: SnapshotExecution): string {
+  return JSON.stringify([execution.trigger, execution.given]);
+}
+
+/**
+ * The last recording of an execution, while it still records it. One made
+ * before its trigger or starting rows changed is of something else, and is
+ * let go of here, whoever asks first.
+ */
+export function recordingOf(execution: SnapshotExecution): Recording | null {
+  const recording = ui.recordings.get(execution.id);
+  if (!recording) return null;
+  if (recording.basis === basisOf(execution)) return recording;
+  ui.recordings.delete(execution.id);
+  return null;
 }
 
 export function requireSnapshot(): ProjectSnapshot {

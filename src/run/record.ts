@@ -120,7 +120,7 @@ export interface Recorded {
 export async function recordExecution(
   projectDir: string,
   id: string,
-  watching: { onEvent?: (event: RunEvent) => void; started?: (control: RunControl) => void } = {},
+  watching: { onEvent?: (event: RunEvent) => void; started?: (control: RunControl) => void; breakpoints?: string[] } = {},
 ): Promise<Recorded | { why: string } | { couldNotRecord: string }> {
   const project = await loadProject(projectDir);
   const code = await readAllCode(project);
@@ -137,6 +137,7 @@ export async function recordExecution(
     blockPath: answering.block,
     input: execution.trigger.payload ?? {},
     stores: execution.given,
+    breakpoints: watching.breakpoints,
     onEvent: (event) => {
       heard.push(event);
       watching.onEvent?.(event);

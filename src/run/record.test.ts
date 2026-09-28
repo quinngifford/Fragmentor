@@ -243,6 +243,7 @@ describe("recording blocks whose code shares a file", () => {
     const recorded = await recordExecution(together, "book-seats");
     if (!("trace" in recorded)) throw new Error(JSON.stringify(recorded));
     expect(check(recorded).expectations).toEqual({
+      met: [],
       failures: [],
       setAside: [{ expectation: "Nothing happens in tickets/booking-api/book-seats/reserve", why: expect.stringContaining("share src/booking/book-seats.ts") }],
     });

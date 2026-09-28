@@ -4,6 +4,8 @@ import type { CaseResult, RunEvent, RunOutcome, StoreSeeds } from "../src/run/ru
 import type { TestCase } from "../src/run/cases.js";
 import type { BlockVersions, SavedVersion, SwapDone, VersionRef } from "../src/project/history.js";
 import type { VersionComparison } from "../src/run/versions.js";
+import type { Trace } from "../src/model/trace.js";
+import type { RecordingScope } from "../src/model/recorded.js";
 import type { FlaggedRun, Note, NoteAnchor } from "../src/project/notes.js";
 
 /**
@@ -28,6 +30,7 @@ export const CHANNELS = {
   revealCode: "code:reveal",
   readCode: "code:read",
   watchRun: "run:start",
+  recordRun: "run:record",
   controlRun: "run:control",
   runEvent: "run:event",
   saveCases: "block:save-cases",
@@ -87,6 +90,27 @@ export interface WatchRunRequest {
   breakpoints: string[];
 }
 
+/**
+ * An execution to record: the code answering its trigger, run and watched as
+ * a block run from the bench is. What runs, with what, is read from the
+ * execution's file by the main process, never taken from the window.
+ */
+export interface RecordRunRequest {
+  runId: string;
+  dir: string;
+  execution: string;
+  breakpoints: string[];
+}
+
+/**
+ * A recording made, with what it could see, or why none could be: nothing
+ * Fragmentor can run answers the trigger, or the run never got going or
+ * never ended. Only the first is ever a trace.
+ */
+export type RecordedRun =
+  | { outcome: RunOutcome; trace: Trace; scope: RecordingScope; complete: boolean }
+  | { couldNotRecord: string };
+
 /** What the person can tell a watched run to do. */
 export type RunCommand =
   | { type: "resume"; mode: "continue" | "step" | "block" }
@@ -130,6 +154,8 @@ export interface FragmentorApi {
   readCode(dir: string, pointer: string): Promise<Result<{ file: string; line: number | null; text: string | null }>>;
   /** Runs a block, reporting every block call beneath it to onRunEvent as it happens. Resolves when the run ends. */
   watchRun(request: WatchRunRequest): Promise<Result<RunOutcome>>;
+  /** Records an execution, reporting its events to onRunEvent as a watched run does. Resolves when the run ends. */
+  recordRun(request: RecordRunRequest): Promise<Result<RecordedRun>>;
   /** Resumes, re-aims or stops a watched run. */
   controlRun(runId: string, command: RunCommand): Promise<Result<null>>;
   /** Called with each event of every watched run. */

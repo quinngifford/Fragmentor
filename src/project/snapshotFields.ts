@@ -138,4 +138,14 @@ export const executionFields: FieldTable<SnapshotExecution> = {
   trigger: compared,
   declared: compared,
   expects: compared,
+  // Values, like what a step carries, are not what an execution does; and
+  // starting rows can hold real data.
+  given: ignoredPrivate,
+  // Whether it says what must happen is compared as `expects`. What it says
+  // is checked by holding a recording to it, not listed as a change.
+  expect: ignored,
+  // Both follow from its trigger and the diagram, and a page that runs
+  // nothing records nothing.
+  records: ignoredPrivate,
+  unrecordable: ignoredPrivate,
 };

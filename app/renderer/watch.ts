@@ -1,6 +1,6 @@
 import type { RunEvent, RunOutcome, StoreSeeds } from "../../src/run/run.js";
-import type { SnapshotBlock } from "../../src/project/snapshot.js";
-import type { Result, RunCommand } from "../ipc.js";
+import type { SnapshotBlock, SnapshotExecution } from "../../src/project/snapshot.js";
+import type { RecordedRun, Result, RunCommand } from "../ipc.js";
 import {
   applyBreakpoints,
   applyRunOverlay,
@@ -12,8 +12,9 @@ import {
 import type { RunOverlay } from "./canvas.js";
 import { shownAt } from "./tree.js";
 import type { Tree } from "./tree.js";
-import { requireSnapshot, ui } from "./state.js";
+import { basisOf, requireSnapshot, ui } from "./state.js";
 import type { Watch, WatchedCall } from "./state.js";
+import { showRecording } from "./execution.js";
 import { el, section, subsection } from "./dom.js";
 import { codeBlock } from "./highlight.js";
 
@@ -48,6 +49,10 @@ function play(watch: Watch, event: RunEvent): void {
     watch.calls.set(event.id, { id: event.id, parent: event.parent, block: event.block, input: event.input, state: "running" });
     return;
   }
+  if (event.type === "store") {
+    watch.stores.set(event.target, (watch.stores.get(event.target) ?? new Set()).add(STORE_USE[event.op]));
+    return;
+  }
   const call = watch.calls.get(event.id);
   if (!call) return;
   if (event.type === "return") {
@@ -80,6 +85,9 @@ function settleUnfinished(watch: Watch): void {
 /* What the diagram on screen shows                                            */
 /* -------------------------------------------------------------------------- */
 
+/** What was done to a store, as the note on it says. */
+const STORE_USE = { read: "read", list: "read", write: "written", remove: "removed from", send: "sent to" } as const;
+
 function nodeRun(calls: WatchedCall[]): { state: "running" | "paused" | "done" | "failed" | "stopped"; note: string } {
   const finished = calls.filter((call) => call.state === "returned").length;
   const has = (state: WatchedCall["state"]) => calls.some((call) => call.state === state);
@@ -111,7 +119,13 @@ function overlayFor(watch: Watch, tree: Tree): RunOverlay {
   for (const node of tree.nodes.values()) {
     const path = node.path;
     const inside = [...watch.calls.values()].filter((call) => isWithin(call.block, path));
-    if (inside.length === 0) continue;
+    if (inside.length === 0) {
+      // A database or a queue is never called: it lights up when a row in
+      // it is read or written, or a message is sent to it, and says which.
+      const uses = [...watch.stores].flatMap(([target, how]) => (isWithin(target.split(".")[0]!, path) ? [...how] : []));
+      if (uses.length > 0) overlay.nodes.set(path, { state: "done", note: [...new Set(uses)].join(", "), flag: false });
+      continue;
+    }
     // A block that was called says how its own calls went; the calls made
     // inside it are its own business, and counting them would make one call
     // read as several. A group of parts is never called, so it says how many
@@ -179,8 +193,8 @@ function followWhenSettled(watch: Watch): void {
 
 /** How long to linger on an event: long enough to see a block light up. */
 function pace(event: RunEvent): number {
-  // What a call did to a store lights nothing here, so it takes no time.
-  if (event.type === "paused" || event.type === "resumed" || event.type === "store") return 0;
+  if (event.type === "paused" || event.type === "resumed") return 0;
+  // A store lighting up is a short beat, as an answer coming back is.
   return event.type === "call" ? 280 : 140;
 }
 
@@ -217,11 +231,8 @@ function schedule(): void {
   if (watch.played >= watch.events.length) {
     // Shown to the end. Once the run itself has ended too, whatever never
     // finished was cut short, and the panels can show how it all came out.
-    if (watch.outcome) {
-      settleUnfinished(watch);
-      paint();
-      notify();
-    } else {
+    if (watch.outcome) finish(watch);
+    else {
       renderRunBar();
     }
     return;
@@ -242,18 +253,34 @@ function command(watch: Watch, instruction: RunCommand): void {
   void window.fragmentor.controlRun(watch.runId, instruction);
 }
 
+/**
+ * The run has ended and been shown to the end. A recording is handed to the
+ * execution bar now, once, rather than when the run ended, so the lighting
+ * is never cut short.
+ */
+function finish(watch: Watch): void {
+  settleUnfinished(watch);
+  const made = watch.recording?.made;
+  if (watch.recording && made) {
+    ui.recordings.set(watch.recording.execution, made);
+    watch.recording.made = null;
+    showRecording(watch.recording.execution);
+  }
+  paint();
+  notify();
+}
+
 function skip(watch: Watch): void {
   stopPlayback();
   while (watch.played < watch.events.length) play(watch, watch.events[watch.played++]!);
-  settleUnfinished(watch);
-  paint();
-  notify();
+  finish(watch);
 }
 
 function replay(watch: Watch): void {
   stopPlayback();
   watch.played = 0;
   watch.calls = new Map();
+  watch.stores = new Map();
   watch.heldId = null;
   paint();
   schedule();
@@ -274,23 +301,7 @@ let runs = 0;
  * with the outcome once the run ends.
  */
 export async function runWatched(block: SnapshotBlock, input: unknown, stores: StoreSeeds = {}): Promise<Result<RunOutcome>> {
-  const previous = ui.watch;
-  if (previous && !previous.outcome) command(previous, { type: "stop" });
-  stopPlayback();
-
-  const watch: Watch = {
-    runId: `${Date.now()}-${++runs}`,
-    blockPath: block.path,
-    events: [],
-    played: 0,
-    calls: new Map(),
-    heldId: null,
-    outcome: null,
-    frames: new Map(),
-  };
-  ui.watch = watch;
-  paint();
-
+  const watch = startWatching(block.path);
   const result = await window.fragmentor.watchRun({
     runId: watch.runId,
     dir: requireSnapshot().dir,
@@ -301,12 +312,78 @@ export async function runWatched(block: SnapshotBlock, input: unknown, stores: S
   });
 
   if (ui.watch === watch) {
-    watch.outcome = result.ok
-      ? result.value
-      : { ok: false, error: result.error, inputProblems: [], outputProblems: [], stores: {}, logs: [], durationMs: 0 };
+    watch.outcome = result.ok ? result.value : failedRun(result.error);
     schedule();
   }
   return result;
+}
+
+/** A run on the canvas, replacing whichever was there, which is stopped if it is still going. */
+function startWatching(blockPath: string): Watch {
+  const previous = ui.watch;
+  if (previous && !previous.outcome) command(previous, { type: "stop" });
+  stopPlayback();
+
+  const watch: Watch = {
+    runId: `${Date.now()}-${++runs}`,
+    blockPath,
+    events: [],
+    played: 0,
+    calls: new Map(),
+    heldId: null,
+    outcome: null,
+    frames: new Map(),
+    stores: new Map(),
+  };
+  ui.watch = watch;
+  paint();
+  return watch;
+}
+
+const failedRun = (error: string): RunOutcome => ({ ok: false, error, inputProblems: [], outputProblems: [], stores: {}, logs: [], durationMs: 0 });
+
+/**
+ * Records an execution: runs the code answering its trigger with the diagram
+ * following along, as a run from the bench is, and once the playback has
+ * shown it all, hands what was seen to the execution bar. Only an execution
+ * the snapshot says can be recorded is.
+ */
+export async function recordWatched(execution: SnapshotExecution): Promise<void> {
+  if (execution.records === null) return;
+  const watch = startWatching(execution.records);
+  const recording: NonNullable<Watch["recording"]> = { execution: execution.id, name: execution.name, made: null, couldNotRecord: null };
+  watch.recording = recording;
+  const basis = basisOf(execution);
+  renderRunBar();
+
+  const result: Result<RecordedRun> = await window.fragmentor.recordRun({
+    runId: watch.runId,
+    dir: requireSnapshot().dir,
+    execution: execution.id,
+    breakpoints: [...ui.breakpoints],
+  });
+  if (ui.watch !== watch) return;
+
+  const made = result.ok ? result.value : { couldNotRecord: result.error };
+  if ("couldNotRecord" in made) {
+    recording.couldNotRecord = made.couldNotRecord;
+    // One made before is of code that can no longer be recorded as it was.
+    ui.recordings.delete(execution.id);
+    watch.outcome = failedRun(made.couldNotRecord);
+  } else {
+    const { trace, scope, complete, outcome } = made;
+    recording.made = {
+      trace,
+      scope,
+      complete,
+      stopped: outcome.stopped === true,
+      truncated: outcome.truncated === true,
+      at: Date.now(),
+      basis,
+    };
+    watch.outcome = outcome;
+  }
+  schedule();
 }
 
 /** Whether a watched run pauses before a block. A run under way hears about the change at once. */
@@ -351,6 +428,7 @@ function renderRunBar(): void {
 
   const blocks = ui.snapshot?.blocks ?? {};
   const name = blocks[watch.blockPath]?.name ?? watch.blockPath;
+  const recording = watch.recording;
   // Only a run that is still going can be held; a replay shows pauses as they were.
   const held = heldCall(watch);
   const state = el("span", "run-state");
@@ -380,19 +458,25 @@ function renderRunBar(): void {
       barButton("Stop", "End the run here", () => command(watch, { type: "stop" })),
     );
   } else if (!watch.outcome) {
-    state.textContent = `Running ${name}…`;
+    state.textContent = recording ? `Recording ${recording.name}…` : `Running ${name}…`;
     buttons.push(barButton("Stop", "End the run here", () => command(watch, { type: "stop" })));
   } else if (watch.played < watch.events.length) {
     state.textContent = `Showing how ${name} ran…`;
     buttons.push(barButton("Skip to the end", "Show the finished run at once", () => skip(watch)));
   } else {
     const outcome = watch.outcome;
-    state.textContent = outcome.stopped
-      ? `${name} was stopped`
-      : outcome.ok
-        ? `${name} finished in ${outcome.durationMs} ms`
-        : `${name} failed: ${outcome.error ?? "no reason was given"}`;
-    if (!outcome.stopped) state.dataset.tone = outcome.ok ? "good" : "bad";
+    // A recording that could not be made has no run to speak of, only why.
+    const failed = recording?.couldNotRecord ? `Could not record ${recording.name}: ${recording.couldNotRecord}` : null;
+    const recorded = recording ? `Recorded ${recording.name}: ` : "";
+    state.textContent =
+      failed ??
+      (outcome.stopped
+        ? `${recorded}${name} was stopped`
+        : outcome.ok
+          ? `${recorded}${name} finished in ${outcome.durationMs} ms`
+          : `${recorded}${name} failed: ${outcome.error ?? "no reason was given"}`);
+    if (failed !== null) state.dataset.tone = "bad";
+    else if (!outcome.stopped) state.dataset.tone = outcome.ok ? "good" : "bad";
     buttons.push(
       barButton("Replay", "Watch the run again", () => replay(watch)),
       barButton("Clear", "Take the run off the diagram", clear),

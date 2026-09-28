@@ -160,6 +160,26 @@ describe("executions in a snapshot", () => {
     });
   });
 
+  it("says which code a recording of each execution runs, or why none can be, and where each entry leads", async () => {
+    const examples = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "examples");
+    const tickets = await projectSnapshot(path.join(examples, "tickets"));
+    const bookSeats = tickets.executions.find((each) => each.id === "book-seats")!;
+    expect([bookSeats.records, bookSeats.unrecordable]).toEqual(["tickets/booking-api/book-seats", null]);
+    // What it starts from and must do travel with it, so a recording can be held to them in the window.
+    expect(Object.keys(bookSeats.given)).toContain("tickets/tickets-db.events");
+    expect(bookSeats.expect?.effects.length).toBeGreaterThan(0);
+    expect(tickets.blocks["tickets/box-office"]!.exposes.find((each) => each.name === "bookSeats")!.route).toEqual([
+      { path: "tickets/box-office", entry: "bookSeats" },
+      { path: "tickets/booking-api", entry: "bookSeats" },
+      { path: "tickets/booking-api/book-seats", entry: null },
+    ]);
+
+    const messenger = await projectSnapshot(path.join(examples, "messenger"));
+    const send = messenger.executions.find((each) => each.id === "send-a-message")!;
+    expect(send.records).toBeNull();
+    expect(send.unrecordable).toContain("does not import its contract");
+  });
+
   it("still opens a project whose executions cannot be read, and says why", async () => {
     // A file where the folder should be, which reading the folder refuses.
     await writeFile(path.join(dir, "executions"), "not a folder", "utf8");

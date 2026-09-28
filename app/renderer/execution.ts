@@ -1,5 +1,6 @@
 import { addressesOf, nextStep, placeEvent, travelOf } from "../../src/model/trace.js";
 import type { Address, InteractionKind, Trace, TraceEvent, View } from "../../src/model/trace.js";
+import { checkRecording } from "../../src/model/recorded.js";
 import type { SnapshotExecution } from "../../src/project/snapshot.js";
 import type { TriggerKind } from "../../src/project/executions.js";
 import type { NoteAnchor } from "../../src/project/notes.js";
@@ -7,8 +8,9 @@ import { applyExecutionMark, keepInView, onFlowWanted, onStepChosen, revealBlock
 import type { ExecutionMark } from "./canvas.js";
 import { buildFlow } from "./flow.js";
 import { shownAt } from "./tree.js";
-import { requireSnapshot, selectedExecution, ui } from "./state.js";
-import { el, section } from "./dom.js";
+import { recordingOf, requireSnapshot, selectedExecution, ui } from "./state.js";
+import type { Recording } from "./state.js";
+import { el, section, subsection } from "./dom.js";
 import { codeBlock } from "./highlight.js";
 
 /**
@@ -41,7 +43,7 @@ export function onExecutionChange(callback: (options: { redraw: boolean }) => vo
 /* In words                                                                    */
 /* -------------------------------------------------------------------------- */
 
-function placeName(address: Address | null): string {
+function nameOfPlace(address: Address | null): string {
   if (address === null) return "outside";
   const name = ui.snapshot?.blocks[address.path]?.name ?? address.path;
   return address.entry === null ? name : `${name} · ${address.entry}`;
@@ -65,6 +67,15 @@ const ARRIVALS: Record<TriggerKind, string> = {
   webhook: "A webhook arrives at",
 };
 
+/**
+ * Who set a trace going: what its trigger says for one written down, and null
+ * for a recording, which Fragmentor started itself by running the code the
+ * trigger leads to. Nobody pressed anything.
+ */
+type Start = TriggerKind | null;
+
+const startOf = (execution: SnapshotExecution, trace: Trace): Start => (trace.source === "recorded" ? null : execution.trigger.kind);
+
 /** What travelled, short enough for one line. The whole of it is on the step's own page. */
 function carried(value: unknown, most = 70): string {
   if (value === undefined) return "";
@@ -75,22 +86,28 @@ function carried(value: unknown, most = 70): string {
 const words = (kind: string) => kind.replace(/-/g, " ");
 
 /** One event in words, as the bar says it while stepping. */
-export function describeStep(event: TraceEvent, trigger: TriggerKind, most?: number): string {
-  if (event.type === "effect") return `${words(event.kind)} at ${placeName(event.at)}${carried(event.detail, most)}`;
+export function describeStep(event: TraceEvent, start: Start, most?: number): string {
+  // What a recording starts from, and answers at the end, is Fragmentor itself.
+  const named = (address: Address | null) => (address === null && start === null ? "Fragmentor" : nameOfPlace(address));
+  if (event.type === "effect") return `${words(event.kind)} at ${named(event.at)}${carried(event.detail, most)}`;
   if (event.type === "return") {
+    if (event.error !== undefined) return `${named(event.to)} throws to ${named(event.from)}${carried(event.error, most)}`;
     return event.response === undefined
-      ? `${placeName(event.to)} finishes for ${placeName(event.from)}`
-      : `${placeName(event.to)} gives back to ${placeName(event.from)}${carried(event.response, most)}`;
+      ? `${named(event.to)} finishes for ${named(event.from)}`
+      : `${named(event.to)} gives back to ${named(event.from)}${carried(event.response, most)}`;
   }
-  if (event.from === null) return `${ARRIVALS[trigger]} ${placeName(event.to)}${carried(event.payload, most)}`;
-  return `${placeName(event.from)} ${VERBS[event.kind]} ${placeName(event.to)}${carried(event.payload, most)}`;
+  if (event.from === null && start === null) {
+    return `Fragmentor runs ${named(event.to)}${event.payload === undefined ? "" : ` with${carried(event.payload, most).slice(1)}`}`;
+  }
+  if (event.from === null) return `${ARRIVALS[start!]} ${named(event.to)}${carried(event.payload, most)}`;
+  return `${named(event.from)} ${VERBS[event.kind]} ${named(event.to)}${carried(event.payload, most)}`;
 }
 
 /** A word for the arrow itself: what kind of step it is. */
-function stepWord(event: TraceEvent, trigger: TriggerKind): string {
-  if (event.type === "return") return "gives back";
+function stepWord(event: TraceEvent, start: Start): string {
+  if (event.type === "return") return event.error === undefined ? "gives back" : "throws";
   if (event.type === "effect") return words(event.kind);
-  return event.from === null ? trigger : event.kind;
+  return event.from === null ? (start ?? "runs") : event.kind;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -108,7 +125,7 @@ export function shownView(): View {
 }
 
 /** One step of a trace as the tree draws it: an arrow between two blocks, or a mark at one. */
-export function markFor(event: TraceEvent, trigger: TriggerKind): ExecutionMark | null {
+export function markFor(event: TraceEvent, trigger: Start): ExecutionMark | null {
   const tree = treeInView();
   if (!tree) return null;
   const view = shownView();
@@ -155,12 +172,17 @@ export function markFor(event: TraceEvent, trigger: TriggerKind): ExecutionMark 
 /* Stepping                                                                    */
 /* -------------------------------------------------------------------------- */
 
-/** The execution picked, with the trace there is to show of it. */
-function picked(): { execution: SnapshotExecution; trace: Trace | null } | null {
+/**
+ * The execution picked, with the trace there is to show of it: the one asked
+ * for, written down or recorded, or the other when there is only that.
+ */
+function picked(): { execution: SnapshotExecution; trace: Trace | null; written: Trace | null; recording: Recording | null } | null {
   const execution = selectedExecution();
   if (!execution) return null;
-  const trace = execution.declared && execution.declared.events.length > 0 ? execution.declared : null;
-  return { execution, trace };
+  const written = execution.declared && execution.declared.events.length > 0 ? execution.declared : null;
+  const recording = recordingOf(execution);
+  const trace = ui.execution?.trace === "recorded" ? (recording?.trace ?? written) : (written ?? recording?.trace ?? null);
+  return { execution, trace, written, recording };
 }
 
 /** The step showing now, if an execution is being stepped through. */
@@ -194,20 +216,30 @@ export function paintExecution(): void {
 
   // The flow is a drawing of the execution itself, so the step is marked on
   // it rather than laid over it.
-  drawnMark = step && ui.shows === "tree" ? markFor(step.event, step.execution.trigger.kind) : null;
+  drawnMark = step && ui.shows === "tree" ? markFor(step.event, startOf(step.execution, step.trace)) : null;
   applyExecutionMark(drawnMark);
   renderBar();
 }
 
-/** Called once, as the window starts: the canvas asks for the flow when it is showing one. */
-export function setUpExecutions(): void {
+/** Starts a recording of an execution. Only a window that can run code is given one. */
+let record: ((execution: SnapshotExecution) => void) | null = null;
+
+/**
+ * Called once, as the window starts: the canvas asks for the flow when it is
+ * showing one. `recordIt` is how the bar's Record button records, which this
+ * module cannot do itself, since it asks nothing of the main process.
+ */
+export function setUpExecutions(recordIt?: (execution: SnapshotExecution) => void): void {
+  record = recordIt ?? null;
   onFlowWanted(() => {
     const step = currentStep();
     if (!step) return null;
+    const start = startOf(step.execution, step.trace);
     return {
-      flow: buildFlow(step.trace, (event) => stepWord(event, step.execution.trigger.kind)),
+      flow: buildFlow(step.trace, (event) => stepWord(event, start)),
       at: step.at,
-      name: (path) => (path === null ? "Outside" : (ui.snapshot?.blocks[path]?.name ?? path)),
+      // A recording starts with Fragmentor running the code, not with anything outside.
+      name: (path) => (path === null ? (start === null ? "Fragmentor" : "Outside") : (ui.snapshot?.blocks[path]?.name ?? path)),
     };
   });
   onStepChosen((at) => {
@@ -225,7 +257,7 @@ function stopPlaying(): void {
 
 function choose(id: string | null): void {
   stopPlaying();
-  ui.execution = id === null ? null : { id, at: 0 };
+  ui.execution = id === null ? null : { id, at: 0, trace: "declared" };
   // Nothing to draw a flow of without an execution.
   if (id === null) ui.shows = "tree";
   showStep();
@@ -314,11 +346,38 @@ export function goToStep(executionId: string, stepId: string): boolean {
   const at = events.findIndex((each) => each.id === stepId);
   if (at === -1) return false;
   stopPlaying();
-  ui.execution = { id: executionId, at };
+  ui.execution = { id: executionId, at, trace: "declared" };
   ui.showInspector = true;
   showStep();
   arrive(events[at]!, true);
   return true;
+}
+
+/**
+ * A recording of an execution has just been made. The bar turns to it, from
+ * its first step, if the person is still on that execution; otherwise it is
+ * there for when they come back to it.
+ */
+export function showRecording(id: string): void {
+  if (ui.execution?.id !== id) {
+    renderBar();
+    return;
+  }
+  stopPlaying();
+  ui.execution = { id, at: 0, trace: "recorded" };
+  showStep();
+  notify({ redraw: ui.shows === "flow" });
+  paintExecution();
+}
+
+/** Shows the other trace of the execution picked, from its first step: the two are different runs, step for step. */
+function showTrace(trace: "declared" | "recorded"): void {
+  if (!ui.execution || ui.execution.trace === trace) return;
+  stopPlaying();
+  ui.execution = { ...ui.execution, at: 0, trace };
+  showStep();
+  notify({ redraw: ui.shows === "flow" });
+  paintExecution();
 }
 
 function jump(at: number): void {
@@ -344,12 +403,14 @@ function barButton(label: string, title: string, action: () => void): HTMLButton
 
 const SOURCE_NOTES = {
   declared: "Written down by the agent from reading the code. Fragmentor has not seen it run.",
-  recorded: "What Fragmentor saw happen when it ran the code.",
+  recorded:
+    "What Fragmentor saw when it ran the code answering this execution's trigger, with stores of its own standing in for the real ones. It starts at that code: nothing before it ran.",
 };
+
+const SOURCE_WORDS = { declared: "Written down", recorded: "Recorded" };
 
 /** The controls for stepping through a trace, kept so they can be brought up to date rather than replaced. */
 interface StepControls {
-  source: HTMLElement;
   restart: HTMLButtonElement;
   step: HTMLButtonElement;
   into: HTMLButtonElement;
@@ -379,7 +440,14 @@ function renderBar(): void {
   }
 
   const shown = picked();
-  const key = JSON.stringify([executions.map((each) => [each.id, each.name]), ui.execution?.id ?? null, Boolean(shown?.trace), ui.shows]);
+  const key = JSON.stringify([
+    executions.map((each) => [each.id, each.name, each.records, each.unrecordable]),
+    ui.execution?.id ?? null,
+    shown?.trace?.source ?? null,
+    Boolean(shown?.written),
+    shown?.recording?.at ?? null,
+    ui.shows,
+  ]);
   if (bar?.key !== key) bar = buildBar(host, key, executions, shown);
   updateBar(bar, shown);
 }
@@ -401,7 +469,27 @@ function buildBar(
   host.append(controls);
 
   if (!shown) return { key, select, steps: null };
+
+  // Offered whatever is written down, and most of all where nothing is.
+  let recordButton: HTMLButtonElement | null = null;
+  if (record) {
+    const recordIt = record;
+    const { execution } = shown;
+    const runs = execution.records === null ? null : (ui.snapshot?.blocks[execution.records]?.name ?? execution.records);
+    recordButton = barButton(
+      shown.recording ? "Record again" : "Record",
+      runs === null
+        ? (execution.unrecordable ?? "")
+        : `Run ${runs} with what this execution starts from, and see what the code really does. Nothing is saved.`,
+      () => recordIt(execution),
+    );
+    recordButton.disabled = runs === null;
+    // Why not is said where it can be read, not only when the button is hovered.
+    if (execution.unrecordable) host.append(el("div", "exec-why", execution.unrecordable));
+  }
+
   if (!shown.trace) {
+    if (recordButton) controls.append(recordButton);
     controls.append(el("span", "exec-count", "nothing written down for it yet"));
     return { key, select, steps: null };
   }
@@ -427,8 +515,23 @@ function buildBar(
   }
   controls.append(shows);
 
+  // Which trace is on screen: the agent's, or what Fragmentor saw. Never left to be guessed.
+  const sources = el("div", "exec-shows");
+  for (const trace of ["declared", "recorded"] as const) {
+    const there = trace === "declared" ? shown.written !== null : shown.recording !== null;
+    const chip = el("button", "chip exec-source", SOURCE_WORDS[trace]);
+    chip.type = "button";
+    chip.dataset.source = trace;
+    chip.title = there ? SOURCE_NOTES[trace] : trace === "declared" ? "Nothing is written down for it yet." : "Press Record to see what the code really does.";
+    chip.disabled = !there;
+    chip.setAttribute("aria-pressed", String(shown.trace.source === trace));
+    chip.addEventListener("click", () => showTrace(trace));
+    sources.append(chip);
+  }
+  controls.append(sources);
+  if (recordButton) controls.append(recordButton);
+
   const steps: StepControls = {
-    source: el("span", "exec-source"),
     restart: barButton("Restart", "Back to what set it going", () => jump(0)),
     step: barButton("Step", "On to the next step", () => {
       stopPlaying();
@@ -442,7 +545,7 @@ function buildBar(
     count: el("span", "exec-count"),
     caption: el("span", "exec-caption-text"),
   };
-  controls.append(steps.source, steps.restart, steps.step, steps.into, steps.play, steps.count);
+  controls.append(steps.restart, steps.step, steps.into, steps.play, steps.count);
   const caption = el("div", "exec-caption");
   caption.append(steps.caption);
   host.append(caption);
@@ -455,19 +558,15 @@ function updateBar(built: NonNullable<typeof bar>, shown: ReturnType<typeof pick
   const step = currentStep();
   if (!steps || !shown?.trace || !step) return;
 
-  steps.source.textContent = shown.trace.source;
-  steps.source.title = SOURCE_NOTES[shown.trace.source];
-  steps.source.dataset.source = shown.trace.source;
-
   steps.restart.disabled = step.at === 0;
   steps.step.disabled = following(false) === null;
   steps.into.disabled = following(true) === null;
   steps.play.textContent = playing === undefined ? "Play" : "Pause";
   steps.count.textContent = `${step.at + 1} of ${step.trace.events.length}`;
 
-  const trigger = step.execution.trigger.kind;
-  steps.caption.textContent = describeStep(step.event, trigger);
-  steps.caption.title = describeStep(step.event, trigger, 4000);
+  const start = startOf(step.execution, step.trace);
+  steps.caption.textContent = describeStep(step.event, start);
+  steps.caption.title = describeStep(step.event, start, 4000);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -494,12 +593,13 @@ export function stepPage(
   if (!step) return false;
   const snapshot = requireSnapshot();
   const { event, execution } = step;
-  const trigger = execution.trigger.kind;
+  const recorded = step.trace.source === "recorded";
+  const trigger = startOf(execution, step.trace);
 
   const head = el("div", "insp-head");
   head.append(
     el("h2", undefined, `Step ${step.at + 1} of ${step.trace.events.length}`),
-    el("div", "insp-id", `${execution.name} · ${step.trace.source}`),
+    el("div", "insp-id", `${execution.name} · ${SOURCE_WORDS[step.trace.source].toLowerCase()}`),
   );
   panel.append(head);
 
@@ -507,12 +607,14 @@ export function stepPage(
   const said = event.type === "return" ? undefined : event.description;
   panel.append(el("p", "responsibility", said ?? describeStep(event, trigger, 400)));
   if (said) panel.append(el("p", "bench-note", describeStep(event, trigger, 400)));
+  if (event.type === "return" && event.error !== undefined) panel.append(el("p", "bench-note bad", `Threw: ${event.error}`));
 
   // A note on a step goes on the block the step leaves, whose code makes it,
-  // as the guide tells the agent a step's code is.
+  // as the guide tells the agent a step's code is. A recorded step is in no
+  // file the agent could find it by, so a note is left on a written one.
   const ends = event.type === "effect" ? null : (travelOf(event) ?? event);
   const leaves = event.type === "effect" ? event.at : (ends?.from ?? ends?.to ?? null);
-  if (noteOn && leaves && snapshot.blocks[leaves.path]) {
+  if (noteOn && !recorded && leaves && snapshot.blocks[leaves.path]) {
     const note = el("button", "btn quiet tiny", "Leave a note on this step");
     note.title = `A note for your coding agent about this step, on ${snapshot.blocks[leaves.path]!.name}.`;
     note.addEventListener("click", () =>
@@ -530,7 +632,8 @@ export function stepPage(
     const row = el("div", "port-row");
     row.append(el("div", "pname", label));
     if (address === null) {
-      row.append(el("div", "ptype", "outside the system"));
+      // Nobody set a recording going: Fragmentor ran the code, in place of whatever does.
+      row.append(el("div", "ptype", recorded ? "Fragmentor, from outside the system" : "outside the system"));
     } else {
       if (!snapshot.blocks[address.path]) missing = true;
       const block = snapshot.blocks[address.path];
@@ -606,13 +709,78 @@ export function stepPage(
       el("p", "bench-note", "Written down by the agent from reading the code. Fragmentor has not seen it run."),
     );
   }
+  const recording = recorded ? recordingOf(execution) : null;
+  if (recording) panel.append(recordingSection(execution, recording));
   return true;
 }
 
-/** A project was opened: nothing about the last one's executions carries over. */
+/** What sets an execution going, in words, with no full stop. */
+function triggerWords(execution: SnapshotExecution): string {
+  if (execution.trigger.description) return execution.trigger.description.replace(/\.$/, "");
+  const dot = execution.trigger.at.indexOf(".");
+  const at = dot === -1 ? { path: execution.trigger.at, entry: null } : { path: execution.trigger.at.slice(0, dot), entry: execution.trigger.at.slice(dot + 1) };
+  return `${ARRIVALS[execution.trigger.kind]} ${nameOfPlace(at)}`;
+}
+
+/**
+ * How a recording was made and how it came out: what it started from, how
+ * the run ended, and what the execution says must happen held to it.
+ *
+ * What was written down can change after the recording was made, so this is
+ * worked out again each time it is shown rather than kept.
+ */
+function recordingSection(execution: SnapshotExecution, recording: Recording): HTMLElement {
+  const node = section("Recording");
+  const runs = nameOfPlace({ path: recording.scope.runs, entry: null });
+  const check = checkRecording(execution, recording.trace, recording.scope, recording.complete);
+  const note = (text: string, bad = false) => el("p", bad ? "bench-note bad" : "bench-note", text);
+
+  node.append(
+    note(
+      `Made at ${new Date(recording.at).toLocaleTimeString()} by running ${runs} with what this execution starts from. The stores it used were Fragmentor's own, standing in for the real ones, and nothing is saved.`,
+    ),
+    note(`It starts at ${runs}, in place of what sets it going: ${triggerWords(execution)}. Nothing before ${runs} ran.`),
+  );
+  if (check.notSeeded.length > 0) {
+    node.append(note(`Starting rows it had no way to put in, so it ran without them: ${check.notSeeded.join(", ")}.`));
+  }
+
+  const first = recording.trace.events[0];
+  const ended = recording.trace.events.find((event) => event.type === "return" && first !== undefined && event.of === first.id);
+  if (recording.stopped) node.append(note("It was stopped before the run ended, so what did not happen may just not have happened yet."));
+  else if (recording.truncated) node.append(note("The run made more calls than are recorded, so the end of it was not heard."));
+  else if (ended?.type === "return" && ended.error !== undefined) node.append(note(`${runs} threw: ${ended.error}`, true));
+  else node.append(note(`${runs} returned.`));
+
+  if (execution.expect === null) {
+    node.append(note("This execution does not say what must happen, so there is nothing to hold the recording to."));
+    return node;
+  }
+  const { met, failures, setAside } = check.expectations;
+  if (failures.length > 0) {
+    const failed = subsection("Failed", "bad");
+    failed.append(...failures.map((failure) => note(failure, true)));
+    node.append(failed);
+  }
+  if (met.length > 0) {
+    const shown = subsection("Met", "good");
+    shown.append(...met.map((each) => note(each)));
+    node.append(shown);
+  }
+  if (setAside.length > 0) {
+    const aside = subsection("Set aside");
+    aside.append(note("What this recording could not see. None of it counts as met."));
+    aside.append(...setAside.map(({ expectation, why }) => note(`${expectation}: ${why}`)));
+    node.append(aside);
+  }
+  return node;
+}
+
+/** A project was opened: nothing about the last one's executions carries over, its recordings included. */
 export function resetExecutions(): void {
   stopPlaying();
   ui.execution = null;
+  ui.recordings.clear();
   ui.folded.clear();
   ui.shows = "tree";
 }

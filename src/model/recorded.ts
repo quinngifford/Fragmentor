@@ -210,6 +210,8 @@ export interface StepVerdict {
 
 export interface RecordingCheck {
   expectations: {
+    /** Expectations the recording shows were met, each as `describeWanted` words it. */
+    met: string[];
     failures: string[];
     /** Expectations this recording could not judge, each with why. None of them counts as met. */
     setAside: { expectation: string; why: string }[];
@@ -384,7 +386,7 @@ export function checkRecording(
   complete: boolean,
 ): RecordingCheck {
   return {
-    expectations: execution.expect ? checkExpectations(execution.expect, trace, scope, complete) : { failures: [], setAside: [] },
+    expectations: execution.expect ? checkExpectations(execution.expect, trace, scope, complete) : { met: [], failures: [], setAside: [] },
     steps: execution.declared ? checkSteps(execution.declared, trace, scope, complete) : [],
     unwrittenCount: unwritten(execution.declared, trace, scope),
     notSeeded: Object.keys(execution.given).filter((target) => !scope.stores.includes(target)),
@@ -395,6 +397,9 @@ function checkExpectations(expected: Expectations, trace: Trace, scope: Recordin
   const judged = only({});
   const setAside: { expectation: string; why: string }[] = [];
   const failures: string[] = [];
+  const met: string[] = [];
+  /** Those judged together, in the order written, so each can be said to be met or not. */
+  const inTurn: { expectation: string; alone: Expectations }[] = [];
 
   /**
    * Judged with the others where the run saw everything that could have
@@ -402,8 +407,11 @@ function checkExpectations(expected: Expectations, trace: Trace, scope: Recordin
    * set aside, never counted either way.
    */
   const judge = (expectation: string, alone: Expectations, why: string | null, include: () => void) => {
-    if (why === null) include();
-    else if (!evaluate(trace, alone).passed) setAside.push({ expectation, why });
+    if (why === null) {
+      include();
+      inTurn.push({ expectation, alone });
+    } else if (evaluate(trace, alone).passed) met.push(expectation);
+    else setAside.push({ expectation, why });
   };
 
   for (const within of expected.entered) {
@@ -440,16 +448,38 @@ function checkExpectations(expected: Expectations, trace: Trace, scope: Recordin
     const expectation = `Nothing happens in ${formatAddress(within)}`;
     if (why !== null) setAside.push({ expectation, why: seen.length > 0 ? `Checked only for ${listed(seen)}.` : why });
     else if (!complete) setAside.push({ expectation, why: STOPPED });
+    else met.push(expectation);
   }
 
   for (const [target, wanted] of Object.entries(expected.state)) {
+    const expectation = `What ${target} holds at the end`;
     const why = !scope.stores.includes(target) ? `${target} is not part of what ran.` : complete ? null : STOPPED;
-    if (why === null) judged.state[target] = wanted;
-    else setAside.push({ expectation: `What ${target} holds at the end`, why });
+    if (why === null) {
+      judged.state[target] = wanted;
+      inTurn.push({ expectation, alone: only({ state: { [target]: wanted } }) });
+    } else setAside.push({ expectation, why });
   }
 
   failures.unshift(...evaluate(trace, judged).failures);
-  return { failures, setAside };
+
+  // The failures come from judging them all together, since two may want
+  // one event. Which ones are met is found the way written steps are: each
+  // held to the recording with every one met before it.
+  let held = only({});
+  const found: string[] = [];
+  for (const { expectation, alone } of inTurn) {
+    const next: Expectations = {
+      entered: [...held.entered, ...alone.entered],
+      interactions: [...held.interactions, ...alone.interactions],
+      effects: [...held.effects, ...alone.effects],
+      never: [],
+      state: { ...held.state, ...alone.state },
+    };
+    if (!evaluate(trace, next).passed) continue;
+    held = next;
+    found.push(expectation);
+  }
+  return { met: [...found, ...met], failures, setAside };
 }
 
 function checkSteps(declared: Trace, trace: Trace, scope: RecordingScope, complete: boolean): StepVerdict[] {

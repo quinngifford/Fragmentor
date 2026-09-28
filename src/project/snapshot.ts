@@ -7,12 +7,15 @@ import { isArchitecture, roleLabel } from "../model/roles.js";
 import type { Role } from "../model/roles.js";
 import { describeType } from "../model/types.js";
 import type { PortType } from "../model/types.js";
-import { loadProject, locateCode, resolveAccess, systemOf, validateProject } from "./project.js";
+import { answeringRoute, loadProject, locateCode, resolveAccess, systemOf, validateProject } from "./project.js";
 import { packFor, readAllCode } from "./code.js";
+import type { BlockCode } from "./code.js";
 import { EXECUTIONS_DIR, architectureOf, checkExecution, loadExecutions } from "./executions.js";
 import type { TriggerKind } from "./executions.js";
 import { formatAddress } from "../model/trace.js";
 import type { Trace } from "../model/trace.js";
+import type { Expectations } from "../run/expect.js";
+import { answeringBlock } from "../run/record.js";
 import type { CodeLocation, Granularity, LoadedBlock, Project, ProjectDiagnostic, Start } from "./project.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
 import { boundStores, describeBound, storeEntries } from "./stores.js";
@@ -52,6 +55,13 @@ export interface SnapshotExposed {
   returns: string | null;
   /** The child block that answers this operation, by id. Null when none does. */
   block: string | null;
+  /**
+   * What happens when this entry is used, block by block, starting with the
+   * entry itself: an operation leads into the block answering it, and an entry
+   * that calls another block's entry leads on to that one. It ends at a
+   * function, which is the code that runs, or wherever the diagram stops saying.
+   */
+  route: { path: string; entry: string | null }[];
   description: string | null;
   /**
    * The named parts of the shape, when it has any: a table's columns. Taken
@@ -224,6 +234,14 @@ export interface SnapshotExecution {
   declared: Trace | null;
   /** Whether it says what must happen, which is what makes it a test. */
   expects: boolean;
+  /** What each store holds before it starts, by target and then by key. */
+  given: Record<string, Record<string, unknown>>;
+  /** What it says must happen, when it says. A recording of it is held to this. */
+  expect: Expectations | null;
+  /** The function block a recording of it runs: the one answering its trigger. Null when there is none Fragmentor can run. */
+  records: string | null;
+  /** Why it cannot be recorded, when it cannot. */
+  unrecordable: string | null;
 }
 
 /** A note, with whose turn it is worked out here rather than again by the window. */
@@ -282,7 +300,7 @@ function excerptOf(pointer: string, location: CodeLocation): SnapshotCode {
  * diagram's own problems, against the file each came from. A trace naming a
  * block that has since moved is exactly the drift worth being told about.
  */
-async function executionsOf(project: Project, problems: ProjectDiagnostic[]): Promise<SnapshotExecution[]> {
+async function executionsOf(project: Project, code: Map<string, BlockCode>, problems: ProjectDiagnostic[]): Promise<SnapshotExecution[]> {
   let loaded: Awaited<ReturnType<typeof loadExecutions>>;
   try {
     loaded = await loadExecutions(project.dir);
@@ -321,6 +339,7 @@ async function executionsOf(project: Project, problems: ProjectDiagnostic[]): Pr
       if (problem) problems.push({ severity: "error", blockPath: file, message: `trace step ${event.id}, code: ${problem}` });
     }
 
+    const answering = answeringBlock(project, code, execution.trigger.at);
     snapshots.push({
         id: execution.id,
         name: execution.name,
@@ -334,6 +353,10 @@ async function executionsOf(project: Project, problems: ProjectDiagnostic[]): Pr
         },
         declared: execution.declared,
         expects: execution.expect !== null,
+        given: execution.given,
+        expect: execution.expect,
+        records: "block" in answering ? answering.block : null,
+        unrecordable: "why" in answering ? answering.why : null,
     });
   }
   return snapshots;
@@ -433,6 +456,7 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
       accepts: entry.accepts === null ? null : describeType(entry.accepts),
       returns: entry.returns === null ? null : describeType(entry.returns),
       block: entry.block ?? null,
+      route: answeringRoute(project, blockPath, name),
       description: entry.description ?? null,
       fields: fieldsOf(entry.returns ?? entry.accepts),
     }));
@@ -521,7 +545,7 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
   }
 
   // Read before the snapshot is put together, because its problems go into the list below.
-  const executions = await executionsOf(project, fileProblems);
+  const executions = await executionsOf(project, code, fileProblems);
   const notes = atCommit ? [] : await notesOf(project, fileProblems);
 
   return {

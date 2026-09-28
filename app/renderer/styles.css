@@ -1414,16 +1414,13 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
   border-radius: var(--radius);
 }
 
-/* Where a trace came from is never left to be guessed. */
-.exec-source {
-  padding: 1px 7px;
-  border-radius: 9px;
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  cursor: help;
-}
-.exec-source[data-source="declared"] { border: 1px dashed var(--ink-faint); color: var(--ink-dim); }
-.exec-source[data-source="recorded"] { border: 1px solid var(--signal-dim); color: var(--signal); }
+/* Where a trace came from is never left to be guessed. The one written down
+   keeps the dashed border that says nobody has seen it run. */
+.exec-source[data-source="declared"] { border-style: dashed; }
+.exec-source:disabled, .exec-source:disabled:hover { opacity: 0.45; cursor: default; color: var(--ink-dim); background: none; }
+
+/* Why the execution picked cannot be recorded, readable without hovering. */
+.exec-why { padding: 0 4px 1px; color: var(--ink-dim); }
 
 .exec-count { color: var(--ink-dim); padding-left: 2px; white-space: nowrap; }
 

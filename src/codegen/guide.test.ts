@@ -380,7 +380,15 @@ describe("the worked example", () => {
     if (!("trace" in recorded)) throw new Error(JSON.stringify(recorded));
     const found = checkRecording(recorded.execution, recorded.trace, recorded.scope, recorded.complete);
 
-    expect(found.expectations).toEqual({ failures: [], setAside: [] });
+    expect(found.expectations).toEqual({
+      met: [
+        "Something crosses into price-orders/price-order",
+        "A call from price-orders/report-totals to price-orders/load-orders",
+        'A "response" effect at price-orders/report-totals',
+      ],
+      failures: [],
+      setAside: [],
+    });
     expect(found.unwrittenCount).toBe(0);
     // Every step it writes down is one the recording saw, the order priced
     // included: the code passes the whole order, so that is what it shows.

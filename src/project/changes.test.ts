@@ -517,6 +517,10 @@ describe("the fields a change is made of", () => {
     trigger: (execution) => (execution.trigger = { ...execution.trigger, at: "tickets/booking-api" }),
     declared: (execution) => (execution.declared = null),
     expects: (execution) => (execution.expects = !execution.expects),
+    given: (execution) => (execution.given = { "tickets/tickets-db.events": {} }),
+    expect: (execution) => (execution.expect = null),
+    records: (execution) => (execution.records = null),
+    unrecordable: (execution) => (execution.unrecordable = "some reason"),
   };
   const projectEdits: { [K in keyof ProjectSnapshot]-?: (then: ProjectSnapshot) => void } = {
     dir: (then) => (then.dir = "elsewhere"),

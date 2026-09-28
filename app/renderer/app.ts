@@ -28,7 +28,7 @@ import {
 import { onInspectorChange, renderInspector } from "./inspector.js";
 import { onBenchChange } from "./bench.js";
 import { askForProjectSettings, firstStepsSections, showFirstSteps } from "./newproject.js";
-import { onWatchChange, resetWatching, setUpWatching } from "./watch.js";
+import { onWatchChange, recordWatched, resetWatching, setUpWatching } from "./watch.js";
 import { onExecutionChange, paintExecution, resetExecutions, setUpExecutions, showStep } from "./execution.js";
 import { closeWindow, onLinesNoted, openBlockWindow, setUpWindows } from "./popup.js";
 import { benchWindowIsOpen, closeBenchWindow, onBenchWindowChange, renderBenchWindow } from "./benchpanel.js";
@@ -670,7 +670,8 @@ try {
     render();
     return true;
   });
-  setUpExecutions();
+  // Recording runs code, which only this window, and not the execution bar itself, asks for.
+  setUpExecutions((execution) => void recordWatched(execution));
   onBlockWindow(openBlockWindow);
   // The count on a block's corner leads to the notes it counts.
   onNotesPicked(showNotesOf);
