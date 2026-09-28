@@ -125,7 +125,7 @@ This is what lets an architecture be argued with before it is built. A project c
 The diagram is the specification of what exists. The agent writes every function; Fragmentor writes each function's types from its contract. Code can still disagree with the diagram, so conformance is checked rather than assumed:
 
 - each function block is one exported function, named by the block's `code` pointer, wherever in the codebase that is
-- a function's contract is expressed as runtime schemas for its inputs and outputs, which also drive the test bench forms
+- a function's contract is its inputs and outputs, written once in its `block.json`: the code imports their types, and Fragmentor checks the values of every run against them and builds the test bench forms from them
 - its code is typechecked against its contract, calls to other functions are typechecked against theirs, and its imports are checked so that it can run: types, other functions in its system, and packages installed in the project
 
 Conditions, loops and error handling are the code's. The diagram does not describe control flow; an execution shows the path one run took.
@@ -207,7 +207,7 @@ A project holds one or more systems. A system is a block hierarchy with a single
 
 The target language is a choice, not an assumption. The block model, the validator and the project format know nothing about any language; that knowledge lives in a language pack, which owns naming conventions, file names, how a port type is written, and the source of the generated contract. Adding a language means adding a pack, not editing the kernel. A system in a language there is no pack for is drawn and nothing more, which Fragmentor says plainly rather than refusing the project.
 
-Port contracts are defined with runtime schemas so a single definition yields both static types and the schema the test bench needs. Which library provides that is the pack's business — zod in TypeScript, pydantic in Python.
+A port contract is defined once, in the block, and yields both the static types the code imports and the checks Fragmentor makes on each run's values. What the code imports holds types only — a declaration file in TypeScript — so it adds nothing to the codebase's own build and needs no package; the checks are Fragmentor's own. How the types are written is the pack's business.
 
 A block may use packages installed in the project, because real code does. What it may not do is reach the outside world except through its capabilities: importing a language's built-in file, network or process modules is refused, and for packages that do the same it is a rule the agent is told rather than one Fragmentor can enforce.
 
