@@ -25,8 +25,8 @@ const ROW_GAP = 46;
 /** Between two systems, which are separate programs drawn side by side. */
 const SYSTEM_GAP = 80;
 /**
- * A block whose parts have no parts of their own lists them under it instead
- * of spreading them sideways. Spread, a system of any size is a very wide,
+ * A block whose parts have no parts of their own, or have them folded away,
+ * lists them under it instead of spreading them sideways. Spread, a system of any size is a very wide,
  * very short drawing that has to be shrunk to nothing to fit on screen; the
  * room is underneath it.
  */
@@ -89,7 +89,10 @@ export function buildTree(folded: ReadonlySet<string> = new Set()): Tree {
     bottom = Math.max(bottom, y + BOX_H);
 
     const parts = partsOf(block, folded.has(path));
-    const listed = parts.length > 0 && parts.every((part) => snapshot.blocks[part]?.children.length === 0);
+    // A part folded away is drawn as a single box, the way a part with no
+    // parts is, so it lists as one too. Otherwise folding the deep parts of a
+    // wide row would leave the row exactly as wide as before.
+    const listed = parts.length > 0 && parts.every((part) => folded.has(part) || snapshot.blocks[part]?.children.length === 0);
 
     const node: TreeNode = {
       path,

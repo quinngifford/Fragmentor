@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { projectSnapshot } from "../../src/project/snapshot.js";
 import { BOX_H, BOX_W, buildTree, shownAt } from "./tree.js";
+import type { Tree } from "./tree.js";
 import { ui } from "./state.js";
 
 /**
@@ -17,6 +18,18 @@ const messenger = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", 
 beforeAll(async () => {
   ui.snapshot = await projectSnapshot(messenger);
 });
+
+/** No two boxes of the tree on top of each other. */
+function expectApart(tree: Tree): void {
+  const boxes = [...tree.nodes.values()];
+  for (const a of boxes) {
+    for (const b of boxes) {
+      if (a.path >= b.path) continue;
+      const apart = a.x + BOX_W <= b.x || b.x + BOX_W <= a.x || a.y + BOX_H <= b.y || b.y + BOX_H <= a.y;
+      expect(apart, `${a.path} and ${b.path} overlap`).toBe(true);
+    }
+  }
+}
 
 describe("the whole system as a tree", () => {
   it("puts the system at the top and every part under what it is part of", () => {
@@ -41,14 +54,12 @@ describe("the whole system as a tree", () => {
     expect(first.x).toBeLessThan(last.x);
   });
 
-  it("leaves no two blocks on top of each other", () => {
-    const boxes = [...buildTree().nodes.values()];
-    for (const a of boxes) {
-      for (const b of boxes) {
-        if (a.path >= b.path) continue;
-        const apart = a.x + BOX_W <= b.x || b.x + BOX_W <= a.x || a.y + BOX_H <= b.y || b.y + BOX_H <= a.y;
-        expect(apart, `${a.path} and ${b.path} overlap`).toBe(true);
-      }
+  it("leaves no two blocks on top of each other, whatever is folded", () => {
+    expectApart(buildTree());
+    // Folding one part turns the row it is in into a list, when the rest of
+    // that row has no parts either; neither way may anything overlap.
+    for (const block of Object.values(ui.snapshot!.blocks)) {
+      if (block.children.length > 0) expectApart(buildTree(new Set([block.path])));
     }
   });
 
@@ -94,14 +105,25 @@ describe("a block whose parts are listed, beside one whose parts run deeper", ()
       "root/spread/c1/deep": [],
     });
 
-    const boxes = [...buildTree().nodes.values()];
-    expect(boxes).toHaveLength(7);
-    for (const a of boxes) {
-      for (const b of boxes) {
-        if (a.path >= b.path) continue;
-        const apart = a.x + BOX_W <= b.x || b.x + BOX_W <= a.x || a.y + BOX_H <= b.y || b.y + BOX_H <= a.y;
-        expect(apart, `${a.path} and ${b.path} overlap`).toBe(true);
-      }
-    }
+    const tree = buildTree();
+    expect(tree.nodes.size).toBe(7);
+    expectApart(tree);
+  });
+
+  it("lists parts once the ones with parts of their own are folded away, which is what makes folding narrow a row", () => {
+    shaped({
+      root: ["root/deep", "root/leaf"],
+      "root/deep": ["root/deep/inner"],
+      "root/deep/inner": [],
+      "root/leaf": [],
+    });
+
+    const spread = buildTree();
+    const folded = buildTree(new Set(["root/deep"]));
+    expect(spread.nodes.get("root")!.listed).toBe(false);
+    expect(folded.nodes.get("root")!.listed).toBe(true);
+    expect(folded.nodes.get("root/deep")!.folded).toBe(true);
+    expect(folded.width).toBeLessThan(spread.width);
+    expectApart(folded);
   });
 });
