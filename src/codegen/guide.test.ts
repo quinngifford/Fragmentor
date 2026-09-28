@@ -447,7 +447,7 @@ describe("the guide says where the project starts", () => {
       expect(first.indexOf("top `block.json`")).toBeLessThan(first.indexOf("`systems`"));
       expect(first).toContain("before its code, so the person watches the structure arrive");
       // Executions come with what starts them, and a plan has none.
-      expect(guide).toContain("each with the block that starts it, once that block is built. A plan has none.");
+      expect(guide).toContain("each with the block that starts it, once that block exists. A plan has none.");
     }
   });
 
@@ -478,7 +478,7 @@ describe("the guide says where the project starts", () => {
   it("has a rebuild commit once and only Fragmentor's files, and a plan committed once written", () => {
     const rebuild = COMMANDS.find((command) => command.name === "rebuild")!;
     expect(rebuild.summary).toContain("none of your code");
-    expect(rebuild.steps).toContain("then commit once, with only Fragmentor's files: `fragmentor.json`, `FRAGMENTOR.md`, `blocks/`, `executions/`, `.fragmentor/` and `.claude/skills/`.");
+    expect(rebuild.steps).toContain("then commit once, with only Fragmentor's files: `fragmentor.json`, `FRAGMENTOR.md`, `blocks/`, `executions/`, `.fragmentor/`, `.claude/skills/`, and any `CLAUDE.md` or `AGENTS.md` that `fragmentor init` created.");
     expect(COMMANDS.find((command) => command.name === "plan")!.steps).toContain("commit the plan");
     // And the guide says the same, rather than asking for a commit per block of a rebuild.
     for (const guide of Object.values({ make: agentGuide(project()), rebuild: agentGuide(project({ existingCode: true })) })) {
@@ -497,7 +497,7 @@ describe("the guide says where the project starts", () => {
   it("says how saved tests seed stores and compare results, and what tests the rest of the code", () => {
     const guide = agentGuide(project());
     expect(guide).toContain("A test gives the stores rows before it runs under `stores`, keyed by the store entry's full address and then by row key");
-    expect(guide).toContain("`expected` is compared whole, so leave it out where the result depends on `Random`");
+    expect(guide).toContain("`expected` is compared whole, so leave it out where the result depends on `Clock` or `Random`");
     expect(guide).toContain("is tested by the project's own tests and typechecked by its own typecheck, run beside `fragmentor test`: Fragmentor does not typecheck it.");
   });
 

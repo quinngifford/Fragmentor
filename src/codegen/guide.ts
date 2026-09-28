@@ -228,7 +228,7 @@ const GRANULARITY: Record<number, string> = {
 /** What a block's code may import, which differs by language. */
 const IMPORT_RULES: Record<string, string> = {
   typescript:
-    "A block with no outputs returns nothing, and one with no inputs is still called with a value and `caps`. Its code may import its own contract's types with `import type`, the code of another block in the same system that is held to its contract, and packages installed in the project folder. Call another block with a value and your `caps`, only when you need it, and as many times as you need it. It may not import a shared helper file or one of Node's built-in modules such as `fs`: make the helper a block, or use a capability. `fragmentor check` reports any such import, of the whole file — a file holding one block's code is held to these rules throughout, so keep anything else out of it.",
+    "A block with no outputs returns nothing, and one with no inputs is still called with a value and `caps`. Its code may import its own contract's types with `import type`, the code of another block in the same system that is held to its contract, and packages installed in the project folder. Call another block with a value and your `caps`, only when you need it, and as many times as you need it. It may not import a shared helper file or one of Node's built-in modules such as `fs`: make the helper a block, or use a capability. `fragmentor check` reports any such import anywhere in the file, so keep anything else out of a file you write for a block.",
 };
 
 const WIDTH = 100;
@@ -418,7 +418,7 @@ function contractsSection(pack: LanguagePack | null): string {
     compactJson(workedExample.cases["price-orders/price-order"]),
     "```",
     "",
-    "`expected` is compared whole, so leave it out where the result depends on `Random`: the test then records what the block returns without checking it. A test gives the stores rows before it runs under `stores`, keyed by the store entry's full address and then by row key: `\"stores\": { \"shop/orders-db.orders\": { \"A-1\": {…} } }`. A block's test runs everything it calls. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.",
+    "`expected` is compared whole, so leave it out where the result depends on `Clock` or `Random`: the test then records what the block returns without checking it. A test gives the stores rows before it runs under `stores`, keyed by the store entry's full address and then by row key: `\"stores\": { \"shop/orders-db.orders\": { \"A-1\": {…} } }`. A block's test runs everything it calls. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.",
     "",
     "Code Fragmentor does not run — a block it draws, or code outside the blocks such as the entry point or a server — is tested by the project's own tests and typechecked by its own typecheck, run beside `fragmentor test`: Fragmentor does not typecheck it.",
   );
@@ -447,7 +447,7 @@ function startingPoint(manifest: Manifest, pack: LanguagePack | null): string {
       : "";
   parts.push(
     manifest.existingCode
-      ? "**This folder already held code**, and the diagram describes it. Map what is there into blocks, each pointing at the code it stands for, and keep them true as the code changes. Code that was already here is described, not changed: it is drawn rather than checked or run, and that is the expected outcome. Never restructure the program to make the diagram tidier; the diagram follows the code, and the person will say when they want the code changed."
+      ? "**This folder already held code**, and the diagram describes it. Map what is there into blocks, each pointing at the code it stands for. Code that was already here is described, not changed: it is drawn rather than checked or run, and that is the expected outcome. Never restructure the program to make the diagram tidier; the diagram follows the code, and the person will say when they want the code changed."
       : `**This folder started empty**, so the program is yours to write. Lay the code out however suits it — a layout that echoes the architecture helps whoever reads both, but nothing requires it — and point each block at the code you wrote. ${ENTRY_POINTS}${setUp}`,
   );
 
