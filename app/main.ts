@@ -3440,7 +3440,10 @@ function attachSelfCheck(
             form().querySelector("input").value === "Ten percent from the fifth seat" &&
             form().querySelector("textarea").value === "The first four seats at full price, and ten percent off each one after.";
           await wait(300);
-          part("Saved").scrollIntoView({ block: "center" });
+          // The section can be read afresh once more just now, which leaves
+          // it saying it is reading the versions until it is drawn again.
+          const saved = await until(() => part("Saved"), 10000);
+          if (saved) saved.scrollIntoView({ block: "center" });
           return { focused, emptyRefused, kept };
         `);
         await capture(window, "self-check-save-form");
