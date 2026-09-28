@@ -147,7 +147,10 @@ describe("the guide", () => {
     // and, where the folder already held code, how that code is described and
     // held to a contract. Saying so cost the lines and characters below, a
     // little of it paid back by trimming. Lines alone let a guide grow by
-    // lengthening them, so the characters are held too.
+    // lengthening them, so the characters are held too. What the second round
+    // of them met — how a recorded execution is judged, store steps, refusals,
+    // where a store sits, clients, an empty TypeScript folder — was paid for
+    // entirely by trimming, with these unchanged.
     const within = (guide: string, lines: number, characters: number) => {
       expect(guide.split("\n").length).toBeLessThan(lines);
       expect(guide.length).toBeLessThan(characters);
@@ -415,6 +418,7 @@ describe("the guide says where the project starts", () => {
     // Planning spreads down, so it goes on the top of what is planned, and building has to take it off above.
     expect(planning).toContain("Set it on the top block of what is planned");
     expect(planning).toContain("Building a block takes `planned` off it and off every block holding it");
+    expect(planning).toContain("Building a block with no code of ours, such as a client, is only taking `planned` off.");
     expect(agentGuide(project({ start: "build" }))).not.toContain("starts as a plan");
   });
 
@@ -453,6 +457,8 @@ describe("the guide says where the project starts", () => {
     expect(guide).toContain("## Code that was already here");
     expect(guide).toContain("`file#Class.method`");
     expect(guide).toContain("the step's `code` is the file alone, and an operation such a handler answers leaves out `block`");
+    // Both agents read the unrecorded executions this leaves as a fault.
+    expect(guide).toContain("its executions are then not recorded, only held to their own expectations, and that is normal.");
     expect(guide).toContain("its `access` line has no port");
     expect(guide).toContain("is for code being built");
     // New code is held to its contract, and so is old code once the person asks, through a function of its own.
@@ -481,7 +487,9 @@ describe("the guide says where the project starts", () => {
 
   it("tells an agent in an empty folder how to set up a TypeScript project, and needs no package for contracts", () => {
     const guide = agentGuide(project());
-    expect(guide).toContain('Start it with a `package.json` holding `"type": "module"` and a `tsconfig.json`, and tell the person how to run the entry point.');
+    expect(guide).toContain(
+      'Start it with a `tsconfig.json` and a `package.json` holding `"type": "module"`, `typescript` and `@types/node` as dev dependencies, a `build` script, and a `test` script giving `node --test` a file pattern, not a folder.',
+    );
     expect(guide).not.toContain("zod");
     expect(agentGuide(project({ language: "python" }))).not.toContain("tsconfig.json");
     expect(agentGuide(project({ existingCode: true }))).not.toContain("tsconfig.json");
@@ -491,7 +499,31 @@ describe("the guide says where the project starts", () => {
     const guide = agentGuide(project());
     expect(guide).toContain("A test gives the stores rows before it runs under `stores`, keyed by the store entry's full address and then by row key");
     expect(guide).toContain("`expected` is compared whole, so leave it out where the result depends on `Clock` or `Random`");
-    expect(guide).toContain("is tested by the project's own tests and typechecked by its own typecheck, run beside `fragmentor test`: Fragmentor does not typecheck it.");
+    // `fragmentor test` was twice read as running them.
+    expect(guide).toContain("is covered by the project's own tests and typecheck: run them yourself, since `fragmentor test` does not.");
+    expect(guide).not.toContain("beside `fragmentor test`");
+    // A refusal thrown is reported as an error, which no test can expect.
+    expect(guide).toContain("A block that turns input away returns the refusal as a value, such as an `error` field, so tests and executions can check it.");
+  });
+
+  it("says what a recording of an execution can check, and how a store step is written", () => {
+    const guide = agentGuide(project());
+    expect(guide).toContain(
+      "The run starts at the block the trigger is handed to, so the hand-off and anything HTTP-level cannot be checked: pin values at what that block returns, which a `response` at the operation is compared with.",
+    );
+    expect(guide).toContain("Leave `Clock` and `Random` values out of steps and expectations, as out of tests.");
+    // A recording names the row read or removed as `{ key }`, so that is how a written step names it.
+    expect(guide).toContain('has as its `payload` the row it wrote, or `{ "key": … }` for the row it read or removed');
+    // Nothing is recorded without a pack that runs code, so none of it is said there.
+    expect(agentGuide(project({ language: "Go" }))).not.toContain("The run starts at the block");
+  });
+
+  it("puts a store beside what uses it, and gives a client's action a direction", () => {
+    const guide = agentGuide(project());
+    expect(guide).toContain("A store goes beside what uses it: beside a service, not inside it.");
+    expect(guide).not.toContain("inside the lowest block that holds all of them");
+    expect(guide).toContain("An operation or a client's action writes its two directions apart");
+    expect(guide).toContain("may leave out one but not both");
   });
 
   it("explains planned blocks", () => {
@@ -511,8 +543,9 @@ describe("the guide says where the project starts", () => {
 
 describe("the architecture the guide shows", () => {
   it("checks clean exactly as printed, in a service that holds all three", async () => {
-    // The service is the one the guide prints, given the other two as
-    // children so that everything it shows is checked in one place.
+    // Everything the guide prints, checked in one place, laid out as the
+    // guide says: the store and the payment service beside the service that
+    // uses them, and found from the block inside it by looking outward.
     await writeFile(
       manifestPath(dir),
       JSON.stringify({ ...workedExample.manifest, systems: [{ rootBlock: "orders-app" }] }, null, 2),
@@ -524,8 +557,8 @@ describe("the architecture the guide shows", () => {
       "orders-app": { role: "component", responsibility: "The orders application." },
       "orders-app/orders-page": architectureExample["orders-page"]!,
       "orders-app/orders-api": architectureExample["orders-api"]!,
-      "orders-app/orders-api/orders-db": architectureExample["orders-db"]!,
-      "orders-app/orders-api/billing": architectureExample.billing!,
+      "orders-app/orders-db": architectureExample["orders-db"]!,
+      "orders-app/billing": architectureExample.billing!,
       "orders-app/orders-api/load-orders": architectureExample["load-orders"]!,
     });
 
@@ -534,9 +567,9 @@ describe("the architecture the guide shows", () => {
     // Neither a database nor someone else's payment service is unfinished work.
     expect([...report.architecture].sort()).toEqual([
       "orders-app",
+      "orders-app/billing",
       "orders-app/orders-api",
-      "orders-app/orders-api/billing",
-      "orders-app/orders-api/orders-db",
+      "orders-app/orders-db",
       "orders-app/orders-page",
     ]);
     // The one block that is code is the one still to be written, which is

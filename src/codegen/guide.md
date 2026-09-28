@@ -32,9 +32,9 @@ The person leaves notes on blocks in Fragmentor — something to change, fix, lo
 
 - Run `fragmentor working <id>` as you start on a note, so the person sees it being worked on until you reply.
 - Do what it asks as you would any request: change the blocks and the code, run `fragmentor check` and `fragmentor test`, and commit. A flagged problem is one Fragmentor reported on the block, which the person wants fixed.
-- Then answer it with `fragmentor reply <id> "<what you did>"`, which hands it back to the person and records your commit with it, so from the note they can compare the block with how it was before, and swap it back. Only the newest commit is recorded, and only if it was made since the person wrote and changed the note's block, so reply to each note as soon as its work is committed. They resolve it when they are satisfied, or reply if not. If you cannot do it, or it needs their decision, say so in the reply.
+- Then answer it with `fragmentor reply <id> "<what you did>"`, which hands it back to the person with your commit, so they can compare the block with how it was, or swap it back. Only the newest commit is recorded, and only if it was made since the person wrote and changed the note's block, so reply to each note as soon as its work is committed. They resolve it when they are satisfied, or reply if not. If you cannot do it, or it needs their decision, say so in the reply.
 - A question is answered, not acted on: answer it with `fragmentor reply <id> --no-commit "<your answer>"`, which records no commit with it.{{flaggedRuns}}
-- If you can hand work to helpers, such as subagents, give each one the notes on blocks that no other helper's blocks contain, call or share a file with. They change the code and report back to you. Once they have all finished, run `fragmentor check` and `fragmentor test` and commit yourself, since a contract one helper changes can break code another is working on, and only then reply to each note, so your commit is recorded with it.
+- If you can hand work to helpers, such as subagents, give each one the notes on blocks that no other helper's blocks contain, call or share a file with. They change the code and report back. Once they have all finished, run `fragmentor check` and `fragmentor test` and commit yourself, since a contract one helper changes can break code another is working on, and only then reply to each note, so your commit is recorded with it.
 - Leave a note yourself with `fragmentor note <block-path> "<text>"` when the person should see something on the block itself: a bug you found and did not fix, a decision that is theirs, or a change they did not ask for. Do not leave one for routine work.
 - `fragmentor check` says how many notes are waiting for you. Work through them when the person asks, not in the middle of something else, and mention any still waiting when you finish.
 
@@ -56,7 +56,7 @@ Each system is a separate program, and `rootBlock` is its folder under `blocks/`
 
 ## Blocks
 
-**The diagram is the architecture: what the system is made of, and what owns what.** A block's parts are the block folders inside its folder. Put a block inside another only when it is part of that block — not because one calls the other, and not only because their files sit in the same folder. A block used by several others goes beside them, inside the lowest block that holds all of them; one used by a single block may go inside that block. Nothing on the diagram says what calls what, or in what order: that is the code's business, and an execution's.
+**The diagram is the architecture: what the system is made of, and what owns what.** A block's parts are the block folders inside its folder. Put a block inside another only when it is part of that block — not because one calls the other, and not only because their files sit in the same folder. A block used by several others goes beside them, in the lowest block holding them all; one used by a single block may go inside it. A store goes beside what uses it: beside a service, not inside it. Nothing on the diagram says what calls what, or in what order: that is the code's business, and an execution's.
 
 A block that is a group of parts rather than something called, `price-orders`:
 
@@ -77,7 +77,7 @@ A function block, `report-totals`:
 - `inputs` and `outputs` map a port name such as `grandTotal` to its type, or to `{ "type": ..., "description": ... }`. Leave either out when the function takes or returns nothing.
 - `capabilities` names the effects the block needs, described below.
 - `pinnedAsLeaf: true` means the person wants the block kept as one piece. Never put blocks inside it.
-- `planned: true` marks a block as part of the plan rather than of the program. It is drawn greyed out, has no `code`, its port types may be plain words such as `"the scored postings"`, and Fragmentor asks nothing of it. Set it on the top block of what is planned, since everything inside a planned block is planned too. Building a block takes `planned` off it and off every block holding it, so give their other parts not built yet `planned` of their own; give what you build real types.
+- `planned: true` marks a block as part of the plan rather than of the program. It is drawn greyed out, has no `code`, its port types may be plain words such as `"the scored postings"`, and Fragmentor asks nothing of it. Set it on the top block of what is planned, since everything inside a planned block is planned too. Building a block takes `planned` off it and off every block holding it, so give their other parts not built yet `planned` of their own; give what you build real types. Building a block with no code of ours, such as a client, is only taking `planned` off.
 
 ## The rest of the system
 
@@ -85,7 +85,7 @@ Not every block is a function. A database, a queue, another team's service, the 
 
 {{roles}}
 
-Say what it is exactly with `subtype`, in whatever words fit: `"subtype": "Dictionary"`, `"subtype": "REST API"`, `"subtype": "S3 bucket"`. It is only a label, shown beside the role.
+Say what it is exactly with `subtype`, in whatever words fit, such as `"subtype": "REST API"`: it is only a label, shown beside the role.
 
 A block with a role is not called, so it has no `inputs`, `outputs` or `capabilities`. It says what it offers with `exposes`, and blocks say what they reach with `access`. It may have `code`, pointing at the module that stands for it, and may be left without one when it lives outside this codebase.
 
@@ -97,15 +97,14 @@ A block with a role is not called, so it has no `inputs`, `outputs` or `capabili
 {{accessBlock}}
 ```
 
-- A store's entry is written once, as the shape it holds. An operation writes its two directions apart, `{{operationEntry}}`, and may leave either out.
-- Write a shape as a type wherever you can, so the block can be drawn column by column. Anything the type language cannot say, such as `timestamp`, is kept as the words you write.
+- A store's entry is written once, as the shape it holds. An operation or a client's action writes its two directions apart, `{{operationEntry}}`, and may leave out one but not both.
 - A service's operation says which block inside it answers it with `"block"`. The block is handed what the operation accepts and returns what it returns, so give them the same shape, field for field; a block that needs nothing from the request may take no inputs. Where the outside world's shape genuinely differs, convert it in the code of the block that answers.
 
 ```json
 {{serviceBlock}}
 ```
 
-- Put the name of one of this block's own entries first, and the line joins those two rather than the two blocks: `"showOrders calls orders-api.listOrders"` runs from that button to that operation. A block with several buttons calling several operations needs this, or they would all leave it at the same point.
+- Put the name of one of this block's own entries first, and the line joins those two rather than the two blocks: `"showOrders calls orders-api.listOrders"` runs from that button to that operation. A block with several buttons needs this.
 - `reads` takes data out, `writes` puts data in, `calls` does both. Name the entry, as in `reads orders-db.orders`, or leave it off to mean the whole thing.
 - The block named is looked for among this block's own parts, then beside it, then above it, so a handler inside a service reaches a database the service keeps beside it. Name one inside a group by its path from there: `reads infrastructure/orders-db.orders`. Put the access on the block that really touches the resource, or calls into a service's or client's code; the diagrams above gather it up.
 - Code reaches a `database`, `storage` or `structure` through a `Store` port, and a `queue` through a `Queue` port. Put the port's name at the start of the access — `"orders reads orders-db.orders"` — and that port is a way into that entry and nothing else, so the line drawn is the line the code runs along. Always name the entry, and ask for a port each where a block reaches two.
@@ -128,7 +127,7 @@ A block that calls another passes it its own `caps`, so it declares every capabi
 
 ## Executions
 
-The blocks say what exists. Also write down what happens: for each thing that sets the system going — a button, a request, a scheduled job, a queue message, a webhook — a file under `executions/`, such as `executions/report-totals.json`, written from reading the code:
+The blocks say what exists. Also write down what happens: for each thing that sets the system going, such as a button, a request or a queue message, a file under `executions/`, such as `executions/report-totals.json`, written from reading the code:
 
 ```json
 {{execution}}
@@ -136,18 +135,18 @@ The blocks say what exists. Also write down what happens: for each thing that se
 
 - An address is a block's path under `blocks/`, optionally followed by `.` and one of its entries: `shop/api.checkout`. `trigger.at` is where it arrives, and `kind` is `action`, `request`, `schedule`, `message` or `webhook`.
 - `name` labels it where an execution is picked; `description` is the one sentence saying what the run is. A file holds only these: `name`, `description`, `given`, `trigger`, `trace`, `expect`.
-- `given` says what the stores held before any of it happened, keyed by a store entry's whole address and then by row: `"given": { "shop/orders-db.orders": { "A-1": { "id": "A-1", "owner": "ada" } } }`. Write it whenever the run depends on something being there, because a trace whose premise is nowhere stated can be neither read nor checked.
+- `given` says what the stores held before any of it happened, keyed by a store entry's whole address and then by row: `"given": { "shop/orders-db.orders": { "A-1": { "id": "A-1", "owner": "ada" } } }`. Write it whenever the run depends on something being there, or the trace can be neither read nor checked.
 - `trace` lists what follows, in order. A step is an interaction — `from`, `to` and `kind` (`call`, `read`, `write`, `remove`, `send` or `deliver`), with `payload` for what it carried and `response` for what came back, where anything did — or an effect, `{ "effect": ..., "at": ... }`, such as `row-changed`, `row-removed`, `message-published`, `response` or `ui-changed`, with `detail` for what it left behind.
-- A step reaching a store carries the row it wrote, or names the row by its key where it read or removed one, and a read that found nothing has `"response": null`. A `response` effect goes at the entry that answered, not the block inside it, because that is where whoever asked is waiting.
-- Every step says what it is with `description`, in a sentence a person reading it would want: why this happens, not a rewording of the blocks it joins. Every step also says which function makes it with `code` — the function the step leaves, not the one it arrives at — written as a block's is. `fragmentor check` makes sure that function exists. Where the code that makes a step is an entry point outside the blocks, name that: it is a real function in this codebase, and a step pointing at what receives it instead says something untrue.
-- Write each step between the finest blocks the code shows, even across distant parts of the system. A call the code makes many times over is one step, whose description says so and whose payload is one of them: how many there were depends on what arrived, which is not something you can read off the code. A service's operation handing a request to the block that answers it is a step of its own, because the code that does the handing is real and is not either block.
+- A step reaching a store has as its `payload` the row it wrote, or `{ "key": … }` for the row it read or removed, and a read that found nothing has `"response": null`. A `response` effect goes at the entry that answered, not the block inside it, because that is where whoever asked is waiting.
+- Every step says what it is with `description`, in a sentence a person reading it would want: why this happens, not a rewording of the blocks it joins. Every step also says which function makes it with `code` — the function the step leaves, not the one it arrives at — written as a block's is. `fragmentor check` makes sure that function exists. Where an entry point outside the blocks makes the step, name that, not what receives it.
+- Write each step between the finest blocks the code shows, even across distant parts of the system. A call the code makes many times over is one step, whose description says so and whose payload is one of them, since how many depends on what arrived. A service's operation handing a request to the block that answers it is a step of its own, because the code that does the handing is real and is not either block.
 - A step follows from the latest step that arrived where it starts, so two calls one block makes in turn are two branches; where the list cannot say so, give a step an `id` — starting with a letter, then letters, digits, `-` or `_` — and another `"cause": "<id>"`, or `"cause": "trigger"` for one that follows from what set the whole thing going.
 - `expect` is what makes an execution a test rather than a drawing, and is where most of its worth is. All of it is optional: `entered` names parts the run must cross into; `interactions` names steps that must happen, each matched by whichever of `from`, `to`, `kind`, `payload` and `response` you give; `effects` the same, by `at`, `kind` and `detail`; `never` names parts in which nothing at all may happen.
 - Three things decide whether an expectation means what you meant. An address without an entry matches that part and everything inside it, and one with an entry matches only that entry. An object — a payload, a response, a detail — is compared field by field, so you name only what matters, but a list is compared whole, length included. And each expectation is matched to a different event, so two that describe the same step fail for want of a second one.
 - **Pin the values, not only the shape.** An expectation that says a row was written, without saying what was in it, passes for code that wrote the wrong thing; that is most of what a test like this is for. And write a `never` no wider than the code justifies — one that can only ever pass, such as a part nobody has built, says nothing about this run.
-- `state`, for what the stores hold at the end, belongs only to a run Fragmentor recorded: a trace you wrote down never saw the stores, so `fragmentor check` reports it here. Say what was written in the step that wrote it instead.
+- `state`, what the stores hold at the end, belongs only to a run Fragmentor recorded, so `fragmentor check` reports it here: say what was written in the step that wrote it.
 - `fragmentor test` {{executionTest}}
-- This is documentation: it is shown as written by you, never as something observed. Keep it true to the code, and change it when the code changes.
+- It is shown as written by you, never as observed, so keep it true to the code as the code changes.
 
 {{existingCode}}
 

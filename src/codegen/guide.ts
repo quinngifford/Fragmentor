@@ -229,7 +229,7 @@ const GRANULARITY: Record<number, string> = {
 /** What a block's code may import, which differs by language. */
 const IMPORT_RULES: Record<string, string> = {
   typescript:
-    "A block with no outputs returns nothing, and one with no inputs is still called with a value and `caps`. Its code may import its own contract's types with `import type`, the code of another block in the same system that is held to its contract, and packages installed in the project folder. Call another block with a value and your `caps`, only when you need it, and as many times as you need it. It may not import a shared helper file or one of Node's built-in modules such as `fs`: make the helper a block, or use a capability. `fragmentor check` reports any such import anywhere in the file, so keep anything else out of a file you write for a block.",
+    "A block with no outputs returns nothing, and one with no inputs is still called with a value and `caps`. Its code may import its own contract's types with `import type`, the code of another block in the same system that is held to its contract, and packages installed in the project folder. Call another block with a value and your `caps`, when and as often as you need it. It may not import a shared helper file or one of Node's built-in modules such as `fs`: make the helper a block, or use a capability. `fragmentor check` reports any such import anywhere in the file, so keep anything else out of a file you write for a block.",
 };
 
 const WIDTH = 100;
@@ -419,9 +419,9 @@ function contractsSection(pack: LanguagePack | null): string {
     compactJson(workedExample.cases["price-orders/price-order"]),
     "```",
     "",
-    "`expected` is compared whole, so leave it out where the result depends on `Clock` or `Random`: the test then records what the block returns without checking it. A test gives the stores rows before it runs under `stores`, keyed by the store entry's full address and then by row key: `\"stores\": { \"shop/orders-db.orders\": { \"A-1\": {…} } }`. A block's test runs everything it calls. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.",
+    "`expected` is compared whole, so leave it out where the result depends on `Clock` or `Random`: the test then records what the block returns without checking it. A block that turns input away returns the refusal as a value, such as an `error` field, so tests and executions can check it. A test gives the stores rows before it runs under `stores`, keyed by the store entry's full address and then by row key: `\"stores\": { \"shop/orders-db.orders\": { \"A-1\": {…} } }`. A block's test runs everything it calls. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.",
     "",
-    "Code Fragmentor does not run — a block it draws, or code outside the blocks such as the entry point or a server — is tested by the project's own tests and typechecked by its own typecheck, run beside `fragmentor test`: Fragmentor does not typecheck it.",
+    "Code Fragmentor does not run — a block it draws, or code outside the blocks such as a server — is covered by the project's own tests and typecheck: run them yourself, since `fragmentor test` does not.",
   );
 
   return lines.join("\n");
@@ -440,11 +440,12 @@ const ENTRY_POINTS =
 function startingPoint(manifest: Manifest, pack: LanguagePack | null): string {
   const parts: string[] = [];
 
-  // An empty folder has nothing to build or run TypeScript with until the
-  // agent sets it up, which agents starting from nothing had to work out.
+  // An empty folder has nothing to build, run or test TypeScript with until
+  // the agent sets it up, which agents starting from nothing had to work out,
+  // down to `node --test` wanting files rather than a folder.
   const setUp =
     pack?.id === "typescript"
-      ? ' Start it with a `package.json` holding `"type": "module"` and a `tsconfig.json`, and tell the person how to run the entry point.'
+      ? ' Start it with a `tsconfig.json` and a `package.json` holding `"type": "module"`, `typescript` and `@types/node` as dev dependencies, a `build` script, and a `test` script giving `node --test` a file pattern, not a folder. Tell the person how to run the entry point.'
       : "";
   parts.push(
     manifest.existingCode
@@ -473,7 +474,7 @@ function existingCodeSection(manifest: Manifest, pack: LanguagePack | null): str
     "## Code that was already here",
     "",
     "- A function block's inputs are named after the function's parameters, and its one output is what the function returns. Where the code reaches a store directly, such as through an ORM client or a file, its `access` line has no port. Giving an operation and its block the same shape, field for field, is for code being built.",
-    "- Point at a method as `file#Class.method`. Where no named function makes a step, such as top-level script code or an anonymous route handler, the step's `code` is the file alone, and an operation such a handler answers leaves out `block`.",
+    "- Point at a method as `file#Class.method`. Where no named function makes a step, such as top-level script code or an anonymous route handler, the step's `code` is the file alone, and an operation such a handler answers leaves out `block`: its executions are then not recorded, only held to their own expectations, and that is normal.",
   ];
   if (pack?.canRun) {
     lines.push(
@@ -563,8 +564,10 @@ export function agentGuide(manifest: Manifest): string {
       : "",
     // Only code Fragmentor runs can be recorded, so where none is, an
     // execution is held to what its own file says must happen and no more.
+    // Where it is, agents pinned values the run could never see, and wrote
+    // random codes a rerun could never match, until told where a run starts.
     executionTest: pack?.canRun
-      ? "runs each execution whose trigger leads to code held to its contract, and holds what you wrote down to what ran."
+      ? "runs each execution whose trigger leads to code held to its contract, and holds what you wrote down to what ran. The run starts at the block the trigger is handed to, so the hand-off and anything HTTP-level cannot be checked: pin values at what that block returns, which a `response` at the operation is compared with. Leave `Clock` and `Random` values out of steps and expectations, as out of tests."
       : "holds each execution to its own expectations, which catches a file that contradicts itself and cannot catch one that is wrong about the code, since both halves are your reading of it.",
     files: filesSection(pack),
     manifest: compactJson(exampleManifest(manifest)),
