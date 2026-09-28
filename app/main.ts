@@ -2854,15 +2854,19 @@ function attachSelfCheck(
           button.click();
 
           const arrived = await until(() => document.body.textContent.includes("Booked 2 for Night Gig"), 20000);
+          // What the run left in the stores can be drawn a moment after what
+          // it returned, while the run is still being played back.
+          const page = () => document.body.textContent;
+          await until(() => page().includes("1 message sent") && page().includes('"seatsLeft": 8'), 10000);
           return {
             offered: true,
             label,
             ran: Boolean(arrived),
             // Nothing comes back along the queue, so the only evidence it was
             // written to is what the run left on it.
-            sent: document.body.textContent.includes("1 message sent"),
+            sent: page().includes("1 message sent"),
             // And the seats came off the event, which is a write rather than a read.
-            written: document.body.textContent.includes('"seatsLeft": 8'),
+            written: page().includes('"seatsLeft": 8'),
           };
         `);
         await capture(window, "self-check-from-the-top");
@@ -3528,8 +3532,9 @@ function attachSelfCheck(
         // What to tell the agent, copied from the bar above the drawing. The
         // clipboard is the person's, so whatever was on it, in every format, is put back.
         // Read out in full first: an item read from the clipboard cannot be written back as it is.
+        // An item holding nothing, which a crash can leave behind, cannot be made again at all.
         const clipboardBefore = await Promise.all(
-          (await clipboard.read()).map(
+          (await clipboard.read()).filter((item) => item.types.length > 0).map(
             async (item) => new ClipboardItem(Object.fromEntries(await Promise.all(item.types.map(async (type) => [type, await item.getType(type)] as const)))),
           ),
         );
