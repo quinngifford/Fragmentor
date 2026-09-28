@@ -103,6 +103,23 @@ describe("the forms of import it follows", () => {
     ]);
   });
 
+  it("finds a name a barrel passes on whole in a file it reads before one it cannot, such as a generated client", async () => {
+    await block("app/db", part("database", "src/db"));
+    await source("src/db/generated/index.d.ts", "export declare class Client { constructor(); }\n");
+    await source("src/db/generated/index.js", "exports.Client = class {};\n");
+    await source("src/lib/index.ts", 'export * from "../db/generated";\nexport * from "./format";\n');
+    await source("src/lib/format.ts", "export function formatMoney(cents: number) { return (cents / 100).toFixed(2); }\n");
+    await block("app/a", fn("src/a.ts#a"));
+    await block("app/b", fn("src/b.ts#b"));
+    await source("src/a.ts", 'import { formatMoney } from "./lib";\nexport function a() { return formatMoney(1); }\n');
+    await source("src/b.ts", 'import { Client } from "./lib";\nexport function b() { return new Client(); }\n');
+
+    // Only the name no file it reads declares is the generated file's, the one place left it can come from.
+    expect((await reachOf()).edges).toEqual([
+      { from: "app/b", to: "app/db", evidence: "Client from src/db/generated/index.d.ts", approximate: false },
+    ]);
+  });
+
   it("resolves a tsconfig paths alias and a baseUrl import, which look like packages and are not", async () => {
     await withDatabase();
     await source("tsconfig.json", JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@/*": ["src/*"] } } }));
@@ -375,6 +392,24 @@ describe("which block the reach belongs to", () => {
     });
   });
 
+  it("gives a function block the helpers in its own file, and a file's rest to the block around its functions when the folder holding it does not hold them", async () => {
+    // A command's file inside a server's folder, the way a CLI often sits beside the code it starts.
+    await block("app/api", part("service", "src"));
+    await block("app/cli", part("client"));
+    await block("app/cli/run", fn("src/bin.ts#run"));
+    await source(
+      "src/bin.ts",
+      'function parseArgs(argv: string[]) { return Number(argv[2]); }\nconst usage = "usage: tool [port]";\n' +
+        "export function run(argv: string[]) { return parseArgs(argv) || usage; }\nrun(process.argv);\n",
+    );
+    // A file some other part points at whole, one function of which is the command's.
+    await block("app/web", part("client", "src/web.ts"));
+    await block("app/cli/serve", fn("src/web.ts#serve"));
+    await source("src/web.ts", "function port() { return 3000; }\nexport function serve() { return port(); }\n");
+
+    expect((await reachOf()).edges).toEqual([]);
+  });
+
   it("lists code under no pointer that reaches something no block's code led into", async () => {
     await withDatabase();
     await block("app/a", fn("src/a.ts#a"));
@@ -433,7 +468,38 @@ describe("what it says it could not read", () => {
     await source("src/glue.ts", 'import { db } from "./db";\nexport function helper() { return db; }\n');
     await source("src/a.ts", 'import * as glue from "./glue";\nexport function a() { return Object.keys(glue); }\n');
 
-    expect((await reachOf()).edges).toEqual([{ from: "app/a", to: "app/db", evidence: "db from src/db.ts", approximate: true }]);
+    const reach = await reachOf();
+    expect(reach.edges).toEqual([{ from: "app/a", to: "app/db", evidence: "db from src/db.ts", approximate: true }]);
+    expect(reach.notChecked).toEqual({ "app/a": ["src/glue.ts is used whole, so all of it is counted"] });
+  });
+
+  it("counts a file imported only to run it as all of it, marked approximate, and says so only where it reaches something", async () => {
+    await withDatabase();
+    await block("app/workers", part("service", "src/workers"));
+    await block("app/workers/deliver", fn("src/workers/deliver.ts#deliver"));
+    await source("src/glue.ts", 'import { open } from "./db";\nopen();\n');
+    await source("src/polyfill.ts", "export const ready = true;\n");
+    await source("src/workers/deliver.ts", 'import "../glue";\nimport "../polyfill";\nexport function deliver() { return 1; }\n');
+
+    const reach = await reachOf();
+    expect(reach.edges).toEqual([{ from: "app/workers", to: "app/db", evidence: "open from src/db.ts", approximate: true }]);
+    expect(reach.notChecked).toEqual({ "app/workers": ["src/glue.ts is imported only to run it, so all of it is counted"] });
+  });
+
+  it("counts a value no block points at as all of it, so an object bundling several parts is not taken as reaching each from every use", async () => {
+    await withDatabase();
+    await block("app/mailer", part("external", "src/mailer.ts"));
+    await source("src/mailer.ts", "export class Mailer { send(to: string) { return to; } }\n");
+    await source("src/container.ts", 'import { db } from "./db";\nimport { Mailer } from "./mailer";\nexport const container = { db, mailer: new Mailer() };\n');
+    await block("app/a", fn("src/a.ts#a"));
+    await source("src/a.ts", 'import { container } from "./container";\nexport function a() { return container.db.rows.size; }\n');
+
+    const reach = await reachOf();
+    expect(reach.edges).toEqual([
+      { from: "app/a", to: "app/db", evidence: "db from src/db.ts", approximate: true },
+      { from: "app/a", to: "app/mailer", evidence: "Mailer from src/mailer.ts", approximate: true },
+    ]);
+    expect(reach.notChecked).toEqual({ "app/a": ["container in src/container.ts is a value that may hold several things, so all of it is counted"] });
   });
 
   it("counts a namespace handed on whole as reaching every block in its file, the ones pointing at functions approximately", async () => {

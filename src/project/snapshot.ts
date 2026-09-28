@@ -18,6 +18,7 @@ import { getPack, isKnownLanguage } from "../lang/index.js";
 import { boundStores, describeBound, storeEntries } from "./stores.js";
 import { NOTES_DIR, loadNotes, waitingOn } from "./notes.js";
 import { readProjectReach, undeclaredReach } from "./reach.js";
+import type { ProjectReach } from "./reach.js";
 import type { Note, NoteAuthor } from "./notes.js";
 import { readCases, storeKeyProblems } from "../run/cases.js";
 import type { TestCase } from "../run/cases.js";
@@ -378,7 +379,23 @@ async function notesOf(project: Project, problems: ProjectDiagnostic[]): Promise
 export async function projectSnapshot(projectDir: string, { atCommit = false }: { atCommit?: boolean } = {}): Promise<ProjectSnapshot> {
   const project = await loadProject(projectDir);
   const code = await readAllCode(project);
-  const reach = atCommit ? null : await readProjectReach(project, code);
+  // What the code reaches only ever gives warnings, so a project whose reach
+  // could not be read still opens, and says so instead.
+  let reach: ProjectReach | null = null;
+  let reachProblems: ProjectDiagnostic[] = [];
+  if (!atCommit) {
+    try {
+      reach = await readProjectReach(project, code);
+      reachProblems = undeclaredReach(project, reach);
+    } catch (error) {
+      reach = null;
+      reachProblems = project.systems.map((system): ProjectDiagnostic => ({
+        severity: "warning",
+        blockPath: system.rootBlock,
+        message: `What the code reaches could not be read, so reach the diagram leaves out is not found: ${error instanceof Error ? error.message : String(error)}`,
+      }));
+    }
+  }
   const blocks: Record<string, SnapshotBlock> = {};
 
   // Problems found reading the files beside the diagram are reported with the
@@ -528,7 +545,7 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
     blocks,
     executions,
     notes,
-    diagnostics: [...validateProject(project), ...fileProblems, ...(reach === null ? [] : undeclaredReach(project, reach))],
+    diagnostics: [...validateProject(project), ...fileProblems, ...reachProblems],
     reachUnpointed: reach?.unpointed ?? [],
   };
 }

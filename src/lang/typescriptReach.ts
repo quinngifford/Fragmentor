@@ -61,6 +61,7 @@ interface Parsed {
   rest: RawUses;
   exports: Map<string, { local: string } | { specifier: string; name: string }>;
   exportsAll: string[];
+  values: Set<string>;
 }
 
 const BUILTINS = new Set(builtinModules);
@@ -85,11 +86,13 @@ export function importsOnlyTypes(statement: ts.ImportDeclaration): boolean {
 }
 
 const CODE = /\.(ts|tsx|mts|cts)$/;
-const TEST = /\.(test|spec)\.[cm]?tsx?$/;
+// Jest's and Vitest's, Nest's `.e2e-spec`, Cypress's `.cy`, and the folders tests and their helpers are kept in.
+const TEST = /[.-](test|spec|e2e|cy)\.[cm]?tsx?$/;
+const TEST_FOLDERS = new Set(["__tests__", "__mocks__", "test", "tests", "testing", "e2e", "cypress"]);
 
 function fileKind(file: string): "code" | "test" | null {
   if (!CODE.test(file) || /\.d\.[cm]?ts$/.test(file)) return null;
-  return TEST.test(file) || file.split("/").includes("__tests__") ? "test" : "code";
+  return TEST.test(file) || file.split("/").slice(0, -1).some((folder) => TEST_FOLDERS.has(folder)) ? "test" : "code";
 }
 
 /* -------------------------------------------------------------------------- */
@@ -197,6 +200,7 @@ function parseText(fileName: string, text: string): Parsed {
   /** The statements each top-level name is declared by, in order; a function can be declared more than once to overload it. */
   const declared = new Map<string, ts.Node[]>();
   const restNodes: ts.Node[] = [];
+  const values = new Set<string>();
   const sideEffects: string[] = [];
 
   const declare = (name: string, node: ts.Node, statement: ts.Statement, kind: OutlineDeclaration["kind"]) => {
@@ -266,12 +270,16 @@ function parseText(fileName: string, text: string): Parsed {
       for (const each of statement.declarationList.declarations) {
         const initial = each.initializer;
         const kind = initial && (ts.isArrowFunction(initial) || ts.isFunctionExpression(initial)) ? "function" : "variable";
-        for (const name of bindingNames(each.name)) declare(name, each, statement, kind);
+        for (const name of bindingNames(each.name)) {
+          declare(name, each, statement, kind);
+          if (kind === "variable") values.add(name);
+        }
       }
     } else if (ts.isEnumDeclaration(statement)) {
       declare(statement.name.text, statement, statement, "enum");
     } else if (ts.isModuleDeclaration(statement) && ts.isIdentifier(statement.name)) {
       declare(statement.name.text, statement, statement, "namespace");
+      values.add(statement.name.text);
     } else if (ts.isExportAssignment(statement)) {
       // `export default x` names something declared or imported; anything else is its own declaration.
       if (ts.isIdentifier(statement.expression)) {
@@ -279,6 +287,7 @@ function parseText(fileName: string, text: string): Parsed {
         exportedNames.add(statement.expression.text);
       } else {
         declare("default", statement.expression, statement, "default");
+        if (ts.isObjectLiteralExpression(statement.expression) || ts.isArrayLiteralExpression(statement.expression)) values.add("default");
       }
     } else if (!ts.isInterfaceDeclaration(statement) && !ts.isTypeAliasDeclaration(statement) && !ts.isImportDeclaration(statement)) {
       restNodes.push(statement);
@@ -342,7 +351,7 @@ function parseText(fileName: string, text: string): Parsed {
   const rest = usesOf(restNodes);
   rest.imports.push(...sideEffects.map((specifier) => ({ specifier, name: null })));
 
-  return { outline: outlined, declarations, rest, exports, exportsAll };
+  return { outline: outlined, declarations, rest, exports, exportsAll, values };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -532,7 +541,7 @@ function reading(projectDir: string): (file: string, text: string) => FileReach 
       else if (found !== "missing") exportsAll.push(found.file);
     }
 
-    return { declarations, rest: resolveUses(parsed.rest, file, resolve), exports, exportsAll };
+    return { declarations, values: parsed.values, rest: resolveUses(parsed.rest, file, resolve), exports, exportsAll };
   };
 }
 

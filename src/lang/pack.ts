@@ -62,6 +62,8 @@ export interface Uses {
 export interface FileReach {
   /** Each top-level function, class or variable, by name. */
   declarations: Map<string, Uses>;
+  /** The declarations that are values rather than functions or classes, such as an object bundling several services, whose parts may be used one at a time. */
+  values: Set<string>;
   /** Top-level statements, and imports that only run a file. */
   rest: Uses;
   /**

@@ -22,9 +22,10 @@ import { isArchitecture } from "../model/roles.js";
  * On the reaching side, a block pointing at a function is that function and
  * the helpers in its file that it calls. Everything else in a file belongs to
  * the block whose pointer covers the whole file, or else the deepest folder
- * that holds it: top-level statements, imports that only run a file, and
- * functions no block points at. So three blocks sharing one file each reach
- * only what their own function does.
+ * that holds it, unless the functions blocks point at there are some other
+ * part's: top-level statements, imports that only run a file, and functions
+ * no block points at. So three blocks sharing one file each reach only what
+ * their own function does.
  *
  * On the reached side, a name belongs to the block pointing at it, then to
  * the block pointing at its whole file, then to the deepest folder. Code that
@@ -32,7 +33,8 @@ import { isArchitecture } from "../model/roles.js";
  * it is followed, name by name, to whatever it in turn reaches. A file is
  * counted whole only where no single name can be followed — a module handed
  * on whole, an import that only runs it, a name that could not be found — and
- * an edge found that way is marked approximate.
+ * so is a value built from several things, which may be used one at a time.
+ * An edge found that way is marked approximate, and the block told why.
  */
 
 export interface ReachEdge {
@@ -58,6 +60,14 @@ export interface ProjectReach {
 
 /** Windows and macOS find a file whatever the case it is written in, so a pointer written differently still covers it. */
 const fold = (file: string): string => (IGNORES_CASE ? file.toLowerCase() : file);
+
+/** The deepest block holding all of these, or "" when they are in different systems. */
+function holding(blockPaths: string[]): string {
+  const segments = blockPaths.map((each) => each.split("/"));
+  const first = segments[0]!;
+  const differs = first.findIndex((segment, i) => segments.some((other) => other[i] !== segment));
+  return first.slice(0, differs === -1 ? first.length : differs).join("/");
+}
 
 /** A block's pointer, as the owner of the code it covers. */
 interface Owner {
@@ -131,10 +141,9 @@ export async function readProjectReach(project: Project, code: Map<string, Block
     const separate = owners.filter((owner, i) => !owners.slice(0, i).some((before) => under(before.path, owner.path)));
     let owner = separate[0]!;
     if (separate.length > 1) {
-      const segments = separate.map((each) => each.path.split("/"));
-      const common = segments[0]!.slice(0, segments[0]!.findIndex((segment, i) => segments.some((other) => other[i] !== segment)));
-      if (common.length > 0) {
-        owner = { path: common.join("/"), file: owner.file, symbol: null };
+      const common = holding(separate.map((each) => each.path));
+      if (common !== "") {
+        owner = { path: common, file: owner.file, symbol: null };
         for (const each of separate) {
           const others = separate.filter((other) => other !== each).map((other) => other.path);
           note(each.path, `${each.file} is also the code of ${others.join(" and ")}, so what it reaches is counted as ${owner.path}'s`);
@@ -147,9 +156,22 @@ export async function readProjectReach(project: Project, code: Map<string, Block
   // The deepest first, so the folder that holds a file most closely is the one that owns it.
   folders.sort((a, b) => (b.file === "." ? 0 : b.file.length) - (a.file === "." ? 0 : a.file.length));
 
+  const pointedInto = new Map<string, string[]>();
+  for (const owner of bySymbol.values()) pointedInto.set(fold(owner.file), [...(pointedInto.get(fold(owner.file)) ?? []), owner.path]);
+
   /** Who a file's code belongs to, apart from the names blocks point at. */
-  const restOwner = (file: string): Owner | undefined =>
-    byFile.get(fold(file)) ?? folders.find((folder) => folder.file === "." || fold(file).startsWith(`${fold(folder.file)}/`));
+  const restOwner = (file: string): Owner | undefined => {
+    const whole = byFile.get(fold(file));
+    if (whole !== undefined) return whole;
+    const folder = folders.find((each) => each.file === "." || fold(file).startsWith(`${fold(each.file)}/`));
+    const functions = pointedInto.get(fold(file)) ?? [];
+    if (folder === undefined || functions.every((each) => under(folder.path, each))) return folder;
+    // A file the folder only takes in along with the rest, whose functions are
+    // some other part's, such as a command's file inside a server's folder, is
+    // that part's: its top-level code is what runs those functions.
+    const around = holding(functions.map((each) => each.split("/").slice(0, -1).join("/")));
+    return around === "" ? folder : { path: around, file, symbol: null };
+  };
   const ownerOf = (file: string, name: string | null): Owner | undefined =>
     (name === null ? undefined : bySymbol.get(`${fold(file)}#${name}`)) ?? restOwner(file);
 
@@ -213,27 +235,38 @@ export async function readProjectReach(project: Project, code: Map<string, Block
       if ("local" in passed) return found.declarations.has(passed.local) ? { file: target.file, name: passed.local } : null;
       declared = definition(passed, reader, through, seen);
     } else {
+      // A file that is not read, such as a generated client, would seem to
+      // declare every name, so it is taken only as the one place left.
+      const unread = found.exportsAll.filter((file): file is string => {
+        const read = file === null ? undefined : source(file, reader);
+        return read === null || typeof read === "string";
+      });
       for (const file of found.exportsAll) {
-        if (file !== null) declared = definition({ file, name: target.name }, reader, through, seen);
+        if (file !== null && !unread.includes(file)) declared = definition({ file, name: target.name }, reader, through, seen);
         if (declared !== null) break;
       }
+      const somePackage = found.exportsAll.includes(null);
+      if (declared === null && unread.length === 1 && !somePackage) declared = definition({ file: unread[0]!, name: target.name }, reader, through, seen);
       // A name no file of the project passes on may be a package's, passed on whole.
-      if (declared === null && found.exportsAll.includes(null)) return "outside";
+      else if (declared === null && unread.length === 0 && somePackage) return "outside";
     }
     if (declared !== null && declared !== "outside") through.unshift(target.file);
     return declared;
   };
 
+  /** How many edges have been found so far, to tell whether following something found any. */
+  let added = 0;
   const addEdge = (from: string, to: string, evidence: string, approximate: boolean) => {
     const key = `${from}\n${to}\n${evidence}`;
+    if (!edges.has(key)) added += 1;
     if (!approximate || !edges.has(key)) edges.set(key, { from, to, evidence, approximate });
   };
 
   /** Every name any block's code was followed into, to tell what nothing accounts for. */
   const followed = new Set<string>();
 
-  /** Follows everything one block's code uses, recording what it reaches. */
-  const reaching = (reacher: string, reader: ReachReader) => {
+  /** Follows everything one block's code uses, recording what it reaches; `ownFile` is a function block's file. */
+  const reaching = (reacher: string, reader: ReachReader, ownFile?: string) => {
     const visited = new Set<string>();
 
     const walk = (file: string, uses: Uses, approximate: boolean): void => {
@@ -261,8 +294,10 @@ export async function readProjectReach(project: Project, code: Map<string, Block
 
       const read = source(at.file, reader);
       if (read === null) return;
-      let owner = ownerOf(at.file, at.name === "*" ? null : at.name);
-      if (owner === undefined || under(owner.path, reacher)) {
+      // A function block's helpers in its own file are its own, whoever holds the rest of the file.
+      const helper = ownFile !== undefined && at.name !== null && at.name !== "*" && fold(at.file) === fold(ownFile) && !bySymbol.has(key);
+      let owner = helper ? undefined : ownerOf(at.file, at.name === "*" ? null : at.name);
+      if (!helper && (owner === undefined || under(owner.path, reacher))) {
         // A name declared where no other block's pointer reaches, but passed on
         // by a file that is some block's, such as the index a block points at,
         // is that block's: it is what the code imported from.
@@ -291,8 +326,23 @@ export async function readProjectReach(project: Project, code: Map<string, Block
         return;
       }
       const uses = at.name === null || at.name === "*" ? undefined : read.declarations.get(at.name);
+      // A value built from several things, such as an object bundling a
+      // database and a mailer, may be used one of them at a time, so unless
+      // it is the reacher's own code, all of it is only perhaps reached.
+      const bundle =
+        uses !== undefined && owner?.path !== reacher && read.values.has(at.name!) && new Set([...uses.targets.map((each) => each.file), ...uses.local]).size > 1;
+      const before = added;
       if (uses === undefined) walkWhole(at.file, read);
-      else walk(at.file, uses, rough);
+      else walk(at.file, uses, rough || bundle);
+      // What was found only by counting all of something is not judged, so the block is told why.
+      if (!rough && added > before && (uses === undefined || bundle)) {
+        note(
+          reacher,
+          uses === undefined
+            ? `${at.file} is ${at.name === null ? "imported only to run it" : "used whole"}, so all of it is counted`
+            : `${at.name} in ${at.file} is a value that may hold several things, so all of it is counted`,
+        );
+      }
     };
 
     return { visited, walk, walkWhole, follow };
@@ -323,7 +373,7 @@ export async function readProjectReach(project: Project, code: Map<string, Block
         note(owner.path, read);
         return;
       }
-      const from = reaching(owner.path, reader);
+      const from = reaching(owner.path, reader, owner.file);
       const key = `${fold(owner.file)}#${owner.symbol}`;
       from.visited.add(`false:${key}`);
       followed.add(key);

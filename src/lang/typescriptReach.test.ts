@@ -122,6 +122,12 @@ describe("telling files apart", () => {
     expect(typescriptReach.fileKind("src/a.test.ts")).toBe("test");
     expect(typescriptReach.fileKind("src/a.spec.tsx")).toBe("test");
     expect(typescriptReach.fileKind("src/__tests__/a.ts")).toBe("test");
+    // Nest's end-to-end tests, Cypress's, and the helpers kept in a folder beside them.
+    expect(typescriptReach.fileKind("src/app.e2e-spec.ts")).toBe("test");
+    expect(typescriptReach.fileKind("src/orders.cy.ts")).toBe("test");
+    for (const folder of ["test", "tests", "testing", "e2e", "cypress", "__mocks__"]) expect(typescriptReach.fileKind(`src/${folder}/run.ts`)).toBe("test");
+    expect(typescriptReach.fileKind("src/legacy.ts")).toBe("code");
+    expect(typescriptReach.fileKind("src/latest/a.ts")).toBe("code");
     expect(typescriptReach.fileKind("src/a.d.ts")).toBeNull();
     expect(typescriptReach.fileKind("src/a.js")).toBeNull();
     expect(typescriptReach.fileKind("src/a.py")).toBeNull();

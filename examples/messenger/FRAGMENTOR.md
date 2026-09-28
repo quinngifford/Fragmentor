@@ -169,7 +169,7 @@ A block with a role is not called, so it has no `inputs`, `outputs` or `capabili
 
 - Put the name of one of this block's own entries first, and the line joins those two rather than the two blocks: `"showOrders calls orders-api.listOrders"` runs from that button to that operation. A block with several buttons calling several operations needs this, or they would all leave it at the same point.
 - `reads` takes data out, `writes` puts data in, `calls` does both. Name the entry, as in `reads orders-db.orders`, or leave it off to mean the whole thing.
-- The block named is looked for among this block's own parts, then beside it, then above it, so a handler inside a service reaches a database the service keeps beside it. Name one inside a group by its path from there: `reads infrastructure/orders-db.orders`. Put the access on the block that really touches the resource, even by calling into its code from outside; the diagrams above gather it up.
+- The block named is looked for among this block's own parts, then beside it, then above it, so a handler inside a service reaches a database the service keeps beside it. Name one inside a group by its path from there: `reads infrastructure/orders-db.orders`. Put the access on the block that really touches the resource, or calls into a service's or client's code; the diagrams above gather it up.
 - Code reaches a `database`, `storage` or `structure` through a `Store` port, and a `queue` through a `Queue` port. Put the port's name at the start of the access — `"orders reads orders-db.orders"` — and that port is a way into that entry and nothing else, so the line drawn is the line the code runs along. Always name the entry, and ask for a port each where a block reaches two.
 
 ## Types
