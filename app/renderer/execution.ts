@@ -1,6 +1,7 @@
 import { addressesOf, nextStep, placeEvent, travelOf } from "../../src/model/trace.js";
 import type { Address, InteractionKind, Trace, TraceEvent, View } from "../../src/model/trace.js";
 import { addressOf, checkRecording } from "../../src/model/recorded.js";
+import type { StepVerdict } from "../../src/model/recorded.js";
 import type { SnapshotExecution } from "../../src/project/snapshot.js";
 import type { TriggerKind } from "../../src/project/executions.js";
 import type { NoteAnchor } from "../../src/project/notes.js";
@@ -235,9 +236,14 @@ export function setUpExecutions(recordIt: (execution: SnapshotExecution) => void
     const step = currentStep();
     if (!step) return null;
     const start = startOf(step.execution, step.trace);
+    const verdicts = step.trace.source === "declared" ? verdictsOf(step.execution) : null;
+    const notSeen = new Set(
+      step.trace.events.flatMap((event, at) => (verdicts?.contradicted && verdicts.byStep.get(event.id)?.verdict === "not-seen" ? [at] : [])),
+    );
     return {
       flow: buildFlow(step.trace, (event) => stepWord(event, start)),
       at: step.at,
+      notSeen,
       // A recording starts with Fragmentor running the code, not with anything outside.
       name: (path) => (path === null ? (start === null ? "Fragmentor" : "Outside") : (ui.snapshot?.blocks[path]?.name ?? path)),
     };
@@ -370,6 +376,22 @@ export function showRecording(id: string): void {
   paintExecution();
 }
 
+/**
+ * Goes to one step of the execution picked, in whichever trace it is in,
+ * opening whatever folds hide it: the step a recording contradicts, or the
+ * recorded step a written one was seen as.
+ */
+function showStepOf(trace: "declared" | "recorded", id: string): void {
+  const shown = picked();
+  const events = (trace === "declared" ? shown?.written : shown?.recording?.trace)?.events ?? [];
+  const at = events.findIndex((event) => event.id === id);
+  if (!ui.execution || at === -1) return;
+  stopPlaying();
+  ui.execution = { ...ui.execution, at, trace };
+  showStep();
+  arrive(events[at]!, true);
+}
+
 /** Shows the other trace of the execution picked, from its first step: the two are different runs, step for step. */
 function showTrace(trace: "declared" | "recorded"): void {
   if (!ui.execution || ui.execution.trace === trace) return;
@@ -447,6 +469,8 @@ function renderBar(): void {
     Boolean(shown?.written),
     shown?.recording?.at ?? null,
     ui.shows,
+    // What the recording says of the steps written down changes as the agent edits them.
+    shown ? agreementOf(shown.execution) : null,
   ]);
   if (bar?.key !== key) bar = buildBar(host, key, executions, shown);
   updateBar(bar, shown);
@@ -531,6 +555,8 @@ function buildBar(
   }
   controls.append(sources);
   controls.append(recordButton);
+  const agreement = agreementOf(execution);
+  if (agreement) controls.append(agreementPill(agreement));
 
   const steps: StepControls = {
     restart: barButton("Restart", "Back to what set it going", () => jump(0)),
@@ -570,6 +596,75 @@ function updateBar(built: NonNullable<typeof bar>, shown: ReturnType<typeof pick
   steps.caption.title = describeStep(step.event, start, 4000);
 }
 
+/**
+ * How the steps written down came out against the recording, for the bar:
+ * what it says, the counts behind it, and the first step it contradicts.
+ * Null unless there is both a trace written down and a recording of it.
+ */
+interface Agreement {
+  text: string;
+  title: string;
+  /** The first step written down that the recording contradicts, if any. */
+  first: string | null;
+  /** Anything else wrong that only the recording's own page shows: an expectation it failed. */
+  failed: number;
+}
+
+const counted = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+
+function agreementOf(execution: SnapshotExecution): Agreement | null {
+  const verdicts = verdictsOf(execution);
+  if (!verdicts) return null;
+  const { check, contradicted } = verdicts;
+  const count = (verdict: string) => check.steps.filter((step) => step.verdict === verdict).length;
+  // A step missing from a run that was cut short may just not have happened yet.
+  const notSeen = contradicted ? count("not-seen") : 0;
+  const unchecked = count("unchecked") + (contradicted ? 0 : count("not-seen"));
+  const failed = check.expectations.failures.length;
+
+  const wrong = [
+    notSeen > 0 ? `${counted(notSeen, "step")} not seen` : "",
+    failed > 0 ? `${counted(failed, "expectation")} failed` : "",
+  ].filter(Boolean);
+  const text =
+    wrong.length > 0
+      ? wrong.join(", ")
+      : !contradicted
+        ? "Agrees as far as the recording went"
+        : unchecked > 0
+          ? "Agrees where the recording could see"
+          : "Agrees with the recording";
+  const title = [
+    `Of the ${counted(check.steps.length, "step")} written down, ${count("seen")} seen, ${notSeen} not seen, and ${unchecked} that cannot be checked from this run, which count neither way.`,
+    check.expectations.met.length + failed + check.expectations.setAside.length > 0
+      ? `Of what must happen, ${check.expectations.met.length} met, ${failed} failed and ${check.expectations.setAside.length} set aside.`
+      : "",
+    check.unwrittenCount > 0 ? `The run also did ${counted(check.unwrittenCount, "thing")} no step says.` : "",
+    contradicted ? "" : "The recording ends before the run did, so nothing missing from it counts against what was written.",
+    notSeen > 0 ? "Click to go to the first step not seen." : failed > 0 ? "Click to see the recording, whose page says what failed." : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const first = contradicted ? (check.steps.find((step) => step.verdict === "not-seen")?.id ?? null) : null;
+  return { text, title, first, failed };
+}
+
+/** The verdict on the bar: quiet when the recording agrees, red and a way to the trouble when it does not. */
+function agreementPill(agreement: Agreement): HTMLElement {
+  if (agreement.first === null && agreement.failed === 0) {
+    const quiet = el("span", "exec-verdict", agreement.text);
+    quiet.title = agreement.title;
+    return quiet;
+  }
+  const { first } = agreement;
+  const pill = el("button", "chip exec-verdict", agreement.text);
+  pill.type = "button";
+  pill.dataset.bad = "true";
+  pill.title = agreement.title;
+  pill.addEventListener("click", () => (first === null ? showTrace("recorded") : showStepOf("declared", first)));
+  return pill;
+}
+
 /* -------------------------------------------------------------------------- */
 /* The step's own page                                                         */
 /* -------------------------------------------------------------------------- */
@@ -584,7 +679,7 @@ function updateBar(built: NonNullable<typeof bar>, shown: ReturnType<typeof pick
 export function stepPage(
   panel: HTMLElement,
   actions: {
-    noteOn?: (blockPath: string, on: NoteAnchor) => void;
+    noteOn?: (blockPath: string, on: NoteAnchor, text?: string) => void;
     openCode?: (pointer: string, title: string) => void;
     problemsListed?: boolean;
   },
@@ -615,14 +710,26 @@ export function stepPage(
   // file the agent could find it by, so a note is left on a written one.
   const ends = event.type === "effect" ? null : (travelOf(event) ?? event);
   const leaves = event.type === "effect" ? event.at : (ends?.from ?? ends?.to ?? null);
+  const verdict = recorded ? null : verdictOn(execution, event);
+  // A step a recording contradicts is what a note is most often for, so the
+  // note starts off with what the recording found, for the agent to read.
+  const contradiction =
+    verdict?.verdict.verdict === "not-seen" && verdict.contradicted
+      ? `When Fragmentor recorded this execution, this step was not seen. ${verdict.verdict.reason ?? ""}`.trim()
+      : undefined;
   if (noteOn && !recorded && leaves && snapshot.blocks[leaves.path]) {
     const note = el("button", "btn quiet tiny", "Leave a note on this step");
     note.title = `A note for your coding agent about this step, on ${snapshot.blocks[leaves.path]!.name}.`;
     note.addEventListener("click", () =>
-      noteOn(leaves.path, { execution: execution.id, step: event.id, description: said ?? describeStep(event, trigger, 200) }),
+      noteOn(
+        leaves.path,
+        { execution: execution.id, step: event.id, description: said ?? describeStep(event, trigger, 200) },
+        contradiction,
+      ),
     );
     panel.append(note);
   }
+  if (verdict) panel.append(verdictSection(verdict));
 
   // "Where", not "between": an effect happens at one block rather than
   // between two, and this is the section that says so for both.
@@ -707,7 +814,13 @@ export function stepPage(
 
   if (step.trace.source === "declared") {
     panel.append(
-      el("p", "bench-note", "Written down by the agent from reading the code. Fragmentor has not seen it run."),
+      el(
+        "p",
+        "bench-note",
+        verdict
+          ? "Written down by the agent from reading the code. What Fragmentor saw when it ran the code is above."
+          : "Written down by the agent from reading the code. Fragmentor has not seen it run.",
+      ),
     );
   }
   const recording = recorded ? recordingOf(execution) : null;
@@ -735,6 +848,73 @@ function checkOf(execution: SnapshotExecution, recording: Recording): ReturnType
   const check = checkRecording(execution, recording.trace, recording.scope, recording.complete);
   checks.set(recording, { of: execution, check });
   return check;
+}
+
+/**
+ * What the recording of an execution says of each step written down about
+ * it, or null unless there are both. `contradicted` is false for a recording
+ * that ended before the run did, where a step not seen may just not have
+ * happened yet, and so is no contradiction.
+ */
+function verdictsOf(
+  execution: SnapshotExecution,
+): { check: ReturnType<typeof checkRecording>; byStep: Map<string, StepVerdict>; contradicted: boolean; recording: Recording } | null {
+  const recording = recordingOf(execution);
+  if (!recording || !execution.declared || execution.declared.events.length === 0) return null;
+  const check = checkOf(execution, recording);
+  return { check, byStep: new Map(check.steps.map((step) => [step.id, step])), contradicted: recording.complete, recording };
+}
+
+/**
+ * What the recording says of one step written down, in words: seen, not
+ * seen and why, or cannot be checked and why. An answer is held to the
+ * recording with the call it answers, and what set the execution going is
+ * never in a recording, which starts at the code it runs.
+ */
+function verdictOn(execution: SnapshotExecution, event: TraceEvent): { verdict: StepVerdict; answer: boolean; contradicted: boolean } | null {
+  const verdicts = verdictsOf(execution);
+  if (!verdicts) return null;
+  const { byStep, contradicted, recording } = verdicts;
+  if (event.type === "interaction" && event.kind === "trigger") {
+    const runs = nameOfPlace({ path: recording.scope.runs, entry: null });
+    const reason = `The recording starts at ${runs}, so it cannot see what set the execution going.`;
+    return { verdict: { id: event.id, verdict: "unchecked", reason }, answer: false, contradicted };
+  }
+  const verdict = byStep.get(event.type === "return" ? event.of : event.id);
+  return verdict ? { verdict, answer: event.type === "return", contradicted } : null;
+}
+
+/**
+ * On a step written down, what the recording says of it, in one line: the
+ * person reading the step is told whether the code really does it, and where
+ * the run could not see, that it cannot say, rather than anything that reads
+ * as agreeing.
+ */
+function verdictSection(on: NonNullable<ReturnType<typeof verdictOn>>): HTMLElement {
+  const node = section("When it was recorded");
+  const { verdict, answer, contradicted } = on;
+  // An answer has no verdict of its own: it was held to the recording with its call.
+  const lead = answer ? "With the call it answers: " : "";
+  const line = (text: string, bad = false) => {
+    const p = el("p", bad ? "bench-note bad" : "bench-note", `${lead}${text}`);
+    p.dataset.verdict = verdict.verdict;
+    return p;
+  };
+  if (verdict.verdict === "seen") {
+    node.append(line("Seen. The code really did this when Fragmentor ran it."));
+    const seenAs = verdict.seenAs;
+    if (seenAs !== undefined) {
+      const show = el("button", "btn quiet tiny", "Show in the recording");
+      show.title = "Go to the step Fragmentor saw that this one is.";
+      show.addEventListener("click", () => showStepOf("recorded", seenAs));
+      node.append(show);
+    }
+  } else if (verdict.verdict === "not-seen") {
+    node.append(contradicted ? line(`Not seen. ${verdict.reason ?? ""}`.trim(), true) : line(`Not seen yet. ${verdict.reason ?? ""}`.trim()));
+  } else {
+    node.append(line(`Cannot be checked from this run, so it counts neither as seen nor as not seen. ${verdict.reason ?? ""}`.trim()));
+  }
+  return node;
 }
 
 /**

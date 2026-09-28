@@ -206,6 +206,8 @@ export interface StepVerdict {
   verdict: "seen" | "not-seen" | "unchecked";
   /** Why, for anything but `seen`. */
   reason: string | null;
+  /** For a step `seen`, the id of a recorded step that shows it, so the person can be taken to it. */
+  seenAs?: string;
 }
 
 export interface RecordingCheck {
@@ -503,12 +505,14 @@ function checkSteps(declared: Trace, trace: Trace, scope: RecordingScope, comple
   // every step seen so far is held to the recording again with the next one.
   // A step written twice for something done once is then seen only once.
   const seen = only({});
+  const shown = new Set<string>();
 
   return declared.events.flatMap((step): StepVerdict[] => {
     if (step.id === TRIGGER || step.type === "return") return [];
     const unchecked = (reason: string): StepVerdict[] => [{ id: step.id, verdict: "unchecked", reason }];
 
     let held: Expectations;
+    let alone: Expectations;
     let keep: () => void;
     let reach: string | null;
     if (step.type === "interaction") {
@@ -525,6 +529,7 @@ function checkSteps(declared: Trace, trace: Trace, scope: RecordingScope, comple
       const never = unrecordableInteraction(scope, wanted) ?? heardFromAFile(scope, wanted.from);
       if (never !== null) return unchecked(never);
       held = { ...seen, interactions: [...seen.interactions, wanted] };
+      alone = only({ interactions: [wanted] });
       keep = () => seen.interactions.push(wanted);
       reach = interactionOutOfReach(scope, wanted);
     } else {
@@ -532,6 +537,7 @@ function checkSteps(declared: Trace, trace: Trace, scope: RecordingScope, comple
       const never = unrecordableEffect(scope, wanted);
       if (never !== null) return unchecked(never);
       held = { ...seen, effects: [...seen.effects, wanted] };
+      alone = only({ effects: [wanted] });
       keep = () => seen.effects.push(wanted);
       reach = effectOutOfReach(scope, wanted);
     }
@@ -540,11 +546,32 @@ function checkSteps(declared: Trace, trace: Trace, scope: RecordingScope, comple
     const result = evaluate(trace, held);
     if (result.passed) {
       keep();
-      return [{ id: step.id, verdict: "seen", reason: null }];
+      const as = seenAs(trace, alone, shown);
+      return [{ id: step.id, verdict: "seen", reason: null, ...(as === undefined ? {} : { seenAs: as }) }];
     }
     if (reach !== null) return unchecked(reach);
     return [{ id: step.id, verdict: "not-seen", reason: complete ? result.failures.join(" ") : STOPPED }];
   });
+}
+
+/**
+ * A recorded step that one written down is seen as: one that alone meets it,
+ * and, of those, one no earlier written step was shown as, so five written
+ * calls to Price Seat lead to five different recorded ones. Only steps of the
+ * same kind are tried, which keeps this quick on a long recording.
+ */
+function seenAs(trace: Trace, alone: Expectations, shown: Set<string>): string | undefined {
+  const answers = new Map(trace.events.flatMap((event) => (event.type === "return" ? [[event.of, event] as const] : [])));
+  const [wanted] = alone.interactions;
+  const [effect] = alone.effects;
+  const fits = trace.events.filter(
+    (event) =>
+      (event.type === "interaction" ? wanted?.kind === event.kind : event.type === "effect" && effect?.kind === event.kind) &&
+      evaluate({ ...trace, events: [event, ...(answers.has(event.id) ? [answers.get(event.id)!] : [])] }, alone).passed,
+  );
+  const as = (fits.find((event) => !shown.has(event.id)) ?? fits[0])?.id;
+  if (as !== undefined) shown.add(as);
+  return as;
 }
 
 /**

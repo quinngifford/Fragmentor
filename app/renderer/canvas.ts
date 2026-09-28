@@ -65,9 +65,14 @@ export function onNotesPicked(callback: (blockPath: string) => void): void {
 let currentTree: Tree | null = null;
 let currentFlow: Flow | null = null;
 
-/** The execution to draw as a flow, and how to word each of its steps. Set by whoever holds the trace. */
-let flowSource: () => { flow: Flow; at: number; name: (path: string | null) => string } | null = () => null;
-export function onFlowWanted(source: () => { flow: Flow; at: number; name: (path: string | null) => string } | null): void {
+/**
+ * The execution to draw as a flow, and how to word each of its steps. Set by
+ * whoever holds the trace. `notSeen` is the steps, by their place in it, that
+ * a recording contradicts.
+ */
+type FlowShown = { flow: Flow; at: number; name: (path: string | null) => string; notSeen: Set<number> };
+let flowSource: () => FlowShown | null = () => null;
+export function onFlowWanted(source: () => FlowShown | null): void {
   flowSource = source;
 }
 
@@ -817,7 +822,7 @@ function renderFlow(): void {
   shown.flow.boxes.forEach((box, at) => {
     const before = at > 0 ? shown.flow.boxes[at - 1]! : null;
     if (box.arrow && before) drawFlowArrow(before, box, box === current, lines);
-    drawFlowBox(box, shown.name(box.path), box === current, shown.at, layer);
+    drawFlowBox(box, shown.name(box.path), box === current, shown.at, shown.notSeen, layer);
   });
 
   applyViewport();
@@ -825,8 +830,11 @@ function renderFlow(): void {
 }
 
 /** One box of the flow: where the run was, at that moment. */
-function drawFlowBox(box: FlowBox, name: string, current: boolean, at: number, layer: Element): void {
+function drawFlowBox(box: FlowBox, name: string, current: boolean, at: number, notSeen: Set<number>, layer: Element): void {
   const block = (box.path === null ? null : ui.snapshot?.blocks[box.path]) ?? null;
+  // A step the recording contradicts glows red as a failure does, wherever
+  // it is drawn: the arrow into this box, or something left here.
+  const failing = (box.arrow !== null && notSeen.has(box.arrow.at)) || box.effects.some((effect) => notSeen.has(effect.at));
   const group = svgEl("g", {
     class: "block-box flow-box",
     transform: `translate(${box.x} ${box.y})`,
@@ -835,6 +843,7 @@ function drawFlowBox(box: FlowBox, name: string, current: boolean, at: number, l
     "data-architecture": String(Boolean(block?.architecture)),
     "data-tinted": String(block !== null && (viewSettings.colourBy === "block" || block.architecture)),
     "data-current": String(current),
+    "data-failing": String(failing),
     "data-key": box.path ?? "(outside)",
   }, layer);
   if (block && viewSettings.colourBy === "block" && !block.planned) {

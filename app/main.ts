@@ -1325,6 +1325,67 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         );
       })(),
     ],
+    [
+      "each step written down says whether the recording saw it, the bar says whether they all agree, and a step it contradicts is one click from a note that says so",
+      (() => {
+        type Verdict = { verdict?: string; text?: string; red?: boolean } | null;
+        type Verdicts = {
+          agrees?: { text?: string; bad?: boolean } | null;
+          hop?: Verdict;
+          price?: Verdict;
+          shown?: { recorded?: boolean; caption?: string };
+        };
+        type Drift = {
+          turned?: boolean;
+          red?: { text?: string; title?: string } | null;
+          landed?: boolean;
+          at?: { count?: string; verdict?: Verdict };
+          flowRed?: number;
+          note?: string | null;
+        };
+        type Moved = { renumbered?: boolean; inserted?: Verdict; landed?: boolean; at?: { count?: string; verdict?: Verdict }; red?: string };
+        const seen = report["verdicts"] as Verdicts;
+        const drift = { ...report["verdictsDrift"], ...report["verdictsNote"] } as Drift;
+        const moved = report["verdictsMoved"] as Moved;
+        const back = report["verdictsBack"] as { agrees?: boolean; text?: string; again?: boolean };
+        const wrongTotal = (line: string | undefined) => /122\.5/.test(String(line)) && /125/.test(String(line));
+        const driftAt = Number(/^(\d+) of 20$/.exec(String(drift?.at?.count))?.[1]);
+        return (
+          // Where the run could not see is said to be so, never counted as agreeing.
+          /^Agrees/.test(String(seen?.agrees?.text)) &&
+          seen?.agrees?.bad === false &&
+          seen?.hop?.verdict === "unchecked" &&
+          /^Cannot be checked from this run, so it counts neither as seen nor as not seen\. .*not part of what ran/.test(String(seen?.hop?.text)) &&
+          seen?.price?.verdict === "seen" &&
+          seen?.shown?.recorded === true &&
+          /^Book Seats calls Price Seat: \{.*"seat":5/.test(String(seen?.shown?.caption)) &&
+          // The total written wrong: found without recording again, one click from the step.
+          drift?.turned === true &&
+          drift?.red?.text === "1 step not seen" &&
+          /1 not seen/.test(String(drift?.red?.title)) &&
+          drift?.landed === true &&
+          drift?.at?.verdict?.verdict === "not-seen" &&
+          drift?.at?.verdict?.red === true &&
+          /^Not seen\. /.test(String(drift?.at?.verdict?.text)) &&
+          wrongTotal(drift?.at?.verdict?.text) &&
+          drift?.flowRed === 1 &&
+          /^When Fragmentor recorded this execution, this step was not seen\. /.test(String(drift?.note)) &&
+          wrongTotal(drift?.note ?? undefined) &&
+          // A step put in above it, and the verdicts move with the steps.
+          moved?.renumbered === true &&
+          moved?.inserted?.verdict === "unchecked" &&
+          /ui-changed/.test(String(moved?.inserted?.text)) &&
+          moved?.landed === true &&
+          moved?.at?.count === `${driftAt + 1} of 21` &&
+          moved?.at?.verdict?.verdict === "not-seen" &&
+          wrongTotal(moved?.at?.verdict?.text) &&
+          moved?.red === "1 step not seen" &&
+          back?.agrees === true &&
+          /^Agrees/.test(String(back?.text)) &&
+          back?.again === true
+        );
+      })(),
+    ],
     ["a new project starts a git repository, so its blocks have versions from the start", value("newRepo", "started") === true],
     [
       "every block's panel ends with its versions, the saved ones and then its git history, newest first, with no window of their own",
@@ -3361,6 +3422,110 @@ function attachSelfCheck(
           if (clear) clear.click();
           await wait(200);
           return { back };
+        `);
+
+        // The steps written down, held to the recording: each says whether the
+        // code really did it, and the bar says whether all of them agree.
+        const verdictHelpers = `
+          const button = (label) => [...document.querySelectorAll("#exec-bar .run-btn")].find((b) => b.textContent === label);
+          const chip = (label) => [...document.querySelectorAll("#exec-bar .chip")].find((c) => c.textContent === label);
+          const pressed = (label) => chip(label)?.getAttribute("aria-pressed") === "true";
+          const pill = () => document.querySelector("#exec-bar .exec-verdict");
+          const verdict = () => {
+            const line = document.querySelector("#inspector [data-verdict]");
+            return line ? { verdict: line.dataset.verdict, text: line.textContent, red: line.classList.contains("bad") } : null;
+          };
+          // Steps on through what was written down until the page says what is wanted.
+          const stepUntil = async (wanted) => {
+            button("Restart")?.click();
+            await wait(150);
+            for (let i = 0; i < 40; i += 1) {
+              if (wanted()) return true;
+              if (!button("Step into") || button("Step into").disabled) return false;
+              button("Step into").click();
+              await wait(80);
+            }
+            return false;
+          };
+          const said = () => text("#inspector .responsibility");
+        `;
+        await run("verdicts", `${verdictHelpers}
+          const agrees = pill() ? { text: pill().textContent, bad: pill().dataset.bad === "true" } : null;
+          // The hop from the page into the API is drawn code the run never reaches.
+          await stepUntil(() => text(".exec-count") === "2 of 20");
+          const hop = verdict();
+          await stepUntil(() => said().startsWith("Each of the five seats is priced"));
+          const price = verdict();
+          const show = [...document.querySelectorAll("#inspector button")].find((b) => b.textContent === "Show in the recording");
+          show?.click();
+          await wait(300);
+          const shown = { recorded: pressed("Recorded"), caption: text(".exec-caption-text") };
+          chip("Written down").click();
+          await wait(300);
+          await stepUntil(() => said().startsWith("Each of the five seats is priced"));
+          return { agrees, hop, price, shown };
+        `);
+        await capture(window, "self-check-verdict-seen");
+
+        // The agent gets the total of the booking wrong: the recording, made
+        // before, is held to the file as it is now, with no need to record again.
+        const beforeDrift = await readFile(bookSeatsFile, "utf8");
+        const drifted = JSON.parse(beforeDrift);
+        drifted.trace.find((step: { to?: string; kind?: string }) => step.to === "tickets/tickets-db.bookings" && step.kind === "write").payload.total = 125;
+        await writeFile(bookSeatsFile, JSON.stringify(drifted, null, 2), "utf8");
+        await run("verdictsDrift", `${verdictHelpers}
+          const turned = Boolean(await until(() => pill()?.dataset.bad === "true", 15000));
+          const red = pill() ? { text: pill().textContent, title: pill().title } : null;
+          pill()?.click();
+          const landed = Boolean(await until(() => said().startsWith("The booking is written down"), 5000));
+          const at = { count: text(".exec-count"), verdict: verdict() };
+
+          chip("Flow").click();
+          await until(() => document.querySelector(".flow-box"));
+          await wait(300);
+          const flowRed = document.querySelectorAll('.flow-box[data-failing="true"]').length;
+          chip("Tree").click();
+          await wait(300);
+          return { turned, red, landed, at, flowRed };
+        `);
+        await capture(window, "self-check-verdict-not-seen");
+        await run("verdictsNote", `
+          const leave = [...document.querySelectorAll("#inspector button")].find((b) => b.textContent === "Leave a note on this step");
+          leave?.click();
+          const box = await until(() => document.getElementById("note-tickets/booking-api/book-seats/reserve-new"), 5000);
+          return { note: box ? box.value : null };
+        `);
+        await capture(window, "self-check-verdict-note");
+
+        // A step put in near the top renumbers every step after it that has no
+        // id of its own; the verdicts go with the steps, not with the numbers.
+        drifted.trace.splice(1, 0, {
+          effect: "ui-changed",
+          at: "tickets/box-office.bookSeats",
+          description: "The page shows it is waiting for the API.",
+        });
+        await writeFile(bookSeatsFile, JSON.stringify(drifted, null, 2), "utf8");
+        await run("verdictsMoved", `${verdictHelpers}
+          // The note is put away without being left, and without keeping what it started with.
+          const box = document.getElementById("note-tickets/booking-api/book-seats/reserve-new");
+          if (box) {
+            box.value = "";
+            box.dispatchEvent(new Event("input", { bubbles: true }));
+            [...document.querySelectorAll(".note-form button")].find((b) => b.textContent === "Cancel")?.click();
+          }
+          const renumbered = Boolean(await until(() => /of 21$/.test(text(".exec-count")), 15000));
+          await stepUntil(() => said().startsWith("The page shows it is waiting"));
+          const inserted = verdict();
+          pill()?.click();
+          const landed = Boolean(await until(() => said().startsWith("The booking is written down"), 5000));
+          return { renumbered, inserted, landed, at: { count: text(".exec-count"), verdict: verdict() }, red: pill()?.textContent };
+        `);
+
+        // Put right again, it agrees again, still without recording again.
+        await writeFile(bookSeatsFile, beforeDrift, "utf8");
+        await run("verdictsBack", `${verdictHelpers}
+          const agrees = Boolean(await until(() => pill() && pill().dataset.bad !== "true", 15000));
+          return { agrees, text: pill()?.textContent, again: Boolean(button("Record again")) };
         `);
 
         // A block's versions, from the history the tickets copy was given at

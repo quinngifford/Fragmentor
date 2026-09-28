@@ -393,9 +393,9 @@ describe("the worked example", () => {
     // Every step it writes down is one the recording saw, the order priced
     // included: the code passes the whole order, so that is what it shows.
     expect(found.steps).toEqual([
-      { id: "#1", verdict: "seen", reason: null },
-      { id: "#2", verdict: "seen", reason: null },
-      { id: "#3", verdict: "seen", reason: null },
+      { id: "#1", verdict: "seen", reason: null, seenAs: "@2" },
+      { id: "#2", verdict: "seen", reason: null, seenAs: "@3" },
+      { id: "#3", verdict: "seen", reason: null, seenAs: "trigger.response" },
     ]);
   }, 30_000);
 

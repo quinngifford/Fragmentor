@@ -249,6 +249,15 @@ describe("holding written steps to a recording", () => {
     expect(verdicts({ trace: [price, price] })).toEqual(["seen", "seen"]);
   });
 
+  it("says which recorded step shows each one seen, a different one for each of two alike", () => {
+    const seenAs = (file: Parameters<typeof written>[0]) => checkRecording(written(file), trace, scope, true).steps.map((each) => each.seenAs);
+    const price = step(BOOK, PRICE, "call");
+    expect(seenAs({ trace: [price, price] })).toEqual(["@4", "@5"]);
+    expect(seenAs({ trace: [read({ id: "gig" }), read({ id: "other" })] })).toEqual(["@3", undefined]);
+    // The operation's response is shown by what the block run returned.
+    expect(seenAs({ trace: [{ effect: "response", at: "tickets/booking-api.bookSeats" }] })).toEqual(["trigger.response"]);
+  });
+
   it("does not call a step missing from a run that did not finish a contradiction", () => {
     const stopped = recordedTrace("x", scope, heard.slice(0, 3), outcome);
     expect(verdicts({ trace: [step(RESERVE, "tickets/tickets-db.events", "write")] }, false, stopped)).toEqual([

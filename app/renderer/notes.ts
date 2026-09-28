@@ -191,13 +191,16 @@ export function showNotesOf(blockPath: string): void {
 
 /**
  * Starts a note on part of a block, some lines of its code or one of its
- * steps: its panel opens at a new note that says what it is on.
+ * steps: its panel opens at a new note that says what it is on. `text` starts
+ * the note off, such as what a recording found wrong with the step, unless
+ * something the person typed is already waiting there.
  */
-export function noteOn(blockPath: string, on: NoteAnchor): void {
+export function noteOn(blockPath: string, on: NoteAnchor, text?: string): void {
   const block = ui.snapshot?.blocks[blockPath];
   if (!block) return;
   closeWindow();
   pendingOn.set(blockPath, on);
+  if (text !== undefined && !drafts.get(key(blockPath, "new"))?.trim()) drafts.set(key(blockPath, "new"), text);
   said.clear();
   forms.set(blockPath, "new");
   showNotesOf(blockPath);
