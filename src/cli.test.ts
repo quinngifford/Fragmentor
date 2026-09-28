@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -148,6 +148,69 @@ describe("the fragmentor command", () => {
     expect(failing.status).toBe(1);
     expect(failing.output).toContain("FAIL   wrong on purpose");
     expect(failing.output).toContain("output.price was 25, expected 20.");
+  }, 60_000);
+});
+
+describe("executions, held to what their code does", () => {
+  const bookSeats = () => path.join(dir, "executions", "book-seats.json");
+  const change = async (edit: (execution: { trigger: { payload: Record<string, unknown> }; trace: Record<string, unknown>[] }) => void) => {
+    const execution = JSON.parse(await readFile(bookSeats(), "utf8"));
+    edit(execution);
+    await writeFile(bookSeats(), JSON.stringify(execution), "utf8");
+  };
+
+  it("records each one it can run, and says how much of it the run could not see", async () => {
+    await cp(tickets, dir, { recursive: true });
+
+    const result = fragmentor(["test"], dir);
+    expect(result.status).toBe(0);
+    // The two hops before the block it runs and what the page shows, and the
+    // one expectation about what the page shows, are out of the run's sight.
+    for (const id of ["book-seats", "booking-turned-away", "cancel-booking", "cancel-without-the-event"]) {
+      expect(result.output).toContain(`  MET    ${id}  (3 steps and 1 expectation could not be checked from this run)\n`);
+    }
+    expect(result.output).not.toContain("not recorded");
+  }, 60_000);
+
+  it("fails on a step the run contradicts, and names it, even with no saved tests", async () => {
+    await cp(tickets, dir, { recursive: true });
+    const files = await readdir(path.join(dir, "blocks"), { recursive: true });
+    await Promise.all(files.filter((file) => path.basename(file) === "cases.json").map((file) => rm(path.join(dir, "blocks", file))));
+    await change((execution) => {
+      const write = execution.trace.find((step) => step.to === "tickets/tickets-db.bookings")!;
+      write.payload = { ...(write.payload as object), total: 125 };
+    });
+
+    const result = fragmentor(["test"], dir);
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("No block has saved tests yet.");
+    expect(result.output).toContain("  FAILED book-seats");
+    expect(result.output).toContain(
+      "(#9): A write from tickets/booking-api/book-seats/reserve to tickets/tickets-db.bookings happened, but not as expected: payload.total was 122.5, expected 125.",
+    );
+    expect(result.output).toContain("  MET    cancel-booking");
+    expect(result.output).toContain("1 of 4 executions failed.");
+  }, 60_000);
+
+  it("fails on one whose payload the code no longer accepts", async () => {
+    await cp(tickets, dir, { recursive: true });
+    await change((execution) => {
+      delete execution.trigger.payload.email;
+    });
+
+    const result = fragmentor(["test"], dir);
+    expect(result.status).toBe(1);
+    expect(result.output).toMatch(/ {2}FAILED book-seats\n {11}could not record: .*input\.email is missing/);
+  }, 60_000);
+
+  it("never runs code only drawn, and says why each is held to its own file alone", async () => {
+    await cp(path.join(repo, "examples", "messenger"), dir, { recursive: true });
+
+    const result = fragmentor(["test"], dir);
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("  MET    log-in\n");
+    expect(result.output).toContain('not recorded: "Login Form" answers app/client/ui/login-form, but cannot be recorded:');
+    expect(result.output).toContain("Those not recorded are held only to what their own file says must happen");
   }, 60_000);
 });
 

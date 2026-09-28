@@ -9,6 +9,7 @@ import { GUIDE_FILE, skillName } from "./codegen/guide.js";
 import { getPack, isKnownLanguage } from "./lang/index.js";
 import { readAllCode } from "./project/code.js";
 import { loadExecutions } from "./project/executions.js";
+import type { Execution } from "./project/executions.js";
 import { changesBetween, changesText } from "./project/changes.js";
 import { changePoints, commitTouchesBlock, headCommit, projectAt } from "./project/history.js";
 import { projectSnapshot } from "./project/snapshot.js";
@@ -16,12 +17,15 @@ import type { ProjectSnapshot } from "./project/snapshot.js";
 import { NOTES_DIR, addNote, describeRun, isNoteWithin, loadNotes, markWorking, noteById, replyToNote, waitingOn } from "./project/notes.js";
 import type { Note, NoteCommit } from "./project/notes.js";
 import { evaluate } from "./run/expect.js";
+import { checkRecording } from "./model/recorded.js";
 import { isArchitecture } from "./model/roles.js";
 import { findProject, loadProject, locateCode, manifestPath, readManifest, systemOf } from "./project/project.js";
 import type { Project, ProjectDiagnostic } from "./project/project.js";
 import { casesPath, readCases } from "./run/cases.js";
 import { runCases } from "./run/run.js";
 import type { CaseResult } from "./run/run.js";
+import { recordExecution } from "./run/record.js";
+import type { Recorded } from "./run/record.js";
 
 /**
  * The `fragmentor` command.
@@ -40,8 +44,9 @@ Commands:
                          --start plan draws the architecture as planned blocks before any of it is built.
                          In a folder that is already a project, brings FRAGMENTOR.md up to date.
   check                  Check the diagram, regenerate generated code, check the code, and list unfinished work.
-  test [block-path ...]  Run the saved tests of every block, or of the named blocks only, and hold each
-                         execution to its own expectations.
+  test [block-path ...]  Run the saved tests of every block, or of the named blocks only. With no block named,
+                         also run each execution whose code is held to its contract, and hold what is written
+                         down about it to what ran; any other execution is held to its own expectations.
   notes [block-path]     List the notes waiting for you, on every block or only on that block and its parts,
                          with where each block's code and tests are. Run it when the person says "fragmentor notes".
   working <note-id>      Say you have started on a note, so the person sees it being worked on until you reply.
@@ -375,37 +380,44 @@ async function test(dir: string, requested: string[]): Promise<number> {
   console.log("");
   if (ran === 0 && untested.length === 0 && inThePlan.length === 0) {
     console.log("There is nothing to test yet: this project has no blocks Fragmentor can run.");
-    return 0;
-  }
-  if (ran === 0 && untested.length > 0) {
+  } else if (ran === 0 && untested.length > 0) {
     console.log("No block has saved tests yet. Add a cases.json beside a block.json; FRAGMENTOR.md describes the format.");
-    return 0;
+  } else {
+    const summary = [`${counts.passed} passed`, `${counts.failed} failed`, plural(counts.error, "error")];
+    if (counts.unchecked > 0) summary.push(`${counts.unchecked} without an expectation`);
+    if (counts.skipped > 0) summary.push(`${counts.skipped} skipped`);
+    console.log(`Result: ${summary.join(", ")}.`);
+    if (untested.length > 0) console.log(`No tests yet: ${untested.join(", ")}`);
+    // Said plainly, because a block with saved tests that quietly never runs
+    // reads as a test runner that lost them.
+    if (inThePlan.length > 0) console.log(`Not run, because they have no code: ${inThePlan.join(", ")}`);
+    for (const each of drawn) console.log(`Not run, because Fragmentor only draws this code: ${each}`);
   }
-
-  const summary = [`${counts.passed} passed`, `${counts.failed} failed`, plural(counts.error, "error")];
-  if (counts.unchecked > 0) summary.push(`${counts.unchecked} without an expectation`);
-  if (counts.skipped > 0) summary.push(`${counts.skipped} skipped`);
-  console.log(`Result: ${summary.join(", ")}.`);
-  if (untested.length > 0) console.log(`No tests yet: ${untested.join(", ")}`);
-  // Said plainly, because a block with saved tests that quietly never runs
-  // reads as a test runner that lost them.
-  if (inThePlan.length > 0) console.log(`Not run, because they have no code: ${inThePlan.join(", ")}`);
-  for (const each of drawn) console.log(`Not run, because Fragmentor only draws this code: ${each}`);
 
   // Naming blocks asks about those blocks, so the executions are left alone.
+  // Otherwise they are tested even where no block has saved tests yet, since
+  // recording one needs none.
   const executionFailures = requested.length > 0 ? 0 : await testExecutions(dir);
   return counts.failed + counts.error + executionFailures > 0 ? 1 : 0;
 }
 
 /**
- * Holds each execution to the expectations written beside it.
+ * Holds each execution to what really happens, where Fragmentor can run the
+ * code it leads to, and otherwise to what its own file says must happen.
  *
- * What this proves is worth being exact about. A trace an agent wrote down is
- * its reading of the code, so evaluating it against its own expectations says
- * the two agree with each other — it catches a file that contradicts itself,
- * and it cannot catch a file that is wrong about the code. Once Fragmentor
- * records a run, the same expectations run against what really happened, and
- * the same failures mean something much stronger.
+ * An execution whose trigger leads to code held to its contract is recorded:
+ * that code runs in the sandbox saved tests run in, from the file's payload
+ * and starting rows, and the file's steps and expectations are held to what
+ * ran. A step or an expectation the run contradicts fails, and so does a file
+ * whose payload or rows the code refuses, since it no longer describes a run
+ * the code could make. What the run could not see, such as the hops before
+ * the block it starts at, is counted, and never taken as agreeing.
+ *
+ * Code only drawn is never run to find out. Its executions are held to their
+ * own expectations alone, which is worth being exact about: a trace written
+ * down is the agent's reading of the code, so this says the two halves of the
+ * file agree with each other. It catches a file that contradicts itself, and
+ * cannot catch one that is wrong about the code.
  */
 async function testExecutions(dir: string): Promise<number> {
   const { executions, problems } = await loadExecutions(dir);
@@ -415,31 +427,90 @@ async function testExecutions(dir: string): Promise<number> {
   }
   if (executions.length === 0) return 0;
 
-  const withExpectations = executions.filter((execution) => execution.expect !== null && execution.declared !== null);
   console.log("\nExecutions");
-  if (withExpectations.length === 0) {
-    console.log(`  ${plural(executions.length, "execution")}, none of which says what must happen. Add an "expect" to make one a test.`);
-    return 0;
-  }
-
   let failed = 0;
+  let onlyWritten = 0;
   for (const execution of executions) {
-    if (execution.expect === null || execution.declared === null) {
-      console.log(`  ${execution.id}: nothing to check`);
-      continue;
-    }
-    const { failures } = evaluate(execution.declared, execution.expect);
-    console.log(`  ${failures.length === 0 ? "MET  " : "FAILED"} ${execution.id}`);
-    for (const failure of failures) console.log(`           ${indent(failure, "           ")}`);
-    if (failures.length > 0) failed += 1;
+    const recorded = await recordExecution(dir, execution.id);
+    const result =
+      "trace" in recorded
+        ? recordingResult(recorded)
+        : "couldNotRecord" in recorded
+          ? { failed: true, lines: [`  FAILED ${execution.id}`, ...details([`could not record: ${recorded.couldNotRecord}`])] }
+          : writtenResult(execution, recorded.why);
+    if ("why" in recorded && execution.expect !== null && execution.declared !== null) onlyWritten += 1;
+    if (result.failed) failed += 1;
+    console.log(result.lines.join("\n"));
   }
 
-  console.log(
-    failed === 0
-      ? "  Each of these holds a trace written down from reading the code to what that same file says must happen, so it catches a file that contradicts itself, not one that is wrong about the code."
-      : `  ${plural(failed, "execution")} does not do what its own file says must happen.`,
-  );
+  if (onlyWritten > 0) {
+    console.log(
+      "  Those not recorded are held only to what their own file says must happen, which catches a file that contradicts itself, not one that is wrong about the code.",
+    );
+  }
+  if (failed > 0) {
+    console.log(
+      `  ${failed} of ${plural(executions.length, "execution")} failed. Where a run contradicts what is written down, change whichever is wrong: the code, or the file.`,
+    );
+  }
   return failed;
+}
+
+const DETAIL = "           ";
+const details = (texts: string[]) => texts.map((text) => `${DETAIL}${indent(text, DETAIL)}`);
+
+/**
+ * What a recording found wrong with what was written down about it, or, when
+ * nothing was, how much of it the run could not check.
+ */
+function recordingResult(recorded: Recorded): { failed: boolean; lines: string[] } {
+  const { execution, complete } = recorded;
+  if (execution.declared === null && execution.expect === null) return { failed: false, lines: [`  ${execution.id}: nothing to check`] };
+
+  const found = checkRecording(execution, recorded.trace, recorded.scope, complete);
+  // A step missing from a run that was cut short may just not have happened yet.
+  const notSeen = complete ? found.steps.filter((step) => step.verdict === "not-seen") : [];
+  const unchecked = found.steps.filter((step) => step.verdict !== "seen").length - notSeen.length;
+  const failed = found.expectations.failures.length > 0 || notSeen.length > 0;
+
+  const counted = [
+    unchecked > 0 ? plural(unchecked, "step") : "",
+    found.expectations.setAside.length > 0 ? plural(found.expectations.setAside.length, "expectation") : "",
+  ].filter(Boolean);
+  const notes = [
+    counted.length > 0 ? `${counted.join(" and ")} could not be checked from this run` : "",
+    found.unwrittenCount > 0 ? `it did ${plural(found.unwrittenCount, "thing")} no step says` : "",
+    complete ? "" : "it made more calls than Fragmentor records, so not all of it was heard",
+  ].filter(Boolean);
+  const head = `  ${failed ? "FAILED" : "MET   "} ${execution.id}${notes.length > 0 ? `  (${notes.join("; ")})` : ""}`;
+  if (!failed) return { failed, lines: [head] };
+
+  const described = new Map((execution.declared?.events ?? []).map((event) => [event.id, event.type === "return" ? undefined : event.description]));
+  const stepName = (id: string) => (described.get(id) ? `The step "${described.get(id)}" (${id})` : `Step ${id}`);
+  return {
+    failed,
+    lines: [
+      head,
+      ...details([
+        ...found.expectations.failures,
+        ...notSeen.map((step) => `${stepName(step.id)}: ${step.reason}`),
+        ...(found.notSeeded.length > 0 ? [`It ran without the rows given for ${listed(found.notSeeded)}, since nothing it ran reaches them.`] : []),
+        ...(recorded.outcome.error ? [`The run ended in an error: ${recorded.outcome.error}`] : []),
+      ]),
+    ],
+  };
+}
+
+/** An execution Fragmentor cannot record, held only to its own expectations. */
+function writtenResult(execution: Execution, why: string): { failed: boolean; lines: string[] } {
+  if (execution.expect === null || execution.declared === null) {
+    return { failed: false, lines: [`  ${execution.id}: nothing to check`, ...details([`not recorded: ${why}`])] };
+  }
+  const { failures } = evaluate(execution.declared, execution.expect);
+  return {
+    failed: failures.length > 0,
+    lines: [`  ${failures.length === 0 ? "MET   " : "FAILED"} ${execution.id}`, ...details([`not recorded: ${why}`, ...failures])],
+  };
 }
 
 /* -------------------------------------------------------------------------- */

@@ -177,10 +177,12 @@ export async function loadOrders(input: LoadOrdersInput, caps: LoadOrdersCaps): 
 
   for (const [blockPath, cases] of Object.entries(workedExample.cases)) await write(blockFile(blockPath, "cases.json"), cases);
   await write(blockFile("price-orders/report-totals", "cases.json"), [
-    { name: "prices a file of orders", input: { path: "orders.json" }, expected: { totals: [17, 0], grandTotal: 17 } },
+    { name: "prices a file of orders", input: { path: "orders.json" }, expected: { totals: [7, 0], grandTotal: 7 } },
   ]);
+  // The orders the guide's saved tests price, so the one its execution
+  // writes down being priced is exactly what the code passes.
   await write("orders.json", [
-    { id: "A-1", lines: [{ quantity: 2, unitPrice: 3.5 }, { quantity: 1, unitPrice: 10 }] },
+    { id: "A-1", lines: [{ quantity: 2, unitPrice: 3.5 }] },
     { id: "A-2", lines: [] },
   ]);
   await write("executions/report-totals.json", executionExample);

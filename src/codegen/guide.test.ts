@@ -167,6 +167,7 @@ describe("the guide", () => {
     for (const name of Object.keys(CAPABILITIES)) expect(guide).toContain(`**${name}**`);
     expect(guide).toContain("`fragmentor check`");
     expect(guide).toContain("`fragmentor test`");
+    expect(guide).toContain("leads to code held to its contract, and holds what you wrote down to what ran.");
     expect(guide).toContain("readFile(path: string) → string");
   });
 
@@ -378,19 +379,11 @@ describe("the worked example", () => {
 
     expect(found.expectations).toEqual({ failures: [], setAside: [] });
     expect(found.unwrittenCount).toBe(0);
-    // The one step it does not see is the guide's own mistake: it writes the
-    // order priced as its id, where the code passes the whole order. That is
-    // corrected with the change that has `fragmentor test` record
-    // executions, which alters what the guide says, so it waits until the
-    // guide may change; until then this says exactly what is wrong.
+    // Every step it writes down is one the recording saw, the order priced
+    // included: the code passes the whole order, so that is what it shows.
     expect(found.steps).toEqual([
       { id: "#1", verdict: "seen", reason: null },
-      {
-        id: "#2",
-        verdict: "not-seen",
-        reason:
-          'A call from price-orders/report-totals to price-orders/price-order happened, but not as expected: payload.order was an object, expected "A-1".',
-      },
+      { id: "#2", verdict: "seen", reason: null },
       { id: "#3", verdict: "seen", reason: null },
     ]);
   }, 30_000);

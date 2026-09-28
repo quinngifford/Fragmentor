@@ -146,7 +146,7 @@ The blocks say what exists. Also write down what happens: for each thing that se
 - Three things decide whether an expectation means what you meant. An address without an entry matches that part and everything inside it, and one with an entry matches only that entry. An object — a payload, a response, a detail — is compared field by field, so you name only what matters, but a list is compared whole, length included. And each expectation is matched to a different event, so two that describe the same step fail for want of a second one.
 - **Pin the values, not only the shape.** An expectation that says a row was written, without saying what was in it, passes for code that wrote the wrong thing; that is most of what a test like this is for. And write a `never` no wider than the code justifies — one that can only ever pass, such as a part nobody has built, says nothing about this run.
 - `state`, for what the stores hold at the end, belongs only to a run Fragmentor recorded: a trace you wrote down never saw the stores, so `fragmentor check` reports it here. Say what was written in the step that wrote it instead.
-- `fragmentor test` holds each execution to its own expectations, which catches a file that contradicts itself and cannot catch one that is wrong about the code, since both halves are your reading of it.
+- `fragmentor test` {{executionTest}}
 - This is documentation: it is shown as written by you, never as something observed. Keep it true to the code, and change it when the code changes.
 
 {{existingCode}}

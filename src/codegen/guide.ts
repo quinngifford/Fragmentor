@@ -164,7 +164,8 @@ export const architectureExample: Record<string, Record<string, unknown>> = {
 /**
  * What happens when something sets the worked example going, written down the
  * way the guide asks an agent to. Held by test to read and check cleanly
- * against that example's blocks.
+ * against that example's blocks, and to agree with a recording of its code,
+ * since `fragmentor test` holds an agent's own executions to one.
  */
 export const executionExample = {
   description: "Someone asks for the totals of a file of orders.",
@@ -190,8 +191,8 @@ export const executionExample = {
       kind: "call",
       description: "Each order is priced in turn, and the totals added up.",
       code: "src/pricing/report-totals.ts#reportTotals",
-      payload: { order: "A-1" },
-      response: { total: 17 },
+      payload: { order: { id: "A-1", lines: [{ quantity: 2, unitPrice: 3.5 }] } },
+      response: { total: 7 },
     },
     {
       effect: "response",
@@ -560,6 +561,11 @@ export function agentGuide(manifest: Manifest): string {
     flaggedRuns: pack?.canRun
       ? "\n- A note flagged from a failed run carries its input, what was expected and what came back. Make that run pass, and add it as a saved test if it is not one."
       : "",
+    // Only code Fragmentor runs can be recorded, so where none is, an
+    // execution is held to what its own file says must happen and no more.
+    executionTest: pack?.canRun
+      ? "runs each execution whose trigger leads to code held to its contract, and holds what you wrote down to what ran."
+      : "holds each execution to its own expectations, which catches a file that contradicts itself and cannot catch one that is wrong about the code, since both halves are your reading of it.",
     files: filesSection(pack),
     manifest: compactJson(exampleManifest(manifest)),
     languageRule: languageRule(manifest, chosen),
