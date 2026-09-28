@@ -2,10 +2,10 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import { checkProject } from "./check/check.js";
 import type { CheckReport } from "./check/check.js";
-import { startProject, writeAgentFiles } from "./codegen/emit.js";
+import { guideLine, startProject, writeAgentFiles } from "./codegen/emit.js";
 import type { NewProjectSettings } from "./codegen/emit.js";
 import { COMMANDS } from "./codegen/commands.js";
-import { CLAUDE_FILE, GUIDE_FILE, skillName } from "./codegen/guide.js";
+import { GUIDE_FILE, skillName } from "./codegen/guide.js";
 import { getPack, isKnownLanguage } from "./lang/index.js";
 import { readAllCode } from "./project/code.js";
 import { loadExecutions } from "./project/executions.js";
@@ -147,8 +147,7 @@ async function init(dir: string, options: Map<string, string>): Promise<number> 
   // Those files are the person's and are never changed, but an agent reading
   // one that never mentions the guide would not know the guide is there.
   for (const file of files.withoutGuide) {
-    const line = file === CLAUDE_FILE ? `@${GUIDE_FILE}` : `Read ${GUIDE_FILE} before changing anything.`;
-    console.log(`\n${file} does not mention ${GUIDE_FILE}. Add this line to it, so an agent reads the guide:\n  ${line}`);
+    console.log(`\n${file} does not mention ${GUIDE_FILE}. Add this line to it, so an agent reads the guide:\n  ${guideLine(file)}`);
   }
 
   console.log(`\nNext: read ${GUIDE_FILE}, then fill in fragmentor.json and write the blocks.`);

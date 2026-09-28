@@ -46,6 +46,7 @@ export const CHANNELS = {
   copyText: "clipboard:write",
   rerunNote: "note:rerun",
   refreshAgentFiles: "project:agent-files",
+  commandInstalled: "agent:command-installed",
   menuCommand: "menu:command",
 } as const;
 
@@ -65,6 +66,13 @@ export interface ProjectLoad {
   snapshot: ProjectSnapshot | null;
   /** Why the project could not be read, when it could not. */
   error: string | null;
+}
+
+/** A folder the person picked to open that is not a project yet, offered as one to start. */
+export interface FolderToStart {
+  dir: string;
+  /** Whether it holds anything already, which is most likely code to work with. */
+  holdsFiles: boolean;
 }
 
 export interface WatchRunRequest {
@@ -98,10 +106,10 @@ export interface WriteImplRequest {
 }
 
 export interface FragmentorApi {
-  /** Opens a folder picker. Resolves to null when the user cancels. */
-  chooseProject(): Promise<Result<ProjectLoad | null>>;
-  /** Picks a folder and starts a project there with what the person chose. Resolves to null when they cancel. */
-  newProject(settings: NewProjectSettings): Promise<Result<ProjectLoad | null>>;
+  /** Opens a folder picker. Resolves to null when the user cancels, and to the folder when it is not a project yet. */
+  chooseProject(): Promise<Result<ProjectLoad | { startHere: FolderToStart } | null>>;
+  /** Starts a project with what the person chose, in `dir`, or else in a folder picked now. Resolves to null when they cancel. */
+  newProject(settings: NewProjectSettings, dir?: string): Promise<Result<ProjectLoad | null>>;
   /** Opens a project: remembers it, starts watching it, and reads it. */
   loadProject(dir: string): Promise<Result<ProjectLoad>>;
   /** Stops watching whatever this window had open, for going back to the start screen. */
@@ -152,6 +160,8 @@ export interface FragmentorApi {
   rerunNote(dir: string, id: string): Promise<Result<CaseResult>>;
   /** Brings the project's guide and its agent's slash commands up to date, where they are not. */
   refreshAgentFiles(dir: string): Promise<Result<null>>;
+  /** Whether the fragmentor command the agent uses is installed, and where Fragmentor's own folder is, to install it from. */
+  commandInstalled(): Promise<Result<{ installed: boolean; fragmentorDir: string }>>;
   /** Marks a note done. */
   resolveNote(dir: string, id: string): Promise<Result<Note>>;
   deleteNote(dir: string, id: string): Promise<Result<null>>;

@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CAPABILITIES, isKnownCapability } from "../model/capabilities.js";
 import { getPack, knownLanguages, normaliseLanguage } from "../lang/index.js";
@@ -137,12 +137,12 @@ export async function writeCommandSkills(projectDir: string): Promise<string[]> 
 export async function writeAgentFiles(
   projectDir: string,
   manifest: Manifest,
-): Promise<{ written: string[]; kept: string[]; withoutGuide: string[] }> {
+): Promise<{ written: string[]; kept: string[]; withoutGuide: (typeof AGENTS_FILE | typeof CLAUDE_FILE)[] }> {
   await mkdir(projectDir, { recursive: true });
 
   const written = (await writeGuide(projectDir, manifest)) ? [GUIDE_FILE] : [];
   const kept: string[] = [];
-  const withoutGuide: string[] = [];
+  const withoutGuide: (typeof AGENTS_FILE | typeof CLAUDE_FILE)[] = [];
 
   for (const [file, contents] of [[AGENTS_FILE, AGENTS_SCAFFOLD], [CLAUDE_FILE, CLAUDE_SCAFFOLD]] as const) {
     const existing = await readIfPresent(path.join(projectDir, file));
@@ -159,6 +159,32 @@ export async function writeAgentFiles(
   return { written, kept, withoutGuide };
 }
 
+/** The one line that points an agent's own instructions file at the guide. */
+export function guideLine(file: string): string {
+  return file === CLAUDE_FILE ? `@${GUIDE_FILE}` : `Read ${GUIDE_FILE} before changing anything.`;
+}
+
+/**
+ * Adds that line to the end of an AGENTS.md or CLAUDE.md the person already
+ * had, and says whether it did. The file is theirs, so this is only done when
+ * they press the button that asks for it, and never twice: a file that already
+ * mentions the guide is left exactly as it is.
+ */
+export async function pointAtGuide(projectDir: string, file: typeof AGENTS_FILE | typeof CLAUDE_FILE): Promise<boolean> {
+  const at = path.join(projectDir, file);
+  const existing = await readFile(at, "utf8");
+  if (existing.includes(GUIDE_FILE)) return false;
+  // A paragraph of its own, so it is not run into whatever the file ended with.
+  const gap = existing === "" || /\n\r?\n$/.test(existing) ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
+  await appendFile(at, `${gap}${guideLine(file)}\n`, "utf8");
+  return true;
+}
+
+/** Whether a folder holds anything of its own. Hidden entries such as `.git` do not count. */
+export async function holdsFiles(dir: string): Promise<boolean> {
+  return (await readdir(dir)).some((name) => !name.startsWith("."));
+}
+
 /** What the person decides when starting a project. */
 export interface NewProjectSettings {
   granularity: 1 | 2 | 3 | 4 | 5;
@@ -168,6 +194,33 @@ export interface NewProjectSettings {
   existingCode: boolean;
   /** Whether the agent draws the architecture as a plan before building it. */
   start: Start;
+}
+
+/** The settings as the window sent them. The window is not trusted to send sensible ones. */
+export function settingsFrom(raw: unknown): NewProjectSettings {
+  const value = (raw ?? {}) as Partial<Record<keyof NewProjectSettings, unknown>>;
+  if (typeof value.granularity !== "number" || ![1, 2, 3, 4, 5].includes(value.granularity)) {
+    throw new Error("Choose how finely to divide the work, from 1 to 5.");
+  }
+
+  if (typeof value.existingCode !== "boolean") {
+    throw new Error("Choose whether you are starting from scratch or working with code you already have.");
+  }
+  if (value.start !== "plan" && value.start !== "build") {
+    throw new Error("Choose whether to plan the architecture first or build it straight away.");
+  }
+  if (value.existingCode && value.start === "plan") {
+    throw new Error("Code that already exists is described or rebuilt, not planned. Start from scratch to plan an architecture.");
+  }
+
+  const language = typeof value.language === "string" && value.language.trim() ? value.language.trim().slice(0, 40) : null;
+
+  return {
+    granularity: value.granularity as NewProjectSettings["granularity"],
+    language,
+    existingCode: value.existingCode,
+    start: value.start,
+  };
 }
 
 /**
@@ -182,7 +235,7 @@ export interface NewProjectSettings {
 export async function startProject(
   dir: string,
   settings: NewProjectSettings,
-): Promise<{ written: string[]; kept: string[]; withoutGuide: string[]; history: string }> {
+): Promise<{ written: string[]; kept: string[]; withoutGuide: (typeof AGENTS_FILE | typeof CLAUDE_FILE)[]; history: string }> {
   if (await exists(manifestPath(dir))) throw new Error(`${dir} is already a Fragmentor project.`);
 
   const manifest: Manifest = {

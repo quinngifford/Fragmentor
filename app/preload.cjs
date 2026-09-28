@@ -39,12 +39,13 @@ const CHANNELS = {
   copyText: "clipboard:write",
   rerunNote: "note:rerun",
   refreshAgentFiles: "project:agent-files",
+  commandInstalled: "agent:command-installed",
   menuCommand: "menu:command",
 };
 
 contextBridge.exposeInMainWorld("fragmentor", {
   chooseProject: () => ipcRenderer.invoke(CHANNELS.chooseProject),
-  newProject: (settings) => ipcRenderer.invoke(CHANNELS.newProject, settings),
+  newProject: (settings, dir) => ipcRenderer.invoke(CHANNELS.newProject, settings, dir),
   loadProject: (dir) => ipcRenderer.invoke(CHANNELS.loadProject, dir),
   closeProject: () => ipcRenderer.invoke(CHANNELS.closeProject),
   readProject: (dir) => ipcRenderer.invoke(CHANNELS.readProject, dir),
@@ -77,6 +78,7 @@ contextBridge.exposeInMainWorld("fragmentor", {
   replyToNote: (dir, id, text, extras) => ipcRenderer.invoke(CHANNELS.replyToNote, dir, id, text, extras),
   rerunNote: (dir, id) => ipcRenderer.invoke(CHANNELS.rerunNote, dir, id),
   refreshAgentFiles: (dir) => ipcRenderer.invoke(CHANNELS.refreshAgentFiles, dir),
+  commandInstalled: () => ipcRenderer.invoke(CHANNELS.commandInstalled),
   resolveNote: (dir, id) => ipcRenderer.invoke(CHANNELS.resolveNote, dir, id),
   deleteNote: (dir, id) => ipcRenderer.invoke(CHANNELS.deleteNote, dir, id),
   copyText: (text) => ipcRenderer.invoke(CHANNELS.copyText, text),

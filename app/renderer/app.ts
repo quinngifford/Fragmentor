@@ -1,5 +1,4 @@
-import type { MenuCommand, ProjectLoad } from "../ipc.js";
-import { firstStep } from "../../src/codegen/commands.js";
+import type { FolderToStart, MenuCommand, ProjectLoad } from "../ipc.js";
 import {
   INSPECTOR_WIDTH,
   forgetBlocks,
@@ -28,7 +27,7 @@ import {
 } from "./canvas.js";
 import { onInspectorChange, renderInspector } from "./inspector.js";
 import { onBenchChange } from "./bench.js";
-import { askForProjectSettings, showFirstSteps } from "./newproject.js";
+import { askForProjectSettings, firstStepsSections, showFirstSteps } from "./newproject.js";
 import { onWatchChange, resetWatching, setUpWatching } from "./watch.js";
 import { onExecutionChange, paintExecution, resetExecutions, setUpExecutions, showStep } from "./execution.js";
 import { closeWindow, onLinesNoted, openBlockWindow, setUpWindows } from "./popup.js";
@@ -165,14 +164,18 @@ async function chooseProject(): Promise<void> {
     render();
     return;
   }
-  if (result.value) show(result.value, true);
+  if (!result.value) return;
+  // A folder that is not a project yet is offered as one to start.
+  if ("startHere" in result.value) await newProject(result.value.startHere);
+  else show(result.value, true);
 }
 
-async function newProject(): Promise<void> {
-  const settings = await askForProjectSettings();
+/** Starts a project, in the folder given or else in one the person picks once they have answered. */
+async function newProject(folder?: FolderToStart): Promise<void> {
+  const settings = await askForProjectSettings(folder);
   if (!settings) return;
 
-  const result = await window.fragmentor.newProject(settings);
+  const result = await window.fragmentor.newProject(settings, folder?.dir);
   if (!result.ok) {
     ui.status = { text: `Could not start a project there: ${result.error}`, tone: "bad" };
     render();
@@ -182,7 +185,7 @@ async function newProject(): Promise<void> {
   show(result.value, true);
   // Where the folder turned out to disagree with an answer, what was written
   // down is what the agent will be told, so that is what the first step follows.
-  showFirstSteps(result.value.snapshot ?? settings, result.value.dir);
+  await showFirstSteps(result.value.snapshot ?? settings, result.value.dir);
 }
 
 async function openPath(dir: string): Promise<void> {
@@ -503,33 +506,27 @@ function renderStatus(): void {
 }
 
 /**
- * What the canvas says when a folder is open but there is no diagram to draw.
+ * What the canvas shows when a folder is open but there is no diagram to draw.
  *
- * While the agent has not started, that is what to send it first. The person
- * answered where they were starting from and whether to plan first when they
- * created the project, so it names the one command for that case rather than
- * listing every case and leaving them to work out which is theirs.
+ * While the agent has not started, that is what to do first, as a card headed
+ * the way the first-steps window is. The person answered where they were
+ * starting from and whether to plan first when they created the project, so
+ * it names the one command for that case rather than listing every case and
+ * leaving them to work out which is theirs.
  */
-function noDiagramText(): string {
+function noDiagram(): HTMLElement | string {
   if (ui.waiting) {
-    const existingCode = ui.snapshot?.existingCode ?? false;
-    const { command, phrase, happens, next } = firstStep(existingCode, ui.snapshot?.start ?? "build");
-    return [
-      existingCode ? "Nothing has been drawn yet." : "No system has been defined here yet.",
-      "",
-      "Open your coding agent (Claude Code or Codex) in this folder:",
-      "",
-      `  ${ui.dir ?? ""}`,
-      "",
-      command.takes === "words" ? "and send it this first, describing what you want to build where the angle brackets are:" : "and send it this first:",
-      "",
-      `  ${phrase}`,
-      "",
-      `${happens} It learns how from FRAGMENTOR.md, and the diagram appears here as soon as it defines the first system.`,
-      ...(next ? ["", "When you agree to the plan, send it:", "", `  ${next}`] : []),
-      "",
-      "The full list of commands can be found in the top right.",
-    ].join("\n");
+    const answers = { existingCode: ui.snapshot?.existingCode ?? false, start: ui.snapshot?.start ?? "build" };
+    const card = el("div", "canvas-empty waiting-card");
+    const steps = el("div", "window-sections");
+    steps.append(...firstStepsSections(answers, ui.dir ?? ""));
+    card.append(
+      el("h2", undefined, "Waiting for your agent"),
+      el("p", "dialog-lede", "Your agent learns how from FRAGMENTOR.md. Blocks appear on the canvas as it writes them."),
+      steps,
+      el("p", "dialog-note", "The full list of commands can be found in the top right."),
+    );
+    return card;
   }
   return [
     "This project could not be read.",
@@ -563,7 +560,7 @@ function renderPanels(): void {
 export function render(): void {
   renderPanels();
   if (ui.snapshot && !ui.waiting) renderCanvas();
-  else if (ui.dir) showCanvasMessage(noDiagramText());
+  else if (ui.dir) showCanvasMessage(noDiagram());
   // Whichever diagram is on screen now, or none.
   paintExecution();
   renderLoadError();

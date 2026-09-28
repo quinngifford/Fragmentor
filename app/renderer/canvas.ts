@@ -669,12 +669,20 @@ export function clearCanvas(): void {
   renderLegend(false);
 }
 
-/** Empties the canvas and leaves a note where the tree would be. */
-export function showCanvasMessage(text: string): void {
+/**
+ * Empties the canvas and leaves a note where the tree would be: plain words,
+ * or something built already, which has to carry the `canvas-empty` class so
+ * that it goes again when the canvas is next cleared.
+ */
+export function showCanvasMessage(message: string | HTMLElement): void {
   clearCanvas();
+  if (typeof message !== "string") {
+    element("canvas-wrap").append(message);
+    return;
+  }
   const note = document.createElement("p");
   note.className = "canvas-empty";
-  note.textContent = text;
+  note.textContent = message;
   element("canvas-wrap").append(note);
 }
 

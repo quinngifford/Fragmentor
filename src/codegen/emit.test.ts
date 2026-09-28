@@ -4,7 +4,7 @@ import path from "node:path";
 import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { COMMANDS } from "./commands.js";
-import { emitProject, startProject, writeCommandSkills } from "./emit.js";
+import { emitProject, holdsFiles, pointAtGuide, settingsFrom, startProject, writeAgentFiles, writeCommandSkills } from "./emit.js";
 import { SKILLS_DIR, commandSkill } from "./guide.js";
 import { blockDir, createProject, loadProject, readManifest, writeBlock } from "../project/project.js";
 import { gitIn } from "../project/exampleHistory.js";
@@ -370,6 +370,60 @@ describe("startProject", () => {
       await rm(fresh, { recursive: true, force: true });
       await rm(nowhere, { recursive: true, force: true });
     }
+  });
+
+  it("starts in a folder the person picked by opening it, answered from what the folder holds", async () => {
+    const picked = await mkdtemp(path.join(tmpdir(), "fragmentor start "));
+    try {
+      // Hidden entries, such as a repository, are not code to work with.
+      await mkdir(path.join(picked, ".git"));
+      expect(await holdsFiles(picked)).toBe(false);
+      await writeFile(path.join(picked, "server.ts"), "export const port = 80;\n", "utf8");
+      expect(await holdsFiles(picked)).toBe(true);
+
+      // The window answers where the person starts from as the folder says,
+      // and what it sends is checked before anything is written.
+      const chosen = settingsFrom({ granularity: 3, language: " TypeScript ", existingCode: true, start: "build" });
+      expect(chosen).toEqual({ granularity: 3, language: "TypeScript", existingCode: true, start: "build" });
+      await startProject(picked, chosen);
+      expect((await readManifest(picked)).existingCode).toBe(true);
+      expect(await readFile(path.join(picked, "server.ts"), "utf8")).toBe("export const port = 80;\n");
+    } finally {
+      await rm(picked, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses settings the window should never have sent", () => {
+    expect(() => settingsFrom({ granularity: 6, existingCode: false, start: "build" })).toThrow(/from 1 to 5/);
+    expect(() => settingsFrom({ granularity: 3, start: "build" })).toThrow(/starting from scratch/);
+    expect(() => settingsFrom({ granularity: 3, existingCode: false, start: "later" })).toThrow(/plan the architecture/);
+    expect(() => settingsFrom({ granularity: 3, existingCode: true, start: "plan" })).toThrow(/not planned/);
+    expect(settingsFrom({ granularity: 1, language: "  ", existingCode: false, start: "plan" }).language).toBeNull();
+  });
+});
+
+describe("pointAtGuide", () => {
+  it("adds the one line to a CLAUDE.md or AGENTS.md that was already there, once, as a paragraph of its own", async () => {
+    await writeFile(path.join(dir, "CLAUDE.md"), "# House rules\nUse tabs.", "utf8");
+    await writeFile(path.join(dir, "AGENTS.md"), "Be brief.\n", "utf8");
+
+    expect(await pointAtGuide(dir, "CLAUDE.md")).toBe(true);
+    expect(await pointAtGuide(dir, "AGENTS.md")).toBe(true);
+    expect(await readFile(path.join(dir, "CLAUDE.md"), "utf8")).toBe("# House rules\nUse tabs.\n\n@FRAGMENTOR.md\n");
+    expect(await readFile(path.join(dir, "AGENTS.md"), "utf8")).toBe("Be brief.\n\nRead FRAGMENTOR.md before changing anything.\n");
+
+    // Pressed again, or on a file that already mentions the guide, nothing changes.
+    expect(await pointAtGuide(dir, "CLAUDE.md")).toBe(false);
+    expect(await pointAtGuide(dir, "AGENTS.md")).toBe(false);
+    expect(await readFile(path.join(dir, "CLAUDE.md"), "utf8")).toBe("# House rules\nUse tabs.\n\n@FRAGMENTOR.md\n");
+    expect(await readFile(path.join(dir, "AGENTS.md"), "utf8")).toBe("Be brief.\n\nRead FRAGMENTOR.md before changing anything.\n");
+  });
+
+  it("adds no second blank line, and a file it has pointed at is no longer listed as missing the line", async () => {
+    await writeFile(path.join(dir, "CLAUDE.md"), "Use tabs.\r\n\r\n", "utf8");
+    await pointAtGuide(dir, "CLAUDE.md");
+    expect(await readFile(path.join(dir, "CLAUDE.md"), "utf8")).toBe("Use tabs.\r\n\r\n@FRAGMENTOR.md\n");
+    expect((await writeAgentFiles(dir, manifest)).withoutGuide).toEqual([]);
   });
 });
 

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { BrowserWindow, ClipboardItem, Menu, app, clipboard, dialog, ipcMain, shell } from "electron";
 import { CHANNELS } from "./ipc.js";
 import type {
+  FolderToStart,
   MenuCommand,
   ProjectLoad,
   Result,
@@ -18,8 +19,7 @@ import type {
 import { projectSnapshot } from "../src/project/snapshot.js";
 import { blockDir, loadProject, locateCode, manifestPath, readManifest } from "../src/project/project.js";
 import { readBlockCode } from "../src/project/code.js";
-import { startProject, writeCommandSkills, writeGuide } from "../src/codegen/emit.js";
-import type { NewProjectSettings } from "../src/codegen/emit.js";
+import { guideLine, holdsFiles, pointAtGuide, settingsFrom, startProject, writeCommandSkills, writeGuide } from "../src/codegen/emit.js";
 import { GUIDE_FILE } from "../src/codegen/guide.js";
 import { resolveInside } from "../src/project/safePath.js";
 import { runCases, startRun } from "../src/run/run.js";
@@ -67,12 +67,15 @@ function selfChecking(): boolean {
  */
 const selfCheck = selfChecking() ? prepareSelfCheck() : null;
 
-function prepareSelfCheck(): { root: string; projectDir: string; application: string; messenger: string } {
+function prepareSelfCheck(): { root: string; projectDir: string; application: string; messenger: string; noCommands: string } {
   const root = mkdtempSync(path.join(tmpdir(), "fragmentor-self-check-"));
   const projectDir = path.join(root, "project");
   const userData = path.join(root, "user-data");
+  // Where the check looks for the fragmentor command: nowhere it could be.
+  const noCommands = path.join(root, "no-commands");
   mkdirSync(projectDir);
   mkdirSync(userData);
+  mkdirSync(noCommands);
 
   // A copy of the example, so the check can look at a whole architecture,
   // and run it, without touching the repository's own.
@@ -86,7 +89,7 @@ function prepareSelfCheck(): { root: string; projectDir: string; application: st
   // opens them. Its own project is started from the menu instead.
   writeFileSync(path.join(userData, "recent-projects.json"), JSON.stringify([application, messenger]));
   app.setPath("userData", userData);
-  return { root, projectDir, application, messenger };
+  return { root, projectDir, application, messenger, noCommands };
 }
 
 function ok<T>(value: T): Result<T> {
@@ -179,38 +182,6 @@ async function readProject(dir: string): Promise<ProjectLoad> {
   }
 }
 
-/** Whether a folder holds anything of its own. Hidden entries such as `.git` do not count. */
-async function holdsFiles(dir: string): Promise<boolean> {
-  return (await readdir(dir)).some((name) => !name.startsWith("."));
-}
-
-/** The settings as the window sent them. The window is not trusted to send sensible ones. */
-function settingsFrom(raw: unknown): NewProjectSettings {
-  const value = (raw ?? {}) as Partial<Record<keyof NewProjectSettings, unknown>>;
-  if (typeof value.granularity !== "number" || ![1, 2, 3, 4, 5].includes(value.granularity)) {
-    throw new Error("Choose how finely to divide the work, from 1 to 5.");
-  }
-
-  if (typeof value.existingCode !== "boolean") {
-    throw new Error("Choose whether you are starting from scratch or working with code you already have.");
-  }
-  if (value.start !== "plan" && value.start !== "build") {
-    throw new Error("Choose whether to plan the architecture first or build it straight away.");
-  }
-  if (value.existingCode && value.start === "plan") {
-    throw new Error("Code that already exists is described or rebuilt, not planned. Start from scratch to plan an architecture.");
-  }
-
-  const language = typeof value.language === "string" && value.language.trim() ? value.language.trim().slice(0, 40) : null;
-
-  return {
-    granularity: value.granularity as NewProjectSettings["granularity"],
-    language,
-    existingCode: value.existingCode,
-    start: value.start,
-  };
-}
-
 /* -------------------------------------------------------------------------- */
 /* Watching                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -288,6 +259,22 @@ async function openProject(contents: Electron.WebContents, dir: string): Promise
   return load;
 }
 
+/**
+ * Whether a command is in one of the folders of a PATH, under any of the
+ * names a terminal here would run it by: on Windows that is with one of the
+ * extensions it runs, such as the `fragmentor.cmd` that npm link writes.
+ */
+async function onPath(command: string, searchPath: string): Promise<boolean> {
+  const names =
+    process.platform === "win32"
+      ? (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean).map((extension) => `${command}${extension.toLowerCase()}`)
+      : [command];
+  for (const folder of searchPath.split(path.delimiter).filter(Boolean)) {
+    for (const name of names) if (await exists(path.join(folder, name))) return true;
+  }
+  return false;
+}
+
 async function pickFolder(contents: Electron.WebContents, options: Electron.OpenDialogOptions): Promise<string | undefined> {
   // Nobody is there to answer a folder picker during the self-check, so it is
   // answered with the folder the check made for starting a project in.
@@ -302,24 +289,33 @@ async function pickFolder(contents: Electron.WebContents, options: Electron.Open
 /* -------------------------------------------------------------------------- */
 
 function registerHandlers(): void {
-  ipcMain.handle(CHANNELS.chooseProject, async (event): Promise<Result<ProjectLoad | null>> => {
+  ipcMain.handle(CHANNELS.chooseProject, async (event): Promise<Result<ProjectLoad | { startHere: FolderToStart } | null>> => {
     try {
       const dir = await pickFolder(event.sender, { properties: ["openDirectory"], title: "Open a Fragmentor project" });
-      return ok(dir ? await openProject(event.sender, dir) : null);
+      if (!dir) return ok(null);
+      // A folder that is not a project yet is most likely one the person wants
+      // to start one in, so that is offered rather than refused.
+      if (!(await exists(manifestPath(dir)))) return ok({ startHere: { dir: path.resolve(dir), holdsFiles: await holdsFiles(dir) } });
+      return ok(await openProject(event.sender, dir));
     } catch (error) {
       return failed(error);
     }
   });
 
-  ipcMain.handle(CHANNELS.newProject, async (event, raw: unknown): Promise<Result<ProjectLoad | null>> => {
+  ipcMain.handle(CHANNELS.newProject, async (event, raw: unknown, chosen: unknown): Promise<Result<ProjectLoad | null>> => {
     try {
       const settings = settingsFrom(raw);
-      const dir = await pickFolder(event.sender, {
-        properties: ["openDirectory", "createDirectory"],
-        title: "Choose the project's folder: an empty one, or one holding code",
-        buttonLabel: "Start project here",
-      });
+      // A folder the person already picked, with Open Project…, is not asked for again.
+      const dir =
+        chosen === undefined || chosen === null
+          ? await pickFolder(event.sender, {
+              properties: ["openDirectory", "createDirectory"],
+              title: "Choose the project's folder: an empty one, or one holding code",
+              buttonLabel: "Start project here",
+            })
+          : sent(chosen, "The project's folder");
       if (!dir) return ok(null);
+      if (!(await stat(dir).catch(() => null))?.isDirectory()) throw new Error(`${dir} is not a folder that exists.`);
 
       if (await exists(manifestPath(dir))) {
         throw new Error(`${dir} is already a Fragmentor project. Open it with File › Open Project… instead.`);
@@ -354,16 +350,39 @@ function registerHandlers(): void {
       // The guide is what tells an agent opened in this folder what to do.
       const { withoutGuide } = await startProject(dir, settings);
       if (withoutGuide.length > 0) {
-        // Those files are the person's, so they are left alone, but an agent
-        // reading them would never learn the guide is there.
+        // Those files are the person's, so nothing is added to them unless
+        // they ask, but an agent reading them would never learn the guide is there.
         const files = withoutGuide.join(" and ");
-        await ask({
-          type: "info",
-          message: `Point ${files} at Fragmentor's rules`,
-          detail: `This folder already had ${files}, and Fragmentor never changes files like that. Add a line so your agent reads ${GUIDE_FILE}: "@${GUIDE_FILE}" in CLAUDE.md, or "Read ${GUIDE_FILE} before changing anything." in AGENTS.md.`,
+        const one = withoutGuide.length === 1;
+        const { response } = await ask({
+          type: "question",
+          buttons: ["Add the line", "Leave it"],
+          defaultId: 0,
+          cancelId: 1,
+          message: `Point ${files} at Fragmentor's rules?`,
+          detail: `This folder already had ${files}, which your agent reads first, and ${one ? "it does" : "they do"} not mention ${GUIDE_FILE}. Fragmentor can add one line to the end so your agent reads it: ${withoutGuide.map((file) => `"${guideLine(file)}" to ${file}`).join(" and ")}. Nothing else in ${one ? "it" : "them"} changes.`,
         });
+        if (response === 0) {
+          try {
+            for (const file of withoutGuide) await pointAtGuide(dir, file);
+          } catch (error) {
+            await ask({ type: "warning", message: "The line could not be added", detail: messageOf(error) });
+          }
+        }
       }
       return ok(await openProject(event.sender, dir));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  // Whether the agent will find the fragmentor command, asked as a new
+  // project's first steps are shown, while there is still time to install it.
+  // During the self-check it is looked for in an empty folder, so the window
+  // always shows what it says when the command is missing.
+  ipcMain.handle(CHANNELS.commandInstalled, async (): Promise<Result<{ installed: boolean; fragmentorDir: string }>> => {
+    try {
+      return ok({ installed: await onPath("fragmentor", selfCheck ? selfCheck.noCommands : (process.env.PATH ?? "")), fragmentorDir: repoRoot });
     } catch (error) {
       return failed(error);
     }
@@ -1613,11 +1632,46 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       value("waiting", "waiting") === true &&
         /fragmentor plan <what you want to build>/.test(String(value("waiting", "note"))) &&
         /greyed out/.test(String(value("waiting", "note"))) &&
-        /send it:\s+fragmentor build/.test(String(value("waiting", "note"))) &&
-        /full list of commands/i.test(String(value("waiting", "note"))) &&
+        /\| fragmentor build$/.test(String(value("waiting", "phrases"))) &&
+        /The full list of commands can be found in the top right\./.test(String(value("waiting", "note"))) &&
         !/greyed out/.test(String(value("building", "note"))) &&
         /fragmentor make <what you want to build>/.test(String(value("building", "note"))) &&
         !/fragmentor build/.test(String(value("building", "note"))),
+    ],
+    [
+      "the waiting canvas is a card with the first steps headed as a panel's sections, a Copy button beside the phrase, and other messages keep their look",
+      value("waiting", "card") === true &&
+        value("waiting", "title") === "Waiting for your agent" &&
+        /Blocks appear on the canvas as it writes them/.test(String(value("waiting", "note"))) &&
+        value("waiting", "headings") === "1. Open your coding agent | 2. Send it this first" &&
+        value("waiting", "copyBesidePhrase") === true &&
+        value("waiting", "plainKept") === true,
+    ],
+    [
+      "the top block the agent writes first is drawn in place of the card, with nothing said to be wrong",
+      value("topArrived", "drawn") === true &&
+        value("topArrived", "cardGone") === true &&
+        value("topArrived", "noBanner") === true &&
+        value("appeared", "cardGone") === true,
+    ],
+    [
+      "opening a folder that is not a project yet offers to start one there, answered from what it holds, and cancelling writes nothing",
+      value("startHere", "offered") === true &&
+        value("startHere", "startButton") === true &&
+        /is not a Fragmentor project yet/.test(String(value("startHere", "lede"))) &&
+        /changes none of its code/.test(String(value("startHere", "lede"))) &&
+        value("startHere", "answered") === "false" &&
+        value("startHere", "startAsked") === true &&
+        value("startHereClosed", "closed") === true &&
+        value("startHereClosed", "opened") === false &&
+        value("startHereClosed", "untouched") === true,
+    ],
+    [
+      "the first steps say what to do before starting when the fragmentor command is not installed, and the command is found where it is",
+      value("firstSteps", "headings") === "Before you start | 1. Open your coding agent | 2. Send it this first | Full Command List" &&
+        /^npm link \| /.test(String(value("firstSteps", "phrases"))) &&
+        value("readiness", "missing") === true &&
+        value("readiness", "found") === true,
     ],
     [
       "a project just made says what to send the agent first, from the answers given, and lists every command",
@@ -1788,7 +1842,7 @@ async function capture(window: BrowserWindow, name: string): Promise<void> {
 // self-check exits explicitly, or a failed check would pass as a command.
 function attachSelfCheck(
   window: BrowserWindow,
-  check: { root: string; projectDir: string; application: string; messenger: string },
+  check: { root: string; projectDir: string; application: string; messenger: string; noCommands: string },
 ): void {
   window.webContents.on("did-fail-load", (_event, code, description) => {
     console.error(`The window failed to load: ${description} (${code})`);
@@ -1857,6 +1911,31 @@ function attachSelfCheck(
             `[...document.querySelectorAll(".toolbar button")].map((b) => b.id).join(" ")`,
           )) as string,
         };
+
+        // Open Project… on a folder that is not a project yet offers to start
+        // one there: the questions, for that folder, with where the person
+        // starts from answered from what it holds. This comes before anything
+        // else picks a folder, because every picker in the check answers with
+        // the same one, which is still empty now. Cancelled, it writes nothing.
+        pick("open-project");
+        await run("startHere", `
+          const dialog = await until(() => document.querySelector("dialog.new-project[open]"));
+          if (!dialog) return { offered: false };
+          return {
+            offered: true,
+            startButton: [...dialog.querySelectorAll(".dialog-actions .btn")].some((b) => b.textContent === "Start project"),
+            lede: text("dialog.new-project .dialog-lede"),
+            answered: [...dialog.querySelectorAll('input[name="starting-point"]')].filter((i) => i.checked).map((i) => i.value).join(" "),
+            startAsked: !dialog.querySelector('input[name="start"]').closest("fieldset").hidden,
+          };
+        `);
+        await capture(window, "self-check-start-here");
+        await run("startHereClosed", `
+          [...document.querySelectorAll("dialog.new-project .btn")].find((b) => b.textContent === "Cancel").click();
+          await wait(200);
+          return { closed: !document.querySelector("dialog.new-project"), opened: document.body.dataset.project === "open" };
+        `);
+        report.startHereClosed = { ...report.startHereClosed, untouched: (await readdir(check.projectDir)).length === 0 };
 
         // The person asks for a new project. The questions are asked as a
         // tree: each answer reveals the next, and the form will not go on
@@ -1944,9 +2023,20 @@ function attachSelfCheck(
             phrases: [...steps.querySelectorAll(".note-phrase-words")].map((each) => each.textContent).join(" | "),
             listed: [...steps.querySelectorAll("[data-command]")].map((each) => each.dataset.command).join(" "),
             focused: document.activeElement && document.activeElement.textContent,
+            // The check hides the fragmentor command, so the window says
+            // first what to do about it.
+            headings: [...steps.querySelectorAll(".section > h4")].map((each) => each.textContent).join(" | "),
           };
         `);
         await capture(window, "self-check-first-steps");
+        // Where it is installed, it is found under the name npm link gives it here.
+        const commands = path.join(check.root, "commands");
+        await mkdir(commands);
+        await writeFile(path.join(commands, process.platform === "win32" ? "fragmentor.cmd" : "fragmentor"), "", "utf8");
+        report.readiness = {
+          missing: !(await onPath("fragmentor", check.noCommands)),
+          found: await onPath("fragmentor", [check.noCommands, commands].join(path.delimiter)),
+        };
         await run("firstStepsClosed", `
           const done = [...document.querySelectorAll("dialog.first-steps .btn")].find((b) => b.textContent === "Got it");
           if (done) done.click();
@@ -1955,9 +2045,30 @@ function attachSelfCheck(
         `);
         // Its folder is in no repository, so it gets one of its own.
         report.newRepo = { started: await exists(inProject(".git")) };
+        // The canvas waits with the same steps, headed as the window's were,
+        // and says that blocks appear on it as the agent writes them.
         await run("waiting", `
           const waiting = await until(() => /FRAGMENTOR\\.md/.test(text(".canvas-empty")));
-          return { waiting, note: text(".canvas-empty") };
+          const card = document.querySelector(".canvas-empty.waiting-card");
+          if (!card) return { waiting, card: false, note: text(".canvas-empty") };
+          const phrase = card.querySelector(".first-phrase");
+          // Any other message on the canvas keeps its own look: plain words, not a card.
+          const plain = document.createElement("p");
+          plain.className = "canvas-empty";
+          document.getElementById("canvas-wrap").append(plain);
+          const plainLook = getComputedStyle(plain);
+          const plainKept = plainLook.whiteSpace === "pre-wrap" && plainLook.borderTopStyle === "none" && plainLook.backgroundColor === "rgba(0, 0, 0, 0)";
+          plain.remove();
+          return {
+            waiting,
+            card: true,
+            note: card.textContent,
+            title: text(".waiting-card h2"),
+            headings: [...card.querySelectorAll(".section > h4")].map((each) => each.textContent).join(" | "),
+            phrases: [...card.querySelectorAll(".note-phrase-words")].map((each) => each.textContent).join(" | "),
+            copyBesidePhrase: Boolean(phrase && [...phrase.querySelectorAll("button")].some((b) => b.textContent === "Copy")),
+            plainKept,
+          };
         `);
         report.waiting = { ...report.waiting, closeOffered: menuItem("close-project").enabled, reloadOffered: menuItem("reload-project").enabled };
         await capture(window, "self-check-waiting");
@@ -2002,12 +2113,40 @@ function attachSelfCheck(
           return { said: Boolean(said) };
         `);
 
-        // The agent defines and builds the system — here, all at once.
+        // The agent writes the system's top block, then names it in
+        // fragmentor.json, as its guide says. That block alone is drawn in
+        // place of the card, with nothing said to be wrong.
+        await mkdir(inProject("blocks", "tickets"), { recursive: true });
+        await cp(path.join(repoRoot, "examples", "tickets", "blocks", "tickets", "block.json"), inProject("blocks", "tickets", "block.json"));
+        await writeFile(
+          startFile,
+          JSON.stringify({ ...JSON.parse(await readFile(startFile, "utf8")), systems: [{ rootBlock: "tickets", language: "typescript" }] }, null, 2),
+          "utf8",
+        );
+        await run("topArrived", `
+          const drawn = await until(() => document.querySelector('.block-box[data-id="tickets"]'));
+          return {
+            drawn: Boolean(drawn),
+            cardGone: !document.querySelector(".waiting-card"),
+            noBanner: document.getElementById("load-error").hidden,
+          };
+        `);
+
+        // The agent defines and builds the rest of the system — here, all at once.
         await cp(path.join(repoRoot, "examples", "tickets"), check.projectDir, { recursive: true });
         await run("appeared", `
-          const blocks = await until(() => document.querySelectorAll(".block-box").length);
+          // Its top block is on screen already, so this waits for the ones inside it.
+          await until(() => document.querySelector('.tree .node[data-path="tickets/booking-api/pricing/price-seat"]'));
+          const blocks = document.querySelectorAll(".block-box").length;
+          // And for the view to finish easing over to take them in.
+          await wait(800);
           // Everything in a project the agent has only just written is new, so it arrives.
-          return { appeared: blocks > 0, blocks, arrived: document.querySelectorAll(".block-body.appearing").length };
+          return {
+            appeared: blocks > 0,
+            blocks,
+            arrived: document.querySelectorAll(".block-body.appearing").length,
+            cardGone: !document.querySelector(".waiting-card"),
+          };
         `);
 
         await run("interface", INTERACTIONS);

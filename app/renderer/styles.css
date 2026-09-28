@@ -187,6 +187,27 @@ body[data-resizing="true"] { cursor: col-resize; }
   font-family: var(--mono);
 }
 
+/* What to do while the agent has not started: a card laid out as the
+   first-steps window is, rather than the plain words of any other message. */
+.canvas-empty.waiting-card {
+  width: min(560px, calc(100% - 52px));
+  max-width: none;
+  max-height: calc(100% - 52px);
+  overflow-y: auto;
+  padding: 22px 24px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  white-space: normal;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  user-select: text;
+}
+.waiting-card .dialog-lede { margin: -14px 0 0; }
+
 .zoom-bar {
   position: absolute;
   left: 14px;
@@ -1161,7 +1182,7 @@ button.problem:hover .problem-where { color: var(--signal); }
 }
 
 .new-project::backdrop { background: rgba(4, 6, 7, 0.72); }
-.new-project h2 { margin: 0; font-size: 17px; font-weight: 600; }
+.new-project h2, .waiting-card h2 { margin: 0; font-size: 17px; font-weight: 600; }
 .dialog-lede { margin: 4px 0 18px; font-size: 12.5px; color: var(--ink-dim); }
 
 /* A question is headed the way a panel's section is, with the answers

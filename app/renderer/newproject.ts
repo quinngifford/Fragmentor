@@ -1,4 +1,5 @@
 import type { NewProjectSettings } from "../../src/codegen/emit.js";
+import type { FolderToStart } from "../ipc.js";
 import { COMMANDS, firstStep, usageOf } from "../../src/codegen/commands.js";
 import { el, section } from "./dom.js";
 import { phraseLine } from "./notes.js";
@@ -19,6 +20,8 @@ import { phraseLine } from "./notes.js";
  * are asked here and written into fragmentor.json before any agent starts.
  * The folder is chosen afterwards by the main process, which owns the file
  * dialog, and which reconciles these answers with what is actually in it.
+ * Where the person has already picked a folder, by opening one that is not a
+ * project yet, the questions are asked for that folder instead.
  */
 
 type Start = NewProjectSettings["start"];
@@ -91,8 +94,12 @@ function radio(name: string, value: string): HTMLInputElement {
   return input;
 }
 
-/** Asks for the settings in a modal dialog. Resolves to null when the person cancels. */
-export function askForProjectSettings(): Promise<NewProjectSettings | null> {
+/**
+ * Asks for the settings in a modal dialog. Resolves to null when the person
+ * cancels. Given the folder, where the person starts from is answered already
+ * from whether it holds anything, and can still be changed.
+ */
+export function askForProjectSettings(folder?: FolderToStart): Promise<NewProjectSettings | null> {
   return new Promise((resolve) => {
     let existingCode: boolean | null = null;
     let start: Start | null = null;
@@ -103,7 +110,16 @@ export function askForProjectSettings(): Promise<NewProjectSettings | null> {
     dialog.setAttribute("aria-labelledby", "new-project-title");
     const title = el("h2", undefined, "New project");
     title.id = "new-project-title";
-    dialog.append(title, el("p", "dialog-lede", "You choose the folder last."));
+    dialog.append(
+      title,
+      el(
+        "p",
+        "dialog-lede",
+        folder
+          ? `${folder.dir} is not a Fragmentor project yet. Answer these to start one there. Fragmentor adds its own files beside what is in it and changes none of its code.`
+          : "You choose the folder last.",
+      ),
+    );
 
     /**
      * One question of the tree. Its options are rebuilt whenever the question
@@ -143,6 +159,11 @@ export function askForProjectSettings(): Promise<NewProjectSettings | null> {
       existingCode = value;
     });
     startingPoint.draw("Where are you starting from?", STARTING_POINTS);
+    if (folder) {
+      existingCode = folder.holdsFiles;
+      const answer = startingPoint.field.querySelector<HTMLInputElement>(`input[value="${folder.holdsFiles}"]`);
+      if (answer) answer.checked = true;
+    }
 
     const firstStep = question<Start>("start", (value) => {
       start = value;
@@ -192,7 +213,7 @@ export function askForProjectSettings(): Promise<NewProjectSettings | null> {
     const actions = el("div", "dialog-actions");
     const cancel = el("button", "btn quiet", "Cancel");
     cancel.type = "button";
-    const create = el("button", "btn", "Choose folder…");
+    const create = el("button", "btn", folder ? "Start project" : "Choose folder…");
     create.type = "button";
     actions.append(cancel, create);
 
@@ -242,19 +263,13 @@ export function askForProjectSettings(): Promise<NewProjectSettings | null> {
 }
 
 /**
- * What to do now that the project exists: open the agent in its folder, and
- * the one thing to send it first, which follows from the answers just given.
- * The rest of the commands are listed underneath, since this is when someone
- * is looking for what they can ask for, with where to find them again.
+ * The two things to do before the agent starts: open it in the project's
+ * folder, and send it the one thing that follows from the answers given.
+ * Shown when the project is made, and again on the empty canvas for as long
+ * as the agent has not started.
  */
-export function showFirstSteps(answers: { existingCode: boolean; start: Start }, dir: string): void {
+export function firstStepsSections(answers: { existingCode: boolean; start: Start }, dir: string): HTMLElement[] {
   const { command, phrase, happens, next } = firstStep(answers.existingCode, answers.start);
-
-  const dialog = el("dialog", "new-project first-steps");
-  dialog.setAttribute("aria-labelledby", "first-steps-title");
-  const title = el("h2", undefined, "Your project is ready");
-  title.id = "first-steps-title";
-  dialog.append(title, el("p", "dialog-lede", "Your coding agent builds it, and Fragmentor draws it as it goes."));
 
   // Each step is headed the way every section of a panel is, so the heading
   // reads louder than what it holds rather than as a caption under it.
@@ -271,6 +286,41 @@ export function showFirstSteps(answers: { existingCode: boolean; start: Start },
   }
   send.append(el("p", "first-step-text", happens));
   if (next) send.append(phraseLine("When you agree to the plan, send", next));
+
+  return [open, send];
+}
+
+/**
+ * Said before the first steps only when the agent would not find the
+ * fragmentor command, which it needs for everything it does here. Nothing is
+ * installed for the person: the command is set up once, from Fragmentor's own
+ * folder, as its README says.
+ */
+function beforeYouStart(fragmentorDir: string): HTMLElement {
+  const node = section("Before you start");
+  node.append(
+    el("p", "first-step-text", "Your agent will not find the fragmentor command, which it needs to check its work: it is not installed on this computer yet."),
+    phraseLine(`Install it once: open a terminal in ${fragmentorDir} and run`, "npm link", "note-phrase", "to install the fragmentor command"),
+    el("p", "dialog-note", "Then open your coding agent in a new terminal, so that it finds the command."),
+  );
+  return node;
+}
+
+/**
+ * What to do now that the project exists: open the agent in its folder, and
+ * the one thing to send it first. The rest of the commands are listed
+ * underneath, since this is when someone is looking for what they can ask
+ * for, with where to find them again.
+ */
+export async function showFirstSteps(answers: { existingCode: boolean; start: Start }, dir: string): Promise<void> {
+  // Asked before the window opens, so that nothing in it moves once it is up.
+  const ready = await window.fragmentor.commandInstalled();
+
+  const dialog = el("dialog", "new-project first-steps");
+  dialog.setAttribute("aria-labelledby", "first-steps-title");
+  const title = el("h2", undefined, "Your project is ready");
+  title.id = "first-steps-title";
+  dialog.append(title, el("p", "dialog-lede", "Your coding agent builds it, and Fragmentor draws it as it goes."));
 
   const later = section("Full Command List");
   const list = el("dl", "first-commands");
@@ -295,7 +345,8 @@ export function showFirstSteps(answers: { existingCode: boolean; start: Start },
   actions.append(done);
 
   const steps = el("div", "window-sections first-steps-body");
-  steps.append(open, send, later);
+  if (ready.ok && !ready.value.installed) steps.append(beforeYouStart(ready.value.fragmentorDir));
+  steps.append(...firstStepsSections(answers, dir), later);
   dialog.append(steps, actions);
   const finish = () => {
     dialog.close();
