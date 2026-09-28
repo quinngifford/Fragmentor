@@ -1330,7 +1330,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       (() => {
         type Verdict = { verdict?: string; text?: string; red?: boolean } | null;
         type Verdicts = {
-          agrees?: { text?: string; bad?: boolean } | null;
+          agrees?: { text?: string; title?: string; bad?: boolean } | null;
           hop?: Verdict;
           price?: Verdict;
           shown?: { recorded?: boolean; caption?: string };
@@ -1343,17 +1343,35 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
           flowRed?: number;
           note?: string | null;
         };
-        type Moved = { renumbered?: boolean; inserted?: Verdict; landed?: boolean; at?: { count?: string; verdict?: Verdict }; red?: string };
+        type Moved = {
+          renumbered?: boolean;
+          inserted?: Verdict;
+          landed?: boolean;
+          at?: { count?: string; verdict?: Verdict };
+          red?: string;
+          again?: string | null;
+        };
         const seen = report["verdicts"] as Verdicts;
         const drift = { ...report["verdictsDrift"], ...report["verdictsNote"] } as Drift;
         const moved = report["verdictsMoved"] as Moved;
-        const back = report["verdictsBack"] as { agrees?: boolean; text?: string; again?: boolean };
+        const other = (report["verdictsNoteOther"] as { other?: { verdict?: string; note?: string | null } } | undefined)?.other;
+        const none = report["verdictsNone"] as { turned?: boolean; text?: string; none?: boolean } | undefined;
+        const back = report["verdictsBack"] as {
+          agrees?: boolean;
+          text?: string;
+          again?: boolean;
+          fixed?: string;
+          fresh?: string | null;
+          kept?: string | null;
+        };
         const wrongTotal = (line: string | undefined) => /122\.5/.test(String(line)) && /125/.test(String(line));
         const driftAt = Number(/^(\d+) of 20$/.exec(String(drift?.at?.count))?.[1]);
         return (
           // Where the run could not see is said to be so, never counted as agreeing.
-          /^Agrees/.test(String(seen?.agrees?.text)) &&
+          seen?.agrees?.text === "Agrees where the recording could see" &&
           seen?.agrees?.bad === false &&
+          // Counted as the pages count: the trigger cannot be checked, and answers go with their calls.
+          /^Of the 15 steps written down, not counting answers, 11 seen, 0 not seen, and 4 that cannot be checked/.test(String(seen?.agrees?.title)) &&
           seen?.hop?.verdict === "unchecked" &&
           /^Cannot be checked from this run, so it counts neither as seen nor as not seen\. .*not part of what ran/.test(String(seen?.hop?.text)) &&
           seen?.price?.verdict === "seen" &&
@@ -1371,6 +1389,9 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
           drift?.flowRed === 1 &&
           /^When Fragmentor recorded this execution, this step was not seen\. /.test(String(drift?.note)) &&
           wrongTotal(drift?.note ?? undefined) &&
+          // A finding put away as it was started is not carried to another step.
+          other?.verdict === "seen" &&
+          other?.note === "" &&
           // A step put in above it, and the verdicts move with the steps.
           moved?.renumbered === true &&
           moved?.inserted?.verdict === "unchecked" &&
@@ -1380,9 +1401,18 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
           moved?.at?.verdict?.verdict === "not-seen" &&
           wrongTotal(moved?.at?.verdict?.text) &&
           moved?.red === "1 step not seen" &&
+          wrongTotal(moved?.again ?? undefined) &&
+          // With nothing seen, nothing reads as agreeing.
+          none?.turned === true &&
+          none?.text === "Nothing written down could be checked from this run" &&
+          none?.none === true &&
           back?.agrees === true &&
-          /^Agrees/.test(String(back?.text)) &&
-          back?.again === true
+          back?.text === "Agrees where the recording could see" &&
+          back?.again === true &&
+          // Seen again, the step's note no longer starts with the old finding, and what is typed is kept.
+          back?.fixed === "seen" &&
+          back?.fresh === "" &&
+          back?.kept === "Mine"
         );
       })(),
     ],
@@ -3450,7 +3480,7 @@ function attachSelfCheck(
           const said = () => text("#inspector .responsibility");
         `;
         await run("verdicts", `${verdictHelpers}
-          const agrees = pill() ? { text: pill().textContent, bad: pill().dataset.bad === "true" } : null;
+          const agrees = pill() ? { text: pill().textContent, title: pill().title, bad: pill().dataset.bad === "true" } : null;
           // The hop from the page into the API is drawn code the run never reaches.
           await stepUntil(() => text(".exec-count") === "2 of 20");
           const hop = verdict();
@@ -3496,6 +3526,22 @@ function attachSelfCheck(
           return { note: box ? box.value : null };
         `);
         await capture(window, "self-check-verdict-note");
+        // Put away as it was started, the finding is not taken for something
+        // typed: a note on another step leaving Reserve, which the recording
+        // saw, starts empty rather than with this step's finding.
+        await run("verdictsNoteOther", `${verdictHelpers}
+          const cancel = () => [...document.querySelectorAll(".note-form button")].find((b) => b.textContent === "Cancel")?.click();
+          cancel();
+          await wait(200);
+          await stepUntil(() => said().startsWith("The seats come off the event first"));
+          const onStep = verdict();
+          [...document.querySelectorAll("#inspector button")].find((b) => b.textContent === "Leave a note on this step")?.click();
+          const box = await until(() => document.getElementById("note-tickets/booking-api/book-seats/reserve-new"), 5000);
+          const other = box ? box.value : null;
+          cancel();
+          await wait(200);
+          return { other: { verdict: onStep?.verdict, note: other } };
+        `);
 
         // A step put in near the top renumbers every step after it that has no
         // id of its own; the verdicts go with the steps, not with the numbers.
@@ -3506,26 +3552,66 @@ function attachSelfCheck(
         });
         await writeFile(bookSeatsFile, JSON.stringify(drifted, null, 2), "utf8");
         await run("verdictsMoved", `${verdictHelpers}
-          // The note is put away without being left, and without keeping what it started with.
-          const box = document.getElementById("note-tickets/booking-api/book-seats/reserve-new");
-          if (box) {
-            box.value = "";
-            box.dispatchEvent(new Event("input", { bubbles: true }));
-            [...document.querySelectorAll(".note-form button")].find((b) => b.textContent === "Cancel")?.click();
-          }
           const renumbered = Boolean(await until(() => /of 21$/.test(text(".exec-count")), 15000));
           await stepUntil(() => said().startsWith("The page shows it is waiting"));
           const inserted = verdict();
           pill()?.click();
           const landed = Boolean(await until(() => said().startsWith("The booking is written down"), 5000));
-          return { renumbered, inserted, landed, at: { count: text(".exec-count"), verdict: verdict() }, red: pill()?.textContent };
+          const at = { count: text(".exec-count"), verdict: verdict() };
+          const red = pill()?.textContent;
+          // The finding is typed in again, and put away as it was started, not left.
+          [...document.querySelectorAll("#inspector button")].find((b) => b.textContent === "Leave a note on this step")?.click();
+          const box = await until(() => document.getElementById("note-tickets/booking-api/book-seats/reserve-new"), 5000);
+          const again = box ? box.value : null;
+          [...document.querySelectorAll(".note-form button")].find((b) => b.textContent === "Cancel")?.click();
+          await wait(200);
+          return { renumbered, inserted, landed, at, red, again };
+        `);
+
+        // Only steps the run cannot see are left written down: the recording
+        // confirmed none of them, so the bar does not say it agrees.
+        const unseeable = JSON.parse(beforeDrift);
+        unseeable.trace = [unseeable.trace[0], unseeable.trace[1], unseeable.trace[unseeable.trace.length - 1]];
+        await writeFile(bookSeatsFile, JSON.stringify(unseeable, null, 2), "utf8");
+        await run("verdictsNone", `${verdictHelpers}
+          const turned = Boolean(await until(() => !/of 21$/.test(text(".exec-count")) && pill() && pill().dataset.bad !== "true", 15000));
+          return { turned, text: pill()?.textContent, none: pill()?.dataset.none === "true" };
         `);
 
         // Put right again, it agrees again, still without recording again.
         await writeFile(bookSeatsFile, beforeDrift, "utf8");
         await run("verdictsBack", `${verdictHelpers}
-          const agrees = Boolean(await until(() => pill() && pill().dataset.bad !== "true", 15000));
-          return { agrees, text: pill()?.textContent, again: Boolean(button("Record again")) };
+          // Waited for by what it says, since the bar was not red before either.
+          const agrees = Boolean(await until(() => pill()?.textContent === "Agrees where the recording could see" && pill().dataset.bad !== "true", 15000));
+          const state = { agrees, text: pill()?.textContent, again: Boolean(button("Record again")) };
+          // The step is seen now, so a note on it no longer starts with what
+          // was found wrong before; what the person types is still kept.
+          const cancel = () => [...document.querySelectorAll(".note-form button")].find((b) => b.textContent === "Cancel")?.click();
+          const leave = async () => {
+            [...document.querySelectorAll("#inspector button")].find((b) => b.textContent === "Leave a note on this step")?.click();
+            return await until(() => document.getElementById("note-tickets/booking-api/book-seats/reserve-new"), 5000);
+          };
+          await stepUntil(() => said().startsWith("The booking is written down"));
+          const fixed = verdict();
+          let box = await leave();
+          const fresh = box ? box.value : null;
+          if (box) {
+            box.value = "Mine";
+            box.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          cancel();
+          await wait(200);
+          await stepUntil(() => said().startsWith("The booking is written down"));
+          box = await leave();
+          const kept = box ? box.value : null;
+          // Emptied and put away, so nothing is left waiting.
+          if (box) {
+            box.value = "";
+            box.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          cancel();
+          await wait(200);
+          return { ...state, fixed: fixed?.verdict, fresh, kept };
         `);
 
         // A block's versions, from the history the tickets copy was given at

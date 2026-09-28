@@ -341,18 +341,19 @@ function play(): void {
 }
 
 /**
- * Goes to one step of an execution from anywhere: a note left on that step.
- * The step is found by its id, which outlives steps added before it, and
- * whatever folds hide it are opened. False when the execution or the step is
- * no longer there.
+ * Goes to one step of an execution from anywhere: a note left on that step,
+ * the first step a recording contradicts, or the recorded step a written one
+ * was seen as. The step is found by its id, which outlives steps added
+ * before it, and whatever folds hide it are opened. False when the execution
+ * or the step is no longer there.
  */
-export function goToStep(executionId: string, stepId: string): boolean {
+export function goToStep(executionId: string, stepId: string, trace: "declared" | "recorded" = "declared"): boolean {
   const execution = ui.snapshot?.executions.find((each) => each.id === executionId);
-  const events = execution?.declared?.events ?? [];
+  const events = (execution && (trace === "declared" ? execution.declared : recordingOf(execution)?.trace))?.events ?? [];
   const at = events.findIndex((each) => each.id === stepId);
   if (at === -1) return false;
   stopPlaying();
-  ui.execution = { id: executionId, at, trace: "declared" };
+  ui.execution = { id: executionId, at, trace };
   ui.showInspector = true;
   showStep();
   arrive(events[at]!, true);
@@ -374,22 +375,6 @@ export function showRecording(id: string): void {
   showStep();
   notify({ redraw: ui.shows === "flow" });
   paintExecution();
-}
-
-/**
- * Goes to one step of the execution picked, in whichever trace it is in,
- * opening whatever folds hide it: the step a recording contradicts, or the
- * recorded step a written one was seen as.
- */
-function showStepOf(trace: "declared" | "recorded", id: string): void {
-  const shown = picked();
-  const events = (trace === "declared" ? shown?.written : shown?.recording?.trace)?.events ?? [];
-  const at = events.findIndex((event) => event.id === id);
-  if (!ui.execution || at === -1) return;
-  stopPlaying();
-  ui.execution = { ...ui.execution, at, trace };
-  showStep();
-  arrive(events[at]!, true);
 }
 
 /** Shows the other trace of the execution picked, from its first step: the two are different runs, step for step. */
@@ -602,8 +587,11 @@ function updateBar(built: NonNullable<typeof bar>, shown: ReturnType<typeof pick
  * Null unless there is both a trace written down and a recording of it.
  */
 interface Agreement {
+  execution: string;
   text: string;
   title: string;
+  /** Whether the recording saw any step written down at all: with none, nothing it says reads as agreeing. */
+  anySeen: boolean;
   /** The first step written down that the recording contradicts, if any. */
   first: string | null;
   /** Anything else wrong that only the recording's own page shows: an expectation it failed. */
@@ -617,25 +605,36 @@ function agreementOf(execution: SnapshotExecution): Agreement | null {
   if (!verdicts) return null;
   const { check, contradicted } = verdicts;
   const count = (verdict: string) => check.steps.filter((step) => step.verdict === verdict).length;
+  // What set the execution going is never in a recording, and its page says
+  // it cannot be checked, so it is counted here as its page counts it.
+  const triggers = execution.declared!.events.filter((event) => event.type === "interaction" && event.kind === "trigger").length;
+  const seen = count("seen");
   // A step missing from a run that was cut short may just not have happened yet.
   const notSeen = contradicted ? count("not-seen") : 0;
-  const unchecked = count("unchecked") + (contradicted ? 0 : count("not-seen"));
+  const unchecked = triggers + count("unchecked") + (contradicted ? 0 : count("not-seen"));
   const failed = check.expectations.failures.length;
 
   const wrong = [
     notSeen > 0 ? `${counted(notSeen, "step")} not seen` : "",
     failed > 0 ? `${counted(failed, "expectation")} failed` : "",
   ].filter(Boolean);
+  // Agreeing is said only of steps the recording saw: with none seen, the
+  // recording has confirmed nothing, whatever else it did.
   const text =
     wrong.length > 0
       ? wrong.join(", ")
-      : !contradicted
-        ? "Agrees as far as the recording went"
-        : unchecked > 0
-          ? "Agrees where the recording could see"
-          : "Agrees with the recording";
+      : seen === 0
+        ? contradicted
+          ? "Nothing written down could be checked from this run"
+          : "The recording stopped before it saw any step"
+        : !contradicted
+          ? "Agrees as far as the recording went"
+          : unchecked > 0
+            ? "Agrees where the recording could see"
+            : "Agrees with the recording";
+  // Answers go with the calls they answer, and their pages repeat their calls' verdicts, so they are not counted twice.
   const title = [
-    `Of the ${counted(check.steps.length, "step")} written down, ${count("seen")} seen, ${notSeen} not seen, and ${unchecked} that cannot be checked from this run, which count neither way.`,
+    `Of the ${counted(seen + notSeen + unchecked, "step")} written down, not counting answers, ${seen} seen, ${notSeen} not seen, and ${unchecked} that cannot be checked from this run, which count neither way.`,
     check.expectations.met.length + failed + check.expectations.setAside.length > 0
       ? `Of what must happen, ${check.expectations.met.length} met, ${failed} failed and ${check.expectations.setAside.length} set aside.`
       : "",
@@ -646,22 +645,26 @@ function agreementOf(execution: SnapshotExecution): Agreement | null {
     .filter(Boolean)
     .join(" ");
   const first = contradicted ? (check.steps.find((step) => step.verdict === "not-seen")?.id ?? null) : null;
-  return { text, title, first, failed };
+  return { execution: execution.id, text, title, anySeen: seen > 0, first, failed };
 }
 
-/** The verdict on the bar: quiet when the recording agrees, red and a way to the trouble when it does not. */
+/**
+ * The verdict on the bar: quiet when the recording agrees, dim when it saw
+ * nothing to agree with, and red and a way to the trouble when it disagrees.
+ */
 function agreementPill(agreement: Agreement): HTMLElement {
   if (agreement.first === null && agreement.failed === 0) {
     const quiet = el("span", "exec-verdict", agreement.text);
     quiet.title = agreement.title;
+    if (!agreement.anySeen) quiet.dataset.none = "true";
     return quiet;
   }
-  const { first } = agreement;
+  const { execution, first } = agreement;
   const pill = el("button", "chip exec-verdict", agreement.text);
   pill.type = "button";
   pill.dataset.bad = "true";
   pill.title = agreement.title;
-  pill.addEventListener("click", () => (first === null ? showTrace("recorded") : showStepOf("declared", first)));
+  pill.addEventListener("click", () => (first === null ? showTrace("recorded") : goToStep(execution, first)));
   return pill;
 }
 
@@ -729,7 +732,7 @@ export function stepPage(
     );
     panel.append(note);
   }
-  if (verdict) panel.append(verdictSection(verdict));
+  if (verdict) panel.append(verdictSection(execution.id, verdict));
 
   // "Where", not "between": an effect happens at one block rather than
   // between two, and this is the section that says so for both.
@@ -876,6 +879,8 @@ function verdictOn(execution: SnapshotExecution, event: TraceEvent): { verdict: 
   if (!verdicts) return null;
   const { byStep, contradicted, recording } = verdicts;
   if (event.type === "interaction" && event.kind === "trigger") {
+    // The kernel's own reason for a trigger it is asked to find, worded with
+    // the block's name rather than its path; the two should say the same.
     const runs = nameOfPlace({ path: recording.scope.runs, entry: null });
     const reason = `The recording starts at ${runs}, so it cannot see what set the execution going.`;
     return { verdict: { id: event.id, verdict: "unchecked", reason }, answer: false, contradicted };
@@ -890,7 +895,7 @@ function verdictOn(execution: SnapshotExecution, event: TraceEvent): { verdict: 
  * the run could not see, that it cannot say, rather than anything that reads
  * as agreeing.
  */
-function verdictSection(on: NonNullable<ReturnType<typeof verdictOn>>): HTMLElement {
+function verdictSection(executionId: string, on: NonNullable<ReturnType<typeof verdictOn>>): HTMLElement {
   const node = section("When it was recorded");
   const { verdict, answer, contradicted } = on;
   // An answer has no verdict of its own: it was held to the recording with its call.
@@ -906,7 +911,7 @@ function verdictSection(on: NonNullable<ReturnType<typeof verdictOn>>): HTMLElem
     if (seenAs !== undefined) {
       const show = el("button", "btn quiet tiny", "Show in the recording");
       show.title = "Go to the step Fragmentor saw that this one is.";
-      show.addEventListener("click", () => showStepOf("recorded", seenAs));
+      show.addEventListener("click", () => goToStep(executionId, seenAs, "recorded"));
       node.append(show);
     }
   } else if (verdict.verdict === "not-seen") {

@@ -1422,6 +1422,7 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
 /* What the recording says of the steps written down. Quiet when it agrees;
    red, and a way to the trouble, when it does not. */
 .exec-verdict { font-family: var(--mono); font-size: 11.5px; color: var(--signal); padding: 0 4px; white-space: nowrap; }
+.exec-verdict[data-none="true"] { color: var(--ink-dim); }
 .chip.exec-verdict[data-bad="true"] { color: var(--bad); border-color: var(--bad); padding: 4px 10px; }
 
 /* Why the execution picked cannot be recorded, readable without hovering. */

@@ -38,6 +38,12 @@ export function onNotesChange(callbacks: { all: () => void; reload: () => Promis
 
 /** What is typed into a form, by block and "new", or by block and the note replied to. */
 const drafts = new Map<string, string>();
+/**
+ * What a new note on a block was started off with, such as what a recording
+ * found wrong with a step, so a draft that is still only that is not taken
+ * for something the person typed.
+ */
+const startedWith = new Map<string, string>();
 /** Which form is open in a block's section: "new", or the id of the note being replied to. One at a time. */
 const forms = new Map<string, string>();
 /** What the note being written on a block is about, when it is some lines of its code or one of its steps. */
@@ -72,6 +78,7 @@ export function forgetNotes(): void {
   session += 1;
   busy = false;
   drafts.clear();
+  startedWith.clear();
   forms.clear();
   pendingOn.clear();
   said.clear();
@@ -193,14 +200,26 @@ export function showNotesOf(blockPath: string): void {
  * Starts a note on part of a block, some lines of its code or one of its
  * steps: its panel opens at a new note that says what it is on. `text` starts
  * the note off, such as what a recording found wrong with the step, unless
- * something the person typed is already waiting there.
+ * something the person typed is already waiting there. A draft that is still
+ * only what an earlier note was started with is replaced, or emptied when
+ * there is nothing to start with: it was about another step, or about one
+ * the recording no longer contradicts.
  */
 export function noteOn(blockPath: string, on: NoteAnchor, text?: string): void {
   const block = ui.snapshot?.blocks[blockPath];
   if (!block) return;
   closeWindow();
   pendingOn.set(blockPath, on);
-  if (text !== undefined && !drafts.get(key(blockPath, "new"))?.trim()) drafts.set(key(blockPath, "new"), text);
+  const draft = drafts.get(key(blockPath, "new")) ?? "";
+  if (!draft.trim() || draft === startedWith.get(blockPath)) {
+    if (text === undefined) {
+      drafts.delete(key(blockPath, "new"));
+      startedWith.delete(blockPath);
+    } else {
+      drafts.set(key(blockPath, "new"), text);
+      startedWith.set(blockPath, text);
+    }
+  }
   said.clear();
   forms.set(blockPath, "new");
   showNotesOf(blockPath);
@@ -243,7 +262,10 @@ function sentFrom(where: Where, which: string): () => void {
   return () => {
     drafts.delete(key(where.path, which));
     if (forms.get(where.path) === which) forms.delete(where.path);
-    if (which === "new") pendingOn.delete(where.path);
+    if (which === "new") {
+      pendingOn.delete(where.path);
+      startedWith.delete(where.path);
+    }
   };
 }
 

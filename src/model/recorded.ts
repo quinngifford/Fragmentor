@@ -557,8 +557,11 @@ function checkSteps(declared: Trace, trace: Trace, scope: RecordingScope, comple
 /**
  * A recorded step that one written down is seen as: one that alone meets it,
  * and, of those, one no earlier written step was shown as, so five written
- * calls to Price Seat lead to five different recorded ones. Only steps of the
- * same kind are tried, which keeps this quick on a long recording.
+ * calls to Price Seat lead to five different recorded ones. It is a step that
+ * fits, for the person to be taken to, and not always the one the matching
+ * above used: when every one that fits was shown already, it is one of those.
+ * Only steps of the same kind are tried, which keeps this quick on a long
+ * recording.
  */
 function seenAs(trace: Trace, alone: Expectations, shown: Set<string>): string | undefined {
   const answers = new Map(trace.events.flatMap((event) => (event.type === "return" ? [[event.of, event] as const] : [])));
