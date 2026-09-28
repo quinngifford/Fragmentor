@@ -1674,6 +1674,19 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("readiness", "found") === true,
     ],
     [
+      "a drawn block whose ports are types offers to be held to its contract, which leaves the agent a note, and one written in words offers nothing",
+      value("holdOffered", "opened") === true &&
+        value("holdOffered", "inWords") === true &&
+        value("holdOffered", "wordsOffered") === false &&
+        value("holdOffered", "notImported") === true &&
+        value("holdOffered", "button") === "Hold to its contract" &&
+        value("held", "noted") === true &&
+        value("held", "waiting") === "agent" &&
+        /without changing how its existing code is called/.test(String(value("held", "words"))) &&
+        /import type/.test(String(value("held", "words"))) &&
+        value("held", "gone") === true,
+    ],
+    [
       "a project just made says what to send the agent first, from the answers given, and lists every command",
       value("firstSteps", "shown") === true &&
         value("firstSteps", "opened") === true &&
@@ -4377,6 +4390,55 @@ function attachSelfCheck(
           return { boxes: boxes.length, rows: rows.size, repeated, arrows: arrows.length, picked, backOnTree, sameStep };
         `);
         await capture(window, "self-check-flow");
+
+        // A function drawn because its code does not import the contract it
+        // has offers to have the agent hold it to that contract. One whose
+        // ports are written in words has no contract, and no offer.
+        pick("close-project");
+        await run("holdOffered", `
+          await until(() => document.body.dataset.project !== "open");
+          const link = await until(() => [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.messenger)}));
+          if (!link) return { opened: false };
+          link.click();
+          const node = (id) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === id);
+          const drawnBecause = (reason) => until(() => [...document.querySelectorAll("#inspector .code-foot .bench-note")].some((p) => reason.test(p.textContent)));
+          if (!(await until(() => node("router")))) return { opened: false };
+          node("router").click();
+          const inWords = await drawnBecause(/written in words/);
+          const wordsOffered = Boolean(document.querySelector("#inspector .hold-offer"));
+          node("save-message").click();
+          const notImported = await drawnBecause(/does not import its contract/);
+          const hold = document.querySelector("#inspector .hold-offer");
+          if (hold) hold.scrollIntoView({ block: "center" });
+          return {
+            opened: true,
+            inWords,
+            wordsOffered,
+            notImported,
+            button: hold ? [...hold.querySelectorAll("button")].map((b) => b.textContent).join(" ") : "",
+          };
+        `);
+        await capture(window, "self-check-hold");
+
+        // Pressed, it leaves the agent a note asking for exactly that, and
+        // the button gives way to the note, waiting for the agent.
+        await run("held", `
+          const button = [...document.querySelectorAll("#inspector .hold-offer button")].find((b) => b.textContent === "Hold to its contract");
+          if (!button) return { pressed: false };
+          button.click();
+          const card = await until(() =>
+            [...document.querySelectorAll("#inspector .note-card")].find((c) => /hold this block to its contract/i.test(c.textContent)),
+          );
+          if (card) card.scrollIntoView({ block: "center" });
+          return {
+            pressed: true,
+            noted: Boolean(card),
+            waiting: card ? card.dataset.waiting : "",
+            words: card ? (card.querySelector(".note-text") || {}).textContent || "" : "",
+            gone: !document.querySelector("#inspector .hold-offer"),
+          };
+        `);
+        await capture(window, "self-check-held");
 
         console.log(JSON.stringify(report, null, 2));
 

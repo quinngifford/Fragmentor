@@ -8,7 +8,7 @@ import { openBlockWindow, openCodeAt } from "./popup.js";
 import { STEP_LINK, stepPage } from "./execution.js";
 import { openBenchWindow } from "./benchpanel.js";
 import { versionBadge, versionsSection } from "./versions.js";
-import { noteOn, notesSection, problemFlag, projectNotesSection } from "./notes.js";
+import { holdOffer, noteOn, notesSection, problemFlag, projectNotesSection } from "./notes.js";
 import { el, keepingFocus, section } from "./dom.js";
 import { codeBlock, codeFragment, codeLines, languageOf } from "./highlight.js";
 
@@ -253,6 +253,8 @@ function linkedCodeSection(block: SnapshotBlock): HTMLElement {
     el("p", "bench-note", block.drawnBecause ?? "Fragmentor shows this code and never changes it."),
   );
   node.append(foot);
+  const hold = holdOffer(block);
+  if (hold) node.append(hold);
   return node;
 }
 

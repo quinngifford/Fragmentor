@@ -367,6 +367,51 @@ export function problemFlag(blockPath: string, problem: string): HTMLElement | n
 }
 
 /**
+ * The note that asks the agent to hold a block's existing code to its
+ * contract. It says briefly what the guide says, and asks rather than
+ * promises: where the file cannot be held to the import rules, the agent
+ * leaves the code alone and says so in its answer.
+ */
+const HOLD_WORDS =
+  "Please hold this block to its contract, without changing how its existing code is called. In the file its code is in, add a small exported function that takes `(input, caps)`, imports the block's contract with `import type` and calls the existing code, then point the block's `code` at it. Add saved tests, commit, and answer this note. If the file cannot be held to the import rules, leave the code as it is and tell me why here.";
+
+/**
+ * The offer, under a block's code, to have the agent hold it to its
+ * contract: only for a function drawn because its code does not import the
+ * contract it has. One whose ports are written in words has no contract, and
+ * its panel already says so. While a note asking for this is open, the offer
+ * is gone, and the block's notes show that note with the agent.
+ */
+export function holdOffer(block: SnapshotBlock): HTMLElement | null {
+  const drawnForWantOfImport =
+    !block.architecture && !block.planned && !block.runnable && block.files.contract !== "" && /does not import its contract/.test(block.drawnBecause ?? "");
+  if (!drawnForWantOfImport) return null;
+  const asked = allNotes().some(
+    (note) => note.block === block.path && note.status === "open" && note.messages.some((message) => message.from === "person" && message.text === HOLD_WORDS),
+  );
+  if (asked) return null;
+
+  const row = key(block.path, "hold");
+  const offer = el("div", "flag-offer hold-offer");
+  offer.append(el("span", undefined, "Have your agent hold this code to its contract, so Fragmentor checks, runs and tests it? Whatever calls it now stays as it is."));
+  const hold = el("button", "run-btn", "Hold to its contract");
+  hold.type = "button";
+  hold.disabled = busy;
+  hold.title = `Leave a note on ${block.name} asking your coding agent to do this.`;
+  hold.addEventListener("click", () => {
+    void write(
+      row,
+      (dir) => window.fragmentor.addNote(dir, block.path, HOLD_WORDS),
+      () => `Asked your agent to hold ${block.name} to its contract. Tell it “${NOTES_PHRASE}” when you are ready.`,
+    );
+  });
+  offer.append(hold);
+  const trouble = said.get(row);
+  if (trouble) offer.append(el("p", "bench-note bad", trouble.text));
+  return offer;
+}
+
+/**
  * Runs what a note flags again, as it was flagged, and draws what came of it
  * on the note. It never touches the block's saved tests. It is marked as
  * running at once, so a panel drawn meanwhile says so and starts no other,
