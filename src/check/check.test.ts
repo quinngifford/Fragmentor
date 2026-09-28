@@ -38,7 +38,7 @@ describe("checkProject", () => {
     expect(report.problems).toEqual([]);
     expect(report.errorCount).toBe(0);
     expect(report.systems).toEqual([
-      { rootBlock: "tickets", language: "typescript", displayName: "TypeScript", codeChecked: true, codeHeld: 6, codeProblems: [] },
+      { rootBlock: "tickets", language: "typescript", displayName: "TypeScript", codeChecked: true, codeHeld: 6, codeProblems: [], reachRead: true },
     ]);
     expect(report.unimplemented).toEqual([]);
     expect(report.untested).toEqual([]);

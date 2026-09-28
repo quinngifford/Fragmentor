@@ -133,7 +133,7 @@ function exposedGroup(block: SnapshotBlock, routes: EntryRoute[] = []): HTMLElem
 
 /** What this block reaches, with each resource named as it was found. */
 export function reachesSection(block: SnapshotBlock): HTMLElement | null {
-  if (block.access.length === 0) return null;
+  if (block.access.length === 0 && block.reachNotChecked.length === 0) return null;
 
   const node = section("Reaches");
   const list = el("div", "ports");
@@ -161,6 +161,11 @@ export function reachesSection(block: SnapshotBlock): HTMLElement | null {
   }
 
   node.append(list);
+  // What its code reaches is checked against these, so what could not be
+  // followed there is said here, where a missing line would be looked for.
+  if (block.reachNotChecked.length > 0) {
+    node.append(el("p", "bench-note", `Not checked in the code: ${block.reachNotChecked.join("; ")}.`));
+  }
   return node;
 }
 

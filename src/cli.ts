@@ -206,6 +206,22 @@ function formatReport(report: CheckReport): string {
     for (const drawn of report.drawnOnly) lines.push(`  ${drawn.blockPath}: ${drawn.reason}`);
   }
 
+  // What the code reaches is read to find what the diagram leaves out, so
+  // whatever could not be read is said, rather than taken to reach nothing.
+  const unread = report.systems.filter((system) => !system.reachRead);
+  if (unread.length > 0 || report.reachNotChecked.length > 0 || report.reachUnpointed.length > 0) {
+    lines.push("", "Reach not checked");
+    for (const system of unread) {
+      lines.push(`  ${system.rootBlock}: ${system.displayName || "its"} code is not read for what it reaches yet, so only its declared access is known`);
+    }
+    for (const { blockPath, reasons } of report.reachNotChecked) lines.push(...reasons.map((reason) => `  ${blockPath}: ${reason}`));
+    if (report.reachUnpointed.length > 0) {
+      const shown = report.reachUnpointed.slice(0, 10);
+      const more = report.reachUnpointed.length - shown.length;
+      lines.push(`  code under no block's pointer, which nothing accounts for: ${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}`);
+    }
+  }
+
   // Neither a plan nor a piece of the architecture is unfinished work, so
   // both are kept apart from it. One is a drawing of what has not been
   // started; the other is not Fragmentor's to write at all.

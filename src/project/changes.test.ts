@@ -485,6 +485,7 @@ describe("the fields a change is made of", () => {
     drawnBecause: (then) => (then.blocks[priceSeat]!.drawnBecause = "some reason"),
     cases: (then) => (then.blocks[priceSeat]!.cases = []),
     code: (then) => (then.blocks[priceSeat]!.code = { ...then.blocks[priceSeat]!.code!, hash: "0" }),
+    reachNotChecked: (then) => (then.blocks[findEvent]!.reachNotChecked = ["a dynamic import in src/booking/find-event.ts"]),
   };
   const codeEdits: { [K in keyof SnapshotCode]-?: (code: SnapshotCode) => void } = {
     pointer: (code) => (code.pointer = "src/other.ts#priceSeat"),
@@ -530,6 +531,7 @@ describe("the fields a change is made of", () => {
     executions: (then) => (then.executions = then.executions.slice(1)),
     notes: (then) => (then.notes = []),
     diagnostics: (then) => (then.diagnostics = [{ severity: "error", blockPath: findEvent, message: "Wrong." }]),
+    reachUnpointed: (then) => (then.reachUnpointed = ["src/cron.ts"]),
   };
 
   /** Edits to one part of the older side, made to whichever snapshot they are given. */

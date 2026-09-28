@@ -17,6 +17,7 @@ import type { CodeLocation, Granularity, LoadedBlock, Project, ProjectDiagnostic
 import { getPack, isKnownLanguage } from "../lang/index.js";
 import { boundStores, describeBound, storeEntries } from "./stores.js";
 import { NOTES_DIR, loadNotes, waitingOn } from "./notes.js";
+import { readProjectReach, undeclaredReach } from "./reach.js";
 import type { Note, NoteAuthor } from "./notes.js";
 import { readCases, storeKeyProblems } from "../run/cases.js";
 import type { TestCase } from "../run/cases.js";
@@ -115,6 +116,8 @@ export interface SnapshotSystem {
   displayName: string;
   /** False when Fragmentor has no language pack for it, so it generates and runs nothing. */
   known: boolean;
+  /** Whether what its code reaches is read, so reach the diagram leaves out is found. */
+  reachRead: boolean;
 }
 
 /** The code a block points at, as much of it as the inspector shows. */
@@ -197,6 +200,12 @@ export interface SnapshotBlock {
   cases: TestCase[];
   /** The code this block stands for, and where it is. */
   code: SnapshotCode | null;
+  /**
+   * What this block's code does that could not be followed in reading what it
+   * reaches, such as an import made while the program runs. Empty when all of
+   * it was, or when it was not read at all.
+   */
+  reachNotChecked: string[];
 }
 
 /**
@@ -236,6 +245,8 @@ export interface ProjectSnapshot {
   /** Every note left on a block, resolved ones too, oldest first. */
   notes: SnapshotNote[];
   diagnostics: ProjectDiagnostic[];
+  /** Files whose code reaches something but lies under no block's pointer, so nothing accounts for it. */
+  reachUnpointed: string[];
 }
 
 async function readIfPresent(filePath: string): Promise<string | null> {
@@ -360,14 +371,14 @@ async function notesOf(project: Project, problems: ProjectDiagnostic[]): Promise
 /**
  * `atCommit` is for the project as it was at a commit, read back into a folder
  * holding only its blocks, its executions and the code they point at. It is
- * where whatever needs the rest of the project's folder is skipped. Today that
- * is only its notes, which are not part of what it was and which the folder
- * has none of anyway, so it changes nothing yet; what reads more of the
- * project, such as what its code reaches, is skipped here when it comes.
+ * where whatever needs the rest of the project's folder is skipped: its notes,
+ * which are not part of what it was, and what its code reaches, which needs
+ * the files no block points at and the project's tsconfig to be read right.
  */
 export async function projectSnapshot(projectDir: string, { atCommit = false }: { atCommit?: boolean } = {}): Promise<ProjectSnapshot> {
   const project = await loadProject(projectDir);
   const code = await readAllCode(project);
+  const reach = atCommit ? null : await readProjectReach(project, code);
   const blocks: Record<string, SnapshotBlock> = {};
 
   // Problems found reading the files beside the diagram are reported with the
@@ -488,6 +499,7 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
       drawnBecause: found.drawnBecause,
       cases: found.bound && (pack?.canRun ?? false) ? await casesFor(blockPath, node) : [],
       code: where,
+      reachNotChecked: reach?.notChecked[blockPath] ?? [],
     };
   }
 
@@ -510,11 +522,13 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
         language: system.language,
         displayName: known ? getPack(system.language).displayName : system.language,
         known,
+        reachRead: reach?.systemsRead[system.rootBlock] ?? false,
       };
     }),
     blocks,
     executions,
     notes,
-    diagnostics: [...validateProject(project), ...fileProblems],
+    diagnostics: [...validateProject(project), ...fileProblems, ...(reach === null ? [] : undeclaredReach(project, reach))],
+    reachUnpointed: reach?.unpointed ?? [],
   };
 }

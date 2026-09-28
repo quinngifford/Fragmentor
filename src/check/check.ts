@@ -31,6 +31,8 @@ export interface SystemCheck {
   /** How many of the system's blocks are held to a contract, and so checked. */
   codeHeld: number;
   codeProblems: CodeProblem[];
+  /** False when what its code reaches is not read, so reach the diagram leaves out cannot be found there. */
+  reachRead: boolean;
 }
 
 /** A block whose code Fragmentor draws rather than checks, and why. */
@@ -67,6 +69,13 @@ export interface CheckReport {
   /** Blocks Fragmentor can run that have no saved tests. */
   untested: string[];
   /**
+   * What could not be followed in reading what each block's code reaches, by
+   * block, so reach that is not found is never taken for reach that is not there.
+   */
+  reachNotChecked: { blockPath: string; reasons: string[] }[];
+  /** Files whose code reaches something but lies under no block's pointer. */
+  reachUnpointed: string[];
+  /**
    * The open notes, by who they are waiting for, as the block each is on:
    * a block with two notes waiting is named twice. A note is never an error,
    * because it says what someone wants done rather than what is wrong.
@@ -98,6 +107,7 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
       codeChecked,
       codeHeld: held.length,
       codeProblems: codeChecked ? checkSystemCode(project, system.rootBlock, code) : [],
+      reachRead: snapshot.systems.find((each) => each.rootBlock === system.rootBlock)?.reachRead ?? false,
     };
   });
 
@@ -123,6 +133,10 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
       .filter((block) => block.drawnBecause !== null)
       .map((block) => ({ blockPath: block.path, reason: block.drawnBecause! })),
     untested: real.filter((block) => block.runnable && block.cases.length === 0).map((block) => block.path),
+    reachNotChecked: blocks
+      .filter((block) => block.reachNotChecked.length > 0)
+      .map((block) => ({ blockPath: block.path, reasons: block.reachNotChecked })),
+    reachUnpointed: snapshot.reachUnpointed,
     notes: {
       agent: snapshot.notes.filter((note) => note.waiting === "agent").map((note) => note.block),
       person: snapshot.notes.filter((note) => note.waiting === "person").map((note) => note.block),

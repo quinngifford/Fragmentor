@@ -5,8 +5,9 @@ import type { FileReach, ReachReader, Target, Uses } from "../lang/index.js";
 import { packFor } from "./code.js";
 import type { BlockCode } from "./code.js";
 import { IGNORES_CASE, under } from "./history.js";
-import { LARGEST_SHOWN } from "./project.js";
-import type { Project } from "./project.js";
+import { LARGEST_SHOWN, resolveAccess } from "./project.js";
+import type { Project, ProjectDiagnostic } from "./project.js";
+import { isArchitecture } from "../model/roles.js";
 
 /**
  * Which blocks each block's code reaches, read from the code itself.
@@ -104,19 +105,44 @@ export async function readProjectReach(project: Project, code: Map<string, Block
   /* Who owns what. */
 
   const bySymbol = new Map<string, Owner>();
-  const byFile = new Map<string, Owner>();
-  const folders: Owner[] = [];
+  // Every block pointing at each whole file or folder, since several may.
+  const pointedAt = new Map<string, Owner[]>();
+  const folderKeys = new Set<string>();
   for (const [blockPath, found] of [...code].sort(([a], [b]) => a.localeCompare(b))) {
     const location = found.location;
     if (location === null) continue;
     const owner = { path: blockPath, file: location.file, symbol: location.symbol };
     if (location.symbol !== null) {
       if (!bySymbol.has(`${fold(location.file)}#${location.symbol}`)) bySymbol.set(`${fold(location.file)}#${location.symbol}`, owner);
-    } else if (location.text === null && statSync(path.join(project.dir, location.file), { throwIfNoEntry: false })?.isDirectory()) {
-      folders.push(owner);
-    } else if (!byFile.has(fold(location.file))) {
-      byFile.set(fold(location.file), owner);
+      continue;
     }
+    const key = fold(location.file);
+    pointedAt.set(key, [...(pointedAt.get(key) ?? []), owner]);
+    if (location.text === null && statSync(path.join(project.dir, location.file), { throwIfNoEntry: false })?.isDirectory()) folderKeys.add(key);
+  }
+
+  // A file several blocks point at whole, such as one router holding the
+  // routes of three services, cannot be split between them, so its code is
+  // counted as the block that holds them all, and each of them says so.
+  const byFile = new Map<string, Owner>();
+  const folders: Owner[] = [];
+  for (const [key, owners] of pointedAt) {
+    // Sorted by path, so a block pointing at the same code as one of its parts comes first and keeps it.
+    const separate = owners.filter((owner, i) => !owners.slice(0, i).some((before) => under(before.path, owner.path)));
+    let owner = separate[0]!;
+    if (separate.length > 1) {
+      const segments = separate.map((each) => each.path.split("/"));
+      const common = segments[0]!.slice(0, segments[0]!.findIndex((segment, i) => segments.some((other) => other[i] !== segment)));
+      if (common.length > 0) {
+        owner = { path: common.join("/"), file: owner.file, symbol: null };
+        for (const each of separate) {
+          const others = separate.filter((other) => other !== each).map((other) => other.path);
+          note(each.path, `${each.file} is also the code of ${others.join(" and ")}, so what it reaches is counted as ${owner.path}'s`);
+        }
+      }
+    }
+    if (folderKeys.has(key)) folders.push(owner);
+    else byFile.set(key, owner);
   }
   // The deepest first, so the folder that holds a file most closely is the one that owns it.
   folders.sort((a, b) => (b.file === "." ? 0 : b.file.length) - (a.file === "." ? 0 : a.file.length));
@@ -369,4 +395,95 @@ export async function readProjectReach(project: Project, code: Map<string, Block
   });
 
   return result(unpointed);
+}
+
+/**
+ * Where the code reaches into a service, client, database, queue or any other
+ * such part from outside it, and nothing on the diagram says so.
+ *
+ * Crossing into one of those is what the diagram's access is for, so a
+ * crossing no access declares is the diagram leaving out a connection the
+ * code really makes. A component is only a grouping, so crossing into one
+ * needs nothing, and calls inside one part need nothing either.
+ *
+ * It is lenient about where the access is: on the reaching block, on one of
+ * its parts, or on something around it, naming the part crossed into,
+ * something inside it, or something around it that does not also hold the
+ * reaching block. Only which part is reached is judged, not how.
+ *
+ * Only reach read exactly is judged. Where some file had to be counted whole,
+ * the block already says so as something not checked, and a guess is not
+ * worth a warning.
+ *
+ * One warning for each reaching block and each part it crosses into, with its
+ * evidence sorted and no line numbers, so the text stays the same while the
+ * code does and a warning flagged for the agent is recognised again.
+ */
+export function undeclaredReach(project: Project, reach: ProjectReach): ProjectDiagnostic[] {
+  // What each block's access leads to, found once.
+  const leadsTo: [string, string[]][] = [...project.byPath].map(([blockPath, node]) => [
+    blockPath,
+    node.block.access.flatMap((entry) => resolveAccess(project, blockPath, entry.resource)?.path ?? []),
+  ]);
+  const declared = (from: string, into: string) =>
+    leadsTo.some(
+      ([holder, targets]) =>
+        (under(holder, from) || under(from, holder)) &&
+        targets.some((target) => !under(target, from) && (under(target, into) || under(into, target))),
+    );
+
+  const crossings = new Map<string, { from: string; into: string; evidence: Set<string> }>();
+  for (const edge of reach.edges) {
+    if (edge.approximate) continue;
+    const segments = edge.to.split("/");
+    let into: string | undefined;
+    if (segments[0] !== edge.from.split("/")[0]) {
+      into = segments[0];
+    } else {
+      // The outermost part crossed into that nothing declares.
+      for (let depth = 1; depth <= segments.length && into === undefined; depth += 1) {
+        const around = segments.slice(0, depth).join("/");
+        const role = project.byPath.get(around)!.block.role;
+        if (isArchitecture(role) && role !== "component" && !under(around, edge.from) && !declared(edge.from, around)) into = around;
+      }
+    }
+    if (into === undefined) continue;
+    const key = `${edge.from}\n${into}`;
+    if (!crossings.has(key)) crossings.set(key, { from: edge.from, into, evidence: new Set() });
+    crossings.get(key)!.evidence.add(edge.evidence);
+  }
+
+  return [...crossings.values()]
+    .sort((a, b) => a.from.localeCompare(b.from) || a.into.localeCompare(b.into))
+    .map(({ from, into, evidence }) => {
+      const name = (blockPath: string) => project.byPath.get(blockPath)!.block.name;
+      const uses = [...evidence].sort().join("; ");
+      if (into.split("/")[0] !== from.split("/")[0]) {
+        return {
+          severity: "warning",
+          blockPath: from,
+          message: `"${name(from)}"'s code reaches into the system "${name(into)}" (${into}): ${uses}. Systems in one project are separate programs that never reach each other, so the diagram cannot say this: stop reaching it, or make the two one system.`,
+        };
+      }
+      const naming = accessNaming(project, from, into);
+      return {
+        severity: "warning",
+        blockPath: from,
+        message: `"${name(from)}"'s code reaches "${name(into)}" (${into}), but no access on it, inside it or above it names that: ${uses}. ${
+          naming === null ? "Add an access to it" : `Add an access naming "${naming}"`
+        } to the block that makes the call, or stop reaching it.`,
+      };
+    });
+}
+
+/** The shortest resource an access on `from` would name `target` by, or null when none leads there. */
+function accessNaming(project: Project, from: string, target: string): string | null {
+  const segments = from.split("/");
+  for (let depth = segments.length; depth > 0; depth -= 1) {
+    const around = segments.slice(0, depth).join("/");
+    if (!under(around, target) || around === target) continue;
+    const naming = target.slice(around.length + 1);
+    return resolveAccess(project, from, naming)?.path === target ? naming : null;
+  }
+  return null;
 }

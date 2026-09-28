@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { blockDir, createProject, writeBlock, loadProject } from "./project.js";
 import type { Manifest } from "./project.js";
@@ -258,7 +259,7 @@ describe("a snapshot of code Fragmentor only draws", () => {
       const snapshot = await projectSnapshot(other);
       expect(snapshot.language).toBe("Go");
       // Nothing is generated or run in a language there is no pack for.
-      expect(snapshot.systems).toEqual([{ rootBlock: "serve", language: "Go", displayName: "Go", known: false }]);
+      expect(snapshot.systems).toEqual([{ rootBlock: "serve", language: "Go", displayName: "Go", known: false, reachRead: false }]);
 
       const serve = snapshot.blocks.serve!;
       expect(serve.code).toMatchObject({ pointer: "main.go#main", file: "main.go", line: 3, excerptStart: 1 });
@@ -280,4 +281,34 @@ describe("a snapshot of code Fragmentor only draws", () => {
       await rm(other, { recursive: true, force: true });
     }
   });
+});
+
+describe("what the code reaches, in a snapshot", () => {
+  it("warns on the block whose code reaches a part the diagram does not say it reaches, in the same words each time", async () => {
+    const copy = await mkdtemp(path.join(tmpdir(), "fragmentor-snap-"));
+    try {
+      await cp(fileURLToPath(new URL("../../examples/messenger", import.meta.url)), copy, { recursive: true });
+      const blockFile = path.join(blockDir(copy, "app/workers/deliver-notification"), "block.json");
+      const block = JSON.parse(await readFile(blockFile, "utf8")) as { access: string[] };
+      await writeFile(blockFile, JSON.stringify({ ...block, access: block.access.filter((each) => each !== "writes client") }), "utf8");
+
+      const snapshot = await projectSnapshot(copy);
+      expect(snapshot.systems.map((system) => system.reachRead)).toEqual([true]);
+      expect(snapshot.diagnostics).toEqual([
+        {
+          severity: "warning",
+          blockPath: "app/workers/deliver-notification",
+          message: expect.stringContaining('"Deliver Notification"\'s code reaches "Client" (app/client)'),
+        },
+      ]);
+      expect((await projectSnapshot(copy)).diagnostics).toEqual(snapshot.diagnostics);
+      expect(Object.values(snapshot.blocks).filter((each) => each.reachNotChecked.length > 0)).toEqual([]);
+      expect(snapshot.reachUnpointed).toEqual([]);
+
+      // Read as it was at a commit, the code's reach is left alone.
+      expect((await projectSnapshot(copy, { atCommit: true })).diagnostics).toEqual([]);
+    } finally {
+      await rm(copy, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

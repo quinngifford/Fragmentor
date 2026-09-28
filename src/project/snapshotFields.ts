@@ -54,6 +54,8 @@ export const projectFields: FieldTable<ProjectSnapshot> = {
   notes: ignoredPrivate,
   // Problems lead the panels already, compared with nothing.
   diagnostics: ignoredPrivate,
+  // What the code reaches is not read at a commit, and the files are the codebase's.
+  reachUnpointed: ignoredPrivate,
 };
 
 export const blockFields: FieldTable<SnapshotBlock> = {
@@ -92,6 +94,8 @@ export const blockFields: FieldTable<SnapshotBlock> = {
   // Saved tests can hold real data.
   cases: comparedPrivate,
   code: compared,
+  // Not read at a commit, and it names the codebase's files.
+  reachNotChecked: ignoredPrivate,
 };
 
 export const codeFields: FieldTable<SnapshotCode> = {

@@ -7,6 +7,7 @@
   "access": [
     "reads infrastructure/queue.notifications",
     "reads infrastructure/database.messages",
-    "reads infrastructure/database.sessions"
+    "reads infrastructure/database.sessions",
+    "writes client"
   ]
 }

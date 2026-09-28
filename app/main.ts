@@ -1740,6 +1740,14 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("held", "gone") === true,
     ],
     [
+      "code reaching a part the diagram does not say it reaches is a warning that can be flagged, and goes once the access is back",
+      value("reachWarned", "warned") === true &&
+        value("reachWarned", "severity") === "warning" &&
+        /dispatch from src\/client\/state\.ts/.test(String(value("reachWarned", "words"))) &&
+        value("reachWarned", "flag") === true &&
+        value("reachDeclared", "gone") === true,
+    ],
+    [
       "a project just made says what to send the agent first, from the answers given, and lists every command",
       value("firstSteps", "shown") === true &&
         value("firstSteps", "opened") === true &&
@@ -4507,6 +4515,36 @@ function attachSelfCheck(
           };
         `);
         await capture(window, "self-check-held");
+
+        // Code reaching a part the diagram does not say it reaches is a
+        // warning on the block whose code does it, which can be flagged, and
+        // it goes once the access is put back.
+        const deliverFile = path.join(check.messenger, "blocks", "app", "workers", "deliver-notification", "block.json");
+        const deliverBefore = await readFile(deliverFile, "utf8");
+        const deliver = JSON.parse(deliverBefore) as { access: string[] };
+        await writeFile(deliverFile, JSON.stringify({ ...deliver, access: deliver.access.filter((each) => each !== "writes client") }, null, 2), "utf8");
+        const reachLine = `
+          const node = (id) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === id);
+          const reachLine = () => [...document.querySelectorAll("#inspector .problem")].find((p) => /code reaches "Client"/.test(p.textContent));
+        `;
+        await run("reachWarned", `${reachLine}
+          node("deliver-notification").click();
+          const line = await until(reachLine, 10000);
+          if (!line) return { warned: false };
+          line.scrollIntoView({ block: "center" });
+          const holder = line.closest(".problem-line");
+          return {
+            warned: true,
+            severity: line.querySelector(".problem-level").textContent,
+            words: line.querySelector(".problem-text").textContent,
+            flag: Boolean(holder && [...holder.querySelectorAll("button")].some((b) => b.textContent === "Flag")),
+          };
+        `);
+        await capture(window, "self-check-reach");
+        await writeFile(deliverFile, deliverBefore, "utf8");
+        await run("reachDeclared", `${reachLine}
+          return { gone: Boolean(await until(() => !reachLine(), 10000)) };
+        `);
 
         // A system bigger than the window opens with its names readable and
         // its top in view, the rest a drag away. Fit then shows all of it.

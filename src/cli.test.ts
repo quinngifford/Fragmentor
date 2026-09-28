@@ -104,6 +104,20 @@ describe("the fragmentor command", () => {
     expect(result.status).toBe(0);
   }, 30_000);
 
+  it("says a system whose code is not read for what it reaches is not checked for it", async () => {
+    expect(fragmentor(["init", "--granularity=3", "--language=python"], dir).status).toBe(0);
+    const manifest = JSON.parse(await readFile(path.join(dir, "fragmentor.json"), "utf8")) as { systems: unknown[] };
+    manifest.systems.push({ rootBlock: "app" });
+    await writeFile(path.join(dir, "fragmentor.json"), JSON.stringify(manifest), "utf8");
+    await mkdir(path.join(dir, "blocks", "app"), { recursive: true });
+    await writeFile(path.join(dir, "blocks", "app", "block.json"), JSON.stringify({ role: "service", responsibility: "The app.", code: "src" }), "utf8");
+    await mkdir(path.join(dir, "src"));
+
+    const result = fragmentor(["check"], dir);
+    expect(result.output).toContain("Reach not checked\n  app: Python code is not read for what it reaches yet, so only its declared access is known\n");
+    expect(result.status).toBe(0);
+  }, 30_000);
+
   it("explains a phrase for the agent typed as a command, without failing", () => {
     const result = fragmentor(["rebuild"], dir);
     expect(result.status).toBe(0);
@@ -129,6 +143,24 @@ describe("the fragmentor command", () => {
     const result = fragmentor(["check", "--project", dir], repo);
     expect(result.status).toBe(1);
     expect(result.output).toContain('ERROR  tickets/booking-api/find-event: "Find Event" declares "events reads tickets-db.venues"');
+  }, 30_000);
+
+  it("warns of reach the diagram leaves out, and says what it could not follow, without failing", async () => {
+    await cp(path.join(repo, "examples", "messenger"), dir, { recursive: true });
+    const blockFile = path.join(dir, "blocks", "app", "workers", "deliver-notification", "block.json");
+    const block = JSON.parse(await readFile(blockFile, "utf8")) as { access: string[] };
+    block.access = block.access.filter((access) => access !== "writes client");
+    await writeFile(blockFile, JSON.stringify(block, null, 2), "utf8");
+    const cleanUp = path.join(dir, "src", "workers", "cleanUp.ts");
+    await writeFile(cleanUp, `${await readFile(cleanUp, "utf8")}\nexport const later = () => import("./delivery.js");\n`, "utf8");
+
+    const result = fragmentor(["check"], dir);
+    expect(result.output).toContain(
+      `WARN   app/workers/deliver-notification: "Deliver Notification"'s code reaches "Client" (app/client), but no access on it, inside it or above it names that: dispatch from src/client/state.ts.`,
+    );
+    expect(result.output).toContain(`Reach not checked\n  app/workers: a dynamic import of "./delivery.js" in src/workers/cleanUp.ts\n`);
+    expect(result.output).toContain("Result: no errors, 1 warning.");
+    expect(result.status).toBe(0);
   }, 30_000);
 
   it("runs the saved tests, and fails when one does", async () => {

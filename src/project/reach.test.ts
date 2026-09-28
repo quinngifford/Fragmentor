@@ -1,11 +1,12 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readAllCode } from "./code.js";
 import { blockDir, loadProject } from "./project.js";
-import { readProjectReach } from "./reach.js";
+import type { ProjectDiagnostic } from "./project.js";
+import { readProjectReach, undeclaredReach } from "./reach.js";
 import type { ProjectReach } from "./reach.js";
 
 /**
@@ -353,6 +354,27 @@ describe("which block the reach belongs to", () => {
     },
   );
 
+  it("counts a file several blocks point at whole as the block holding them all, and says so on each", async () => {
+    // One router file holding the routes of two services, as real Express apps keep them.
+    await block("app/api", part("service", "src/main.ts"));
+    await source("src/main.ts", 'import { router } from "./routes";\nexport const app = router;\n');
+    await block("app/api/articles", part("service", "src/routes.ts"));
+    await block("app/api/articles/create", fn("src/articles.ts#create"));
+    await block("app/api/comments", part("service", "src/routes.ts"));
+    await block("app/api/comments/add", fn("src/comments.ts#add"));
+    await source("src/articles.ts", "export function create() { return 1; }\n");
+    await source("src/comments.ts", "export function add() { return 2; }\n");
+    await source("src/routes.ts", 'import { create } from "./articles";\nimport { add } from "./comments";\nexport const router = [create, add];\n');
+
+    const reach = await reachOf();
+    // Neither service reaches into the other: the routes are theirs together, which is the API's.
+    expect(reach.edges).toEqual([]);
+    expect(reach.notChecked).toEqual({
+      "app/api/articles": ["src/routes.ts is also the code of app/api/comments, so what it reaches is counted as app/api's"],
+      "app/api/comments": ["src/routes.ts is also the code of app/api/articles, so what it reaches is counted as app/api's"],
+    });
+  });
+
   it("lists code under no pointer that reaches something no block's code led into", async () => {
     await withDatabase();
     await block("app/a", fn("src/a.ts#a"));
@@ -462,6 +484,107 @@ describe("what it says it could not read", () => {
     const reach = await reachOf();
     expect(reach.systemsRead).toEqual({ app: true, model: false });
     expect(reach.edges).toEqual([]);
+  });
+});
+
+describe("reach the diagram does not declare", () => {
+  async function warningsOf(): Promise<ProjectDiagnostic[]> {
+    const project = await loadProject(dir);
+    return undeclaredReach(project, await readProjectReach(project, await readAllCode(project)));
+  }
+
+  /** A client whose state is reached from a worker, the way Messenger's is. */
+  async function withClient(): Promise<void> {
+    await block("app/client", part("client", "src/client"));
+    await block("app/client/state", fn("src/client/state.ts#dispatch"));
+    await source("src/client/state.ts", "export function dispatch(x: string) { return x; }\nexport function reset() { return 0; }\n");
+    await block("app/workers", part("service", "src/workers"));
+    await block("app/workers/deliver", fn("src/workers/deliver.ts#deliver"));
+  }
+
+  it("warns once for each block and each part it reaches into, with what it uses there sorted, and says how to declare it", async () => {
+    await withClient();
+    await source(
+      "src/workers/deliver.ts",
+      'import { reset, dispatch } from "../client/state";\nexport function deliver() { reset(); return dispatch("hi"); }\n',
+    );
+
+    expect(await warningsOf()).toEqual([
+      {
+        severity: "warning",
+        blockPath: "app/workers/deliver",
+        message:
+          '"Deliver"\'s code reaches "Client" (app/client), but no access on it, inside it or above it names that: ' +
+          "dispatch from src/client/state.ts; reset from src/client/state.ts. " +
+          'Add an access naming "client" to the block that makes the call, or stop reaching it.',
+      },
+    ]);
+  });
+
+  it("takes an access on the block, on one of its parts or around it, naming the part, something in it or something around it", async () => {
+    await withClient();
+    await source("src/workers/deliver.ts", 'import { dispatch } from "../client/state";\nexport function deliver() { return dispatch("hi"); }\n');
+    const declaring = async (blockPath: string, access: string) => {
+      const file = path.join(blockDir(dir, blockPath), "block.json");
+      const before = JSON.parse(await readFile(file, "utf8"));
+      await writeFile(file, JSON.stringify({ ...before, access: [access] }), "utf8");
+      const warned = (await warningsOf()).length;
+      await writeFile(file, JSON.stringify(before), "utf8");
+      return warned;
+    };
+
+    expect(await declaring("app/workers/deliver", "writes client")).toBe(0);
+    expect(await declaring("app/workers/deliver", "calls client/state")).toBe(0);
+    expect(await declaring("app/workers", "writes client")).toBe(0);
+    // An access leading anywhere else says nothing about crossing into the client.
+    await block("app/infra", part("component"));
+    await block("app/infra/queue", part("queue"));
+    expect(await declaring("app/workers/deliver", "reads infra/queue")).toBe(1);
+  });
+
+  it("needs nothing for calls inside one part, or into a group of parts that is none of those kinds", async () => {
+    await block("app/api", part("service", "src/api"));
+    await block("app/api/router", fn("src/api/router.ts#route"));
+    await block("app/api/save", fn("src/api/save.ts#save"));
+    await block("app/lib", part("component", "src/lib"));
+    await block("app/lib/format", fn("src/lib/format.ts#format"));
+    await source("src/api/save.ts", "export function save() { return 1; }\n");
+    await source("src/lib/format.ts", "export function format() { return 2; }\n");
+    await source(
+      "src/api/router.ts",
+      'import { save } from "./save";\nimport { format } from "../lib/format";\nexport function route() { return [save(), format()]; }\n',
+    );
+
+    expect(pairs(await reachOf())).toEqual(["app/api/router -> app/api/save", "app/api/router -> app/lib/format"]);
+    expect(await warningsOf()).toEqual([]);
+  });
+
+  it("judges only reach read exactly", async () => {
+    await withDatabase();
+    await block("app/cart", fn("src/cart.ts#Cart.total"));
+    await source("src/cart.ts", 'import { db } from "./db";\nexport class Cart { total() { return db.rows.size; } }\n');
+
+    expect(pairs(await reachOf())).toEqual(["app/cart -> app/db"]);
+    expect(await warningsOf()).toEqual([]);
+  });
+
+  it("warns of reach into another system, which nothing can declare", async () => {
+    await manifest([
+      { rootBlock: "app", language: "typescript" },
+      { rootBlock: "admin", language: "typescript" },
+    ]);
+    await block("admin", part("component", "admin"));
+    await withDatabase();
+    await source("admin/report.ts", 'import { db } from "../src/db";\nexport const rows = db.rows;\n');
+
+    expect(await warningsOf()).toEqual([
+      {
+        severity: "warning",
+        blockPath: "admin",
+        message:
+          '"Admin"\'s code reaches into the system "App" (app): db from src/db.ts. Systems in one project are separate programs that never reach each other, so the diagram cannot say this: stop reaching it, or make the two one system.',
+      },
+    ]);
   });
 });
 
