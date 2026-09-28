@@ -26,9 +26,9 @@ const ROW_GAP = 46;
 const SYSTEM_GAP = 80;
 /**
  * A block whose parts have no parts of their own, or have them folded away,
- * lists them under it instead of spreading them sideways. Spread, a system of any size is a very wide,
- * very short drawing that has to be shrunk to nothing to fit on screen; the
- * room is underneath it.
+ * lists them under it instead of spreading them sideways. Spread, a system of
+ * any size is a very wide, very short drawing that has to be shrunk to nothing
+ * to fit on screen; the room is underneath it.
  */
 const STACK_INDENT = 24;
 const STACK_GAP = 10;
