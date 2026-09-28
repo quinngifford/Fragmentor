@@ -150,8 +150,9 @@ function show(load: ProjectLoad, opening: boolean): void {
   }
 
   render();
-  // Keep whatever the agent added in view, unless the person has arranged the
-  // view themselves. Once the diagram is on screen, it eases over rather than jumping.
+  // Fit again as the agent adds blocks, unless the person has arranged the view
+  // themselves: the whole system while it fits at a readable size, and its top
+  // once it no longer does. Once the diagram is on screen, it eases over rather than jumping.
   if (!ui.userAdjusted) {
     if (firstSight) fitWhenReady(20);
     else fitToView(true);

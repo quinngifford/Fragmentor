@@ -41,7 +41,6 @@ import type { FlaggedRun, Note, NoteAnchor } from "../src/project/notes.js";
 import { compareWithVersion } from "../src/run/versions.js";
 import type { VersionComparison } from "../src/run/versions.js";
 import { commitExampleHistory, filesOf, gitIn } from "../src/project/exampleHistory.js";
-import { READABLE_SCALE } from "./renderer/canvas.js";
 
 /**
  * The main process owns everything with side effects: the window, the disk,
@@ -1881,11 +1880,12 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       "a system bigger than the window opens readable at its top, and Fit shows all of it",
       value("large", "opened") === true &&
         value("large", "blocks") === 111 &&
-        // Read back from the page, where it passed through single precision.
-        Number(value("large", "scale")) >= READABLE_SCALE - 0.001 &&
+        // The floor the person chose, READABLE_SCALE in app/renderer/canvas.ts, which this
+        // process does not load. Read back from the page, through single precision.
+        Number(value("large", "scale")) >= 0.6 - 0.001 &&
         value("large", "topInView") === true &&
         value("large", "allInView") === false &&
-        Number(value("largeFitted", "scale")) < READABLE_SCALE &&
+        Number(value("largeFitted", "scale")) < 0.6 &&
         value("largeFitted", "allInView") === true,
     ],
   ];
