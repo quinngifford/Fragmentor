@@ -168,6 +168,21 @@ export function manifestPath(projectDir: string): string {
   return path.join(projectDir, MANIFEST_FILE);
 }
 
+/** Walks up to the folder holding fragmentor.json, the way git finds a repository. */
+export async function findProject(start: string): Promise<string | null> {
+  let dir = path.resolve(start);
+  for (;;) {
+    try {
+      await access(manifestPath(dir));
+      return dir;
+    } catch {
+      const parent = path.dirname(dir);
+      if (parent === dir) return null;
+      dir = parent;
+    }
+  }
+}
+
 /**
  * Where a block's folder lives, given its path from the blocks root. A path is
  * block ids joined by `/`, and anything else — `..` above all, arriving from

@@ -6,6 +6,7 @@ import {
   answeringRoute,
   blockDir,
   createProject,
+  findProject,
   loadProject,
   locateCode,
   resolveAccess,
@@ -36,6 +37,19 @@ afterEach(async () => {
 });
 
 const writeManifestJson = (value: unknown) => writeFile(path.join(dir, "fragmentor.json"), JSON.stringify(value), "utf8");
+
+describe("finding the project a folder belongs to", () => {
+  it("walks up from a folder inside the project, and finds nothing outside one", async () => {
+    const project = path.join(dir, "shop");
+    const inside = path.join(project, "src", "orders");
+    await mkdir(inside, { recursive: true });
+    expect(await findProject(inside)).toBeNull();
+
+    await writeFile(path.join(project, "fragmentor.json"), "{}", "utf8");
+    expect(await findProject(inside)).toBe(project);
+    expect(await findProject(project)).toBe(project);
+  });
+});
 
 /** A component holding one function that scores a posting. */
 async function writeSmallProject() {

@@ -17,7 +17,7 @@ import type {
   WriteImplRequest,
 } from "./ipc.js";
 import { projectSnapshot } from "../src/project/snapshot.js";
-import { blockDir, loadProject, locateCode, manifestPath, readManifest } from "../src/project/project.js";
+import { blockDir, findProject, loadProject, locateCode, manifestPath, readManifest } from "../src/project/project.js";
 import { readBlockCode } from "../src/project/code.js";
 import { guideLine, holdsFiles, pointAtGuide, settingsFrom, startProject, writeCommandSkills, writeGuide } from "../src/codegen/emit.js";
 import { GUIDE_FILE } from "../src/codegen/guide.js";
@@ -288,15 +288,23 @@ async function pickFolder(contents: Electron.WebContents, options: Electron.Open
 /* Requests from the window                                                    */
 /* -------------------------------------------------------------------------- */
 
+/** The folder Open Project… last offered to start a project in, which the window may name back. */
+let offeredFolder: string | null = null;
+
 function registerHandlers(): void {
   ipcMain.handle(CHANNELS.chooseProject, async (event): Promise<Result<ProjectLoad | { startHere: FolderToStart } | null>> => {
     try {
       const dir = await pickFolder(event.sender, { properties: ["openDirectory"], title: "Open a Fragmentor project" });
       if (!dir) return ok(null);
+      // A folder inside a project, such as its src, opens that project rather
+      // than starting a second one within it.
+      const project = await findProject(dir);
+      if (project) return ok(await openProject(event.sender, project));
       // A folder that is not a project yet is most likely one the person wants
-      // to start one in, so that is offered rather than refused.
-      if (!(await exists(manifestPath(dir)))) return ok({ startHere: { dir: path.resolve(dir), holdsFiles: await holdsFiles(dir) } });
-      return ok(await openProject(event.sender, dir));
+      // to start one in, so that is offered rather than refused. It is the only
+      // folder a project may then be started in without the picker.
+      offeredFolder = path.resolve(dir);
+      return ok({ startHere: { dir: offeredFolder, holdsFiles: await holdsFiles(dir) } });
     } catch (error) {
       return failed(error);
     }
@@ -306,6 +314,11 @@ function registerHandlers(): void {
     try {
       const settings = settingsFrom(raw);
       // A folder the person already picked, with Open Project…, is not asked for again.
+      // Any other folder the window names is refused: files are only ever
+      // written where the person chose to put them.
+      if (chosen !== undefined && chosen !== null && path.resolve(sent(chosen, "The project's folder")) !== offeredFolder) {
+        throw new Error("A project can only be started in the folder Open Project… offered, or one chosen now.");
+      }
       const dir =
         chosen === undefined || chosen === null
           ? await pickFolder(event.sender, {
@@ -313,7 +326,8 @@ function registerHandlers(): void {
               title: "Choose the project's folder: an empty one, or one holding code",
               buttonLabel: "Start project here",
             })
-          : sent(chosen, "The project's folder");
+          : offeredFolder;
+      offeredFolder = null;
       if (!dir) return ok(null);
       if (!(await stat(dir).catch(() => null))?.isDirectory()) throw new Error(`${dir} is not a folder that exists.`);
 
@@ -357,7 +371,9 @@ function registerHandlers(): void {
         const { response } = await ask({
           type: "question",
           buttons: ["Add the line", "Leave it"],
-          defaultId: 0,
+          // The file is the person's, so only a click on the button changes it:
+          // Enter, like Escape, leaves it alone.
+          defaultId: 1,
           cancelId: 1,
           message: `Point ${files} at Fragmentor's rules?`,
           detail: `This folder already had ${files}, which your agent reads first, and ${one ? "it does" : "they do"} not mention ${GUIDE_FILE}. Fragmentor can add one line to the end so your agent reads it: ${withoutGuide.map((file) => `"${guideLine(file)}" to ${file}`).join(" and ")}. Nothing else in ${one ? "it" : "them"} changes.`,

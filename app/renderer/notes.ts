@@ -373,7 +373,7 @@ export function problemFlag(blockPath: string, problem: string): HTMLElement | n
  * leaves the code alone and says so in its answer.
  */
 const HOLD_WORDS =
-  "Please hold this block to its contract, without changing how its existing code is called. In the file its code is in, add a small exported function that takes `(input, caps)`, imports the block's contract with `import type` and calls the existing code, then point the block's `code` at it. Add saved tests, commit, and answer this note. If the file cannot be held to the import rules, leave the code as it is and tell me why here.";
+  "Please hold this block to its contract, without changing how its existing code is called. In the file its code is in, add a small exported function that takes a value and caps, imports the block's contract with import type and calls the existing code, then point the block's code at it. Add saved tests, commit, and answer this note. If the file cannot be held to the import rules, leave the code as it is and tell me why here.";
 
 /**
  * The offer, under a block's code, to have the agent hold it to its

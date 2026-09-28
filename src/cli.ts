@@ -17,7 +17,7 @@ import { NOTES_DIR, addNote, describeRun, isNoteWithin, loadNotes, markWorking, 
 import type { Note, NoteCommit } from "./project/notes.js";
 import { evaluate } from "./run/expect.js";
 import { isArchitecture } from "./model/roles.js";
-import { loadProject, locateCode, manifestPath, readManifest, systemOf } from "./project/project.js";
+import { findProject, loadProject, locateCode, manifestPath, readManifest, systemOf } from "./project/project.js";
 import type { Project, ProjectDiagnostic } from "./project/project.js";
 import { casesPath, readCases } from "./run/cases.js";
 import { runCases } from "./run/run.js";
@@ -79,17 +79,6 @@ async function exists(file: string): Promise<boolean> {
     return true;
   } catch {
     return false;
-  }
-}
-
-/** Walks up to the folder holding fragmentor.json, the way git finds a repository. */
-async function findProject(start: string): Promise<string | null> {
-  let dir = path.resolve(start);
-  for (;;) {
-    if (await exists(manifestPath(dir))) return dir;
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
   }
 }
 
