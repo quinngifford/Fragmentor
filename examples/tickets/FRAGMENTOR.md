@@ -105,7 +105,7 @@ A function block, `report-totals`:
 - `inputs` and `outputs` map a port name such as `grandTotal` to its type, or to `{ "type": ..., "description": ... }`. Leave either out when the function takes or returns nothing.
 - `capabilities` names the effects the block needs, described below.
 - `pinnedAsLeaf: true` means the person wants the block kept as one piece. Never put blocks inside it.
-- `planned: true` marks a block as part of the plan rather than of the program. It is drawn greyed out, has no `code`, its port types may be plain words such as `"the scored postings"`, and Fragmentor asks nothing of it. Set it on the top block of what is planned, since everything inside a planned block is planned too. Building a block takes `planned` off it and off every block holding it, so give their other parts not built yet `planned` of their own; give what you build real types. Building a block with no code of ours, such as a client, is only taking `planned` off.
+- `planned: true` marks a block as part of the plan rather than of the program. It is drawn greyed out, has no `code`, its port types may be plain words such as `"the scored postings"`, and Fragmentor asks nothing of it. Set it on the top block of what is planned, since everything inside a planned block is planned too. Building a block takes `planned` off it and off every block holding it, so give their other parts not built yet `planned` of their own; give what you build real types. Building a block with no code of ours is only taking `planned` off.
 
 ## The rest of the system
 
@@ -301,9 +301,9 @@ The blocks say what exists. Also write down what happens: for each thing that se
 - `expect` is what makes an execution a test rather than a drawing, and is where most of its worth is. All of it is optional: `entered` names parts the run must cross into; `interactions` names steps that must happen, each matched by whichever of `from`, `to`, `kind`, `payload` and `response` you give; `effects` the same, by `at`, `kind` and `detail`; `never` names parts in which nothing at all may happen.
 - Three things decide whether an expectation means what you meant. An address without an entry matches that part and everything inside it, and one with an entry matches only that entry. An object — a payload, a response, a detail — is compared field by field, so you name only what matters, but a list is compared whole, length included. And each expectation is matched to a different event, so two that describe the same step fail for want of a second one.
 - **Pin the values, not only the shape.** An expectation that says a row was written, without saying what was in it, passes for code that wrote the wrong thing; that is most of what a test like this is for. And write a `never` no wider than the code justifies — one that can only ever pass, such as a part nobody has built, says nothing about this run.
-- `state`, what the stores hold at the end, belongs only to a run Fragmentor recorded, so `fragmentor check` reports it here: say what was written in the step that wrote it.
+- `state`, what the stores hold at the end, belongs only to a run Fragmentor recorded, so `fragmentor check` reports it in one you write: say what was written in the step that wrote it.
 - `fragmentor test` runs each execution whose trigger leads to code held to its contract, and holds what you wrote down to what ran. The run starts at the block the trigger is handed to, so the hand-off and anything HTTP-level cannot be checked: pin values at what that block returns, which a `response` at the operation is compared with. Leave `Clock` and `Random` values out of steps and expectations, as out of tests.
-- It is shown as written by you, never as observed, so keep it true to the code as the code changes.
+- An execution is shown as written by you, never as observed, so keep it true to the code as the code changes.
 
 ## Granularity: level 3
 

@@ -214,6 +214,10 @@ describe("executions, held to what their code does", () => {
     expect(result.output).toContain(
       `${detail}"Nothing happens in tickets/outbox.reminders" could not be checked: tickets/outbox.reminders is not part of what ran.\n`,
     );
+    // A `never` the run saw part of was checked there, so it is not said to be unchecked outright.
+    expect(result.output).toContain(
+      `${detail}"Nothing happens in tickets/outbox" could not be fully checked: Checked only for tickets/outbox.confirmations.\n`,
+    );
   }, 60_000);
 
   it("fails on a step the run contradicts, and names it, even with no saved tests", async () => {
@@ -264,6 +268,13 @@ describe("executions, held to what their code does", () => {
     const api = JSON.parse(await readFile(apiFile, "utf8")) as { exposes: Record<string, { block?: string }> };
     delete api.exposes.bookSeats!.block;
     await writeFile(apiFile, JSON.stringify(api), "utf8");
+    // Only code that was already here has anonymous handlers; in a project
+    // built from the diagram the missing block is a gap and is said as one.
+    const built = fragmentor(["test"], dir);
+    expect(built.output).toContain("Nothing on the diagram says which code answers tickets/box-office.bookSeats");
+    const manifestFile = path.join(dir, "fragmentor.json");
+    const manifest = JSON.parse(await readFile(manifestFile, "utf8")) as Record<string, unknown>;
+    await writeFile(manifestFile, JSON.stringify({ ...manifest, existingCode: true }), "utf8");
 
     const result = fragmentor(["test"], dir);
     expect(result.output).toContain(

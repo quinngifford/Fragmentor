@@ -418,7 +418,7 @@ describe("the guide says where the project starts", () => {
     // Planning spreads down, so it goes on the top of what is planned, and building has to take it off above.
     expect(planning).toContain("Set it on the top block of what is planned");
     expect(planning).toContain("Building a block takes `planned` off it and off every block holding it");
-    expect(planning).toContain("Building a block with no code of ours, such as a client, is only taking `planned` off.");
+    expect(planning).toContain("Building a block with no code of ours is only taking `planned` off.");
     expect(agentGuide(project({ start: "build" }))).not.toContain("starts as a plan");
   });
 

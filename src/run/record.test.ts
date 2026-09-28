@@ -69,7 +69,9 @@ describe("the code an execution leads to", () => {
   it("says an operation with no block, as an anonymous handler leaves it, is why, rather than a fault", async () => {
     const project = await loadProject(dir);
     const code = await readAllCode(project);
-    delete project.byPath.get("tickets/booking-api")!.block.exposes.bookSeats!.block;
+    const api = project.byPath.get("tickets/booking-api")!.block;
+    delete api.exposes.bookSeats!.block;
+    project.manifest.existingCode = true;
 
     expect(answeringBlock(project, code, { path: "tickets/booking-api", entry: "bookSeats" })).toEqual({
       why: "its operation tickets/booking-api.bookSeats names no block that answers it, as with an anonymous handler.",
@@ -77,6 +79,15 @@ describe("the code an execution leads to", () => {
     expect(answeringBlock(project, code, { path: "tickets/box-office", entry: "bookSeats" })).toEqual({
       why: "it leads to the operation tickets/booking-api.bookSeats, which names no block that answers it, as with an anonymous handler.",
     });
+
+    // A planned service has no handler yet, and code built from the diagram
+    // names a block for each operation, so in either the missing block is a gap.
+    const gap = { why: "Nothing on the diagram says which code answers tickets/booking-api.bookSeats." };
+    api.planned = true;
+    expect(answeringBlock(project, code, { path: "tickets/booking-api", entry: "bookSeats" })).toEqual(gap);
+    api.planned = false;
+    project.manifest.existingCode = false;
+    expect(answeringBlock(project, code, { path: "tickets/booking-api", entry: "bookSeats" })).toEqual(gap);
   });
 
   it("says why code that does not import its contract cannot be recorded", async () => {

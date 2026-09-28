@@ -351,9 +351,9 @@ async function test(dir: string, requested: string[]): Promise<number> {
   const drawn: string[] = [];
 
   for (const blockPath of requested.length > 0 ? requested : [...project.byPath.keys()]) {
-    // A planned block has no code to run, and neither has a block that is not
-    // a function. Nothing about either is untested, so they are passed over
-    // rather than failing to load.
+    // A planned block has no code to run, and a block that is not a function
+    // is not called, so nothing of it runs. Nothing about either is untested,
+    // so they are passed over rather than failing to load.
     const node = project.byPath.get(blockPath);
     if (node && (node.block.planned || isArchitecture(node.block.role))) {
       (node.block.planned ? planned : notCalled).push(blockPath);
@@ -518,7 +518,10 @@ function recordingResult(recorded: Recorded): { failed: boolean; lines: string[]
     ...found.steps
       .filter((step) => step.verdict !== "seen" && !notSeen.includes(step))
       .map((step) => `${stepName(step.id)} could not be checked: ${step.reason}`),
-    ...found.expectations.setAside.map(({ expectation, why }) => `"${expectation}" could not be checked: ${why}`),
+    // A `never` the run saw part of was checked there, so it is not said to be unchecked outright.
+    ...found.expectations.setAside.map(
+      ({ expectation, why }) => `"${expectation}" could not be ${why.startsWith("Checked only") ? "fully checked" : "checked"}: ${why}`,
+    ),
   ];
   // A run that threw is worth knowing about even when nothing written down says otherwise.
   const error = recorded.outcome.error ? [`The run ended in an error: ${recorded.outcome.error}`] : [];

@@ -39,9 +39,14 @@ export function answeringBlock(project: Project, code: Map<string, BlockCode>, a
   const node = project.byPath.get(last.path)!;
   // An operation answered by an anonymous handler names no block, and that is
   // the codebase's shape rather than a gap in the diagram, so it is said as
-  // one: agents reading the general sentence below took it for a fault.
+  // one: agents reading the general sentence below took it for a fault. Only
+  // code that was already here has such handlers. Code built from the diagram
+  // names a block for each operation, and a planned service has no handler
+  // yet, so in either the missing block is a gap and the general sentence
+  // stands.
   const exposed = last.entry === null ? undefined : node.block.exposes[last.entry];
-  if (node.block.role === "service" && exposed !== undefined && exposed.block === undefined) {
+  const anonymous = project.manifest.existingCode && !node.block.planned && node.block.role === "service";
+  if (anonymous && exposed !== undefined && exposed.block === undefined) {
     const operation = formatAddress(last);
     return {
       why:
