@@ -1,11 +1,24 @@
+import { mkdtempSync, rmSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { writeWorkedExample } from "../project/exampleHistory.js";
+import { findPython } from "./python.js";
 import { runBlock, runCases, startRun } from "./run.js";
 import type { RunEvent } from "./run.js";
 import type { TestCase } from "./cases.js";
+
+/** A Python Fragmentor can run (3.11 or later), probed in an empty folder of its own. */
+const python311 = (() => {
+  const probe = mkdtempSync(path.join(tmpdir(), "fragmentor-run-gate-"));
+  try {
+    return findPython(probe).ok;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
 
 type Call = Extract<RunEvent, { type: "call" }>;
 const callsIn = (events: RunEvent[]) => events.filter((event): event is Call => event.type === "call");
@@ -16,10 +29,10 @@ const blockOf = (events: RunEvent[], id: number) => callsIn(events).find((call) 
  * prove a block can actually be executed rather than only generated.
  *
  * The project is written here rather than taken from an example, so it can
- * hold exactly what the harness has to be tested against: a block reading
+ * hold exactly what the harnesses have to be tested against: a block reading
  * files, one calling another for several items at once, one calling a block
- * beside it, one returning nothing, and a system in a language that cannot
- * run yet.
+ * beside it, one returning nothing, and a Python system run through its own
+ * harness, stores and queue included.
  *
  * Its code happens to sit in the blocks' own folders, which is allowed and is
  * not required: what makes each block runnable is its code importing the
@@ -95,9 +108,164 @@ export async function writeNote(input: { path: string; text: string }, caps: any
   await caps.files.writeFile(input.path, input.text);
 }
 `,
-  "blocks/py/block.json": { role: "component", responsibility: "Python, which cannot run yet." },
+  "blocks/py/block.json": { role: "component", responsibility: "Python notes." },
+  "blocks/py/notes-db/block.json": { role: "database", responsibility: "Holds notes.", exposes: { notes: "{ text: string }" } },
+  "blocks/py/outbox/block.json": { role: "queue", responsibility: "Carries notes away.", exposes: { sent: { accepts: "{ key: string }" } } },
+  "blocks/py/keep/block.json": {
+    responsibility: "Keep a note, tell the outbox, and say how many are kept.",
+    code: "src/py/keep.py#keep",
+    inputs: { key: "string", text: "string" },
+    outputs: { kept: "number" },
+    capabilities: { notes: "Store", sent: "Queue", log: "Logger" },
+    access: ["notes reads notes-db.notes", "notes writes notes-db.notes", "sent writes outbox.sent"],
+  },
+  "src/py/keep.py": `from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from blocks._contracts.py.keep.contract import KeepCaps, KeepInput, KeepOutput
+
+
+async def keep(input: KeepInput, caps: KeepCaps) -> KeepOutput:
+    await caps.notes.write(input["key"], {"text": input["text"]})
+    rows = await caps.notes.list()
+    await caps.sent.send({"key": input["key"]})
+    caps.log.log(f"kept {input['key']}")
+    return {"kept": float(len(rows))}
+`,
+  "blocks/py/twice/block.json": {
+    responsibility: "Keep a note twice.",
+    code: "src/py/twice.py#twice",
+    inputs: { key: "string", text: "string" },
+    outputs: { kept: "number" },
+    capabilities: { notes: "Store", sent: "Queue", log: "Logger" },
+    access: ["notes reads notes-db.notes", "notes writes notes-db.notes", "sent writes outbox.sent"],
+  },
+  "src/py/twice.py": `from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from src.py.keep import keep
+
+if TYPE_CHECKING:
+    from blocks._contracts.py.twice.contract import TwiceCaps, TwiceInput, TwiceOutput
+
+
+async def twice(input: TwiceInput, caps: TwiceCaps) -> TwiceOutput:
+    await keep({"key": input["key"], "text": input["text"]}, caps)
+    return await keep({"key": input["key"] + "-2", "text": input["text"]}, caps)
+`,
+  "blocks/py/lie/block.json": {
+    responsibility: "Promise a number and give back words.",
+    code: "src/py/lie.py#lie",
+    inputs: { key: "string" },
+    outputs: { kept: "number" },
+  },
+  "src/py/lie.py": `from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from blocks._contracts.py.lie.contract import LieCaps, LieInput, LieOutput
+
+
+async def lie(input: LieInput, caps: LieCaps) -> LieOutput:
+    return {"kept": "many"}
+`,
+  "blocks/py/boom/block.json": {
+    responsibility: "Fail.",
+    code: "src/py/boom.py#boom",
+    inputs: { key: "string" },
+    outputs: { kept: "number" },
+  },
+  "src/py/boom.py": `from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from blocks._contracts.py.boom.contract import BoomCaps, BoomInput, BoomOutput
+
+
+async def boom(input: BoomInput, caps: BoomCaps) -> BoomOutput:
+    raise ValueError("nope")
+`,
+  "blocks/py/noisy/block.json": {
+    responsibility: "Print, which must never reach the protocol.",
+    code: "src/py/noisy.py#noisy",
+    inputs: { key: "string" },
+    outputs: { kept: "number" },
+  },
+  "src/py/noisy.py": `from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from blocks._contracts.py.noisy.contract import NoisyCaps, NoisyInput, NoisyOutput
+
+
+async def noisy(input: NoisyInput, caps: NoisyCaps) -> NoisyOutput:
+    print("junk that must not reach the report")
+    return {"kept": 1}
+`,
+  "blocks/py/flood/block.json": {
+    responsibility: "Write more rows than a recording keeps.",
+    code: "src/py/flood.py#flood",
+    inputs: { count: "number" },
+    outputs: { kept: "number" },
+    capabilities: { notes: "Store" },
+    access: ["notes writes notes-db.notes"],
+  },
+  "src/py/flood.py": `from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from blocks._contracts.py.flood.contract import FloodCaps, FloodInput, FloodOutput
+
+
+async def flood(input: FloodInput, caps: FloodCaps) -> FloodOutput:
+    for index in range(int(input["count"])):
+        await caps.notes.write(str(index), {"text": "x"})
+    return {"kept": float(input["count"])}
+`,
+  "blocks/py/big/block.json": {
+    responsibility: "Give back more than a recording shows.",
+    code: "src/py/big.py#big",
+    inputs: { count: "number" },
+    outputs: { text: "string" },
+  },
+  "src/py/big.py": `from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from blocks._contracts.py.big.contract import BigCaps, BigInput, BigOutput
+
+
+async def big(input: BigInput, caps: BigCaps) -> BigOutput:
+    return {"text": "x" * int(input["count"])}
+`,
+  "blocks/py/read-note/block.json": {
+    responsibility: "Read a file as it is.",
+    code: "src/py/read_note.py#read_note",
+    inputs: { path: "string" },
+    outputs: { text: "string" },
+    capabilities: { files: "FileSystem" },
+  },
+  "src/py/read_note.py": `from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from blocks._contracts.py.read_note.contract import ReadNoteCaps, ReadNoteInput, ReadNoteOutput
+
+
+async def read_note(input: ReadNoteInput, caps: ReadNoteCaps) -> ReadNoteOutput:
+    return {"text": await caps.files.read_file(input["path"])}
+`,
   "blocks/py/shout/block.json": {
-    responsibility: "Shout.",
+    responsibility: "Shout. Its code does not import its contract.",
     code: "blocks/py/shout/impl.py#shout",
     inputs: { text: "string" },
     outputs: { text: "string" },
@@ -242,13 +410,204 @@ describe("running a list of tests", () => {
   }, 30_000);
 });
 
-describe("a language that cannot run yet", () => {
-  it("says so plainly instead of failing oddly", async () => {
+describe("Python code that is only drawn", () => {
+  it("cannot be run, and says why plainly instead of failing oddly", async () => {
     const result = await runBlock({ projectDir, blockPath: "py/shout", input: { text: "x" } });
 
     expect(result.ok).toBe(false);
-    expect(result.error).toContain("cannot run Python blocks yet");
+    expect(result.error).toContain("does not import its contract");
   });
+});
+
+describe.skipIf(!python311)("running a Python block", () => {
+  it("returns what the block computed, with its logs and what its stores were left holding", async () => {
+    const events: RunEvent[] = [];
+    const result = await runBlock({
+      projectDir,
+      blockPath: "py/keep",
+      input: { key: "a", text: "héllo" },
+      stores: { "py/notes-db.notes": { z: { text: "old" } } },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.ok).toBe(true);
+    expect(result.output).toEqual({ kept: 2 });
+    expect(result.outputProblems).toEqual([]);
+    expect(result.logs).toEqual(["kept a"]);
+    expect(result.stores).toEqual({
+      "py/notes-db.notes": { kind: "store", rows: { z: { text: "old" }, a: { text: "héllo" } } },
+      "py/outbox.sent": { kind: "queue", sent: [{ key: "a" }] },
+    });
+
+    // Each store use is reported as it happens, with the call that made it.
+    const root = callsIn(events)[0]!;
+    expect(root).toMatchObject({ block: "py/keep", parent: null });
+    const uses = events.filter((event) => event.type === "store") as Extract<RunEvent, { type: "store" }>[];
+    expect(uses.map((use) => [use.op, use.target, use.parent])).toEqual([
+      ["write", "py/notes-db.notes", root.id],
+      ["list", "py/notes-db.notes", root.id],
+      ["send", "py/outbox.sent", root.id],
+    ]);
+  }, 30_000);
+
+  it("reports every call with the call it came from", async () => {
+    const events: RunEvent[] = [];
+    const result = await runBlock({ projectDir, blockPath: "py/twice", input: { key: "k", text: "t" }, onEvent: (event) => events.push(event) });
+
+    expect(result.output).toEqual({ kept: 2 });
+    const root = callsIn(events).find((call) => call.block === "py/twice")!;
+    const kept = callsIn(events).filter((call) => call.block === "py/keep");
+    expect(root.parent).toBeNull();
+    expect(kept.map((call) => call.parent)).toEqual([root.id, root.id]);
+  }, 30_000);
+
+  it("checks the contract on both sides, and keeps what a block prints out of the report", async () => {
+    const refused = await runBlock({ projectDir, blockPath: "py/keep", input: { key: 3 } });
+    expect(refused.ok).toBe(false);
+    expect(refused.inputProblems).toEqual(["input.key should be a string, but it is 3.", "input.text is missing."]);
+
+    const lied = await runBlock({ projectDir, blockPath: "py/lie", input: { key: "k" } });
+    expect(lied.ok).toBe(true);
+    expect(lied.outputProblems).toEqual([expect.stringContaining("output.kept should be a number")]);
+
+    const threw = await runBlock({ projectDir, blockPath: "py/boom", input: { key: "k" } });
+    expect(threw.ok).toBe(false);
+    expect(threw.error).toBe("ValueError: nope");
+
+    const noisy = await runBlock({ projectDir, blockPath: "py/noisy", input: { key: "k" } });
+    expect(noisy.ok).toBe(true);
+    expect(noisy.output).toEqual({ kept: 1 });
+  }, 60_000);
+
+  it("holds a Python run at a breakpoint, and shrugs off a resume after the end", async () => {
+    const events: RunEvent[] = [];
+    const heldAt: (string | null)[] = [];
+    const { control, outcome } = startRun({
+      projectDir,
+      blockPath: "py/twice",
+      input: { key: "k", text: "t" },
+      breakpoints: ["py/keep"],
+      onEvent: (event) => {
+        events.push(event);
+        if (event.type !== "paused") return;
+        heldAt.push(blockOf(events, event.id));
+        setTimeout(() => control.resume("continue"), 25);
+      },
+    });
+
+    expect((await outcome).ok).toBe(true);
+    expect(heldAt).toEqual(["py/keep", "py/keep"]);
+    // A resume or a breakpoint change after the run has ended goes nowhere,
+    // never into a broken pipe.
+    control.resume("continue");
+    control.setBreakpoints([]);
+  }, 30_000);
+
+  it("steps from a Python block to the next one that starts, and lets a breakpoint change mid-run", async () => {
+    const events: RunEvent[] = [];
+    const heldAt: (string | null)[] = [];
+    const { control, outcome } = startRun({
+      projectDir,
+      blockPath: "py/twice",
+      input: { key: "k", text: "t" },
+      breakpoints: ["py/twice"],
+      onEvent: (event) => {
+        events.push(event);
+        if (event.type !== "paused") return;
+        heldAt.push(blockOf(events, event.id));
+        // Step into what the released call starts; then clear the
+        // breakpoints mid-run, so nothing else is held.
+        if (heldAt.length === 1) {
+          control.resume("step");
+        } else {
+          control.setBreakpoints([]);
+          control.resume("continue");
+        }
+      },
+    });
+
+    expect((await outcome).ok).toBe(true);
+    expect(heldAt).toEqual(["py/twice", "py/keep"]);
+  }, 30_000);
+
+  it("records the first 2000 calls and says the rest went unseen, describing a value too large to show", async () => {
+    const events: RunEvent[] = [];
+    const flooded = await runBlock({ projectDir, blockPath: "py/flood", input: { count: 2100 }, onEvent: (event) => events.push(event) });
+    expect(flooded.ok).toBe(true);
+    expect(flooded.truncated).toBe(true);
+    // The block's own call is id 1, so 1999 of its 2100 store uses fit.
+    expect(events.filter((event) => event.type === "store")).toHaveLength(1999);
+
+    const big = await runBlock({ projectDir, blockPath: "py/big", input: { count: 250_000 }, onEvent: (event) => events.push(event) });
+    expect(big.ok).toBe(true);
+    // The result carries the whole value; only the recording describes it.
+    expect((big.output as { text: string }).text).toHaveLength(250_000);
+    const returned = events.filter((event) => event.type === "return").at(-1)! as Extract<RunEvent, { type: "return" }>;
+    expect(returned.output).toEqual(expect.stringContaining("a value too large to record"));
+  }, 60_000);
+
+  it("runs a copy's Python tests with the project the copy stands in for, reading its files", async () => {
+    const copy = await mkdtemp(path.join(tmpdir(), "fragmentor run copy "));
+    try {
+      await cp(path.join(projectDir, "fragmentor.json"), path.join(copy, "fragmentor.json"));
+      await cp(path.join(projectDir, "blocks"), path.join(copy, "blocks"), { recursive: true });
+      await cp(path.join(projectDir, "src"), path.join(copy, "src"), { recursive: true });
+
+      const [ran] = await runCases(copy, "py/keep", {
+        cases: [{ name: "keeps a note", input: { key: "k", text: "t" }, expected: { kept: 1 } }],
+        copyOf: projectDir,
+      });
+      expect(ran).toMatchObject({ status: "passed", differences: [] });
+
+      // a.txt exists only in the real project, so the read falls through to
+      // it — and comes back byte for byte, blank line included.
+      const [read] = await runCases(copy, "py/read-note", {
+        cases: [{ name: "reads through the copy", input: { path: "a.txt" }, expected: { text: "one\ntwo\n\nthree\n" } }],
+        copyOf: projectDir,
+      });
+      expect(read).toMatchObject({ status: "passed", differences: [] });
+    } finally {
+      await rm(copy, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("speaks the same protocol as the TypeScript harness over the same system", async () => {
+    // The guide's worked example exists in both languages, block for block,
+    // so a run of each must tell the same story: the same calls from the
+    // same parents, and nothing one harness says that the other does not.
+    const shape = (events: RunEvent[]) =>
+      events
+        .map((event) =>
+          event.type === "call"
+            ? `call ${event.block} < ${event.parent === null ? "-" : blockOf(events, event.parent)}`
+            : event.type === "return" || event.type === "throw"
+              ? `${event.type} ${blockOf(events, event.id)}`
+              : event.type,
+        )
+        .sort();
+
+    const runIn = async (language: "typescript" | "python") => {
+      const example = await mkdtemp(path.join(tmpdir(), `fragmentor parity ${language} `));
+      try {
+        await writeWorkedExample(example, language);
+        const events: RunEvent[] = [];
+        const result = await runBlock({
+          projectDir: example,
+          blockPath: "price-orders/report-totals",
+          input: { path: "orders.json" },
+          onEvent: (event) => events.push(event),
+        });
+        expect(result.ok, `${language}: ${result.error}`).toBe(true);
+        expect(result.output).toEqual({ totals: [7, 0], grandTotal: 7 });
+        return shape(events);
+      } finally {
+        await rm(example, { recursive: true, force: true });
+      }
+    };
+
+    expect(await runIn("python")).toEqual(await runIn("typescript"));
+  }, 60_000);
 });
 
 describe("watching a run", () => {

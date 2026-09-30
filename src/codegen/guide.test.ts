@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -18,6 +19,7 @@ import { runCases } from "../run/run.js";
 import { checkProject } from "../check/check.js";
 import { checkRecording } from "../model/recorded.js";
 import { writeWorkedExample } from "../project/exampleHistory.js";
+import { findPython } from "../run/python.js";
 import { recordExecution } from "../run/record.js";
 
 let dir: string;
@@ -50,6 +52,16 @@ async function writeBlocks(blocks: Record<string, unknown>): Promise<void> {
 
 /** A Python that can parse a file, or nothing if the machine has none. */
 const python = ["python", "python3", "py"].find((candidate) => spawnSync(candidate, ["-c", "print(1)"]).status === 0) ?? null;
+
+/** A Python Fragmentor can run (3.11 or later), probed in an empty folder of its own. */
+const python311 = (() => {
+  const probe = mkdtempSync(path.join(tmpdir(), "fragmentor-guide-gate-"));
+  try {
+    return findPython(probe).ok;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
 
 /** The slash command Claude Code offers for each command, as the files Fragmentor writes for them. */
 const SKILLS = COMMANDS.map((command) => `${SKILLS_DIR}/fragmentor-${command.name}/SKILL.md`);
@@ -119,7 +131,9 @@ describe("the guide", () => {
     it(`(${label}) has nothing left unfilled, and one kind of line ending`, () => {
       expect(guide).not.toMatch(/\{\{|\}\}/);
       expect(guide).not.toContain("\r");
-      expect(guide).not.toMatch(/\n\n\n/);
+      // Blank runs in the prose are a section that vanished; inside a code
+      // fence they are the code as written, held to exactly.
+      expect(guide.replace(/```[\s\S]*?```/g, "```code```")).not.toMatch(/\n\n\n/);
     });
   }
 
@@ -158,6 +172,10 @@ describe("the guide", () => {
     within(guides.TypeScript!, 316, 31_000);
     within(agentGuide(project({ start: "plan" })), 318, 31_300);
     within(agentGuide(project({ existingCode: true })), 323, 32_000);
+    // The Python guide carries the worked example in Python and the longer
+    // import rules — the venv, the future import and the TYPE_CHECKING guard
+    // all have to be taught — which is what its own cap pays for.
+    within(guides.Python!, 325, 31_700);
     // Nothing is generated or run without a pack, so contracts and block
     // testing fall away, and so does a note flagging a failed run. What is
     // left still teaches executions, notes and the commands, which is why
@@ -263,14 +281,20 @@ describe("the guide", () => {
 
   it("speaks the language the person chose", () => {
     const guide = guides.Python!;
-    expect(guide).toContain("contract.py");
+    expect(guide).toContain("blocks/_contracts/<the block>/contract.py");
     expect(guide).toContain("read_file(path: str) → str");
-    expect(guide).toContain("cannot hold Python code to a contract");
+    // The worked example is the same project, written the way Python writes
+    // it — and shown exactly as the tests write and run it, blank lines and all.
+    expect(guide).toContain("```python");
+    expect(guide).toContain(workedExample.python["src/pricing/report_totals.py"]!.trimEnd());
+    expect(guide).toContain("if TYPE_CHECKING:");
+    expect(guide).toContain('"code": "src/pricing/report_totals.py#report_totals"');
     expect(guide).not.toContain("contract.ts");
-    // No block of it is run, so none has saved tests. `fragmentor test` is
-    // still there, because an execution is JSON whatever the code is in.
-    expect(guide).not.toContain("cases.json");
-    expect(guide).toContain("holds each execution to its own expectations");
+    expect(guide).not.toContain("report-totals.ts");
+    // Python runs now, so its blocks have saved tests and recorded executions.
+    expect(guide).toContain("cases.json");
+    expect(guide).toContain("runs each execution whose trigger leads to code held to its contract");
+    expect(guide).toContain("Fragmentor runs the project's `.venv` first, then any Python 3.11 or later");
   });
 
   it("leaves the language to the agent when the person did, and still teaches contracts", () => {
@@ -403,6 +427,54 @@ describe("the worked example", () => {
     const guide = agentGuide(project({ language: "python" }));
     expect(guide).toContain("contract.py");
   });
+
+  it.skipIf(!python311)("checks and passes its tests in Python too, followed to the letter", async () => {
+    await writeWorkedExample(dir, "python");
+    const { executions, problems } = await loadExecutions(dir);
+    expect(problems).toEqual([]);
+    expect(evaluate(executions[0]!.declared!, executions[0]!.expect!).failures).toEqual([]);
+
+    const implemented = await checkProject(dir);
+    expect(implemented.systems[0]!.codeProblems).toEqual([]);
+    expect(implemented.problems).toEqual([]);
+    expect(implemented.errorCount).toBe(0);
+    expect(implemented.unimplemented).toEqual([]);
+    expect(implemented.drawnOnly).toEqual([]);
+    expect(implemented.untested).toEqual(["price-orders/load-orders"]);
+
+    expect((await runCases(dir, "price-orders/price-order")).map((r) => [r.status, r.differences])).toEqual([
+      ["passed", []],
+      ["passed", []],
+    ]);
+    expect((await runCases(dir, "price-orders/report-totals")).map((r) => [r.status, r.differences])).toEqual([["passed", []]]);
+
+    // A broken variant is caught, so the guide cannot teach code that fails.
+    await writeFile(
+      path.join(dir, "src", "pricing", "price_order.py"),
+      (await readFile(path.join(dir, "src", "pricing", "price_order.py"), "utf8")).replace(
+        'line["quantity"] * line["unitPrice"]',
+        'line["quantity"] + line["unitPrice"]',
+      ),
+      "utf8",
+    );
+    expect((await runCases(dir, "price-orders/price-order")).map((r) => r.status)).toEqual(["failed", "passed"]);
+  }, 60_000);
+
+  it.skipIf(!python311)("writes down an execution that a recording of its Python code can be held to", async () => {
+    await writeWorkedExample(dir, "python");
+    const recorded = await recordExecution(dir, "report-totals");
+    if (!("trace" in recorded)) throw new Error(JSON.stringify(recorded));
+    const found = checkRecording(recorded.execution, recorded.trace, recorded.scope, recorded.complete);
+
+    expect(found.expectations.failures).toEqual([]);
+    expect(found.expectations.setAside).toEqual([]);
+    expect(found.unwrittenCount).toBe(0);
+    expect(found.steps.map((step) => [step.id, step.verdict])).toEqual([
+      ["#1", "seen"],
+      ["#2", "seen"],
+      ["#3", "seen"],
+    ]);
+  }, 60_000);
 });
 
 describe("the guide says where the project starts", () => {

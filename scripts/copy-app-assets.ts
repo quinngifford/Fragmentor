@@ -10,6 +10,7 @@ const root = path.join(here, "..");
 const assets = [
   ["app/preload.cjs", "dist/app/preload.cjs"],
   ["src/run/harness.cjs", "dist/src/run/harness.cjs"],
+  ["src/run/harness.py", "dist/src/run/harness.py"],
   ["src/codegen/guide.md", "dist/src/codegen/guide.md"],
   ["app/renderer/index.html", "dist/app/renderer/index.html"],
   ["app/renderer/styles.css", "dist/app/renderer/styles.css"],

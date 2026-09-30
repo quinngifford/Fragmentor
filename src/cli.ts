@@ -22,6 +22,7 @@ import { isArchitecture } from "./model/roles.js";
 import { findProject, loadProject, locateCode, manifestPath, readManifest, systemOf } from "./project/project.js";
 import type { Project, ProjectDiagnostic } from "./project/project.js";
 import { casesPath, readCases } from "./run/cases.js";
+import { findPython } from "./run/python.js";
 import { runCases } from "./run/run.js";
 import type { CaseResult } from "./run/run.js";
 import { recordExecution } from "./run/record.js";
@@ -365,6 +366,8 @@ async function test(dir: string, requested: string[]): Promise<number> {
 
   const code = await readAllCode(project);
   const counts = { passed: 0, failed: 0, error: 0, unchecked: 0, skipped: 0 };
+  /** Why this machine has no Python for the project, found once; null when it has one. */
+  let missingPython: string | null | undefined;
   const untested: string[] = [];
   /** Blocks with no code to run yet. */
   const planned: string[] = [];
@@ -411,6 +414,19 @@ async function test(dir: string, requested: string[]): Promise<number> {
       console.log(`  SKIP   ${plural(saved.cases.length, "test")}: Fragmentor cannot run ${pack?.displayName ?? language} blocks yet`);
       counts.skipped += saved.cases.length;
       continue;
+    }
+    // A machine without Python cannot run these, which is the machine's news
+    // and not each test's failure, so the tests are skipped with the reason.
+    if (pack.id === "python") {
+      if (missingPython === undefined) {
+        const found = findPython(dir);
+        missingPython = found.ok ? null : found.problem;
+      }
+      if (missingPython !== null) {
+        console.log(`  SKIP   ${plural(saved.cases.length, "test")}: ${missingPython}`);
+        counts.skipped += saved.cases.length;
+        continue;
+      }
     }
 
     for (const result of await runCases(dir, blockPath)) {

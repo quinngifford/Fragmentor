@@ -117,8 +117,8 @@ export async function compareWithVersion(projectDir: string, blockPath: string, 
       await copyFile(from, to);
     }
     await cp(nowDir, thenDir, { recursive: true });
-    // Contracts are imported as types, which vanish when the code is compiled
-    // to run, so nothing needs generating in the copy.
+    // Contracts are imported for types only, in both languages, so nothing
+    // needs generating in the copy to run anything.
     await applyPlan(thenDir, new Map(plan.touched.map((file) => [file, plan.then.get(file) ?? null])));
 
     const then = await loadProject(thenDir);

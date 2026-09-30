@@ -3,7 +3,8 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { emitProject } from "../codegen/emit.js";
-import { executionExample, workedExample } from "../codegen/guide.js";
+import { exampleIn, executionExample, workedExample } from "../codegen/guide.js";
+import { getPack } from "../lang/index.js";
 import { blockDir, loadProject, manifestPath } from "./project.js";
 
 const execFileAsync = promisify(execFile);
@@ -143,7 +144,8 @@ export async function seatDiscount(input: SeatDiscountInput, caps: SeatDiscountC
  * them, as it would for the agent. Used by the guide's own tests, which is how
  * the guide is held to what Fragmentor really does with what it teaches.
  */
-export async function writeWorkedExample(dir: string, language: "typescript"): Promise<void> {
+export async function writeWorkedExample(dir: string, language: "typescript" | "python"): Promise<void> {
+  const pack = getPack(language);
   const write = async (file: string, contents: unknown) => {
     const target = path.join(dir, ...file.split("/"));
     await mkdir(path.dirname(target), { recursive: true });
@@ -153,27 +155,33 @@ export async function writeWorkedExample(dir: string, language: "typescript"): P
     path.relative(dir, path.join(blockDir(dir, blockPath), name)).split(path.sep).join("/");
 
   await write(path.relative(dir, manifestPath(dir)), { ...workedExample.manifest, language });
-  for (const [blockPath, file] of Object.entries(workedExample.blocks)) await write(blockFile(blockPath, "block.json"), file);
+  for (const [blockPath, file] of Object.entries(exampleIn(pack, workedExample.blocks))) {
+    await write(blockFile(blockPath, "block.json"), file);
+  }
 
-  await write(workedExample.codeFile, workedExample.code);
-  await write(
-    "src/pricing/price-order.ts",
-    `import type { PriceOrderInput, PriceOrderOutput, PriceOrderCaps } from "../../blocks/price-orders/price-order/contract.js";
+  if (language === "python") {
+    for (const [file, source] of Object.entries(workedExample.python)) await write(file, source);
+  } else {
+    await write(workedExample.codeFile, workedExample.code);
+    await write(
+      "src/pricing/price-order.ts",
+      `import type { PriceOrderInput, PriceOrderOutput, PriceOrderCaps } from "../../blocks/price-orders/price-order/contract.js";
 
 export async function priceOrder(input: PriceOrderInput, caps: PriceOrderCaps): Promise<PriceOrderOutput> {
   return { total: input.order.lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0) };
 }
 `,
-  );
-  await write(
-    "src/pricing/load-orders.ts",
-    `import type { LoadOrdersInput, LoadOrdersOutput, LoadOrdersCaps } from "../../blocks/price-orders/load-orders/contract.js";
+    );
+    await write(
+      "src/pricing/load-orders.ts",
+      `import type { LoadOrdersInput, LoadOrdersOutput, LoadOrdersCaps } from "../../blocks/price-orders/load-orders/contract.js";
 
 export async function loadOrders(input: LoadOrdersInput, caps: LoadOrdersCaps): Promise<LoadOrdersOutput> {
   return { orders: JSON.parse(await caps.files.readFile(input.path)) };
 }
 `,
-  );
+    );
+  }
 
   for (const [blockPath, cases] of Object.entries(workedExample.cases)) await write(blockFile(blockPath, "cases.json"), cases);
   await write(blockFile("price-orders/report-totals", "cases.json"), [
@@ -185,5 +193,5 @@ export async function loadOrders(input: LoadOrdersInput, caps: LoadOrdersCaps): 
     { id: "A-1", lines: [{ quantity: 2, unitPrice: 3.5 }] },
     { id: "A-2", lines: [] },
   ]);
-  await write("executions/report-totals.json", executionExample);
+  await write("executions/report-totals.json", exampleIn(pack, executionExample));
 }

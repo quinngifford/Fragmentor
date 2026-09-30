@@ -202,7 +202,7 @@ async def add(input: AddInput, caps: AddCaps) -> AddOutput:
     return {"sum": input["a"] + input["b"]}
 `;
 
-    it("holds Python code that imports its contract, with only running still missing", async () => {
+    it("holds Python code that imports its contract, checked and run like any other", async () => {
       await block("app/add", { ...ADD, code: "src/add.py#add" });
       await source("src/add.py", PY_BOUND);
 
@@ -211,7 +211,7 @@ async def add(input: AddInput, caps: AddCaps) -> AddOutput:
       expect(found.contract).toBe("blocks/_contracts/app/add/contract.py");
       expect(found.contractImport).toBe("blocks._contracts.app.add.contract");
       expect(found.bound).toBe(true);
-      expect(found.drawnBecause).toBe("Fragmentor cannot run Python code yet, so this block is not run or tested");
+      expect(found.drawnBecause).toBeNull();
       expect(found.functionName).toBe("add");
     });
 

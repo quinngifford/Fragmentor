@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { CAPABILITIES } from "../model/capabilities.js";
 import { ARCHITECTURE_ROLES, ROLES } from "../model/roles.js";
 import { getPack, isKnownLanguage, knownLanguages } from "../lang/index.js";
+import { snakeCase } from "../lang/naming.js";
 import type { LanguagePack } from "../lang/index.js";
 import type { Manifest } from "../project/project.js";
 import { COMMANDS, usageOf } from "./commands.js";
@@ -99,6 +100,59 @@ export async function reportTotals(input: ReportTotalsInput, caps: ReportTotalsC
   /** The block that code is, and the file it is in. */
   codeBlock: "price-orders/report-totals",
   codeFile: "src/pricing/report-totals.ts",
+  /**
+   * The same three blocks' code as Python writes it: the shown file first,
+   * held by test to check and pass exactly as the TypeScript one is. The
+   * guide shows only the first; the others are what an agent following it
+   * would write, and what the tests write for it.
+   */
+  python: {
+    "src/pricing/report_totals.py": `from __future__ import annotations
+
+import asyncio
+from typing import TYPE_CHECKING
+
+from src.pricing.load_orders import load_orders
+from src.pricing.price_order import price_order
+
+if TYPE_CHECKING:
+    from blocks._contracts.price_orders.report_totals.contract import ReportTotalsCaps, ReportTotalsInput, ReportTotalsOutput
+
+
+async def report_totals(input: ReportTotalsInput, caps: ReportTotalsCaps) -> ReportTotalsOutput:
+    """Read a file of orders and report what each one costs and the grand total."""
+    loaded = await load_orders({"path": input["path"]}, caps)
+    if not loaded["orders"]:
+        return {"totals": [], "grandTotal": 0}
+
+    priced = await asyncio.gather(*(price_order({"order": order}, caps) for order in loaded["orders"]))
+    totals = [each["total"] for each in priced]
+    return {"totals": totals, "grandTotal": sum(totals)}
+`,
+    "src/pricing/load_orders.py": `from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from blocks._contracts.price_orders.load_orders.contract import LoadOrdersCaps, LoadOrdersInput, LoadOrdersOutput
+
+
+async def load_orders(input: LoadOrdersInput, caps: LoadOrdersCaps) -> LoadOrdersOutput:
+    return {"orders": json.loads(await caps.files.read_file(input["path"]))}
+`,
+    "src/pricing/price_order.py": `from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from blocks._contracts.price_orders.price_order.contract import PriceOrderCaps, PriceOrderInput, PriceOrderOutput
+
+
+async def price_order(input: PriceOrderInput, caps: PriceOrderCaps) -> PriceOrderOutput:
+    return {"total": sum(line["quantity"] * line["unitPrice"] for line in input["order"]["lines"])}
+`,
+  } as Record<string, string>,
   cases: {
     "price-orders/price-order": [
       {
@@ -230,6 +284,8 @@ const GRANULARITY: Record<number, string> = {
 const IMPORT_RULES: Record<string, string> = {
   typescript:
     "A block with no outputs returns nothing, and one with no inputs is still called with a value and `caps`. Its code may import its own contract's types with `import type`, the code of another block in the same system that is held to its contract, and packages installed in the project folder. Call another block with a value and your `caps`, when and as often as you need it. It may not import a shared helper file or one of Node's built-in modules such as `fs`: make the helper a block, or use a capability. `fragmentor check` reports any such import anywhere in the file, so keep anything else out of a file you write for a block.",
+  python:
+    "A block with no outputs returns `None`, and one with no inputs is still called with a value and `caps`. A block is a top-level `async def` imported at module level; its file starts with `from __future__ import annotations` and imports its contract's types under `if TYPE_CHECKING:`, as shown. It may import the code of another block in the same system that is held to its contract — from that block's own file, by its path from the project root — packages installed in the project, and the standard library that only computes, such as `json`, `math`, `re` and `asyncio`. Call another block with a value and your `caps`, when and as often as you need it. No `open`, `print` or `input`, and no module that reaches files, processes or the network, such as `os` or `subprocess`: use a capability. Fragmentor runs the project's `.venv` first, then any Python 3.11 or later; create the `.venv` yourself when the project needs packages, and ask the person before installing any. `fragmentor check` reports any break of these rules anywhere in the file, so keep anything else out of a file you write for a block.",
 };
 
 const WIDTH = 100;
@@ -266,6 +322,33 @@ function layout(value: unknown, indent: string, used: number): string {
  */
 export function compactJson(value: unknown): string {
   return layout(value, "", 0);
+}
+
+/** A code pointer as Python writes it: the file and name renamed the way Python names them. */
+function pythonPointer(pointer: string): string {
+  const [file, symbol] = pointer.split("#") as [string, string?];
+  const parts = file.replace(/[.]ts$/, "").split("/");
+  const renamed = `${[...parts.slice(0, -1), snakeCase(parts.at(-1)!)].join("/")}.py`;
+  return symbol === undefined ? renamed : `${renamed}#${snakeCase(symbol)}`;
+}
+
+/**
+ * An example as this language's agent would write it: every `code` pointer
+ * renamed to that language's file and function names, so the guide's examples
+ * and the files its tests write are the same project in either language.
+ */
+export function exampleIn<T>(pack: LanguagePack | null, value: T): T {
+  if (pack?.id !== "python") return value;
+  const walk = (each: unknown): unknown => {
+    if (Array.isArray(each)) return each.map(walk);
+    if (each !== null && typeof each === "object") {
+      return Object.fromEntries(
+        Object.entries(each).map(([key, item]) => [key, key === "code" && typeof item === "string" ? pythonPointer(item) : walk(item)]),
+      );
+    }
+    return each;
+  };
+  return walk(value) as T;
 }
 
 function rolesSection(): string {
@@ -412,12 +495,14 @@ function contractsSection(pack: LanguagePack | null): string {
     return lines.join("\n");
   }
 
+  const codeFile = pack.id === "python" ? pythonPointer(workedExample.codeFile) : workedExample.codeFile;
+  const shown = pack.id === "python" ? workedExample.python[codeFile]! : workedExample.code;
   lines.push(
     "",
-    `**Importing that contract is what binds your code to it.** Code that imports it is typechecked against it, can be run from the window with values you type, and can have saved tests; code that does not is drawn and read. This is \`${workedExample.codeBlock.split("/").at(-1)}\`, in \`${workedExample.codeFile}\`:`,
+    `**Importing that contract is what binds your code to it.** Code that imports it is typechecked against it, can be run from the window with values you type, and can have saved tests; code that does not is drawn and read. This is \`${workedExample.codeBlock.split("/").at(-1)}\`, in \`${codeFile}\`:`,
     "",
-    "```typescript",
-    workedExample.code.trimEnd(),
+    `\`\`\`${pack.id}`,
+    shown.trimEnd(),
     "```",
     "",
     IMPORT_RULES[pack.id] ?? "",
@@ -457,7 +542,9 @@ function startingPoint(manifest: Manifest, pack: LanguagePack | null): string {
   const setUp =
     pack?.id === "typescript"
       ? ' Start it with a `tsconfig.json` and a `package.json` holding `"type": "module"`, `typescript` and `@types/node` as dev dependencies, a `build` script, and a `test` script giving `node --test` a file pattern, not a folder. Tell the person how to run the entry point.'
-      : "";
+      : pack?.id === "python"
+        ? " Set it up with a `.venv` (`python -m venv .venv`), which Fragmentor runs first, and ask the person before installing packages into it. Tell the person how to run the entry point."
+        : "";
   parts.push(
     manifest.existingCode
       ? "**This folder already held code**, and the diagram describes it. Map what is there into blocks, each pointing at the code it stands for. Code that was already here is described, not changed: it is drawn rather than checked or run, and that is the expected outcome. Never restructure the program to make the diagram tidier; the diagram follows the code, and the person will say when they want the code changed."
@@ -544,8 +631,13 @@ function fill(template: string, values: Record<string, string>): string {
     if (value === undefined) throw new Error(`The agent guide refers to {{${name}}}, which nothing fills in.`);
     return value;
   });
-  // A section that does not apply to this project leaves its blank lines behind.
-  return filled.replace(/\n{3,}/g, "\n\n");
+  // A section that does not apply to this project leaves its blank lines
+  // behind — but inside a code fence, blank lines are the code as written,
+  // which the tests hold the guide to showing exactly.
+  return filled
+    .split(/(```[\s\S]*?```)/)
+    .map((part, index) => (index % 2 === 1 ? part : part.replace(/\n{3,}/g, "\n\n")))
+    .join("");
 }
 
 function template(): string {
@@ -584,15 +676,15 @@ export function agentGuide(manifest: Manifest): string {
     manifest: compactJson(exampleManifest(manifest)),
     languageRule: languageRule(manifest, chosen),
     componentBlock: compactJson(workedExample.blocks["price-orders"]),
-    functionBlock: compactJson(workedExample.blocks["price-orders/report-totals"]),
+    functionBlock: compactJson(exampleIn(pack, workedExample.blocks["price-orders/report-totals"])),
     roles: rolesSection(),
     architectureBlock: compactJson(architectureExample["orders-db"]),
     serviceBlock: compactJson(architectureExample["orders-api"]),
     operationEntry: compactJson((architectureExample.billing!.exposes as Record<string, unknown>).charge),
-    accessBlock: compactJson(architectureExample["load-orders"]),
+    accessBlock: compactJson(exampleIn(pack, architectureExample["load-orders"])),
     capabilities: capabilitiesSection(pack),
     contracts: contractsSection(pack),
-    execution: compactJson(executionExample),
+    execution: compactJson(exampleIn(pack, executionExample)),
     level: String(manifest.granularity.level),
     granularity: GRANULARITY[manifest.granularity.level]!,
     maxDepth: String(manifest.granularity.maxDepth),

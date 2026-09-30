@@ -6,8 +6,9 @@ import type { BlockCode } from "../project/code.js";
 import { boundStores, storeEntries, storesForRun } from "../project/stores.js";
 import type { LoadedBlock, LoadedSystem, Project } from "../project/project.js";
 import type { LanguagePack } from "../lang/pack.js";
-import { compileSystem, startCompiledBlock } from "./typescript.js";
-import type { CompiledRun, CompiledSystem, RunEvent } from "./typescript.js";
+import * as typescript from "./typescript.js";
+import * as python from "./python.js";
+import type { CompiledRun, CompiledSystem, RunEvent, SpawnOptions } from "./typescript.js";
 import { hasExpectation, loadCases, storeKeyProblems } from "./cases.js";
 import type { TestCase } from "./cases.js";
 import { compareValues } from "./compare.js";
@@ -114,11 +115,18 @@ function failure(error: string, extra: Partial<RunOutcome> = {}): RunOutcome {
   return { ok: false, error, inputProblems: [], outputProblems: [], stores: {}, logs: [], durationMs: 0, ...extra };
 }
 
+/** The two halves of running one language: the throwaway copy, and the harness over it. */
+interface Runner {
+  compileSystem(project: Project, systemRoot: string, code: Map<string, BlockCode>): Promise<CompiledSystem>;
+  startCompiledBlock(options: SpawnOptions): CompiledRun;
+}
+
 interface Prepared {
   project: Project;
   node: LoadedBlock;
   system: LoadedSystem;
   pack: LanguagePack;
+  runner: Runner;
   /** Where every block's code is, and which of them are held to a contract. */
   code: Map<string, BlockCode>;
   /** The project this folder is a copy of, whose files a run reads when the copy does not hold them, and whose packages it uses. */
@@ -168,11 +176,13 @@ export function whyNotRunnable(project: Project, code: Map<string, BlockCode>, b
 function prepare({ project, code }: Loaded, blockPath: string): Prepared | { error: string } {
   const why = whyNotRunnable(project, code, blockPath);
   if (why !== null) return { error: why };
+  const pack = packFor(project, blockPath)!;
   return {
     project,
     node: project.byPath.get(blockPath)!,
     system: systemOf(project, blockPath)!,
-    pack: packFor(project, blockPath)!,
+    pack,
+    runner: pack.id === "python" ? python : typescript,
     code,
   };
 }
@@ -233,7 +243,7 @@ async function executeOnce(
     : undefined;
 
   const started = Date.now();
-  const run = startCompiledBlock({
+  const run = prepared.runner.startCompiledBlock({
     compiledDir: compiled.dir,
     blockPath,
     functionName: prepared.code.get(blockPath)!.functionName!,
@@ -321,7 +331,7 @@ export function startRun(request: RunRequest): { control: RunControl; outcome: P
     const prepared = prepare(await load(request.projectDir), request.blockPath);
     if ("error" in prepared) return failure(prepared.error);
 
-    const compiled = await compileSystem(prepared.project, prepared.system.rootBlock, prepared.code);
+    const compiled = await prepared.runner.compileSystem(prepared.project, prepared.system.rootBlock, prepared.code);
     try {
       if (stopped) return failure("The run was stopped before it started.", { stopped: true });
       return await executeOnce(prepared, compiled, request.blockPath, request.input, request.stores ?? {}, request.timeoutMs ?? 15_000, {
@@ -391,7 +401,7 @@ export async function runManyCases(
       }
 
       const root = prepared.system.rootBlock;
-      if (!compiled.has(root)) compiled.set(root, await compileSystem(prepared.project, root, prepared.code));
+      if (!compiled.has(root)) compiled.set(root, await prepared.runner.compileSystem(prepared.project, root, prepared.code));
       const entries = storeEntries(prepared.project);
       const reached = boundStores(prepared.project, prepared.node);
       const ran: CaseResult[] = [];

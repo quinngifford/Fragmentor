@@ -100,7 +100,7 @@ describe("projectSnapshot", () => {
     expect(snapshot.blocks["double-it/add-to-self"]!.children).toEqual([]);
   });
 
-  it("holds a bound Python block short of runnable, because its language has no runner yet", async () => {
+  it("calls a bound Python block runnable, with its contract in the importable mirror", async () => {
     await writeFile(
       path.join(dir, "fragmentor.json"),
       JSON.stringify({ ...manifest, systems: [{ rootBlock: "double-it", language: "python" }] }),
@@ -133,10 +133,9 @@ describe("projectSnapshot", () => {
     );
 
     const block = (await projectSnapshot(dir)).blocks["double-it"]!;
-    // Bound, so the code and contract travel together — but nothing may call
-    // it runnable or ask it for tests until the language can really run.
-    expect(block.drawnBecause).toBe("Fragmentor cannot run Python code yet, so this block is not run or tested");
-    expect(block.runnable).toBe(false);
+    // Bound Python is checked and runnable, its contract in the mirror.
+    expect(block.drawnBecause).toBeNull();
+    expect(block.runnable).toBe(true);
     expect(block.cases).toEqual([]);
     expect(block.files.contract).toBe("blocks/_contracts/double_it/contract.py");
   });

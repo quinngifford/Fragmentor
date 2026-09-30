@@ -170,28 +170,26 @@ export interface CompiledRun {
   stop(): void;
 }
 
-export function startCompiledBlock(options: SpawnOptions): CompiledRun {
-  // Electron's binary is Node underneath; this makes it behave as Node so the
-  // application does not need a separate runtime installed alongside it. The
-  // harness reports over the IPC channel, so what a block prints is not read.
-  const child = spawn(process.execPath, [harnessPath()], {
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: "1",
-      // The compiled copy sits in a temporary folder, so the packages a
-      // block imports are looked for where the project installed them: the
-      // project a copy stands in for, when it is run from one.
-      NODE_PATH: [path.join(options.copyOf ?? options.projectDir, "node_modules"), process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
-    },
-    stdio: ["ignore", "ignore", "pipe", "ipc"],
-  });
+/** How one harness's child talks: what to send it, and how its messages arrive. */
+export interface HarnessChannel {
+  tell(message: object): void;
+  hear(handler: (message: { type?: string } & Record<string, unknown>) => void): void;
+  /** Said goodbye on settle, before the child is killed, where the channel has one. */
+  close?(): void;
+}
 
-  const tell = (message: object) => {
-    if (child.connected) child.send(message);
-  };
-
-  // The time limit counts only time spent running. A run held at a
-  // breakpoint is waiting for the person, not stuck.
+/**
+ * Drives one harness child to its result, whatever language it runs: sends
+ * the start message, holds the run to its time limit — counting only time
+ * spent running, because a run held at a breakpoint is waiting for the
+ * person, not stuck — maps what comes back, and settles exactly once, on the
+ * result, a timeout, a stop, or the child dying with its stderr as the story.
+ */
+export function drive(
+  child: ReturnType<typeof spawn>,
+  channel: HarnessChannel,
+  options: { start: object; timeoutMs: number; onEvent?: (event: RunEvent) => void },
+): CompiledRun {
   let remaining = options.timeoutMs;
   let since = 0;
   let timer: NodeJS.Timeout | undefined;
@@ -210,22 +208,28 @@ export function startCompiledBlock(options: SpawnOptions): CompiledRun {
     remaining -= Date.now() - since;
   };
 
-  let settle: (result: HarnessResult) => void = () => {};
-  const result = new Promise<HarnessResult>((resolve) => {
-    let settled = false;
-    settle = (value) => {
-      if (settled) return;
-      settled = true;
-      stopClock();
-      resolve(value);
-      child.kill();
-    };
-  });
+  let settled = false;
+  let resolveResult: (value: HarnessResult) => void = () => {};
+  const result = new Promise<HarnessResult>((resolve) => (resolveResult = resolve));
+  const settle = (value: HarnessResult) => {
+    if (settled) return;
+    settled = true;
+    stopClock();
+    channel.close?.();
+    resolveResult(value);
+    child.kill();
+  };
+
+  // Nothing is said to a run that has ended, so a resume pressed as the
+  // child exits goes nowhere rather than into a broken pipe.
+  const tell = (message: object) => {
+    if (!settled) channel.tell(message);
+  };
 
   let stderr = "";
   child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
 
-  child.on("message", (message: { type?: string } & Record<string, unknown>) => {
+  channel.hear((message) => {
     if (message.type === "result") {
       settle({
         ok: message.ok === true,
@@ -245,20 +249,7 @@ export function startCompiledBlock(options: SpawnOptions): CompiledRun {
   child.on("error", (error) => settle({ ok: false, error: error.message, logs: [] }));
   child.on("close", () => settle({ ok: false, error: stderr.trim() || "The block stopped without reporting what happened.", logs: [] }));
 
-  tell({
-    type: "start",
-    spec: {
-      file: options.blocks.find((block) => block.path === options.blockPath)?.file,
-      functionName: options.functionName,
-      blocks: options.blocks,
-      trace: Boolean(options.onEvent),
-      breakpoints: options.breakpoints ?? [],
-      capabilities: options.capabilities,
-      projectDir: options.projectDir,
-      copyOf: options.copyOf ?? null,
-      input: options.input ?? {},
-    },
-  });
+  tell(options.start);
   startClock();
 
   return {
@@ -267,4 +258,49 @@ export function startCompiledBlock(options: SpawnOptions): CompiledRun {
     setBreakpoints: (paths) => tell({ type: "breakpoints", paths }),
     stop: () => settle({ ok: false, error: "The run was stopped before it finished.", logs: [], stopped: true }),
   };
+}
+
+export function startCompiledBlock(options: SpawnOptions): CompiledRun {
+  // Electron's binary is Node underneath; this makes it behave as Node so the
+  // application does not need a separate runtime installed alongside it. The
+  // harness reports over the IPC channel, so what a block prints is not read.
+  const child = spawn(process.execPath, [harnessPath()], {
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: "1",
+      // The compiled copy sits in a temporary folder, so the packages a
+      // block imports are looked for where the project installed them: the
+      // project a copy stands in for, when it is run from one.
+      NODE_PATH: [path.join(options.copyOf ?? options.projectDir, "node_modules"), process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
+    },
+    stdio: ["ignore", "ignore", "pipe", "ipc"],
+  });
+
+  return drive(
+    child,
+    {
+      tell: (message) => {
+        if (child.connected) child.send(message);
+      },
+      hear: (handler) => child.on("message", handler),
+    },
+    {
+      start: {
+        type: "start",
+        spec: {
+          file: options.blocks.find((block) => block.path === options.blockPath)?.file,
+          functionName: options.functionName,
+          blocks: options.blocks,
+          trace: Boolean(options.onEvent),
+          breakpoints: options.breakpoints ?? [],
+          capabilities: options.capabilities,
+          projectDir: options.projectDir,
+          copyOf: options.copyOf ?? null,
+          input: options.input ?? {},
+        },
+      },
+      timeoutMs: options.timeoutMs,
+      onEvent: options.onEvent,
+    },
+  );
 }

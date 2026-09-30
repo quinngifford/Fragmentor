@@ -206,7 +206,7 @@ export function askForProjectSettings(folder?: FolderToStart): Promise<NewProjec
     const languageNote = el(
       "p",
       "dialog-note",
-      "Code in any language is drawn. TypeScript is the one Fragmentor also checks and runs; Python gets its types written and nothing more.",
+      "Code in any language is drawn. TypeScript and Python are the ones Fragmentor also checks, runs and tests; Python needs 3.11 or later.",
     );
     languages.append(legend("Language", "optional"), languageInput, suggestions, languageNote);
 
