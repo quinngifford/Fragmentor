@@ -46,7 +46,8 @@ import { addRule, isRulesPath, removeRule } from "../src/project/rules.js";
 import type { FlaggedRun, Note, NoteAnchor } from "../src/project/notes.js";
 import { compareWithVersion } from "../src/run/versions.js";
 import type { VersionComparison } from "../src/run/versions.js";
-import { commitExampleHistory, filesOf, gitIn } from "../src/project/exampleHistory.js";
+import { commitExampleHistory, filesOf, gitIn, writeWorkedExample } from "../src/project/exampleHistory.js";
+import { findPython } from "../src/run/python.js";
 
 /**
  * The main process owns everything with side effects: the window, the disk,
@@ -2254,6 +2255,28 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         Number(value("largeFitted", "scale")) < 0.6 &&
         value("largeFitted", "allInView") === true,
     ],
+    // The Python leg runs only where the machine has a Python Fragmentor can
+    // use; skipped, it said so and left nothing in the report to hold to.
+    ...(report.pythonRun === undefined
+      ? ([] as [string, boolean][])
+      : ([
+          [
+            "a Python block runs from the bench, reading the project's own file",
+            value("pythonRun", "opened") === true &&
+              /grandTotal/.test(String(value("pythonRun", "result"))) &&
+              /7/.test(String(value("pythonRun", "result"))),
+          ],
+          [
+            "a Python run pauses at a breakpoint, steps, and finishes under Continue all",
+            value("pythonPaused", "breakpointSet") === true &&
+              value("pythonPaused", "paused") === true &&
+              value("pythonPaused", "stepOffered") === true &&
+              value("pythonPaused", "continueAllOffered") === true &&
+              value("pythonPaused", "finished") === true,
+          ],
+          ["a Python block's saved tests pass", /2 of 2 passed/.test(String(value("pythonTests", "summary")))],
+          ["a Python run leaves no __pycache__ in the project", value("pythonClean", "pycache") === ""],
+        ] as [string, boolean][])),
   ];
 
   return checks.filter(([, passed]) => !passed).map(([name]) => name);
@@ -5546,6 +5569,97 @@ function attachSelfCheck(
           ${scaleAndView}
           return { scale, allInView: boxes.every(inView) };
         `);
+
+        // Python, where this machine has one: the guide's worked example as a
+        // real project, run from the bench, paused, stepped and tested,
+        // exactly as TypeScript is. A machine without Python 3.11 says so and
+        // skips, because the check is of Fragmentor, not of the machine.
+        const python = findPython(check.root);
+        if (!python.ok) {
+          console.log(`The Python leg was skipped: ${python.problem}`);
+        } else {
+          const pythonDir = path.join(check.root, "python");
+          await writeWorkedExample(pythonDir, "python");
+          await writeFile(
+            path.join(app.getPath("userData"), "recent-projects.json"),
+            JSON.stringify([pythonDir, check.application, check.messenger, check.large]),
+            "utf8",
+          );
+
+          pick("close-project");
+          await run("pythonRun", `
+            await until(() => document.body.dataset.project !== "open");
+            const link = await until(() => [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(path.join(check.root, "python"))}));
+            if (!link) return { opened: false, stage: "no welcome link" };
+            link.click();
+            if (!(await until(() => document.querySelector('.block-box[data-id="report-totals"]')))) return { opened: false, stage: "no report-totals" };
+            await wait(700);
+            const node = (label) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === label);
+            node("report-totals").click();
+            if (!(await until(() => text("#inspector h2") === "Report Totals"))) return { opened: true, stage: "panel stayed on " + text("#inspector h2") };
+            const bench = await openBench();
+            if (!bench) return { opened: true, stage: "no bench" };
+            const field = [...bench.querySelectorAll(".field")].find((f) => (f.querySelector("label") || {}).textContent === "path");
+            if (!field) return { opened: true, stage: "no path field", labels: [...bench.querySelectorAll(".field label")].map((e) => e.textContent).join(" | ") };
+            const control = field.querySelector("input, textarea");
+            control.value = "orders.json";
+            control.dispatchEvent(new Event("input", { bubbles: true }));
+            const runButton = [...bench.querySelectorAll(".btn")].find((b) => b.textContent === "Run block" && !b.disabled);
+            if (!runButton) return { opened: true, stage: "no run button" };
+            runButton.click();
+            const result = await until(() => (document.querySelector(".run-result pre.code") || {}).textContent, 25000);
+            return { opened: true, result: String(result).slice(0, 160) };
+          `);
+
+          // The person pauses the same run inside the block that prices one
+          // order, steps once, and lets the rest through together.
+          await run("pythonPaused", `
+            const node = (label) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === label);
+            node("price-order").click();
+            const toggle = await until(() => document.querySelector('.block-box[data-id="price-order"] .breakpoint-hit'));
+            if (!toggle) return { paused: false, stage: "no breakpoint to set" };
+            await wait(500);
+            toggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+            const breakpointSet = document.querySelector('.block-box[data-id="price-order"]').dataset.breakpoint === "true";
+
+            node("report-totals").click();
+            if (!(await until(() => text("#inspector h2") === "Report Totals"))) return { breakpointSet, paused: false, stage: "panel stayed" };
+            const bench = await openBench();
+            if (!bench) return { breakpointSet, paused: false, stage: "no bench" };
+            const runButton = [...bench.querySelectorAll(".btn")].find((b) => b.textContent === "Run block" && !b.disabled);
+            if (!runButton) return { breakpointSet, paused: false, stage: "no run button" };
+            runButton.click();
+
+            const paused = Boolean(await until(() => /Paused before Price Order/.test(text("#run-bar")), 25000));
+            const step = [...document.querySelectorAll("#run-bar button")].find((b) => b.textContent === "Step");
+            if (step) step.click();
+            await wait(700);
+            const all = [...document.querySelectorAll("#run-bar button")].find((b) => b.textContent === "Continue all");
+            if (all) all.click();
+            const finished = Boolean(await until(() => /finished/.test(text("#run-bar")), 25000));
+            // The breakpoint comes off again, so nothing later here pauses.
+            document.querySelector('.block-box[data-id="price-order"] .breakpoint-hit').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+            return { breakpointSet, paused, stepOffered: Boolean(step), continueAllOffered: Boolean(all), finished };
+          `);
+
+          await run("pythonTests", `
+            const node = (label) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === label);
+            node("price-order").click();
+            if (!(await until(() => text("#inspector h2") === "Price Order"))) return { summary: "panel stayed on " + text("#inspector h2") };
+            await openBench();
+            const runAll = [...document.querySelectorAll(".bench-window .btn")].find((b) => b.textContent === "Run all tests");
+            if (!runAll || runAll.disabled) return { summary: "no run-all button" };
+            runAll.click();
+            const summary = await until(() => (/passed/.test(text(".case-summary")) ? text(".case-summary") : null), 25000);
+            return { summary: summary || text(".case-summary") };
+          `);
+          await capture(window, "self-check-python");
+
+          // -B keeps compiled files out of the throwaway run copy, and the
+          // project folder itself stays exactly what the agent wrote.
+          const strays = (await readdir(pythonDir, { recursive: true })).filter((each) => each.includes("__pycache__"));
+          report.pythonClean = { pycache: strays.join(" ") };
+        }
 
         console.log(JSON.stringify(report, null, 2));
 

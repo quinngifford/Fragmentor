@@ -1487,7 +1487,7 @@ export async function startHistory(dir: string): Promise<{ written: string[]; no
   const written: string[] = [];
   const ignore = path.join(dir, ".gitignore");
   if (!(await exists(ignore))) {
-    await writeFile(ignore, "node_modules/\n__pycache__/\n", "utf8");
+    await writeFile(ignore, "node_modules/\n__pycache__/\n.venv/\n", "utf8");
     written.push(".gitignore");
   }
   return { written, note: "Started a git repository here. Each commit of a block is a version of it; nothing is committed yet." };

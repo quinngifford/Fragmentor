@@ -293,7 +293,7 @@ describe("startProject", () => {
       // Its blocks' versions will be the commits of the repository it starts,
       // which ignores what the watcher ignores and holds nothing yet.
       expect(await there(path.join(fresh, ".git"))).toBe(true);
-      expect(await readFile(path.join(fresh, ".gitignore"), "utf8")).toBe("node_modules/\n__pycache__/\n");
+      expect(await readFile(path.join(fresh, ".gitignore"), "utf8")).toBe("node_modules/\n__pycache__/\n.venv/\n");
       expect(started.history).toBe("Started a git repository here. Each commit of a block is a version of it; nothing is committed yet.");
 
       expect(await readManifest(fresh)).toEqual({
