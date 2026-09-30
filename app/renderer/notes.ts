@@ -398,7 +398,7 @@ export function problemFlag(blockPath: string, problem: string): HTMLElement | n
  * leaves the code alone and says so in its answer.
  */
 const HOLD_WORDS =
-  "Please hold this block to its contract, without changing how its existing code is called. In the file its code is in, add a small exported function that takes a value and caps, imports the block's contract with import type and calls the existing code, then point the block's code at it. Add saved tests, commit, and answer this note. If the file cannot be held to the import rules, leave the code as it is and tell me why here.";
+  "Please hold this block to its contract, so Fragmentor can check, run and test it. FRAGMENTOR.md says how: a small added function imports the contract and calls the existing code, which stays exactly as it is, and so does everything that calls it. Add saved tests, commit, and answer here. If the file cannot follow the import rules, change nothing and say why instead.";
 
 /**
  * The offer, under a block's code, to have the agent hold it to its
@@ -418,7 +418,7 @@ export function holdOffer(block: SnapshotBlock): HTMLElement | null {
 
   const row = key(block.path, "hold");
   const offer = el("div", "flag-offer hold-offer");
-  offer.append(el("span", undefined, "Have your agent hold this code to its contract, so Fragmentor checks, runs and tests it? Whatever calls it now stays as it is."));
+  offer.append(el("span", undefined, "Fragmentor draws this code but cannot check or run it yet. Ask your agent to hold it to its contract? The code stays as it is."));
   const hold = el("button", "run-btn", "Hold to its contract");
   hold.type = "button";
   hold.disabled = busy;

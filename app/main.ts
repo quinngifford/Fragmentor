@@ -1926,8 +1926,8 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("holdOffered", "button") === "Hold to its contract" &&
         value("held", "noted") === true &&
         value("held", "waiting") === "agent" &&
-        /without changing how its existing code is called/.test(String(value("held", "words"))) &&
-        /import type/.test(String(value("held", "words"))) &&
+        /so Fragmentor can check, run and test it/.test(String(value("held", "words"))) &&
+        /stays exactly as it is/.test(String(value("held", "words"))) &&
         value("held", "gone") === true,
     ],
     [
