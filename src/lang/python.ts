@@ -293,7 +293,7 @@ export const pythonPack: LanguagePack = {
   },
 
   canRun: false,
-  canCheck: false,
+  canCheck: true,
 };
 
 registerPack(pythonPack);

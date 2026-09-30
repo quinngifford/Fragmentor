@@ -19,6 +19,7 @@
     "check:examples:py": "python -c \"import ast,pathlib; [ast.parse(f.read_text(encoding=chr(117)+chr(116)+chr(102)+chr(45)+chr(56)), str(f)) for f in pathlib.Path(chr(101)+chr(120)+chr(97)+chr(109)+chr(112)+chr(108)+chr(101)+chr(115)).rglob(chr(42)+chr(46)+chr(112)+chr(121))]; print(chr(111)+chr(107))\""
   },
   "dependencies": {
+    "pyright": "1.1.414",
     "tsx": "^4.23.13",
     "typescript": "^5.7.2",
     "zod": "^3.24.1"

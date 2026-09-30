@@ -191,7 +191,8 @@ function formatReport(report: CheckReport): string {
     } else if (system.codeHeld === 0) {
       lines.push(`  ${system.rootBlock}: no block's code imports its contract, so all of it is drawn rather than checked`);
     } else if (system.codeProblems.length === 0) {
-      lines.push(`  ${system.rootBlock}: typechecks against its contracts, and imports only what it can run with`);
+      const via = system.interpreter ? ` (Python at ${system.interpreter})` : "";
+      lines.push(`  ${system.rootBlock}: typechecks against its contracts, and imports only what it can run with${via}`);
     }
     for (const problem of system.codeProblems) {
       const where = problem.file ? `${problem.file}:${problem.line}:${problem.column}` : system.rootBlock;

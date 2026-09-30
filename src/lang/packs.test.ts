@@ -309,8 +309,8 @@ describe("the Python pack", () => {
     expect(pack.contractSpecifier("blocks/_contracts/rank_jobs/score_posting/contract.py", "src/jobs/score.py")).toBe(
       "blocks._contracts.rank_jobs.score_posting.contract",
     );
-    // Nothing is checked or run yet; binding is what this phase adds.
-    expect(pack.canCheck).toBe(false);
+    // Bound code is checked; running is the phase still to come.
+    expect(pack.canCheck).toBe(true);
     expect(pack.canRun).toBe(false);
   });
 

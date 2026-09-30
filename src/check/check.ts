@@ -6,6 +6,7 @@ import type { ProjectDiagnostic } from "../project/project.js";
 import { packFor, readAllCode } from "../project/code.js";
 import { projectSnapshot } from "../project/snapshot.js";
 import type { SnapshotRule } from "../project/rules.js";
+import { checkPythonSystem } from "./python.js";
 import { checkSystemCode } from "./typescript.js";
 import type { CodeProblem } from "./typescript.js";
 
@@ -32,6 +33,8 @@ export interface SystemCheck {
   /** How many of the system's blocks are held to a contract, and so checked. */
   codeHeld: number;
   codeProblems: CodeProblem[];
+  /** The interpreter that checked the code, where finding one is part of the job. */
+  interpreter?: string;
   /** False when what its code reaches is not read, so reach the diagram leaves out cannot be found there. */
   reachRead: boolean;
 }
@@ -100,23 +103,30 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
   const generated = await emitProject(project, code);
   const snapshot = await projectSnapshot(projectDir);
 
-  const systems: SystemCheck[] = project.systems.map((system) => {
-    const pack = packFor(project, system.rootBlock);
-    const codeChecked = pack?.canCheck ?? false;
-    const held = [...code].filter(
-      ([blockPath, found]) =>
-        found.bound && (blockPath === system.rootBlock || blockPath.startsWith(`${system.rootBlock}/`)),
-    );
-    return {
-      rootBlock: system.rootBlock,
-      language: system.language,
-      displayName: pack?.displayName ?? (system.language || "unspecified"),
-      codeChecked,
-      codeHeld: held.length,
-      codeProblems: codeChecked ? checkSystemCode(project, system.rootBlock, code) : [],
-      reachRead: snapshot.systems.find((each) => each.rootBlock === system.rootBlock)?.reachRead ?? false,
-    };
-  });
+  const systems: SystemCheck[] = await Promise.all(
+    project.systems.map(async (system) => {
+      const pack = packFor(project, system.rootBlock);
+      const codeChecked = pack?.canCheck ?? false;
+      const held = [...code].filter(
+        ([blockPath, found]) =>
+          found.bound && (blockPath === system.rootBlock || blockPath.startsWith(`${system.rootBlock}/`)),
+      );
+      // Each language checks its own way: TypeScript compiles in this
+      // process, Python asks the project's interpreter and bundled pyright.
+      const python =
+        codeChecked && pack?.id === "python" ? await checkPythonSystem(project, system.rootBlock, code) : null;
+      return {
+        rootBlock: system.rootBlock,
+        language: system.language,
+        displayName: pack?.displayName ?? (system.language || "unspecified"),
+        codeChecked,
+        codeHeld: held.length,
+        codeProblems: python ? python.problems : codeChecked ? checkSystemCode(project, system.rootBlock, code) : [],
+        ...(python?.interpreter ? { interpreter: python.interpreter } : {}),
+        reachRead: snapshot.systems.find((each) => each.rootBlock === system.rootBlock)?.reachRead ?? false,
+      };
+    }),
+  );
 
   const blocks = Object.values(snapshot.blocks);
   // Work that is somebody's to finish: code that is not only a plan.
