@@ -1,4 +1,4 @@
-import { access, appendFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, readdir, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CAPABILITIES, isKnownCapability } from "../model/capabilities.js";
 import { getPack, knownLanguages, normaliseLanguage } from "../lang/index.js";
@@ -273,6 +273,8 @@ export async function emitProject(project: Project, known?: Map<string, BlockCod
 
   const relative = (target: string) => path.relative(project.dir, target).split(path.sep).join("/");
   const write = async (target: string, contents: string) => {
+    // A contract mirror's folders do not exist until something is written into them.
+    await mkdir(path.dirname(target), { recursive: true });
     if (await writeIfChanged(target, contents)) written.push(relative(target));
   };
   /** Takes away a file of Fragmentor's, and only ever one of Fragmentor's. */
@@ -314,6 +316,8 @@ export async function emitProject(project: Project, known?: Map<string, BlockCod
 
   const code = known ?? (await readAllCode(project));
   const written_for = new Set<string>();
+  /** Every contract that should exist after this pass, relative to the project. */
+  const intended = new Set<string>();
 
   for (const node of project.byPath.values()) {
     await discard(path.join(node.dir, FORMER_CONTRACT));
@@ -324,22 +328,48 @@ export async function emitProject(project: Project, known?: Map<string, BlockCod
       // Not a function, planned, written in words, or in a language there is no
       // pack for. Anything written for it before — in any language, since a
       // system's may have changed — describes something that is no longer there.
-      for (const each of knownLanguages()) await discard(path.join(node.dir, getPack(each.id).contractFile));
+      for (const each of knownLanguages()) {
+        await discard(path.join(node.dir, path.basename(getPack(each.id).contractPath(node.path))));
+      }
       continue;
     }
 
-    await write(
-      path.join(project.dir, ...found.contract.split("/")),
-      pack.contractSource({ block: node.block, blockPath: node.path, bound: boundShapes(project, node) }),
-    );
+    const target = path.join(project.dir, ...found.contract.split("/"));
+    await write(target, pack.contractSource({ block: node.block, blockPath: node.path, bound: boundShapes(project, node) }));
+    intended.add(found.contract);
     written_for.add(pack.id);
     if (pack.id === "typescript") await shadowing(path.join(node.dir, FORMER_CONTRACT));
-    // A contract in the language this system used to be written in describes
-    // the same block in words that no longer apply to it.
+    // A contract in this block's folder that is not the one just written is
+    // from another language, or from before contracts moved to a mirror; either
+    // way it describes the block in words that no longer apply to it.
     for (const each of knownLanguages()) {
-      if (each.id !== pack.id) await discard(path.join(node.dir, getPack(each.id).contractFile));
+      const candidate = path.join(node.dir, path.basename(getPack(each.id).contractPath(node.path)));
+      if (candidate !== target) await discard(candidate);
     }
   }
+
+  // The mirror holds only generated contracts, so anything generated in it
+  // that this pass did not mean to write describes a block that has gone, or
+  // moved: a rename changes the mirrored folder rather than reusing it.
+  // Folders nothing is left in go too, and files someone wrote stay put.
+  // Case is folded because a disk that ignores it would hand back a re-cased
+  // folder name for the very file this pass just wrote into it.
+  const meant = new Set([...intended].map((each) => each.toLowerCase()));
+  const sweep = async (dir: string): Promise<void> => {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) await sweep(full);
+      else if (!meant.has(relative(full).toLowerCase())) await discard(full);
+    }
+    if ((await readdir(dir)).length === 0) await rmdir(dir);
+  };
+  await sweep(path.join(blocksRoot(project.dir), "_contracts"));
 
   // The shared capabilities module, for each language something was written in,
   // and no other: one nobody can import is a file nobody reads.

@@ -1,9 +1,8 @@
-import path from "node:path";
 import { isArchitecture } from "../model/roles.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
 import type { LanguagePack } from "../lang/index.js";
 import type { Block } from "../model/block.js";
-import { blockDir, declaresSymbol, locateCode, systemOf } from "./project.js";
+import { declaresSymbol, locateCode, systemOf } from "./project.js";
 import type { CodeLocation, LoadedBlock, Project } from "./project.js";
 
 /**
@@ -38,7 +37,11 @@ export interface BlockCode {
   contract: string | null;
   /** What the code has to import to be held to that contract. */
   contractImport: string | null;
-  /** True when the code imports its contract, so Fragmentor checks, runs and tests it. */
+  /**
+   * True when the code imports its contract, which is what lets Fragmentor
+   * check, run and test it — as far as its language can go: a bound block in
+   * a language Fragmentor cannot run yet is still only drawn, and says so.
+   */
   bound: boolean;
   /**
    * Why Fragmentor draws this block's code rather than checking and running
@@ -65,26 +68,23 @@ function portsAreTyped(block: Block): boolean {
  * The contract file Fragmentor writes for a block, relative to the project, or
  * null where it writes none.
  *
- * It sits in the block's own folder, so everything Fragmentor generates stays
- * inside `blocks/` and nothing of its appears in the codebase's own tree.
+ * The pack says where, so everything Fragmentor generates stays inside
+ * `blocks/` and nothing of its appears in the codebase's own tree.
  */
-function contractPathOf(project: Project, node: LoadedBlock, pack: LanguagePack | null): string | null {
+function contractPathOf(node: LoadedBlock, pack: LanguagePack | null): string | null {
   if (pack === null || node.block.planned || isArchitecture(node.block.role) || !portsAreTyped(node.block)) return null;
-  const dir = path.relative(project.dir, blockDir(project.dir, node.path)).split(path.sep).join("/");
-  return `${dir}/${pack.contractFile}`;
-}
-
-/** The path one project file writes to reach another, as an import: `../../blocks/app/log-in/contract.d.ts`. */
-function relativeFrom(fromFile: string, toFile: string): string {
-  const relative = path.posix.relative(path.posix.dirname(fromFile), toFile);
-  return relative.startsWith(".") ? relative : `./${relative}`;
+  return pack.contractPath(node.path);
 }
 
 export async function readBlockCode(project: Project, node: LoadedBlock): Promise<BlockCode> {
   const block = node.block;
   const pointer = block.code ?? null;
   const pack = packFor(project, node.path);
-  const contract = contractPathOf(project, node, pack);
+  // A contract the language could not write — a capability port named a word
+  // it reserves, say — is not written at all, and the why becomes the reason
+  // the block is drawn, exactly as ports written in words are treated.
+  const unwritable = pack?.contractProblem?.(block) ?? null;
+  const contract = unwritable !== null ? null : contractPathOf(node, pack);
   const language = systemOf(project, node.path)?.language ?? "";
 
   /**
@@ -97,7 +97,7 @@ export async function readBlockCode(project: Project, node: LoadedBlock): Promis
       : pack === null
         ? `Fragmentor has no language pack for ${language === "" ? "this system's language" : language}`
         : contract === null
-          ? "its inputs or outputs are written in words rather than as types, so there is no contract to hold it to"
+          ? (unwritable ?? "its inputs or outputs are written in words rather than as types, so there is no contract to hold it to")
           : reason;
 
   const nothing: BlockCode = {
@@ -130,8 +130,10 @@ export async function readBlockCode(project: Project, node: LoadedBlock): Promis
   if (!found.ok) return { ...nothing, problem: found.problem };
 
   const location: CodeLocation = found.location;
-  const specifier =
-    pack === null || contract === null ? null : pack.contractSpecifier(relativeFrom(location.file, contract));
+  const specifier = pack === null || contract === null ? null : pack.contractSpecifier(contract, location.file);
+  // A file the language itself could never import cannot import a contract
+  // either, so nothing in it can be bound, however its text reads.
+  const fileProblem = specifier === null ? null : (pack?.codeFileProblem?.(location.file) ?? null);
   const functionName = location.symbol ?? pack?.functionName(block.id) ?? null;
   // A folder, or a file too large to read. Nothing can be said about an import
   // in code Fragmentor never read, so it says that instead.
@@ -148,7 +150,7 @@ export async function readBlockCode(project: Project, node: LoadedBlock): Promis
   // value and `caps`, so nothing can run it even where its file imports the
   // contract. It is drawn like any other code that is not held to one.
   const method = functionName?.includes(".") ?? false;
-  const bound = imports && declared && !method;
+  const bound = imports && declared && !method && fileProblem === null;
 
   return {
     pointer,
@@ -160,17 +162,21 @@ export async function readBlockCode(project: Project, node: LoadedBlock): Promis
     drawnBecause: drawn(
       specifier === null
         ? `Fragmentor cannot hold ${pack?.displayName ?? "this"} code to a contract yet, so it draws this code`
-        : unread
-          ? `Fragmentor could not read ${location.file}, so it draws this block rather than checking or running it`
-          : !declared
-            ? `${location.file} does not declare ${functionName ?? "this block's function"}, so there is nothing for Fragmentor to call`
-            : bound
-              ? null
-              : imports
-                ? `${functionName} is a method, and Fragmentor can only call a function on its own, with a value and \`caps\`, so it draws this code rather than running it`
-                : importsOtherwise
-                  ? `${location.file} imports its contract, but not as "${specifier}", which is how Fragmentor knows to hold code to it, so it draws this code as it stands`
-                  : `${location.file} does not import its contract, so Fragmentor draws this code as it stands rather than checking or running it`,
+        : fileProblem !== null
+          ? fileProblem
+          : unread
+            ? `Fragmentor could not read ${location.file}, so it draws this block rather than checking or running it`
+            : !declared
+              ? `${location.file} does not declare ${functionName ?? "this block's function"}, so there is nothing for Fragmentor to call`
+              : bound
+                ? pack!.canRun
+                  ? null
+                  : `Fragmentor cannot run ${pack!.displayName} code yet, so this block is not run or tested`
+                : imports
+                  ? `${functionName} is a method, and Fragmentor can only call a function on its own, with a value and \`caps\`, so it draws this code rather than running it`
+                  : importsOtherwise
+                    ? `${location.file} imports its contract, but not as "${specifier}", which is how Fragmentor knows to hold code to it, so it draws this code as it stands`
+                    : `${location.file} does not import its contract, so Fragmentor draws this code as it stands rather than checking or running it`,
     ),
     functionName,
   };

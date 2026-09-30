@@ -317,7 +317,17 @@ function filesSection(pack: LanguagePack | null): string {
     ["blocks/<system>/", "a system's top block", "a block's parts are the folders inside it"],
     ["  block.json", "the block", "you write"],
   ];
-  if (pack) rows.push([`  ${pack.contractFile}`, "its types", "generated"]);
+  // A contract sits beside the block.json it is made from, or in a mirror
+  // where the language cannot import the block's own folder; the row reads
+  // whichever way the pack writes it.
+  if (pack) {
+    const contract = pack.contractPath("<the block>");
+    rows.push(
+      contract.startsWith("blocks/<the block>/")
+        ? [`  ${contract.split("/").at(-1)}`, "its types", "generated"]
+        : [contract, "its types", "generated"],
+    );
+  }
   if (pack?.canRun) rows.push(["  cases.json", "its tests", "you write, for a block Fragmentor runs"]);
   if (pack) rows.push([`blocks/${pack.capabilitiesFile}`, "the capability interfaces", "generated"]);
   rows.push(
@@ -386,11 +396,12 @@ function fragmentorRole(pack: LanguagePack | null, named: string | null): string
 function contractsSection(pack: LanguagePack | null): string {
   if (pack === null) return "";
 
-  const contractOf = (blockPath: string) => `blocks/${blockPath}/${pack.contractFile}`;
+  const contractOf = (blockPath: string) => pack.contractPath(blockPath);
+  const besideItsBlock = contractOf("<the block>").startsWith("blocks/<the block>/");
   const lines: string[] = ["## Contracts", ""];
 
   lines.push(
-    `Where a function block's inputs and outputs are written as types, Fragmentor writes them into \`${contractOf("<the block>")}\`, beside its \`block.json\`, along with the capabilities it asks for. A block whose ports are words gets none, and is drawn rather than checked or run.`,
+    `Where a function block's inputs and outputs are written as types, Fragmentor writes them into \`${contractOf("<the block>")}\`${besideItsBlock ? ", beside its \`block.json\`," : ","} along with the capabilities it asks for. A block whose ports are words gets none, and is drawn rather than checked or run.`,
   );
 
   if (!pack.canRun) {

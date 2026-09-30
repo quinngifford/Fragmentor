@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { Port } from "../model/block.js";
 import { CAPABILITIES } from "../model/capabilities.js";
 import type { CapabilityOperation } from "../model/capabilities.js";
@@ -64,10 +65,16 @@ function operationSignature(operation: CapabilityOperation): string {
   return `  ${operation.name}(${parameters}): ${operation.async ? `Promise<${returns}>` : returns};`;
 }
 
+/** The path one project file writes to reach another, as an import: `../../blocks/app/log-in/contract.d.ts`. */
+function relativeFrom(fromFile: string, toFile: string): string {
+  const relative = path.posix.relative(path.posix.dirname(fromFile), toFile);
+  return relative.startsWith(".") ? relative : `./${relative}`;
+}
+
 export const typescriptPack: LanguagePack = {
   id: "typescript",
   displayName: "TypeScript",
-  contractFile: "contract.d.ts",
+  contractPath: (blockPath) => `blocks/${blockPath}/contract.d.ts`,
   capabilitiesFile: "capabilities.d.ts",
 
   functionName: (blockId) => camelCase(blockId),
@@ -128,7 +135,7 @@ export const typescriptPack: LanguagePack = {
 
   // What is compiled and run is JavaScript, so that is what an import names:
   // `contract.js` for `contract.d.ts`, which is where TypeScript looks for it.
-  contractSpecifier: (relativePath) => relativePath.replace(/([.]d)?[.]ts$/, ".js"),
+  contractSpecifier: (contractPath, fromFile) => relativeFrom(fromFile, contractPath).replace(/([.]d)?[.]ts$/, ".js"),
 
   canRun: true,
   canCheck: true,

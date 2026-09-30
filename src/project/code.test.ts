@@ -181,6 +181,78 @@ export class Maths {
     expect(found.drawnBecause).toContain("written in words");
   });
 
+  describe("in Python, where the binding is the contract module's dotted name", () => {
+    beforeEach(async () => {
+      await writeFile(
+        path.join(dir, "fragmentor.json"),
+        JSON.stringify({ name: "Adder", granularity: { level: 3 }, systems: [{ rootBlock: "app", language: "python" }] }),
+        "utf8",
+      );
+    });
+
+    const PY_BOUND = `from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from blocks._contracts.app.add.contract import AddCaps, AddInput, AddOutput
+
+
+async def add(input: AddInput, caps: AddCaps) -> AddOutput:
+    return {"sum": input["a"] + input["b"]}
+`;
+
+    it("holds Python code that imports its contract, with only running still missing", async () => {
+      await block("app/add", { ...ADD, code: "src/add.py#add" });
+      await source("src/add.py", PY_BOUND);
+
+      const found = await codeOf("app/add");
+      expect(found.problem).toBeNull();
+      expect(found.contract).toBe("blocks/_contracts/app/add/contract.py");
+      expect(found.contractImport).toBe("blocks._contracts.app.add.contract");
+      expect(found.bound).toBe(true);
+      expect(found.drawnBecause).toBe("Fragmentor cannot run Python code yet, so this block is not run or tested");
+      expect(found.functionName).toBe("add");
+    });
+
+    it("says a Python block whose code does not import its contract is drawn as it stands", async () => {
+      await block("app/add", { ...ADD, code: "src/add.py#add" });
+      await source("src/add.py", 'async def add(input, caps):\n    return {"sum": 1}\n');
+
+      const found = await codeOf("app/add");
+      expect(found.bound).toBe(false);
+      expect(found.drawnBecause).toBe(
+        "src/add.py does not import its contract, so Fragmentor draws this code as it stands rather than checking or running it",
+      );
+    });
+
+    it("writes no contract for a capability port Python reserves, and says to rename it", async () => {
+      await block("app/add", { ...ADD, code: "src/add.py#add", capabilities: { class: { capability: "Logger" } } });
+      await source("src/add.py", PY_BOUND);
+
+      const found = await codeOf("app/add");
+      expect(found.contract).toBeNull();
+      expect(found.contractImport).toBeNull();
+      expect(found.bound).toBe(false);
+      expect(found.drawnBecause).toBe(
+        'its capability port "class" is a word Python reserves, so no contract can be written for it; rename the port',
+      );
+    });
+
+    it("draws a file no Python import can reach, even where its text names the contract", async () => {
+      // A hyphenated file name cannot be a module, so nothing in it can
+      // really import the contract, however its text reads.
+      await block("app/add", { ...ADD, code: "src/add-numbers.py#add" });
+      await source("src/add-numbers.py", PY_BOUND);
+
+      const found = await codeOf("app/add");
+      expect(found.bound).toBe(false);
+      expect(found.drawnBecause).toBe(
+        'Python cannot import src/add-numbers.py, because "add-numbers" cannot be part of a module\'s name, so Fragmentor draws this code as it stands',
+      );
+    });
+  });
+
   it("asks nothing of a block inside a plan, whatever pointer it was written with", async () => {
     // Its parent became a plan after it was written, so its pointer leads
     // nowhere by design. Nothing about a plan is a problem.

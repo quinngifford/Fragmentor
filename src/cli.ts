@@ -384,8 +384,10 @@ async function test(dir: string, requested: string[]): Promise<number> {
 
     // Code Fragmentor is only drawing cannot be run, so its saved tests are
     // not run either, and saying so beats reporting each of them as an error.
+    // A bound block can still be drawn — its language has no runner yet — and
+    // asking for tests nothing could run would be worse than saying why.
     const found = code.get(blockPath);
-    if (found && !found.bound) {
+    if (found && (!found.bound || found.drawnBecause !== null)) {
       drawn.push(`${blockPath}: ${found.problem ?? found.drawnBecause ?? "Fragmentor does not run this block."}`);
       continue;
     }

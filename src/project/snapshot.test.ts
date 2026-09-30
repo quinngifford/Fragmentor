@@ -100,6 +100,47 @@ describe("projectSnapshot", () => {
     expect(snapshot.blocks["double-it/add-to-self"]!.children).toEqual([]);
   });
 
+  it("holds a bound Python block short of runnable, because its language has no runner yet", async () => {
+    await writeFile(
+      path.join(dir, "fragmentor.json"),
+      JSON.stringify({ ...manifest, systems: [{ rootBlock: "double-it", language: "python" }] }),
+      "utf8",
+    );
+    await writeBlock(
+      blockDir(dir, "double-it"),
+      makeBlock({
+        id: "double-it",
+        name: "Double It",
+        code: "src/double_it.py#double_it",
+        inputs: { value: { type: t.number } },
+        outputs: { doubled: { type: t.number } },
+      }),
+    );
+    await writeFile(
+      path.join(dir, "src", "double_it.py"),
+      [
+        "from typing import TYPE_CHECKING",
+        "",
+        "if TYPE_CHECKING:",
+        "    from blocks._contracts.double_it.contract import DoubleItCaps, DoubleItInput, DoubleItOutput",
+        "",
+        "",
+        "async def double_it(input, caps):",
+        '    return {"doubled": input["value"] * 2}',
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const block = (await projectSnapshot(dir)).blocks["double-it"]!;
+    // Bound, so the code and contract travel together — but nothing may call
+    // it runnable or ask it for tests until the language can really run.
+    expect(block.drawnBecause).toBe("Fragmentor cannot run Python code yet, so this block is not run or tested");
+    expect(block.runnable).toBe(false);
+    expect(block.cases).toEqual([]);
+    expect(block.files.contract).toBe("blocks/_contracts/double_it/contract.py");
+  });
+
   it("carries the code it holds to a contract, and the contract once it is written", async () => {
     const before = (await projectSnapshot(dir)).blocks["double-it"]!;
     expect(before.sources.code).toContain("export async function doubleIt");

@@ -93,8 +93,13 @@ export interface LanguagePack {
   id: string;
   displayName: string;
 
-  /** The generated contract's file name, inside a block's folder. */
-  contractFile: string;
+  /**
+   * Where the generated contract of a block at this slash-joined path is
+   * written, relative to the project. TypeScript puts it in the block's own
+   * folder; a language whose imports cannot reach a hyphenated folder puts it
+   * in a mirror the language can import instead.
+   */
+  contractPath(blockPath: string): string;
   /** The shared module of capability declarations, at the blocks root. */
   capabilitiesFile: string;
 
@@ -116,11 +121,28 @@ export interface LanguagePack {
   capabilitiesSource(): string;
 
   /**
-   * How this language writes an import of a file `relativePath` away, which is
-   * how a block's code says it is held to its contract. Null where the
-   * language has no settled answer, and so no block of it is ever bound.
+   * What a block's code writes to import its contract, which is how it says it
+   * is held to it. Both paths are relative to the project: the contract from
+   * `contractPath`, and the file the import would be written in. Null where
+   * the language has no settled answer, and so no block of it is ever bound.
    */
-  contractSpecifier(relativePath: string): string | null;
+  contractSpecifier(contractPath: string, fromFile: string): string | null;
+
+  /**
+   * Why this language could not import the file a block's code pointer names,
+   * in words for whoever wrote it, or null where it could. A file no import
+   * can reach — a hyphen in a Python module's name, say — cannot import its
+   * contract either, so its block is drawn.
+   */
+  codeFileProblem?(file: string): string | null;
+
+  /**
+   * Why no contract can be written for this block in this language, in words,
+   * or null where one can. A Python capability port called `class`, say, has
+   * no way of being declared on a protocol. Such a block gets no contract at
+   * all, and the why becomes the reason it is drawn.
+   */
+  contractProblem?(block: Block): string | null;
 
   /**
    * Whether Fragmentor can execute a block in this language yet. A pack is
