@@ -222,6 +222,25 @@ function formatReport(report: CheckReport): string {
     }
   }
 
+  // The rules are the person's guard rails, so the agent is told all of
+  // them, not only the one it has just broken, and told whose they are.
+  if (report.rules.length > 0) {
+    lines.push("", "Rules");
+    lines.push(
+      "  These rules are the person's: never edit .fragmentor/rules.json, except to change a rule's block path when you move or rename the block it names. If one stands in your way, leave a note on its block.",
+    );
+    for (const rule of report.rules) {
+      const state =
+        rule.problem ??
+        (rule.brokenBy.length > 0
+          ? `broken by ${rule.brokenBy.join(", ")}`
+          : rule.declaredOnly
+            ? "kept, from what the diagram declares"
+            : "kept");
+      lines.push(`  ${rule.rule}: ${indent(state, "         ")}`);
+    }
+  }
+
   // Neither a plan nor a piece of the architecture is unfinished work, so
   // both are kept apart from it. One is a drawing of what has not been
   // started; the other is not Fragmentor's to write at all.

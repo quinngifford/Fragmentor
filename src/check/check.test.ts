@@ -114,6 +114,33 @@ describe("checkProject", () => {
     expect((await checkProject(dir)).generated.written).toEqual([]);
   }, 30_000);
 
+  it("carries the person's rules, and a definite break fails the check while a guessed one warns", async () => {
+    await mkdir(path.join(dir, ".fragmentor"), { recursive: true });
+    await writeFile(
+      path.join(dir, ".fragmentor", "rules.json"),
+      JSON.stringify({
+        rules: [
+          { rule: "tickets/box-office must never reach tickets/booking-api", why: "Only through the counter." },
+          { rule: "only tickets/booking-api may reach tickets/tickets-db" },
+        ],
+      }),
+      "utf8",
+    );
+
+    const report = await checkProject(dir);
+    expect(report.rules.map((rule) => ({ rule: rule.rule, brokenBy: rule.brokenBy }))).toEqual([
+      { rule: "tickets/box-office must never reach tickets/booking-api", brokenBy: ["tickets/box-office"] },
+      { rule: "only tickets/booking-api may reach tickets/tickets-db", brokenBy: ["tickets/reminders"] },
+    ]);
+    // The box office really does call the API, so that break is an error and
+    // fails the check. Reminders is planned, a guess, so it only warns.
+    expect(report.errorCount).toBe(1);
+    expect(report.problems).toEqual([
+      expect.objectContaining({ severity: "error", blockPath: "tickets/box-office" }),
+      expect.objectContaining({ severity: "warning", blockPath: "tickets/reminders" }),
+    ]);
+  }, 30_000);
+
   it("reports a block that returns the wrong shape, with its file and line", async () => {
     await writeFile(code("price-seat.ts"), `${HEADER}\n\n${SIGNATURE} {\n  return { price: String(input.fullPrice) };\n}\n`, "utf8");
 

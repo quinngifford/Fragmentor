@@ -22,6 +22,8 @@ import { boundStores, describeBound, storeEntries } from "./stores.js";
 import { NOTES_DIR, loadNotes, waitingOn } from "./notes.js";
 import { readProjectReach, undeclaredReach } from "./reach.js";
 import type { ProjectReach } from "./reach.js";
+import { RULES_FILE, evaluateRules, loadRules } from "./rules.js";
+import type { SnapshotRule } from "./rules.js";
 import type { Note, NoteAuthor } from "./notes.js";
 import { readCases, storeKeyProblems } from "../run/cases.js";
 import type { TestCase } from "../run/cases.js";
@@ -263,6 +265,8 @@ export interface ProjectSnapshot {
   executions: SnapshotExecution[];
   /** Every note left on a block, resolved ones too, oldest first. */
   notes: SnapshotNote[];
+  /** The person's rules over the architecture, each already held to the diagram and the code. */
+  rules: SnapshotRule[];
   diagnostics: ProjectDiagnostic[];
   /** Files whose code reaches something but lies under no block's pointer, so nothing accounts for it. */
   reachUnpointed: string[];
@@ -548,6 +552,24 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
   const executions = await executionsOf(project, code, fileProblems);
   const notes = atCommit ? [] : await notesOf(project, fileProblems);
 
+  // The person's rules, held to the same reading of reach the warnings above
+  // came from. A file that cannot be read is an error, because rules that
+  // silently stopped being checked would be worse than none.
+  let rules: SnapshotRule[] = [];
+  if (!atCommit) {
+    const loaded = await loadRules(projectDir);
+    if (loaded.problem !== null) {
+      fileProblems.push({
+        severity: "error",
+        blockPath: RULES_FILE,
+        message: `This file holds the person's rules, and none of them are checked until it can be read again: ${loaded.problem}`,
+      });
+    }
+    const held = evaluateRules(project, reach, loaded.rules);
+    rules = held.rules;
+    fileProblems.push(...held.diagnostics);
+  }
+
   return {
     dir: project.dir,
     name: project.manifest.name,
@@ -569,6 +591,7 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
     blocks,
     executions,
     notes,
+    rules,
     diagnostics: [...validateProject(project), ...fileProblems, ...reachProblems],
     reachUnpointed: reach?.unpointed ?? [],
   };

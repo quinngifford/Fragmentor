@@ -534,6 +534,21 @@ describe("the fields a change is made of", () => {
     blocks: (then) => delete then.blocks[findEvent],
     executions: (then) => (then.executions = then.executions.slice(1)),
     notes: (then) => (then.notes = []),
+    rules: (then) =>
+      (then.rules = [
+        {
+          rule: "tickets/box-office must never reach tickets/tickets-db",
+          kind: "never",
+          from: "tickets/box-office",
+          to: "tickets/tickets-db",
+          fromName: "Box Office",
+          toName: "Tickets Database",
+          why: null,
+          brokenBy: [],
+          declaredOnly: false,
+          problem: null,
+        },
+      ]),
     diagnostics: (then) => (then.diagnostics = [{ severity: "error", blockPath: findEvent, message: "Wrong." }]),
     reachUnpointed: (then) => (then.reachUnpointed = ["src/cron.ts"]),
   };

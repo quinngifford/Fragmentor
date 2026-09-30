@@ -52,6 +52,9 @@ export const projectFields: FieldTable<ProjectSnapshot> = {
   executions: compared,
   // A note is a conversation about the project, not part of it.
   notes: ignoredPrivate,
+  // What changed in the rules is `.fragmentor/rules.json`'s own diff, and the
+  // exported page carries problems only as a count.
+  rules: ignoredPrivate,
   // Problems lead the panels already, compared with nothing.
   diagnostics: ignoredPrivate,
   // What the code reaches is not read at a commit, and the files are the codebase's.

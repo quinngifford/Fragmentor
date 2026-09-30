@@ -1174,12 +1174,13 @@ type Kept = SwapRecord & { n: number; done: boolean };
 
 /**
  * What `.fragmentor/.gitignore` says: ignore everything here, this file
- * included, but the saved versions and the notes left on blocks. A copy of
- * old code kept for Undo swap is never committed and never shows as a change,
- * while every saved version and every note shows up to be committed with the
- * project, so everyone working on it has them.
+ * included, but the saved versions, the notes left on blocks and the person's
+ * rules. A copy of old code kept for Undo swap is never committed and never
+ * shows as a change, while every saved version, every note and every rule
+ * shows up to be committed with the project, so everyone working on it has
+ * them.
  */
-const IGNORED = "*\n!versions/\n!versions/**\n!notes/\n!notes/**\n";
+const IGNORED = "*\n!versions/\n!versions/**\n!notes/\n!notes/**\n!rules.json\n";
 
 /**
  * Makes `.fragmentor/.gitignore` say exactly that, before anything is written

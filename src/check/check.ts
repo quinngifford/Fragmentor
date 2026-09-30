@@ -5,6 +5,7 @@ import { loadProject } from "../project/project.js";
 import type { ProjectDiagnostic } from "../project/project.js";
 import { packFor, readAllCode } from "../project/code.js";
 import { projectSnapshot } from "../project/snapshot.js";
+import type { SnapshotRule } from "../project/rules.js";
 import { checkSystemCode } from "./typescript.js";
 import type { CodeProblem } from "./typescript.js";
 
@@ -76,6 +77,12 @@ export interface CheckReport {
   /** Files whose code reaches something but lies under no block's pointer. */
   reachUnpointed: string[];
   /**
+   * The person's rules, each already held to the diagram and the code. A
+   * broken one is among the problems above; this is the whole list, kept
+   * ones too, so the agent knows the rules before it breaks one.
+   */
+  rules: SnapshotRule[];
+  /**
    * The open notes, by who they are waiting for, as the block each is on:
    * a block with two notes waiting is named twice. A note is never an error,
    * because it says what someone wants done rather than what is wrong.
@@ -137,6 +144,7 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
       .filter((block) => block.reachNotChecked.length > 0)
       .map((block) => ({ blockPath: block.path, reasons: block.reachNotChecked })),
     reachUnpointed: snapshot.reachUnpointed,
+    rules: snapshot.rules,
     notes: {
       agent: snapshot.notes.filter((note) => note.waiting === "agent").map((note) => note.block),
       person: snapshot.notes.filter((note) => note.waiting === "person").map((note) => note.block),

@@ -99,7 +99,7 @@ describe("leaving a note", () => {
 
   it("makes sure notes are committed while everything else Fragmentor keeps is not", async () => {
     await addNote(dir, priceSeat, "person", "Hello.");
-    expect(await readFile(path.join(dir, ".fragmentor", ".gitignore"), "utf8")).toBe("*\n!versions/\n!versions/**\n!notes/\n!notes/**\n");
+    expect(await readFile(path.join(dir, ".fragmentor", ".gitignore"), "utf8")).toBe("*\n!versions/\n!versions/**\n!notes/\n!notes/**\n!rules.json\n");
   });
 
   it("gives two notes written in the same millisecond with the same words different ids", async () => {
