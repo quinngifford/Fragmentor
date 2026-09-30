@@ -319,10 +319,16 @@ async function renderWelcome(): Promise<void> {
 /* -------------------------------------------------------------------------- */
 
 function renderPanes(): void {
+  // The start screen is a page, not a workspace: the panes, and the toggles
+  // that show them, wait for a project to be about.
+  const open = Boolean(ui.dir);
+  const rail = open && ui.showRail;
+  const inspector = open && ui.showInspector;
+
   const columns: string[] = [];
-  if (ui.showRail) columns.push("232px");
+  if (rail) columns.push("232px");
   columns.push("minmax(0, 1fr)");
-  if (ui.showInspector) columns.push("5px", `${Math.round(ui.inspectorWidth)}px`);
+  if (inspector) columns.push("5px", `${Math.round(ui.inspectorWidth)}px`);
 
   element("panes").style.gridTemplateColumns = columns.join(" ");
 
@@ -331,14 +337,16 @@ function renderPanes(): void {
   handle.setAttribute("aria-valuemin", String(INSPECTOR_WIDTH.least));
   handle.setAttribute("aria-valuemax", String(INSPECTOR_WIDTH.most));
 
-  element("rail").hidden = !ui.showRail;
-  element("inspector-pane").hidden = !ui.showInspector;
-  element("inspector-splitter").hidden = !ui.showInspector;
+  element("rail").hidden = !rail;
+  element("inspector-pane").hidden = !inspector;
+  element("inspector-splitter").hidden = !inspector;
+  element("toggle-rail").hidden = !open;
+  element("toggle-inspector").hidden = !open;
   element("toggle-rail").setAttribute("aria-pressed", String(ui.showRail));
   element("toggle-inspector").setAttribute("aria-pressed", String(ui.showInspector));
 
   // Only worth offering with a project open to ask an agent about.
-  element("agent-commands").hidden = !ui.dir;
+  element("agent-commands").hidden = !open;
 }
 
 /** Dragging the edge between the diagram and the inspector, or nudging it with the arrow keys. */

@@ -1955,5 +1955,11 @@ button.change-row:hover .change-where { color: var(--signal); }
 .rule-paths { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); }
 .rule-state { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; font-size: 11.5px; color: var(--ink-dim); }
 .rule-state.bad { color: var(--bad); }
+/* The breaks, grouped by how sure Fragmentor is: red only where it is sure
+   something is wrong, amber for a guess, on the words and the chips alike. */
+.rule-broke { display: contents; }
+.rule-broke.bad { color: var(--bad); }
+.rule-broke.warn { color: var(--effect); }
+.rule-broke .btn { color: inherit; border-color: color-mix(in srgb, currentColor 45%, transparent); }
 .rule-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .rule-remove { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }

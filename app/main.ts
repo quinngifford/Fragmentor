@@ -1725,6 +1725,11 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
     ],
     ["without git the Changes bar stays out of the way", value("execution", "changesQuiet") === true],
     [
+      "before the first commit the Changes bar stays away, and the panel says to ask for one",
+      value("noCommitsYet", "barHidden") === true &&
+        /nothing has been committed yet\. Ask your agent to commit\./.test(String(value("noCommitsYet", "said"))),
+    ],
+    [
       "a block's panel offers to leave a note, before anything else about the block, while none is open",
       value("notesOffered", "opened") === true &&
         value("notesOffered", "of") === "tickets/booking-api/pricing/price-seat" &&
@@ -2110,6 +2115,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("menu", "noPageReload") === true &&
         value("menu", "closedWithNothingOpen") === true &&
         value("menu", "toolbar") === "agent-commands toggle-rail toggle-inspector" &&
+        value("menu", "startBare") === true &&
         value("waiting", "closeOffered") === true &&
         value("waiting", "reloadOffered") === true &&
         value("reloaded", "said") === true,
@@ -2223,6 +2229,10 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("closed", "startScreen") === true &&
         value("closed", "blocks") === 0 &&
         value("closed", "commandsHidden") === true &&
+        // The empty panes and their toggles leave with the project, and
+        // return with the next one.
+        value("closed", "panesAway") === true &&
+        value("application", "panesBack") === true &&
         value("closed", "closeOffered") === false,
     ],
     [
@@ -2344,6 +2354,10 @@ function attachSelfCheck(
           toolbar: (await window.webContents.executeJavaScript(
             `[...document.querySelectorAll(".toolbar button")].map((b) => b.id).join(" ")`,
           )) as string,
+          // The panes, and the toggles that show them, wait for a project.
+          startBare: (await window.webContents.executeJavaScript(
+            `["toggle-rail", "toggle-inspector", "inspector-pane"].every((id) => document.getElementById(id).hidden)`,
+          )) as boolean,
         };
 
         // Open Project… on a folder that is not a project yet offers to start
@@ -3095,6 +3109,7 @@ function attachSelfCheck(
             startScreen: Boolean(document.querySelector("#welcome-body .welcome-actions")),
             blocks: document.querySelectorAll(".block-box").length,
             commandsHidden: document.getElementById("agent-commands").hidden,
+            panesAway: ["toggle-rail", "toggle-inspector", "inspector-pane"].every((id) => document.getElementById(id).hidden),
             status: text("#status"),
           };
         `);
@@ -3141,6 +3156,8 @@ function attachSelfCheck(
             // What each block reaches is put away until it is asked for.
             dependencies: document.getElementById("show-dependencies").textContent,
             arrowsHidden: getComputedStyle(document.getElementById("access-layer")).display,
+            // The panes and their toggles came back with the project.
+            panesBack: !document.getElementById("toggle-rail").hidden && !document.getElementById("toggle-inspector").hidden && !document.getElementById("inspector-pane").hidden,
           };
         `);
         await capture(window, "self-check-application");
@@ -5477,6 +5494,21 @@ function attachSelfCheck(
           return { asked: true, gone, errorGone };
         `);
         report.ruleFileGone = { gone: await readFile(rulesFile, "utf8").then(() => false, () => true) };
+
+        // A repository nothing has been committed to yet behaves like one
+        // with no git at all: the bar stays away, and the panel says what to
+        // ask the agent for. A commit touches only .git, so the window hears
+        // of the new repository the same way, when the focus comes back.
+        await gitIn(check.messenger)("init", "--quiet");
+        await run("noCommitsYet", `${clearSelection}
+          window.dispatchEvent(new Event("focus"));
+          const changes = () => document.querySelector("#inspector [data-project-changes]");
+          const said = await until(() => (changes() && /nothing has been committed yet/.test(changes().textContent) ? changes().textContent : null), 15000);
+          return {
+            said: said || (changes() ? changes().textContent : ""),
+            barHidden: document.getElementById("changes-bar").hidden,
+          };
+        `);
 
         // A system bigger than the window opens with its names readable and
         // its top in view, the rest a drag away. Fit then shows all of it.

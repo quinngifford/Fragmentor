@@ -471,7 +471,8 @@ function buildBar(
   const controls = el("div", "exec-controls");
   const select = el("select", "exec-select");
   select.title = "An execution to step through on the tree: one run of the system, from what set it going";
-  select.append(new Option("No execution", ""));
+  // An invitation to pick one, not a report that none is picked.
+  select.append(new Option("Executions…", ""));
   for (const execution of executions) select.append(new Option(execution.name, execution.id));
   select.addEventListener("change", () => choose(select.value === "" ? null : select.value));
   controls.append(select);

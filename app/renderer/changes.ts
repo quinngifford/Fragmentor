@@ -35,9 +35,9 @@ export function onChangesChange(callback: () => void): void {
   redrawAll = callback;
 }
 
-/** Where the person last looked: the commit that was newest then, or null before any commit. */
+/** Where the person last looked: the commit that was newest then. Before any commit there is no bookmark at all. */
 interface Bookmark {
-  commit: string | null;
+  commit: string;
   date: string;
 }
 
@@ -48,7 +48,9 @@ function readBookmark(dir: string): Bookmark | null {
     const raw: unknown = JSON.parse(localStorage.getItem(bookmarkKey(dir)) ?? "null");
     if (raw === null || typeof raw !== "object" || !("commit" in raw)) return null;
     const commit = (raw as { commit: unknown }).commit;
-    if (commit !== null && typeof commit !== "string") return null;
+    // An older Fragmentor could bookmark a project before its first commit,
+    // and such a mark would list the whole project as new for ever.
+    if (typeof commit !== "string") return null;
     return { commit, date: String((raw as { date?: unknown }).date ?? "") };
   } catch {
     return null;
@@ -119,23 +121,27 @@ export async function refreshChanges(): Promise<void> {
   facts = result.ok ? result.value : { unavailable: `What changed cannot be read: ${result.error}` };
   // The first time this folder is ever opened, what is on screen is what the
   // person has seen, so looking starts here rather than at everything new.
-  if (firstEver) {
-    bookmark = { commit: facts.unavailable === null ? (facts.head?.hash ?? null) : null, date: new Date().toISOString() };
+  // Before the first commit there is no look to keep: a bookmark without a
+  // commit would list the whole project as new after a restart.
+  let startedLooking = false;
+  if (firstEver && facts.unavailable === null && facts.head !== null) {
+    bookmark = { commit: facts.head.hash, date: new Date().toISOString() };
     seenSnapshot = ui.snapshot;
     writeBookmark(dir, bookmark);
     // The commits were read against no bookmark at all, which is the whole
     // history; nothing is since the look that has only just begun.
-    if (facts.unavailable === null) facts = { ...facts, since: [], more: false };
+    facts = { ...facts, since: [], more: false };
+    startedLooking = true;
   }
-  if (firstEver || JSON.stringify(facts) !== before) redrawAll();
+  if (startedLooking || JSON.stringify(facts) !== before) redrawAll();
 }
 
 /** Holds what is on screen now as the new "then", and remembers the newest commit for after a restart. Nothing is written into the project. */
 function markSeen(): void {
   const dir = ui.dir;
-  if (dir === null || ui.snapshot === null || facts === null) return;
+  if (dir === null || ui.snapshot === null || facts === null || facts.unavailable !== null || facts.head === null) return;
   seenSnapshot = ui.snapshot;
-  bookmark = { commit: facts.unavailable === null ? (facts.head?.hash ?? null) : null, date: new Date().toISOString() };
+  bookmark = { commit: facts.head.hash, date: new Date().toISOString() };
   writeBookmark(dir, bookmark);
   listOpen = false;
   redrawAll();
@@ -146,8 +152,8 @@ function markSeen(): void {
 /** After a rewritten history, looking starts again from the newest commit. */
 function startFromHead(): void {
   const dir = ui.dir;
-  if (dir === null || facts === null || facts.unavailable !== null) return;
-  bookmark = { commit: facts.head?.hash ?? null, date: new Date().toISOString() };
+  if (dir === null || facts === null || facts.unavailable !== null || facts.head === null) return;
+  bookmark = { commit: facts.head.hash, date: new Date().toISOString() };
   writeBookmark(dir, bookmark);
   redrawAll();
   void refreshChanges();
@@ -188,7 +194,7 @@ function thenFor(which: Point): ThenSide {
   if (facts.unavailable !== null) return { problem: facts.unavailable };
   if (which === "looked") {
     if (seenSnapshot !== null) return { snapshot: seenSnapshot };
-    if (bookmark === null || bookmark.commit === null) return { snapshot: null };
+    if (bookmark === null) return { snapshot: null };
     if (!facts.baseKnown) return { problem: REWRITTEN };
     return fromCommit(bookmark.commit);
   }
@@ -231,7 +237,8 @@ function summary(changes: ProjectChanges): string {
 /**
  * The bar above the drawing once something has changed: the counts, leading
  * to the list, and Mark as seen. Nothing while nothing has changed, while
- * the project is waiting for its agent, or while git cannot say.
+ * the project is waiting for its agent, while git cannot say, or before
+ * anything has been committed, when there is no history to say it from.
  */
 export function renderChangesBar(): void {
   const bar = document.getElementById("changes-bar");
@@ -239,7 +246,7 @@ export function renderChangesBar(): void {
   bar.replaceChildren();
   bar.hidden = true;
   if (ui.dir === null || ui.snapshot === null || ui.waiting) return;
-  if (facts === null || facts.unavailable !== null) return;
+  if (facts === null || facts.unavailable !== null || facts.head === null) return;
   // The first minutes of a new project belong to the first-steps window.
   const firstSteps = document.querySelector<HTMLElement>("dialog.first-steps[open]");
   if (firstSteps) {
@@ -340,6 +347,12 @@ export function projectChangesSection(): HTMLElement {
     node.append(el("p", "bench-note", facts.unavailable));
     return node;
   }
+  // A repository with no commits yet has no history to read changes from,
+  // said in the same voice as a folder with no git at all.
+  if (facts.head === null) {
+    node.append(el("p", "bench-note", "Changes come from the project's git history, and nothing has been committed yet. Ask your agent to commit."));
+    return node;
+  }
 
   // Which point the list starts from: the two the person can mean.
   const pick = el("div", "changes-point");
@@ -363,7 +376,7 @@ export function projectChangesSection(): HTMLElement {
   pick.append(label, select);
   node.append(pick);
 
-  if (point === "looked" && seenSnapshot === null && bookmark !== null && bookmark.commit !== null && !facts.baseKnown) {
+  if (point === "looked" && seenSnapshot === null && bookmark !== null && !facts.baseKnown) {
     node.append(el("p", "bench-note", REWRITTEN));
     const restart = el("button", "btn quiet", "Start again from the last commit");
     restart.type = "button";
@@ -411,7 +424,7 @@ export function projectChangesSection(): HTMLElement {
 
   // A restart lets the exact drawing marked as seen go, so the comparison
   // starts at the commit marked instead, and uncommitted work shows again.
-  if (point === "looked" && seenSnapshot === null && bookmark !== null && bookmark.commit !== null) {
+  if (point === "looked" && seenSnapshot === null && bookmark !== null) {
     node.append(el("p", "bench-note", "After a restart the comparison is with the commit you marked, so work not committed yet shows again."));
   }
 
@@ -493,7 +506,7 @@ function compareWithThen(block: SnapshotBlock, changes: ProjectChanges, then: Pr
  * something. A block that has not changed shows nothing at all.
  */
 export function blockChangesSection(block: SnapshotBlock): HTMLElement | null {
-  if (facts === null || facts.unavailable !== null) return null;
+  if (facts === null || facts.unavailable !== null || facts.head === null) return null;
   const state = changesFor(point);
   if (!("changes" in state)) return null;
   const change = state.changes.blocks.find((each) => each.path === block.path && each.kind !== "removed");

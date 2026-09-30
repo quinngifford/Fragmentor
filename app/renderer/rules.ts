@@ -93,7 +93,8 @@ function addRule(text: string): void {
 function removeControls(rule: string): HTMLElement {
   const wrap = el("div", "rule-remove");
   if (confirming === rule) {
-    wrap.append(el("span", "bench-note bad", "Remove this rule? Fragmentor stops checking it, for everyone once the project is committed."));
+    // A question, not something wrong, so it is not dressed in red.
+    wrap.append(el("span", "bench-note", "Remove this rule? Fragmentor stops checking it, for everyone once the project is committed."));
     const yes = el("button", "run-btn", "Remove it");
     yes.disabled = busy;
     yes.addEventListener("click", () => {
@@ -227,21 +228,23 @@ function ruleRow(rule: SnapshotRule): HTMLElement {
     state.classList.add("bad");
     state.textContent = rule.problem;
   } else if (rule.brokenBy.length > 0) {
-    state.classList.add("bad");
-    // A break Fragmentor guessed at is said to be one, apart from those it is sure of.
-    const say = (words: string, paths: string[]) => {
+    // A break Fragmentor guessed at is a warning, amber like any other:
+    // red is kept for the breaks it is sure of.
+    const say = (tone: "bad" | "warn", words: string, paths: string[]) => {
       if (paths.length === 0) return;
-      state.append(el("span", undefined, words));
+      const group = el("span", `rule-broke ${tone}`);
+      group.append(el("span", undefined, words));
       for (const blockPath of paths) {
         const name = ui.snapshot?.blocks[blockPath]?.name ?? blockPath;
         const go = el("button", "btn quiet tiny", name);
         go.title = "Show this block";
         go.addEventListener("click", () => revealBlock(blockPath));
-        state.append(go);
+        group.append(go);
       }
+      state.append(group);
     };
-    say("broken by", rule.brokenBy.filter((blockPath) => !rule.guessed.includes(blockPath)));
-    say("may be broken by", rule.guessed);
+    say("bad", "broken by", rule.brokenBy.filter((blockPath) => !rule.guessed.includes(blockPath)));
+    say("warn", "may be broken by", rule.guessed);
   } else {
     state.textContent = rule.declaredOnly ? "kept, from what the diagram declares" : "kept";
   }
