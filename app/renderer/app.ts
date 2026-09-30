@@ -34,6 +34,7 @@ import { closeWindow, onLinesNoted, openBlockWindow, setUpWindows } from "./popu
 import { benchWindowIsOpen, closeBenchWindow, onBenchWindowChange, renderBenchWindow } from "./benchpanel.js";
 import { forgetVersions, onVersionsChange, refreshVersions } from "./versions.js";
 import { forgetNotes, noteOn, onNotesChange, openCommandsWindow, renderNotesBar, showNotesOf } from "./notes.js";
+import { forgetRules, onRulesChange } from "./rules.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
 
@@ -73,6 +74,7 @@ function forgetProject(): void {
   forgetBlocks(null);
   forgetVersions();
   forgetNotes();
+  forgetRules();
   ui.status = null;
   ui.selection.clear();
   ui.selectedLink = null;
@@ -646,6 +648,13 @@ try {
   });
   // A note written from the window is shown at once, rather than when the watcher next hears.
   onNotesChange({
+    all: render,
+    reload: async () => {
+      await reload();
+    },
+  });
+  // So is a rule: made or removed, the project is read again straight away.
+  onRulesChange({
     all: render,
     reload: async () => {
       await reload();

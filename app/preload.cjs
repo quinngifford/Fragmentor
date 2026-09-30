@@ -34,6 +34,8 @@ const CHANNELS = {
   deleteSavedVersion: "block:delete-saved-version",
   editSavedVersion: "block:edit-saved-version",
   addNote: "note:add",
+  addRule: "rule:add",
+  removeRule: "rule:remove",
   replyToNote: "note:reply",
   resolveNote: "note:resolve",
   deleteNote: "note:delete",
@@ -77,6 +79,8 @@ contextBridge.exposeInMainWorld("fragmentor", {
   editSavedVersion: (dir, blockPath, id, name, description) =>
     ipcRenderer.invoke(CHANNELS.editSavedVersion, dir, blockPath, id, name, description),
   addNote: (dir, blockPath, text, extras) => ipcRenderer.invoke(CHANNELS.addNote, dir, blockPath, text, extras),
+  addRule: (dir, rule, why) => ipcRenderer.invoke(CHANNELS.addRule, dir, rule, why),
+  removeRule: (dir, rule) => ipcRenderer.invoke(CHANNELS.removeRule, dir, rule),
   replyToNote: (dir, id, text, extras) => ipcRenderer.invoke(CHANNELS.replyToNote, dir, id, text, extras),
   rerunNote: (dir, id) => ipcRenderer.invoke(CHANNELS.rerunNote, dir, id),
   refreshAgentFiles: (dir) => ipcRenderer.invoke(CHANNELS.refreshAgentFiles, dir),

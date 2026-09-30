@@ -40,6 +40,7 @@ import {
 } from "../src/project/history.js";
 import type { BlockVersions, SavedVersion, SwapDone, VersionRef } from "../src/project/history.js";
 import { MOST_NOTE_TEXT, addNote, deleteNote, flaggedRunOf, isNotePath, markWorking, noteById, replyToNote, resolveNote } from "../src/project/notes.js";
+import { addRule, isRulesPath, removeRule } from "../src/project/rules.js";
 import type { FlaggedRun, Note, NoteAnchor } from "../src/project/notes.js";
 import { compareWithVersion } from "../src/run/versions.js";
 import type { VersionComparison } from "../src/run/versions.js";
@@ -266,9 +267,10 @@ function watchProject(contents: Electron.WebContents, dir: string): void {
   try {
     watcher = watch(dir, { recursive: true }, (_event, filename) => {
       // The folders tools keep inside a project are nobody's business, by the
-      // same rule that keeps them out of a block's versions. Notes are the
-      // exception: the agent answers them while the person watches.
-      if (filename && noise(filename) && !isNotePath(filename)) return;
+      // same rule that keeps them out of a block's versions. Notes and rules
+      // are the exceptions: the agent answers a note, or re-points a rule at
+      // a block it moved, while the person watches.
+      if (filename && noise(filename) && !isNotePath(filename) && !isRulesPath(filename)) return;
       clearTimeout(timer);
       timer = setTimeout(notify, 300);
     });
@@ -750,6 +752,27 @@ function registerHandlers(): void {
       }
     },
   );
+
+  // A rule is made and removed only here, never by the agent: the kernel
+  // refuses a pair that could never break a rule. Nothing else needs
+  // regenerating, because the rules reach the agent through its check.
+  ipcMain.handle(CHANNELS.addRule, async (_event, dir: unknown, rule: unknown, why: unknown): Promise<Result<null>> => {
+    try {
+      await addRule(sent(dir), sent(rule, "A rule", 400), why === undefined ? undefined : sent(why, "A rule's reason", MOST_NOTE_TEXT));
+      return ok(null);
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  ipcMain.handle(CHANNELS.removeRule, async (_event, dir: unknown, rule: unknown): Promise<Result<null>> => {
+    try {
+      await removeRule(sent(dir), sent(rule, "A rule", 400));
+      return ok(null);
+    } catch (error) {
+      return failed(error);
+    }
+  });
 
   ipcMain.handle(CHANNELS.refreshAgentFiles, async (_event, dir: unknown): Promise<Result<null>> => {
     try {
@@ -1937,6 +1960,25 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         /dispatch from src\/client\/state\.ts/.test(String(value("reachWarned", "words"))) &&
         value("reachWarned", "flag") === true &&
         value("reachDeclared", "gone") === true,
+    ],
+    [
+      "a rule is made from two blocks picked out together, committed with the project, broken like any other problem, and removed only after asking",
+      value("ruleMade", "offered") === true &&
+        value("ruleMade", "onOffer") === true &&
+        value("ruleMade", "made") === true &&
+        value("ruleOnDisk", "rules") === 1 &&
+        value("ruleOnDisk", "sentence") === "app/workers must never reach app/client" &&
+        value("ruleOnDisk", "why") === "The page hears of things through the queue." &&
+        value("ruleOnDisk", "committable") === true &&
+        String(value("ruleBroken", "brokenBy")).includes("Deliver Notification") &&
+        value("ruleBroken", "severity") === "error" &&
+        /Breaks the rule/.test(String(value("ruleBroken", "words"))) &&
+        value("ruleBroken", "flagged") === true &&
+        value("ruleBroken", "red") === true &&
+        value("ruleRemoved", "asked") === true &&
+        value("ruleRemoved", "gone") === true &&
+        value("ruleRemoved", "errorGone") === true &&
+        value("ruleFileGone", "gone") === true,
     ],
     [
       "a project just made says what to send the agent first, from the answers given, and lists every command",
@@ -5000,6 +5042,98 @@ function attachSelfCheck(
         await run("reachDeclared", `${reachLine}
           return { gone: Boolean(await until(() => !reachLine(), 10000)) };
         `);
+
+        // A rule is made from two blocks picked out together, is written to
+        // .fragmentor/rules.json for git to carry, and a break shows like any
+        // other problem: on the block whose reach breaks it, with Flag.
+        const clearSelection = `
+          const svg = document.getElementById("canvas-svg");
+          svg.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+          svg.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+          await wait(400);
+        `;
+        await run("ruleMade", `
+          const press = (id, ctrlKey) =>
+            document.querySelector('.block-box[data-id="' + id + '"]').dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, ctrlKey }));
+          press("workers", false);
+          await wait(300);
+          press("client", true);
+          await wait(400);
+          const button = (label) => {
+            const offers = document.querySelector("#inspector [data-rule-offers]");
+            return offers ? [...offers.querySelectorAll("button")].find((b) => b.textContent === label) : null;
+          };
+          const add = await until(() => button("Add a rule…"));
+          if (!add) return { offered: false };
+          add.click();
+          const never = await until(() => button("Workers must never reach Client"));
+          if (!never) return { offered: true, made: false };
+          const onOffer = Boolean(button("Only Workers may reach Client"));
+          const why = document.querySelector("#inspector .rule-why");
+          why.value = "The page hears of things through the queue.";
+          why.dispatchEvent(new Event("input", { bubbles: true }));
+          never.click();
+          // Once the rule is written, the offers fold back to the button.
+          const made = Boolean(await until(() => button("Add a rule…"), 10000));
+          return { offered: true, onOffer, made };
+        `);
+        const rulesFile = path.join(check.messenger, ".fragmentor", "rules.json");
+        report.ruleOnDisk = await (async () => {
+          try {
+            const raw = JSON.parse(await readFile(rulesFile, "utf8")) as { rules: { rule: string; why?: string }[] };
+            return {
+              rules: raw.rules.length,
+              sentence: raw.rules[0]?.rule ?? "",
+              why: raw.rules[0]?.why ?? "",
+              committable: /!rules\.json/.test(await readFile(path.join(check.messenger, ".fragmentor", ".gitignore"), "utf8")),
+            };
+          } catch (error) {
+            return { error: messageOf(error) };
+          }
+        })();
+        await run("ruleBroken", `${clearSelection}
+          const rules = await until(() => document.querySelector("#inspector [data-rules]"), 10000);
+          if (!rules) return { listed: false };
+          const brokenBy = [...rules.querySelectorAll(".rule-state button")].map((b) => b.textContent).join(" ");
+          const node = (id) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === id);
+          node("deliver-notification").click();
+          const line = await until(() => [...document.querySelectorAll("#inspector .problem")].find((p) => /Breaks the rule/.test(p.textContent)), 10000);
+          if (!line) return { listed: true, brokenBy, broken: false };
+          line.scrollIntoView({ block: "center" });
+          const holder = line.closest(".problem-line");
+          const flag = holder ? [...holder.querySelectorAll("button")].find((b) => b.textContent === "Flag") : null;
+          if (flag) flag.click();
+          // Flagging leaves a note, which redraws the panel, so the marker is
+          // looked for on the line as it is drawn then, not the one clicked.
+          const flagged = Boolean(await until(() => {
+            const drawn = [...document.querySelectorAll("#inspector .problem")].find((p) => /Breaks the rule/.test(p.textContent));
+            return drawn && drawn.closest(".problem-line").querySelector(".problem-flagged");
+          }, 10000));
+          return {
+            listed: true,
+            brokenBy,
+            broken: true,
+            severity: line.querySelector(".problem-level").textContent,
+            words: line.querySelector(".problem-text").textContent,
+            flagged,
+            red: Boolean(await until(() => document.querySelector('.block-box[data-id="deliver-notification"][data-failing="true"]'))),
+          };
+        `);
+        await capture(window, "self-check-rules");
+        await run("ruleRemoved", `${clearSelection}
+          const inRules = () => [...document.querySelectorAll("#inspector [data-rules] button")];
+          const remove = await until(() => inRules().find((b) => b.textContent === "Remove"), 10000);
+          if (!remove) return { asked: false };
+          remove.click();
+          // Remove asks before it deletes; only "Remove it" removes.
+          const sure = await until(() => inRules().find((b) => b.textContent === "Remove it"));
+          if (!sure) return { asked: false };
+          sure.click();
+          const gone = Boolean(await until(() => !document.querySelector("#inspector [data-rules]"), 10000));
+          const errorGone = ![...document.querySelectorAll("#inspector .problem")].some((p) => /Breaks the rule/.test(p.textContent));
+          return { asked: true, gone, errorGone };
+        `);
+        report.ruleFileGone = { gone: await readFile(rulesFile, "utf8").then(() => false, () => true) };
 
         // A system bigger than the window opens with its names readable and
         // its top in view, the rest a drag away. Fit then shows all of it.

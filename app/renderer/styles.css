@@ -1864,3 +1864,39 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
 @media (prefers-reduced-motion: reduce) {
   .note-mark[data-working="true"] .note-mark-dot { stroke: var(--ink); stroke-width: 2.5; }
 }
+
+/* ---- rules ---- */
+
+/* The two rules offered between two picked-out blocks, each a button worded
+   as the sentence it would make. */
+.rule-offer { display: flex; flex-direction: column; gap: 4px; }
+.rule-offer-made { font-size: 12px; color: var(--ink); }
+.rule-why {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--ground);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  color: var(--ink);
+  padding: 6px 8px;
+  width: 100%;
+}
+.rule-why::placeholder { color: var(--ink-faint); }
+
+/* One rule on the project's panel: the sentence, where it stands, and what
+   can be done with it. */
+.rule-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--ground);
+}
+.rule-words { font-size: 12px; color: var(--ink); }
+.rule-paths { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); }
+.rule-state { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; font-size: 11.5px; color: var(--ink-dim); }
+.rule-state.bad { color: var(--bad); }
+.rule-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.rule-remove { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }

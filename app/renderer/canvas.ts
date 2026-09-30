@@ -1464,7 +1464,14 @@ export function setUpCanvasGestures(): void {
     if (target.closest(".block-box") || target.closest(".access-group")) return;
     pan = { x: event.clientX, y: event.clientY, panX: ui.panX, panY: ui.panY, moved: false };
     svg.classList.add("panning");
-    svg.setPointerCapture(event.pointerId);
+    // The pointer can be gone again before this runs — a touch lifted at
+    // once, or a click the self-check plays in. Panning works uncaptured;
+    // only a drag that leaves the window would stop early.
+    try {
+      svg.setPointerCapture(event.pointerId);
+    } catch {
+      /* nothing to capture */
+    }
   });
 
   svg.addEventListener("pointermove", (event) => {

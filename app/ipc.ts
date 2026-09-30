@@ -43,6 +43,8 @@ export const CHANNELS = {
   deleteSavedVersion: "block:delete-saved-version",
   editSavedVersion: "block:edit-saved-version",
   addNote: "note:add",
+  addRule: "rule:add",
+  removeRule: "rule:remove",
   replyToNote: "note:reply",
   resolveNote: "note:resolve",
   deleteNote: "note:delete",
@@ -180,6 +182,10 @@ export interface FragmentorApi {
   editSavedVersion(dir: string, blockPath: string, id: string, name: string, description: string): Promise<Result<SavedVersion>>;
   /** Leaves a note from the person on a block: with the run or the problem it flags, and on some lines or a step, where it is. */
   addNote(dir: string, blockPath: string, text: string, extras?: { run?: FlaggedRun; problem?: string; on?: NoteAnchor }): Promise<Result<Note>>;
+  /** Adds one of the person's rules, as its sentence, with their reason when they gave one. */
+  addRule(dir: string, rule: string, why?: string): Promise<Result<null>>;
+  /** Removes one of the person's rules, by its sentence. */
+  removeRule(dir: string, rule: string): Promise<Result<null>>;
   /** Adds the person's reply to a note, with a run that still goes wrong where there is one, which hands it to the agent, opening it again if it was resolved. */
   replyToNote(dir: string, id: string, text: string, extras?: { run?: FlaggedRun }): Promise<Result<Note>>;
   /** Runs the run a note flags again, as it was flagged, and says how it went, without touching the block's saved tests. */

@@ -9,6 +9,7 @@ import { STEP_LINK, stepPage } from "./execution.js";
 import { openBenchWindow } from "./benchpanel.js";
 import { versionBadge, versionsSection } from "./versions.js";
 import { holdOffer, noteOn, notesSection, problemFlag, projectNotesSection } from "./notes.js";
+import { ruleOffers, rulesSection } from "./rules.js";
 import { el, keepingFocus, section } from "./dom.js";
 import { codeBlock, codeFragment, codeLines, languageOf } from "./highlight.js";
 
@@ -506,6 +507,15 @@ function build(panel: HTMLElement): void {
 
   if (ui.selection.size > 1) {
     multiPanel(panel);
+    // Exactly two blocks picked out together are what a rule is between.
+    // The offer writes through the kernel, so it is mounted here, beside
+    // multiPanel, which stays free of anything that talks to main.
+    if (ui.selection.size === 2) {
+      const [firstPath, secondPath] = [...ui.selection];
+      const first = ui.snapshot?.blocks[firstPath!];
+      const second = ui.snapshot?.blocks[secondPath!];
+      if (first && second) panel.insertBefore(ruleOffers(first, second), panel.lastElementChild);
+    }
     return;
   }
 
@@ -528,6 +538,11 @@ function build(panel: HTMLElement): void {
 
   const problems = problemsSection(snapshot.diagnostics, true);
   if (problems) panel.append(problems);
+
+  // The person's rules, right under the problems a broken one joins. A
+  // project with none shows nothing here.
+  const rules = rulesSection();
+  if (rules) panel.append(rules);
 
   panel.append(projectNotesSection());
 
