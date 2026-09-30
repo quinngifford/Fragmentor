@@ -1431,7 +1431,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         const driftAt = Number(/^(\d+) of 20$/.exec(String(drift?.at?.count))?.[1]);
         return (
           // Where the run could not see is said to be so, never counted as agreeing.
-          seen?.agrees?.text === "Agrees where the recording could see" &&
+          seen?.agrees?.text === "Agrees with the recording, where it could see" &&
           seen?.agrees?.bad === false &&
           // Counted as the pages count: the trigger cannot be checked, and answers go with their calls.
           /^Of the 15 steps written down, not counting answers, 11 seen, 0 not seen, and 4 that cannot be checked/.test(String(seen?.agrees?.title)) &&
@@ -1470,7 +1470,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
           none?.text === "Nothing written down could be checked from this run" &&
           none?.none === true &&
           back?.agrees === true &&
-          back?.text === "Agrees where the recording could see" &&
+          back?.text === "Agrees with the recording, where it could see" &&
           back?.again === true &&
           // Seen again, the step's note no longer starts with the old finding, and what is typed is kept.
           back?.fixed === "seen" &&
@@ -1652,6 +1652,13 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("historyFolded", "folded") === 5 &&
         value("historyFolded", "unfolded") === 6 &&
         value("historyFolded", "back") === 5,
+    ],
+    [
+      "the first look at a project starts at its first opening, with nothing listed as committed since",
+      value("firstLook", "read") === true &&
+        value("firstLook", "nothing") === true &&
+        value("firstLook", "sinceListed") === false &&
+        value("firstLook", "barHidden") === true,
     ],
     [
       "the bar above the drawing says what changed since the person last looked",
@@ -1898,7 +1905,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("execution", "offered") === "clean-up-sessions deliver-a-notification log-in log-out send-a-message" &&
         value("execution", "source") === "Written down" &&
         value("execution", "recordDisabled") === true &&
-        /^"Send Button" answers app\/client\/ui\/send-button, but cannot be recorded: .*does not import its contract/.test(String(value("execution", "unrecordable"))) &&
+        String(value("execution", "unrecordable")) === '"Send Button" answers app/client/ui/send-button, but its code is not held to its contract yet, so it cannot be recorded.' &&
         value("execution", "count") === "1 of 19" &&
         // What sets it going, in the agent's words, from outside the system.
         /Someone uses Send Button/.test(String(value("execution", "caption"))) &&
@@ -2045,11 +2052,12 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("readiness", "found") === true,
     ],
     [
-      "a drawn block whose ports are types offers to be held to its contract, which leaves the agent a note, and one written in words offers nothing",
+      "a drawn block whose ports are types offers to be held to its contract, with the reason left to the offer's own sentence, and one written in words offers nothing",
       value("holdOffered", "opened") === true &&
         value("holdOffered", "inWords") === true &&
         value("holdOffered", "wordsOffered") === false &&
-        value("holdOffered", "notImported") === true &&
+        value("holdOffered", "offered") === true &&
+        value("holdOffered", "jargonQuiet") === true &&
         value("holdOffered", "button") === "Hold to its contract" &&
         value("held", "noted") === true &&
         value("held", "waiting") === "agent" &&
@@ -2140,9 +2148,11 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
       value("problems", "listed") === true && value("problems", "counted") === true,
     ],
     [
-      "code that does not import its contract is drawn, read-only, with nothing to run and the reason on show",
+      "code that does not import its contract is drawn, read-only, with nothing to run and the reason left to the offer's plain sentence",
       /^src\/booking\/cancel-booking\.ts/.test(String(value("drawnOnly", "where"))) &&
-        /does not import/.test(String(value("drawnOnly", "reason"))) &&
+        value("drawnOnly", "offered") === true &&
+        /cannot check or run it yet/.test(String(value("drawnOnly", "offerWords"))) &&
+        value("drawnOnly", "jargonQuiet") === true &&
         value("drawnOnly", "noEditor") === true &&
         value("drawnOnly", "noBench") === true &&
         value("drawnOnly", "drawn") === true &&
@@ -2969,14 +2979,16 @@ function attachSelfCheck(
           if (!node) return { found: false };
           node.click();
           const where = await until(() => text(".code-where"));
-          const reason = await until(() => {
-            const note = [...document.querySelectorAll(".code-foot .bench-note")].find((p) => /does not import/.test(p.textContent));
-            return note ? note.textContent : null;
-          });
+          // The Hold offer's sentence says why the code is only drawn, so no
+          // line above it says the same in jargon.
+          const offer = await until(() => document.querySelector("#inspector .hold-offer"));
+          const jargonQuiet = ![...document.querySelectorAll(".code-foot .bench-note")].some((p) => /does not import/.test(p.textContent));
           return {
             found: true,
             where,
-            reason: reason || "",
+            offered: Boolean(offer),
+            offerWords: offer ? (offer.querySelector("span") || {}).textContent || "" : "",
+            jargonQuiet,
             noEditor: !document.querySelector(".code-edit-input"),
             noBench: ![...document.querySelectorAll("#inspector .section h4")].some((h) => h.textContent === "Run"),
             drawn: /drawn/.test(text("#inspector .badge.state")),
@@ -3132,6 +3144,21 @@ function attachSelfCheck(
           };
         `);
         await capture(window, "self-check-application");
+
+        // The first look at a project ever opened here starts now: however
+        // long its history is, nothing is listed as committed since, nothing
+        // has changed, and the bar stays away.
+        await run("firstLook", `
+          const changes = () => document.querySelector("#inspector [data-project-changes]");
+          if (!(await until(() => changes() && !/Reading what changed/.test(changes().textContent), 15000))) return { read: false };
+          await wait(300);
+          return {
+            read: true,
+            nothing: /Nothing has changed since you last looked/.test(changes().textContent),
+            sinceListed: /Committed since you last looked/.test(changes().textContent),
+            barHidden: document.getElementById("changes-bar").hidden,
+          };
+        `);
 
         // What each block is able to reach, which is a different question
         // from what it is part of, and is drawn as arrows over the tree.
@@ -3728,7 +3755,7 @@ function attachSelfCheck(
         await writeFile(bookSeatsFile, beforeDrift, "utf8");
         await run("verdictsBack", `${verdictHelpers}
           // Waited for by what it says, since the bar was not red before either.
-          const agrees = Boolean(await until(() => pill()?.textContent === "Agrees where the recording could see" && pill().dataset.bad !== "true", 15000));
+          const agrees = Boolean(await until(() => pill()?.textContent === "Agrees with the recording, where it could see" && pill().dataset.bad !== "true", 15000));
           const state = { agrees, text: pill()?.textContent, again: Boolean(button("Record again")) };
           // The step is seen now, so a note on it no longer starts with what
           // was found wrong before; what the person types is still kept.
@@ -5084,7 +5111,7 @@ function attachSelfCheck(
             offered,
             outside,
             source: text('.exec-source[aria-pressed="true"]'),
-            // Its code does not import its contract, so it cannot be recorded, and the bar says why.
+            // Its code is not held to its contract, so it cannot be recorded, and the bar says why in plain words.
             recordDisabled: record ? record.disabled : "no Record button",
             // The messenger has no git, so the Changes bar has nothing to say.
             changesQuiet: document.getElementById("changes-bar").hidden,
@@ -5293,14 +5320,17 @@ function attachSelfCheck(
           const inWords = await drawnBecause(/written in words/);
           const wordsOffered = Boolean(document.querySelector("#inspector .hold-offer"));
           node("save-message").click();
-          const notImported = await drawnBecause(/does not import its contract/);
-          const hold = document.querySelector("#inspector .hold-offer");
+          // The offer's own sentence says why the code is only drawn, so the
+          // technical reason stays out of the panel while it shows.
+          const hold = await until(() => document.querySelector("#inspector .hold-offer"));
           if (hold) hold.scrollIntoView({ block: "center" });
+          const jargonQuiet = ![...document.querySelectorAll("#inspector .code-foot .bench-note")].some((p) => /does not import its contract/.test(p.textContent));
           return {
             opened: true,
             inWords,
             wordsOffered,
-            notImported,
+            offered: Boolean(hold),
+            jargonQuiet,
             button: hold ? [...hold.querySelectorAll("button")].map((b) => b.textContent).join(" ") : "",
           };
         `);

@@ -221,6 +221,9 @@ body[data-resizing="true"] { cursor: col-resize; }
   padding: 4px;
 }
 
+/* `display: flex` above would otherwise beat the hidden attribute's own rule. */
+.zoom-bar[hidden] { display: none; }
+
 .zoom-btn { border-color: transparent; min-width: 28px; text-align: center; }
 .zoom-level { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); min-width: 44px; text-align: center; }
 .zoom-divider { width: 1px; align-self: stretch; background: var(--rule-bright); margin: 0 3px; }
@@ -1275,6 +1278,15 @@ button.problem:hover .problem-where { color: var(--signal); }
 .first-phrase > span:empty { display: none; }
 .first-phrase .note-phrase-words { font-size: 13px; padding: 3px 8px; border-color: var(--signal-dim); color: var(--signal); }
 .first-phrase .run-btn { margin-left: auto; }
+
+/* On a short screen the window would outgrow it, half-hiding Got it, so the
+   command list is what gives way and carries the scroll. A section keeps its
+   content's height unless its min-height says otherwise, so only these two shrink. */
+.first-steps { display: flex; flex-direction: column; overflow: hidden; }
+/* The steps scroll too on a window shorter still, rather than pushing the button out. */
+.first-steps-body { min-height: 0; overflow-y: auto; }
+.first-steps-body > .section.first-later { min-height: 0; }
+.first-later .first-commands { overflow-y: auto; min-height: 0; }
 
 .first-commands { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; font-size: 12px; }
 .first-command { display: contents; }

@@ -545,6 +545,7 @@ describe("the fields a change is made of", () => {
           toName: "Tickets Database",
           why: null,
           brokenBy: [],
+          guessed: [],
           declaredOnly: false,
           problem: null,
         },

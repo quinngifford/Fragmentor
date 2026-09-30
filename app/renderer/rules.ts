@@ -30,6 +30,8 @@ export function onRulesChange(callbacks: { all: () => void; reload: () => Promis
 
 /** Whether the two offers are on show, opened by Add a rule…. */
 let adding = false;
+/** Which pair the offers are about. Picking out a different pair starts afresh. */
+let offersFor: string | null = null;
 /** Which way round the sentence runs: false reads the blocks as they were picked. */
 let swapped = false;
 /** The reason being typed, kept while the agent's changes redraw the panel. */
@@ -43,6 +45,7 @@ let busy = false;
 /** Everything unsent is dropped with the project it belonged to. */
 export function forgetRules(): void {
   adding = false;
+  offersFor = null;
   swapped = false;
   reason = "";
   confirming = null;
@@ -132,6 +135,16 @@ export function ruleOffers(first: SnapshotBlock, second: SnapshotBlock): HTMLEle
   const node = section("Rules");
   node.dataset.ruleOffers = "";
 
+  // The offers, and anything typed into them, are about one pair of blocks:
+  // picking out a different pair folds back to the button.
+  const pairKey = [first.path, second.path].sort().join("\u0000");
+  if (offersFor !== pairKey) {
+    offersFor = pairKey;
+    adding = false;
+    swapped = false;
+    reason = "";
+  }
+
   if (!adding) {
     const open = el("button", "btn", "Add a rule…");
     open.addEventListener("click", () => {
@@ -215,14 +228,20 @@ function ruleRow(rule: SnapshotRule): HTMLElement {
     state.textContent = rule.problem;
   } else if (rule.brokenBy.length > 0) {
     state.classList.add("bad");
-    state.append(el("span", undefined, "broken by"));
-    for (const blockPath of rule.brokenBy) {
-      const name = ui.snapshot?.blocks[blockPath]?.name ?? blockPath;
-      const go = el("button", "btn quiet tiny", name);
-      go.title = "Show this block";
-      go.addEventListener("click", () => revealBlock(blockPath));
-      state.append(go);
-    }
+    // A break Fragmentor guessed at is said to be one, apart from those it is sure of.
+    const say = (words: string, paths: string[]) => {
+      if (paths.length === 0) return;
+      state.append(el("span", undefined, words));
+      for (const blockPath of paths) {
+        const name = ui.snapshot?.blocks[blockPath]?.name ?? blockPath;
+        const go = el("button", "btn quiet tiny", name);
+        go.title = "Show this block";
+        go.addEventListener("click", () => revealBlock(blockPath));
+        state.append(go);
+      }
+    };
+    say("broken by", rule.brokenBy.filter((blockPath) => !rule.guessed.includes(blockPath)));
+    say("may be broken by", rule.guessed);
   } else {
     state.textContent = rule.declaredOnly ? "kept, from what the diagram declares" : "kept";
   }
@@ -259,7 +278,7 @@ export function rulesSection(): HTMLElement | null {
   const node = section("Rules");
   node.dataset.rules = "";
   if (rules.length === 0) {
-    node.append(el("p", "bench-note bad", "The rules file cannot be read, so no rule is checked; the problem is listed above."));
+    node.append(el("p", "bench-note bad", "The rules file is not as Fragmentor writes it, so no rule is checked; the problem is listed above."));
     return node;
   }
 

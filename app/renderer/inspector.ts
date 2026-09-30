@@ -250,12 +250,12 @@ function linkedCodeSection(block: SnapshotBlock): HTMLElement {
   reveal.addEventListener("click", () => {
     void window.fragmentor.revealCode(requireSnapshot().dir, code.file);
   });
-  foot.append(
-    reveal,
-    el("p", "bench-note", block.drawnBecause ?? "Fragmentor shows this code and never changes it."),
-  );
-  node.append(foot);
+  foot.append(reveal);
+  // While the offer below is showing, its sentence already says why this
+  // code is only drawn, so the technical reason would say the same twice.
   const hold = holdOffer(block);
+  if (!hold) foot.append(el("p", "bench-note", block.drawnBecause ?? "Fragmentor shows this code and never changes it."));
+  node.append(foot);
   if (hold) node.append(hold);
   return node;
 }

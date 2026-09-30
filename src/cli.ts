@@ -230,13 +230,16 @@ function formatReport(report: CheckReport): string {
       "  These rules are the person's: never edit .fragmentor/rules.json, except to change a rule's block path when you move or rename the block it names. If one stands in your way, leave a note on its block.",
     );
     for (const rule of report.rules) {
-      const state =
-        rule.problem ??
-        (rule.brokenBy.length > 0
-          ? `broken by ${rule.brokenBy.join(", ")}`
-          : rule.declaredOnly
-            ? "kept, from what the diagram declares"
-            : "kept");
+      // A break Fragmentor is sure of and one it guessed at read differently,
+      // because only the first stops the check.
+      const definite = rule.brokenBy.filter((blockPath) => !rule.guessed.includes(blockPath));
+      const broken = [
+        definite.length > 0 ? `broken by ${definite.join(", ")}` : "",
+        rule.guessed.length > 0 ? `may be broken by ${rule.guessed.join(", ")}` : "",
+      ]
+        .filter(Boolean)
+        .join("; ");
+      const state = rule.problem ?? (broken !== "" ? broken : rule.declaredOnly ? "kept, from what the diagram declares" : "kept");
       lines.push(`  ${rule.rule}: ${indent(state, "         ")}`);
     }
   }

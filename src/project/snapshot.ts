@@ -344,6 +344,14 @@ async function executionsOf(project: Project, code: Map<string, BlockCode>, prob
     }
 
     const answering = answeringBlock(project, code, execution.trigger.at);
+    // The person reads why in plain words; the technical reason stays with
+    // the agent, in `fragmentor test`. The kernel's sentence is kept for
+    // every other case, which is already said in words.
+    const why = "why" in answering ? answering.why : null;
+    const unrecordable =
+      why !== null && why.includes("does not import its contract")
+        ? why.replace(/, but cannot be recorded: .*$/, ", but its code is not held to its contract yet, so it cannot be recorded.")
+        : why;
     snapshots.push({
         id: execution.id,
         name: execution.name,
@@ -360,7 +368,7 @@ async function executionsOf(project: Project, code: Map<string, BlockCode>, prob
         given: execution.given,
         expect: execution.expect,
         records: "block" in answering ? answering.block : null,
-        unrecordable: "why" in answering ? answering.why : null,
+        unrecordable,
     });
   }
   return snapshots;
@@ -562,7 +570,7 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
       fileProblems.push({
         severity: "error",
         blockPath: RULES_FILE,
-        message: `This file holds the person's rules, and none of them are checked until it can be read again: ${loaded.problem}`,
+        message: `This file holds the person's rules, and none of them are checked until it is put right: ${loaded.problem}`,
       });
     }
     const held = evaluateRules(project, reach, loaded.rules);

@@ -123,6 +123,9 @@ export async function refreshChanges(): Promise<void> {
     bookmark = { commit: facts.unavailable === null ? (facts.head?.hash ?? null) : null, date: new Date().toISOString() };
     seenSnapshot = ui.snapshot;
     writeBookmark(dir, bookmark);
+    // The commits were read against no bookmark at all, which is the whole
+    // history; nothing is since the look that has only just begun.
+    if (facts.unavailable === null) facts = { ...facts, since: [], more: false };
   }
   if (firstEver || JSON.stringify(facts) !== before) redrawAll();
 }
@@ -475,7 +478,7 @@ function compareWithThen(block: SnapshotBlock, changes: ProjectChanges, then: Pr
   // The versions list is still being read; this section is drawn again once it has been.
   if (since === undefined) return [];
   if (since === null) {
-    return [el("p", "bench-note", "Its versions do not reach back to then, as after a move, so compare one from Versions below.")];
+    return [el("p", "bench-note", "Its versions do not reach back to then, so compare one from Versions below.")];
   }
   const compare = el("button", "btn quiet", "Compare with then");
   compare.type = "button";

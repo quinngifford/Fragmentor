@@ -177,7 +177,8 @@ describe("executions in a snapshot", () => {
     const messenger = await projectSnapshot(path.join(examples, "messenger"));
     const send = messenger.executions.find((each) => each.id === "send-a-message")!;
     expect(send.records).toBeNull();
-    expect(send.unrecordable).toContain("does not import its contract");
+    // The window says why in plain words; the technical reason is the agent's, in `fragmentor test`.
+    expect(send.unrecordable).toBe('"Send Button" answers app/client/ui/send-button, but its code is not held to its contract yet, so it cannot be recorded.');
   });
 
   it("still opens a project whose executions cannot be read, and says why", async () => {

@@ -735,6 +735,16 @@ export function clearCanvas(): void {
   currentFlow = null;
   document.querySelectorAll(".canvas-empty").forEach((each) => each.remove());
   renderLegend(false);
+  showCanvasChrome(false);
+}
+
+/**
+ * The zoom bar and the gesture hint are about a drawing, so an empty canvas
+ * — the waiting card, the welcome screen, a note — shows neither. Drawing
+ * again brings them back in the same breath.
+ */
+function showCanvasChrome(showing: boolean): void {
+  for (const each of document.querySelectorAll<HTMLElement>(".zoom-bar, .canvas-top .hint")) each.hidden = !showing;
 }
 
 /**
@@ -770,6 +780,7 @@ export function renderCanvas(): void {
     showCanvasMessage("This project has no blocks yet.");
     return;
   }
+  showCanvasChrome(true);
   currentTree = tree;
 
   const before = drawnBefore ?? (everythingArrives ? new Set<string>() : null);
@@ -814,6 +825,7 @@ function renderFlow(): void {
     return;
   }
 
+  showCanvasChrome(true);
   currentFlow = shown.flow;
   const layer = element("node-layer");
   // The lines of the drawing itself, which the step showing never clears.

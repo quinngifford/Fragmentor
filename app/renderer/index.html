@@ -52,7 +52,8 @@
             </g>
           </svg>
 
-          <div class="zoom-bar">
+          <!-- The bar and the hint mean nothing until there is a drawing. -->
+          <div class="zoom-bar" hidden>
             <button class="zoom-btn" id="zoom-out" title="Zoom out">&minus;</button>
             <span class="zoom-level" id="zoom-level">100%</span>
             <button class="zoom-btn" id="zoom-in" title="Zoom in">+</button>
@@ -71,7 +72,7 @@
             <div class="run-bar" id="run-bar" role="status" hidden></div>
             <div class="notes-bar" id="notes-bar" role="status" hidden></div>
             <div class="changes-bar" id="changes-bar" role="status" hidden></div>
-            <div class="hint">drag to move &middot; scroll to zoom &middot; click a block to inspect it &middot; ctrl-click to add another</div>
+            <div class="hint" hidden>drag to move &middot; scroll to zoom &middot; click a block to inspect it &middot; ctrl-click to add another</div>
           </div>
 
           <!-- Trying a block out, in a window that can be moved off the drawing. -->

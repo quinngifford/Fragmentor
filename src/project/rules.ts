@@ -46,6 +46,8 @@ export interface SnapshotRule {
   why: string | null;
   /** The blocks whose reach breaks it, by path, sorted. Empty while it is kept. */
   brokenBy: string[];
+  /** The subset of brokenBy whose break is a guess, so it warns rather than stops the check. */
+  guessed: string[];
   /** True when the code could not be read for reach, so only declared access was checked. */
   declaredOnly: boolean;
   /** What is wrong with the rule itself: it names a block that is not in the diagram. */
@@ -185,6 +187,7 @@ export function evaluateRules(project: Project, reach: ProjectReach | null, rule
       toName: name(parsed.to),
       why: why ?? null,
       brokenBy: [],
+      guessed: [],
       declaredOnly: reach === null || reach.systemsRead[parsed.from.split("/")[0]!] !== true,
       problem:
         missing === undefined
@@ -212,12 +215,26 @@ export function evaluateRules(project: Project, reach: ProjectReach | null, rule
       // Sure only of what was read exactly, between blocks that both exist:
       // a planned block has no code to read, so its declared access is a
       // plan's guess, not something the check may stop the agent over.
-      const sure = byBlock.get(blockPath)!.some((each) => each.exact) && !planned(blockPath) && !planned(parsed.to);
+      const read = byBlock.get(blockPath)!.some((each) => each.exact);
+      const sure = read && !planned(blockPath) && !planned(parsed.to);
       const evidence = [...new Set(byBlock.get(blockPath)!.map((each) => each.evidence))].sort().join("; ");
+      const withWhy = why === undefined ? "" : ` (“${why}”)`;
+      if (sure) {
+        diagnostics.push({ severity: "error", blockPath, message: `Breaks the rule "${rule}"${withWhy}: ${evidence}.` });
+        continue;
+      }
+      // A guess must never read like a certainty, so it says it is one, why
+      // it is one, and that it stops nothing.
+      result.guessed.push(blockPath);
+      const because = planned(blockPath)
+        ? "this block is planned, so only its declared access could be checked"
+        : !read
+          ? "its file was counted whole"
+          : `${name(parsed.to)} is planned, so only declared access could be checked`;
       diagnostics.push({
-        severity: sure ? "error" : "warning",
+        severity: "warning",
         blockPath,
-        message: `Breaks the rule "${rule}"${why === undefined ? "" : ` (“${why}”)`}: ${evidence}.`,
+        message: `May break the rule "${rule}"${withWhy}: ${evidence}. A guess — ${because} — so it does not stop your agent.`,
       });
     }
   }

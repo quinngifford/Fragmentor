@@ -77,6 +77,7 @@ describe("how a rule breaks", () => {
     );
     // app/reports is the planned block, whose declared "reads db" breaks it too.
     expect(held.rules[0]?.brokenBy).toEqual(["app/reports", "app/web"]);
+    expect(held.rules[0]?.guessed).toEqual(["app/reports"]);
     expect(held.diagnostics.map((each) => [each.blockPath, each.severity])).toEqual([
       ["app/reports", "warning"],
       ["app/web", "error"],
@@ -97,6 +98,11 @@ describe("how a rule breaks", () => {
       { rule: "app/web must never reach app/db" },
     );
     expect(guessed.diagnostics[0]?.severity).toBe("warning");
+    // A guess says it is one, why, and that it stops nothing.
+    expect(guessed.diagnostics[0]?.message).toBe(
+      'May break the rule "app/web must never reach app/db": open from src/db.ts. A guess — its file was counted whole — so it does not stop your agent.',
+    );
+    expect(guessed.rules[0]?.guessed).toEqual(["app/web"]);
 
     const sure = await evaluated(
       seen({ from: "app/web", to: "app/db", approximate: true }, { from: "app/web", to: "app/db", evidence: "rows from src/db.ts" }),
@@ -219,7 +225,8 @@ describe("the examples", () => {
       {
         severity: "warning",
         blockPath: "tickets/reminders",
-        message: 'Breaks the rule "only tickets/booking-api may reach tickets/tickets-db": declares "reads tickets-db.bookings".',
+        message:
+          'May break the rule "only tickets/booking-api may reach tickets/tickets-db": declares "reads tickets-db.bookings". A guess — this block is planned, so only its declared access could be checked — so it does not stop your agent.',
       },
     ]);
   });

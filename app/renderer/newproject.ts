@@ -322,7 +322,10 @@ export async function showFirstSteps(answers: { existingCode: boolean; start: St
   title.id = "first-steps-title";
   dialog.append(title, el("p", "dialog-lede", "Your coding agent builds it, and Fragmentor draws it as it goes."));
 
-  const later = section("Full Command List");
+  // With everything above it fixed in place, the list is what gives way and
+  // scrolls when the window would outgrow the screen, so the button below
+  // stays where it can be pressed.
+  const later = section("Full Command List", "first-later");
   const list = el("dl", "first-commands");
   for (const each of COMMANDS) {
     const row = el("div", "first-command");

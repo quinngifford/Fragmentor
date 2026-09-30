@@ -629,21 +629,16 @@ function agreementOf(execution: SnapshotExecution): Agreement | null {
           : "The recording stopped before it saw any step"
         : !contradicted
           ? "Agrees as far as the recording went"
-          : unchecked > 0
-            ? "Agrees where the recording could see"
-            : "Agrees with the recording";
+          : "Agrees with the recording, where it could see";
   // Answers go with the calls they answer, and their pages repeat their calls' verdicts, so they are not counted twice.
   const title = [
-    `Of the ${counted(seen + notSeen + unchecked, "step")} written down, not counting answers, ${seen} seen, ${notSeen} not seen, and ${unchecked} that cannot be checked from this run, which count neither way.`,
-    check.expectations.met.length + failed + check.expectations.setAside.length > 0
-      ? `Of what must happen, ${check.expectations.met.length} met, ${failed} failed and ${check.expectations.setAside.length} set aside.`
-      : "",
-    check.unwrittenCount > 0 ? `The run also did ${counted(check.unwrittenCount, "thing")} no step says.` : "",
-    contradicted ? "" : "The recording ends before the run did, so nothing missing from it counts against what was written.",
-    notSeen > 0 ? "Click to go to the first step not seen." : failed > 0 ? "Click to see the recording, whose page says what failed." : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+    `Of the ${counted(seen + notSeen + unchecked, "step")} written down, not counting answers, ${seen} seen, ${notSeen} not seen, and ${unchecked} that cannot be checked from this run.`,
+    notSeen > 0
+      ? "Click to go to the first step not seen."
+      : failed > 0
+        ? "Click to see the recording, whose page says what failed."
+        : "Each step's own page says what the recording saw of it.",
+  ].join(" ");
   const first = contradicted ? (check.steps.find((step) => step.verdict === "not-seen")?.id ?? null) : null;
   return { execution: execution.id, text, title, anySeen: seen > 0, first, failed };
 }
@@ -896,7 +891,7 @@ function verdictOn(execution: SnapshotExecution, event: TraceEvent): { verdict: 
  * as agreeing.
  */
 function verdictSection(executionId: string, on: NonNullable<ReturnType<typeof verdictOn>>): HTMLElement {
-  const node = section("When it was recorded");
+  const node = section("In the recording");
   const { verdict, answer, contradicted } = on;
   // An answer has no verdict of its own: it was held to the recording with its call.
   const lead = answer ? "With the call it answers: " : "";
