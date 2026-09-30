@@ -779,9 +779,10 @@ export function renderCanvas(): void {
   drawAccesses(tree, element("access-layer"));
   const nodeLayer = element("node-layer");
   const marks = noteMarks(tree);
+  const changed = changeDots(tree);
   for (const node of tree.nodes.values()) {
     const arrival = arriving.indexOf(node.path);
-    drawNode(node, nodeLayer, arrival === -1 ? null : Math.min(arrival, 12) * ARRIVAL_STAGGER_MS, marks.get(node.path));
+    drawNode(node, nodeLayer, arrival === -1 ? null : Math.min(arrival, 12) * ARRIVAL_STAGGER_MS, marks.get(node.path), changed.get(node.path));
   }
 
   renderLegend(true);
@@ -1142,6 +1143,34 @@ function noteMarks(tree: Tree): Map<string, NoteMark> {
 }
 
 /**
+ * The blocks the Changes list is talking about, by path, with what the dot
+ * on each should say. Handed in by whoever keeps the list, so the canvas
+ * never has to know where the changes come from. Null while no list is open.
+ */
+let changedBlocks: () => Map<string, string> | null = () => null;
+export function onChangeMarks(provider: () => Map<string, string> | null): void {
+  changedBlocks = provider;
+}
+
+/**
+ * The dot each block on screen carries while the Changes list is open. One
+ * on a block folded away is gathered onto the block standing for it, as a
+ * note's count is, so folding never hides where the work happened.
+ */
+function changeDots(tree: Tree): Map<string, string> {
+  const dots = new Map<string, string>();
+  const listed = changedBlocks();
+  if (!listed) return dots;
+  for (const [path, said] of listed) {
+    const node = shownAt(tree, path);
+    if (!node) continue;
+    const gathered = node.path !== path || dots.has(node.path);
+    dots.set(node.path, gathered ? "What changed is inside it. The Changes list has the details." : said);
+  }
+  return dots;
+}
+
+/**
  * A count on a block's corner saying notes are open on it. It is amber while
  * any of them waits for the person, and quiet while all of them are with the
  * agent: nothing about a note is wrong, so it is never red.
@@ -1190,7 +1219,7 @@ function drawFlag(group: SVGGElement): void {
 /** How much of a name fits across a box, at 12.5px. */
 const NAME_CHARS = 21;
 
-function drawNode(node: TreeNode, layer: Element, arrivalDelay: number | null, notes: NoteMark | undefined): void {
+function drawNode(node: TreeNode, layer: Element, arrivalDelay: number | null, notes: NoteMark | undefined, changed: string | undefined): void {
   const block = node.block;
   const group = svgEl("g", {
     class: "block-box",
@@ -1253,6 +1282,13 @@ function drawNode(node: TreeNode, layer: Element, arrivalDelay: number | null, n
   drawBlockButtons(group, block);
   if (node.hasParts) drawFold(group, node);
   if (notes) drawNoteMark(group, notes);
+  // A small neutral dot on the other corner while the Changes list is open:
+  // a marker only, never a control, so it takes no clicks from the block.
+  if (changed !== undefined) {
+    const dot = svgEl("g", { class: "change-mark" }, group);
+    svgEl("title", {}, dot).textContent = changed;
+    svgEl("circle", { r: 4.5, class: "change-mark-dot" }, dot);
+  }
   // A failure flagged for the agent is drawn as a failed run is, until the
   // agent has answered it: outlined, glowing and flagged in red.
   group.dataset.failing = String(notes?.failing ?? false);

@@ -1705,8 +1705,10 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
 .note-mark[data-waiting="person"] .note-mark-count { fill: var(--ground); }
 .note-mark:hover .note-mark-dot { stroke: var(--ink); }
 
-/* The bar above the drawing, beside the run bar and drawn like it. */
-.notes-bar {
+/* The bar above the drawing, beside the run bar and drawn like it. The
+   changes bar sits beside it and is drawn the same. */
+.notes-bar,
+.changes-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1722,7 +1724,7 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
   color: var(--ink);
 }
 
-.notes-bar[hidden] { display: none; }
+.notes-bar[hidden], .changes-bar[hidden] { display: none; }
 .notes-bar-part { display: flex; align-items: center; gap: 6px; }
 .notes-bar-part[data-waiting="person"] > span { color: var(--effect); }
 
@@ -1740,7 +1742,50 @@ body[data-sizing="nwse"] { cursor: nwse-resize; }
   color: var(--ink);
   overflow-wrap: anywhere;
 }
-.note-phrase .run-btn, .notes-bar .run-btn { padding: 2px 8px; font-size: 10.5px; }
+.note-phrase .run-btn, .notes-bar .run-btn, .changes-bar .run-btn { padding: 2px 8px; font-size: 10.5px; }
+
+/* What changed, said on the bar itself; pressing it opens the list. */
+.changes-open {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.changes-open:hover { color: var(--signal); }
+
+/* One change: the block, where it is, and each difference on a line. */
+.change-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 0 0 10px;
+  border: 0;
+  border-left: 2px solid var(--ink-faint);
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+}
+button.change-row { cursor: pointer; }
+button.change-row:hover .change-where { color: var(--signal); }
+.change-head { font-size: 12px; }
+.change-where { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; }
+.change-line { font-size: 12px; color: var(--ink-dim); }
+.change-row .btn { align-self: flex-start; margin-top: 2px; }
+
+/* The two points the list can start from. */
+.changes-point { display: flex; align-items: center; gap: 8px; }
+.changes-point label { font-size: 12px; color: var(--ink-dim); }
+
+.changes-actions { display: flex; gap: 8px; }
+
+/* The neutral dot on a changed block while the list is open: a marker only,
+   drawn like a note's count, so it never takes a click from the block. */
+.change-mark { pointer-events: none; }
+.change-mark-dot { fill: var(--panel-high); stroke: var(--ink-dim); stroke-width: 1.2; }
 
 /* One note: whose turn it is and when, then each message in turn. */
 .note-card {

@@ -10,6 +10,7 @@ import { openBenchWindow } from "./benchpanel.js";
 import { versionBadge, versionsSection } from "./versions.js";
 import { holdOffer, noteOn, notesSection, problemFlag, projectNotesSection } from "./notes.js";
 import { ruleOffers, rulesSection } from "./rules.js";
+import { blockChangesSection, projectChangesSection } from "./changes.js";
 import { el, keepingFocus, section } from "./dom.js";
 import { codeBlock, codeFragment, codeLines, languageOf } from "./highlight.js";
 
@@ -374,6 +375,11 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   // before what the block is, because it is what is waiting to be done.
   panel.append(notesSection(block));
 
+  // What changed about it since the person last looked comes next, and only
+  // while something did, so an unchanged block's panel stays as it was.
+  const changed = blockChangesSection(block);
+  if (changed) panel.append(changed);
+
   // The same sections, in the same order, whatever kind of block this is: its
   // notes, then what it can be used through, what it reaches, where its code is, how to set it
   // going, and last, its earlier versions. A block simply may not have one of
@@ -545,6 +551,7 @@ function build(panel: HTMLElement): void {
   if (rules) panel.append(rules);
 
   panel.append(projectNotesSection());
+  panel.append(projectChangesSection());
 
   const systems = section("Systems");
   const list = el("div", "ports");

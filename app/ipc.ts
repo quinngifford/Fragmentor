@@ -2,7 +2,7 @@ import type { ProjectSnapshot } from "../src/project/snapshot.js";
 import type { NewProjectSettings } from "../src/codegen/emit.js";
 import type { CaseResult, RunEvent, RunOutcome, StoreSeeds } from "../src/run/run.js";
 import type { TestCase } from "../src/run/cases.js";
-import type { BlockVersions, SavedVersion, SwapDone, VersionRef } from "../src/project/history.js";
+import type { BlockVersions, ChangePoints, ProjectAt, SavedVersion, SwapDone, VersionRef } from "../src/project/history.js";
 import type { VersionComparison } from "../src/run/versions.js";
 import type { Trace } from "../src/model/trace.js";
 import type { RecordingScope } from "../src/model/recorded.js";
@@ -36,6 +36,8 @@ export const CHANNELS = {
   saveCases: "block:save-cases",
   runCases: "block:run-cases",
   blockVersions: "block:versions",
+  changePoints: "project:change-points",
+  projectAt: "project:at",
   compareVersion: "block:compare-version",
   swapVersion: "block:swap-version",
   undoSwap: "block:undo-swap",
@@ -166,8 +168,12 @@ export interface FragmentorApi {
   saveCases(request: SaveCasesRequest): Promise<Result<null>>;
   /** Runs every saved test for a block. */
   runCases(dir: string, blockPath: string): Promise<Result<CaseResult[]>>;
-  /** A block's saved versions and its git history, newest first, and the swap Undo swap would reverse. */
-  blockVersions(dir: string, blockPath: string): Promise<Result<BlockVersions>>;
+  /** A block's saved versions and its git history, newest first, the swap Undo swap would reverse, and, given the commit last looked at, the row the block was on then. */
+  blockVersions(dir: string, blockPath: string, since?: string | null): Promise<Result<BlockVersions>>;
+  /** The newest commit, whether `base` — the commit last looked at — is still there, and what was committed since it. */
+  changePoints(dir: string, base: string | null): Promise<Result<{ unavailable: string } | ChangePoints>>;
+  /** The project as it was at one commit, snapshotted so the window can compare it with the one on screen. */
+  projectAt(dir: string, commit: string): Promise<Result<ProjectAt>>;
   /** Runs the saved tests of both versions of a block, and every other saved test in its system, against the block as it is and as it was in one version. */
   compareVersion(dir: string, blockPath: string, version: VersionRef): Promise<Result<VersionComparison>>;
   /** Puts a block and its parts back as they were in one version, keeping what was there so it can be undone. */

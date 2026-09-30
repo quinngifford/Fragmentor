@@ -11,6 +11,7 @@ import {
 import {
   clearCanvas,
   onBlockWindow,
+  onChangeMarks,
   onNotesPicked,
   onStepPicked,
   fitToView,
@@ -35,6 +36,7 @@ import { benchWindowIsOpen, closeBenchWindow, onBenchWindowChange, renderBenchWi
 import { forgetVersions, onVersionsChange, refreshVersions } from "./versions.js";
 import { forgetNotes, noteOn, onNotesChange, openCommandsWindow, renderNotesBar, showNotesOf } from "./notes.js";
 import { forgetRules, onRulesChange } from "./rules.js";
+import { forgetChanges, markedOnDrawing, onChangesChange, refreshChanges, renderChangesBar } from "./changes.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
 
@@ -75,6 +77,7 @@ function forgetProject(): void {
   forgetVersions();
   forgetNotes();
   forgetRules();
+  forgetChanges();
   ui.status = null;
   ui.selection.clear();
   ui.selectedLink = null;
@@ -159,6 +162,8 @@ function show(load: ProjectLoad, opening: boolean): void {
     if (firstSight) fitWhenReady(20);
     else fitToView(true);
   }
+  // What changed since the person last looked follows every read of the project.
+  void refreshChanges();
 }
 
 async function chooseProject(): Promise<void> {
@@ -559,6 +564,7 @@ function renderPanels(): void {
   renderInspector();
   renderBenchWindow();
   renderNotesBar();
+  renderChangesBar();
   renderStatus();
 }
 
@@ -665,8 +671,15 @@ try {
     if (dir === ui.dir) void reload().then(refreshVersions);
   });
   // An agent's commit touches only .git, which nothing watches, so the list of
-  // versions on screen is read again whenever the person comes back to it.
-  window.addEventListener("focus", () => void refreshVersions());
+  // versions on screen, and what changed since the person last looked, are
+  // read again whenever the person comes back to the window.
+  window.addEventListener("focus", () => {
+    void refreshVersions();
+    void refreshChanges();
+  });
+  onChangesChange(render);
+  // The drawing dots the changed blocks while the Changes list is open.
+  onChangeMarks(markedOnDrawing);
   wireToolbar();
   wireMenu();
   setUpSplitter();

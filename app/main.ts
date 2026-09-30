@@ -30,15 +30,17 @@ import { recordExecution } from "../src/run/record.js";
 import { saveCases } from "../src/run/cases.js";
 import {
   blockVersions,
+  changePoints,
   deleteSavedVersion,
   editSavedVersion,
   noise,
+  projectAt,
   savedIdPattern,
   saveVersion,
   swapToVersion,
   undoLastSwap,
 } from "../src/project/history.js";
-import type { BlockVersions, SavedVersion, SwapDone, VersionRef } from "../src/project/history.js";
+import type { BlockVersions, ChangePoints, ProjectAt, SavedVersion, SwapDone, VersionRef } from "../src/project/history.js";
 import { MOST_NOTE_TEXT, addNote, deleteNote, flaggedRunOf, isNotePath, markWorking, noteById, replyToNote, resolveNote } from "../src/project/notes.js";
 import { addRule, isRulesPath, removeRule } from "../src/project/rules.js";
 import type { FlaggedRun, Note, NoteAnchor } from "../src/project/notes.js";
@@ -626,9 +628,47 @@ function registerHandlers(): void {
     }
   });
 
-  ipcMain.handle(CHANNELS.blockVersions, async (_event, dir: string, blockPath: string): Promise<Result<BlockVersions>> => {
+  ipcMain.handle(CHANNELS.blockVersions, async (_event, dir: string, blockPath: string, since: unknown): Promise<Result<BlockVersions>> => {
     try {
-      return ok(await blockVersions(dir, blockPath));
+      // The commit format is the kernel's to check, so it is passed as sent.
+      return ok(await blockVersions(dir, blockPath, (since ?? null) as string | null));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  ipcMain.handle(CHANNELS.changePoints, async (_event, dir: unknown, base: unknown): Promise<Result<{ unavailable: string } | ChangePoints>> => {
+    try {
+      return ok(await changePoints(sent(dir), (base ?? null) as string | null));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  /**
+   * Reading a commit back takes a moment, and the window asks again whenever
+   * it gets the focus, so the last few reads are kept as promises, by folder
+   * and commit. A commit's content never changes, and these only read, so
+   * they are not behind oneAtATime.
+   */
+  const projectsAt = new Map<string, Promise<ProjectAt>>();
+  ipcMain.handle(CHANNELS.projectAt, async (_event, dir: unknown, commit: unknown): Promise<Result<ProjectAt>> => {
+    try {
+      const folder = sent(dir);
+      const hash = sent(commit);
+      const held = `${folder}\n${hash}`;
+      let reading = projectsAt.get(held);
+      if (reading === undefined) {
+        reading = projectAt(folder, hash);
+        projectsAt.set(held, reading);
+        // A read that failed is not kept: asked again, it is tried again.
+        reading.catch(() => projectsAt.delete(held));
+        for (const kept of projectsAt.keys()) {
+          if (projectsAt.size <= 4) break;
+          projectsAt.delete(kept);
+        }
+      }
+      return ok(await reading);
     } catch (error) {
       return failed(error);
     }
@@ -1613,6 +1653,70 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("historyFolded", "unfolded") === 6 &&
         value("historyFolded", "back") === 5,
     ],
+    [
+      "the bar above the drawing says what changed since the person last looked",
+      /\d+ new/.test(String(value("changesBar", "shown"))) &&
+        /\d+ changed/.test(String(value("changesBar", "shown"))) &&
+        value("changesBar", "seen") === true,
+    ],
+    [
+      "clicking the bar lists the changes in words, with a neutral dot on each changed block",
+      value("changesListed", "listed") === true &&
+        /New/.test(String(value("changesListed", "parts"))) &&
+        /Seat Discount/.test(String(value("changesListed", "newRows"))) &&
+        /Price Seat/.test(String(value("changesListed", "changedRows"))) &&
+        /code changed/.test(String(value("changesListed", "lines"))) &&
+        value("changesListed", "picks") === true &&
+        value("changesListed", "copy") === true &&
+        Number(value("changesListed", "dots")) >= 2 &&
+        value("changesListed", "dotOnNew") === true &&
+        value("changesListed", "dotOnChanged") === true,
+    ],
+    [
+      "a changed block's own panel says what changed, and Compare with then goes through Versions",
+      value("blockChanges", "section") === true &&
+        value("blockChanges", "afterNotes") === true &&
+        value("blockChanges", "compare") === true &&
+        value("comparedSince", "compared") === true &&
+        value("comparedSince", "onCommitRow") === true,
+    ],
+    [
+      "Mark as seen hides the bar and the dots, and writes nothing into the project",
+      value("markedSeen", "hidden") === true &&
+        Number(value("markedSeen", "dotsGone")) === 0 &&
+        value("markedSeenOnDisk", "untouched") === true,
+    ],
+    [
+      "the comparison is with exactly what was marked as seen, uncommitted work included",
+      /\d+ removed/.test(String(value("seenIsExact", "shown"))) &&
+        /Seat Discount/.test(String(value("seenIsExact", "removedRows"))) &&
+        /Price Seat/.test(String(value("seenIsExact", "changedRows"))) &&
+        value("uncommittedSeen", "cleared") === true &&
+        /1 changed/.test(String(value("uncommittedListed", "shown"))) &&
+        /Find Event/.test(String(value("uncommittedListed", "rows"))) &&
+        !String(value("uncommittedListed", "rows")).includes("|") &&
+        value("uncommittedListed", "hidden") === true &&
+        value("uncommittedOnDisk", "dirty") === true,
+    ],
+    [
+      "a removed block can still be read, as it was, in a window of its own",
+      value("asItWas", "opened") === true &&
+        value("asItWas", "title") === "Seat Discount" &&
+        /seat/.test(String(value("asItWas", "ports"))) &&
+        /discount/.test(String(value("asItWas", "ports"))),
+    ],
+    [
+      "the list can start from the last commit instead, and says when nothing is since it",
+      value("pickedPoint", "none") === true && /Removed/.test(String(value("pickedPoint", "backListed"))),
+    ],
+    [
+      "after closing and opening again, work not committed yet is listed again, and says why",
+      /1 changed/.test(String(value("afterRestart", "shown"))) &&
+        /Find Event/.test(String(value("afterRestart", "rows"))) &&
+        /not committed/.test(String(value("afterRestart", "note"))) &&
+        value("changesQuiet", "hidden") === true,
+    ],
+    ["without git the Changes bar stays out of the way", value("execution", "changesQuiet") === true],
     [
       "a block's panel offers to leave a note, before anything else about the block, while none is open",
       value("notesOffered", "opened") === true &&
@@ -4172,6 +4276,213 @@ function attachSelfCheck(
           return { offered: true, folded, unfolded, back: commits() };
         `);
 
+        // Changes: what happened since the person last looked, which was when
+        // the project was first opened. The swaps above left the older pricing
+        // in place uncommitted, so against that first sight one block is new
+        // and one has changed, and nothing had to be committed to be noticed.
+        const changesHelpers = `
+          const node = (label) => [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === label);
+          const heading = (label) => until(() => text("#inspector h2") === label, 5000);
+          const button = (within, label) => (within ? [...within.querySelectorAll("button")].find((b) => b.textContent === label) : undefined);
+          const bar = () => document.getElementById("changes-bar");
+          const barText = () => (bar().hidden ? "" : ((bar().querySelector(".changes-open") || {}).textContent || ""));
+          const changes = () => document.querySelector("#inspector [data-project-changes]");
+          const part = (title) => changes() && [...changes().querySelectorAll(".subsection")].find((each) => each.querySelector("h5").textContent.startsWith(title));
+          const parts = () => (changes() ? [...changes().querySelectorAll(".subsection h5")].map((h) => h.textContent).join(" | ") : "");
+          const rowsOf = (title) => (part(title) ? [...part(title).querySelectorAll(".change-row")].map((row) => row.querySelector(".change-head").textContent) : []);
+        `;
+        await run("changesBar", `${changesHelpers}
+          window.dispatchEvent(new Event("focus"));
+          const shown = await until(() => (barText().startsWith("Since you last looked") ? barText() : null), 15000);
+          return { shown: shown || barText(), seen: Boolean(button(bar(), "Mark as seen")) };
+        `);
+
+        await run("changesListed", `${changesHelpers}
+          bar().querySelector(".changes-open").click();
+          const listed = await until(() => (changes() && parts() ? changes() : null), 10000);
+          if (!listed) return { listed: false };
+          await wait(600);
+          const dot = (id) => Boolean(document.querySelector('.block-box[data-id="' + id + '"] .change-mark'));
+          return {
+            listed: true,
+            parts: parts(),
+            newRows: rowsOf("New").join(" | "),
+            changedRows: rowsOf("Changed").join(" | "),
+            lines: part("Changed") ? [...part("Changed").querySelectorAll(".change-line")].map((line) => line.textContent).join(" | ") : "",
+            picks: Boolean(changes().querySelector("select")),
+            copy: Boolean(button(changes(), "Copy as text")),
+            dots: document.querySelectorAll(".change-mark").length,
+            dotOnNew: dot("seat-discount"),
+            dotOnChanged: dot("price-seat"),
+          };
+        `);
+        await capture(window, "self-check-changes");
+
+        // A changed block's own panel says what changed about it, right after
+        // its notes, and offers one comparison through the Versions section.
+        await run("blockChanges", `${changesHelpers}
+          node("price-seat").click();
+          if (!(await heading("Price Seat"))) return { opened: false };
+          if (!(await until(() => document.querySelector("#inspector [data-block-changes-of]"), 5000))) return { opened: true, section: false };
+          const headings = [...document.querySelectorAll("#inspector .section h4")].map((h) => h.textContent);
+          // The button waits on the block's versions being read, which names
+          // the row the block was on when the person last looked.
+          const compare = await until(
+            () => [...document.querySelectorAll("#inspector [data-block-changes-of] button")].find((b) => b.textContent === "Compare with then"),
+            15000,
+          );
+          const fresh = document.querySelector("#inspector [data-block-changes-of]");
+          return {
+            opened: true,
+            section: true,
+            afterNotes: headings.indexOf("Notes") !== -1 && headings.indexOf("Notes") < headings.indexOf("Changes"),
+            lines: [...fresh.querySelectorAll(".change-line")].map((line) => line.textContent).join(" | "),
+            compare: Boolean(compare),
+          };
+        `);
+
+        await run("comparedSince", `${changesHelpers}
+          const compare = [...document.querySelectorAll("#inspector [data-block-changes-of] button")].find((b) => b.textContent === "Compare with then");
+          if (!compare) return { compared: false };
+          compare.click();
+          const summary = await until(() => document.querySelector("#inspector [data-versions-of] .version-compare .case-summary"), 60000);
+          const row = summary && summary.closest(".version-row");
+          return { compared: Boolean(summary), onCommitRow: Boolean(row && row.dataset.commit) };
+        `);
+
+        // Mark as seen holds what is on screen and remembers the newest
+        // commit in this computer's profile; the project itself is untouched.
+        const beforeSeen = await gitIn(check.application)("status", "--porcelain", "--untracked-files=all");
+        await run("markedSeen", `${changesHelpers}
+          const seen = button(bar(), "Mark as seen");
+          if (!seen) return { pressed: false };
+          seen.click();
+          const hidden = Boolean(await until(() => bar().hidden, 5000));
+          return { pressed: true, hidden, dotsGone: document.querySelectorAll(".change-mark").length };
+        `);
+        report.markedSeenOnDisk = {
+          untouched: (await gitIn(check.application)("status", "--porcelain", "--untracked-files=all")) === beforeSeen,
+        };
+
+        // The agent puts pricing back as the last commit has it. Against the
+        // drawing just marked as seen — which held the uncommitted swap —
+        // that is one part removed and one block changed.
+        const strayPricing = (await gitIn(check.application)("status", "--porcelain", "--untracked-files=all"))
+          .split("\n")
+          .filter((line) => line.startsWith("??"))
+          .map((line) => line.slice(3).trim())
+          .filter((file) => /^(blocks\/tickets\/booking-api\/pricing\/|src\/booking\/seat-discount\.ts$)/.test(file));
+        for (const file of strayPricing) await rm(path.join(check.application, ...file.split("/")), { force: true });
+        await gitIn(check.application)("checkout", "--", ".");
+        await run("seenIsExact", `${changesHelpers}
+          const shown = await until(() => (barText().startsWith("Since you last looked") ? barText() : null), 15000);
+          if (!shown) return { shown: "" };
+          bar().querySelector(".changes-open").click();
+          await until(changes, 5000);
+          await wait(400);
+          return {
+            shown,
+            parts: parts(),
+            removedRows: rowsOf("Removed").join(" | "),
+            changedRows: rowsOf("Changed").join(" | "),
+          };
+        `);
+
+        // A removed block can still be read: its interface, in a window.
+        await run("asItWas", `${changesHelpers}
+          const see = button(part("Removed"), "See it as it was");
+          if (!see) return { opened: false };
+          see.click();
+          const win = await until(() => !document.getElementById("overlay").hidden, 5000);
+          return {
+            opened: Boolean(win),
+            title: text("#overlay .window-head h2"),
+            ports: [...document.querySelectorAll("#overlay .port-row .pname")].map((p) => p.textContent).join(" "),
+          };
+        `);
+        await capture(window, "self-check-as-it-was");
+
+        // The other point: against the last commit the tree is clean now.
+        await run("pickedPoint", `${changesHelpers}
+          document.querySelector("#overlay .window-close").click();
+          const select = changes().querySelector("select");
+          if (!select) return { picked: false };
+          select.value = "commit";
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+          const none = Boolean(await until(() => /No changes since the last commit/.test(changes() ? changes().textContent : ""), 10000));
+          const back = changes().querySelector("select");
+          back.value = "looked";
+          back.dispatchEvent(new Event("change", { bubbles: true }));
+          await wait(400);
+          return { picked: true, none, backListed: parts() };
+        `);
+
+        // Seen is exact: an uncommitted change is listed on its own, and Mark
+        // as seen puts it away even though no commit holds it.
+        const findEventBlock = path.join(check.application, "blocks", "tickets", "booking-api", "find-event", "block.json");
+        const findEventBefore = await readFile(findEventBlock, "utf8");
+        const findEventRaw = JSON.parse(findEventBefore) as { responsibility: string };
+        await run("uncommittedSeen", `${changesHelpers}
+          const seen = button(bar(), "Mark as seen");
+          if (seen) {
+            seen.click();
+            await until(() => bar().hidden, 5000);
+          }
+          return { cleared: bar().hidden };
+        `);
+        await writeFile(findEventBlock, JSON.stringify({ ...findEventRaw, responsibility: `${findEventRaw.responsibility} It never invents one.` }, null, 2), "utf8");
+        await run("uncommittedListed", `${changesHelpers}
+          const shown = await until(() => (barText().startsWith("Since you last looked") ? barText() : null), 15000);
+          if (!shown) return { shown: "" };
+          bar().querySelector(".changes-open").click();
+          await until(changes, 5000);
+          await wait(300);
+          const rows = [...changes().querySelectorAll(".change-row")].map((row) => row.querySelector(".change-head").textContent).join(" | ");
+          button(bar(), "Mark as seen").click();
+          const hidden = Boolean(await until(() => bar().hidden, 5000));
+          return { shown, rows, hidden };
+        `);
+        report.uncommittedOnDisk = {
+          dirty: (await gitIn(check.application)("status", "--porcelain")).includes("find-event/block.json"),
+        };
+
+        // Closed and opened again, the exact drawing marked as seen is gone,
+        // so the comparison starts at the commit marked instead, and the
+        // uncommitted work marked as seen shows again, said in so many words.
+        pick("close-project");
+        await run("afterRestart", `${changesHelpers}
+          await until(() => document.body.dataset.project !== "open");
+          const link = await until(() => [...document.querySelectorAll(".welcome-link")].find((b) => b.title === ${JSON.stringify(check.application)}));
+          if (!link) return { shown: "" };
+          link.click();
+          await until(() => document.body.dataset.project === "open", 10000);
+          const shown = await until(() => (barText().startsWith("Since you last looked") ? barText() : null), 20000);
+          if (!shown) return { shown: "" };
+          bar().querySelector(".changes-open").click();
+          await until(changes, 5000);
+          await wait(300);
+          return {
+            shown,
+            rows: [...changes().querySelectorAll(".change-row")].map((row) => row.querySelector(".change-head").textContent).join(" | "),
+            note: [...changes().querySelectorAll(".bench-note")].map((p) => p.textContent).join(" "),
+          };
+        `);
+
+        // Put back as committed, there is nothing to tell, and the bar goes.
+        // Opening the project again also put the execution being stepped
+        // away, so it is picked again for the steps further down that step it.
+        await writeFile(findEventBlock, findEventBefore, "utf8");
+        await run("changesQuiet", `${changesHelpers}
+          const hidden = Boolean(await until(() => bar().hidden, 15000));
+          const select = document.querySelector("#exec-bar .exec-select");
+          if (select) {
+            select.value = "book-seats";
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            await wait(400);
+          }
+          return { hidden };
+        `);
+
         // Notes: the person leaves one on a block for the agent, from the
         // block's panel; the agent answers it from the command line while the
         // window is open, and leaves one of its own while the person is typing;
@@ -4775,6 +5086,8 @@ function attachSelfCheck(
             source: text('.exec-source[aria-pressed="true"]'),
             // Its code does not import its contract, so it cannot be recorded, and the bar says why.
             recordDisabled: record ? record.disabled : "no Record button",
+            // The messenger has no git, so the Changes bar has nothing to say.
+            changesQuiet: document.getElementById("changes-bar").hidden,
             unrecordable: text("#exec-bar .exec-why"),
             count: text(".exec-count"),
             caption: text(".exec-caption-text"),

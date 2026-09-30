@@ -137,13 +137,29 @@ export function forgetVersions(): void {
   unfolded.clear();
 }
 
+let sinceCommit: () => string | null = () => null;
+/**
+ * Which commit "when you last looked" is. The Changes section hands it in,
+ * and the kernel answers each read with the row the block was on then, so
+ * Compare with then and this list can never disagree about it.
+ */
+export function compareSinceWith(provider: () => string | null): void {
+  sinceCommit = provider;
+}
+
+/** The row the block was on when the person last looked: null when none is listed, undefined while the list has not been read. */
+export function sinceVersionOf(blockPath: string): string | null | undefined {
+  const shown = listed?.dir === ui.dir && listed.blockPath === blockPath && listed.result.ok ? listed.result.value : undefined;
+  return shown === undefined ? undefined : shown.sinceVersion;
+}
+
 /** Reads a block's list, and redraws the panel if it changed, so reading it again never takes the focus from anything. */
 async function read(blockPath: string): Promise<void> {
   const dir = ui.dir;
   if (!dir) return;
   const ticket = ++latestRead;
   reading = blockPath;
-  const result = await window.fragmentor.blockVersions(dir, blockPath);
+  const result = await window.fragmentor.blockVersions(dir, blockPath, sinceCommit());
   if (ticket !== latestRead || ui.dir !== dir) return;
   reading = null;
 
