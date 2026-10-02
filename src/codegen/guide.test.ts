@@ -579,11 +579,14 @@ describe("the guide says where the project starts", () => {
     const guide = agentGuide(project());
     expect(guide).toContain("A test gives the stores rows before it runs under `stores`, keyed by the store entry's full address and then by row key");
     expect(guide).toContain("`expected` is compared whole, so leave it out where the result depends on `Clock` or `Random`");
-    // `fragmentor test` was twice read as running them.
-    expect(guide).toContain("is covered by the project's own tests and typecheck: run them yourself, since `fragmentor test` does not.");
+    // `fragmentor test` was twice read as running them. A rebuild that
+    // changes no code has nothing of its own to run them for.
+    expect(guide).toContain("is covered by the project's own tests and checks: run them after changing it, since `fragmentor test` does not.");
     expect(guide).not.toContain("beside `fragmentor test`");
-    // A refusal thrown is reported as an error, which no test can expect.
-    expect(guide).toContain("A block that turns input away returns the refusal as a value, such as an `error` field, so tests and executions can check it.");
+    // A refusal thrown is reported as an error, which no test can expect;
+    // and with no optional ports, a Python agent reached for unions first.
+    expect(guide).toContain("A block that turns input away returns the refusal as a value, such as an `error` field, so tests and executions can check it;");
+    expect(guide).toContain("a port is never optional, so type what either leaves empty `T | null`.");
   });
 
   it("says what a recording of an execution can check, and how a store step is written", () => {

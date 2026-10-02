@@ -515,9 +515,9 @@ function contractsSection(pack: LanguagePack | null): string {
     compactJson(workedExample.cases["price-orders/price-order"]),
     "```",
     "",
-    "`expected` is compared whole, so leave it out where the result depends on `Clock` or `Random`: the test then records what the block returns without checking it. A block that turns input away returns the refusal as a value, such as an `error` field, so tests and executions can check it. A test gives the stores rows before it runs under `stores`, keyed by the store entry's full address and then by row key: `\"stores\": { \"shop/orders-db.orders\": { \"A-1\": {…} } }`. A block's test runs everything it calls. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.",
+    "`expected` is compared whole, so leave it out where the result depends on `Clock` or `Random`: the test then records what the block returns without checking it. A block that turns input away returns the refusal as a value, such as an `error` field, so tests and executions can check it; a port is never optional, so type what either leaves empty `T | null`. A test gives the stores rows before it runs under `stores`, keyed by the store entry's full address and then by row key: `\"stores\": { \"shop/orders-db.orders\": { \"A-1\": {…} } }`. A block's test runs everything it calls. During tests, `FileSystem` paths are relative to the project folder, `Http` is unavailable, and `Clock` and `Random` are real.",
     "",
-    "Code Fragmentor does not run — a block it draws, or code outside the blocks such as a server — is covered by the project's own tests and typecheck: run them yourself, since `fragmentor test` does not.",
+    "Code Fragmentor does not run — a block it draws, or code outside the blocks such as a server — is covered by the project's own tests and checks: run them after changing it, since `fragmentor test` does not.",
   );
 
   return lines.join("\n");
@@ -543,7 +543,7 @@ function startingPoint(manifest: Manifest, pack: LanguagePack | null): string {
     pack?.id === "typescript"
       ? ' Start it with a `tsconfig.json` and a `package.json` holding `"type": "module"`, `typescript` and `@types/node` as dev dependencies, a `build` script, and a `test` script giving `node --test` a file pattern, not a folder. Tell the person how to run the entry point.'
       : pack?.id === "python"
-        ? " Set it up with a `.venv` (`python -m venv .venv`), which Fragmentor runs first, and ask the person before installing packages into it. Tell the person how to run the entry point."
+        ? " Tell the person how to run the entry point."
         : "";
   parts.push(
     manifest.existingCode

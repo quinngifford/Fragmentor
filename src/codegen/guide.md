@@ -14,7 +14,7 @@ The person you work with sees this project in Fragmentor as a diagram of **block
 4. {{codeStep}}
 5. Write down what happens when something sets the system going, under `executions/`: each with the block that starts it, once that block exists. A plan has none.
 6. Run `fragmentor check`{{testCommand}} until it passes.
-7. Commit each block you build as soon as it passes: its folder under `blocks/` and the code it points at, together, with a message saying what the block does now. Each commit is a version of the block that the person can compare with today's and go back to. A rebuild or a plan commits once, when it is done. The versions the person saves by name are kept in `.fragmentor/versions/`: commit them with everything else, and never change or delete them.
+7. Commit each block you build as soon as it passes: its folder under `blocks/` and the code it points at, together, with a message saying what the block does now. Each commit is a version the person can compare with today's and go back to. A rebuild or a plan commits once, when it is done. The versions the person saves by name are kept in `.fragmentor/versions/`: commit them with everything else, and never change or delete them.
 
 When the design changes, change the `block.json` files first, then the code. If the `fragmentor` command is not found, ask the person to run `npm link` once in Fragmentor's folder.
 
@@ -44,7 +44,7 @@ The person leaves notes on blocks in Fragmentor — something to change, fix, lo
 {{files}}
 ```
 
-Everything Fragmentor writes is inside `blocks/`. **The code is yours, wherever it belongs in the codebase** — a block's folder says where the block sits in the architecture, never where its code sits on disk. A block's id is its folder name, in kebab-case. Never edit a generated file.
+Fragmentor never writes into your code. **The code is yours, wherever it belongs in the codebase** — a block's folder says where the block sits in the architecture, never where its code sits on disk. A block's id is its folder name, in kebab-case. Never edit a generated file.
 
 ## fragmentor.json
 
@@ -56,7 +56,7 @@ Each system is a separate program, and `rootBlock` is its folder under `blocks/`
 
 ## Blocks
 
-**The diagram is the architecture: what the system is made of, and what owns what.** A block's parts are the block folders inside its folder. Put a block inside another only when it is part of that block — not because one calls the other, and not only because their files sit in the same folder. A block used by several others goes beside them, in the lowest block holding them all; one used by a single block may go inside it. A store goes beside what uses it: beside a service, not inside it. Nothing on the diagram says what calls what, or in what order: that is the code's business, and an execution's.
+**The diagram is the architecture: what the system is made of, and what owns what.** A block's parts are the block folders inside its folder. Put a block inside another only when it is part of that block — not because one calls the other, and not only because their files sit in the same folder. A block used by several others goes beside them, in the lowest block holding them all; one used by a single block may go inside it. A store goes beside what uses it: beside a service, not inside it. What calls what, and in what order, is the code's business, and an execution's.
 
 A block that is a group of parts rather than something called, `price-orders`:
 
@@ -142,7 +142,7 @@ The blocks say what exists. Also write down what happens: for each thing that se
 - Write each step between the finest blocks the code shows, even across distant parts of the system. A call the code makes many times over is one step, whose description says so and whose payload is one of them, since how many depends on what arrived. A service's operation handing a request to the block that answers it is a step of its own, because the code that does the handing is real and is not either block.
 - A step follows from the latest step that arrived where it starts, so two calls one block makes in turn are two branches; where the list cannot say so, give a step an `id` — starting with a letter, then letters, digits, `-` or `_` — and another `"cause": "<id>"`, or `"cause": "trigger"` for one that follows from what set the whole thing going.
 - `expect` is what makes an execution a test rather than a drawing, and is where most of its worth is. All of it is optional: `entered` names parts the run must cross into; `interactions` names steps that must happen, each matched by whichever of `from`, `to`, `kind`, `payload` and `response` you give; `effects` the same, by `at`, `kind` and `detail`; `never` names parts in which nothing at all may happen.
-- Three things decide whether an expectation means what you meant. An address without an entry matches that part and everything inside it, and one with an entry matches only that entry. An object — a payload, a response, a detail — is compared field by field, so you name only what matters, but a list is compared whole, length included. And each expectation is matched to a different event, so two that describe the same step fail for want of a second one.
+- Three things decide whether an expectation means what you meant. An address without an entry matches that part and everything inside it, and one with an entry matches only that entry. An object — a payload, a response, a detail — is compared field by field, so you name only what matters, but a list is compared whole, length included. And each expectation is matched to a different event, so two describing one step fail for want of a second.
 - **Pin the values, not only the shape.** An expectation that says a row was written, without saying what was in it, passes for code that wrote the wrong thing; that is most of what a test like this is for. And write a `never` no wider than the code justifies — one that can only ever pass, such as a part nobody has built, says nothing about this run.
 - `state`, what the stores hold at the end, belongs only to a run Fragmentor recorded, so `fragmentor check` reports it in one you write: say what was written in the step that wrote it.
 - `fragmentor test` {{executionTest}}
