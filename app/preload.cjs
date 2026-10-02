@@ -45,6 +45,7 @@ const CHANNELS = {
   rerunNote: "note:rerun",
   refreshAgentFiles: "project:agent-files",
   commandInstalled: "agent:command-installed",
+  exportPage: "project:export-page",
   menuCommand: "menu:command",
 };
 
@@ -92,6 +93,7 @@ contextBridge.exposeInMainWorld("fragmentor", {
   resolveNote: (dir, id) => ipcRenderer.invoke(CHANNELS.resolveNote, dir, id),
   deleteNote: (dir, id) => ipcRenderer.invoke(CHANNELS.deleteNote, dir, id),
   copyText: (text) => ipcRenderer.invoke(CHANNELS.copyText, text),
+  exportPage: (dir, look) => ipcRenderer.invoke(CHANNELS.exportPage, dir, look),
   onMenuCommand: (callback) => {
     ipcRenderer.on(CHANNELS.menuCommand, (_event, command) => callback(command));
   },

@@ -7,6 +7,7 @@ import type { VersionComparison } from "../src/run/versions.js";
 import type { Trace } from "../src/model/trace.js";
 import type { RecordingScope } from "../src/model/recorded.js";
 import type { FlaggedRun, Note, NoteAnchor } from "../src/project/notes.js";
+import type { ExportLook } from "./renderer/state.js";
 
 /**
  * The whole surface between the interface and the kernel.
@@ -54,11 +55,12 @@ export const CHANNELS = {
   rerunNote: "note:rerun",
   refreshAgentFiles: "project:agent-files",
   commandInstalled: "agent:command-installed",
+  exportPage: "project:export-page",
   menuCommand: "menu:command",
 } as const;
 
 /** What the application menu asks the window to do. */
-export type MenuCommand = "new-project" | "open-project" | "close-project" | "reload-project" | "show-commands";
+export type MenuCommand = "new-project" | "open-project" | "close-project" | "reload-project" | "show-commands" | "export-project";
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -205,6 +207,12 @@ export interface FragmentorApi {
   deleteNote(dir: string, id: string): Promise<Result<null>>;
   /** Puts text on the clipboard, such as what to tell the agent. */
   copyText(text: string): Promise<Result<null>>;
+  /**
+   * Makes the open project into one read-only page, drawn with this look, and
+   * saves it where the person picks. Null when they cancel; `inside` when the
+   * file they picked is inside the project, where the agent may commit it.
+   */
+  exportPage(dir: string, look: ExportLook): Promise<Result<{ file: string; bytes: number; inside: boolean } | null>>;
   /** Called with whatever the person picks from the application menu that is the window's to do. */
   onMenuCommand(callback: (command: MenuCommand) => void): void;
 }

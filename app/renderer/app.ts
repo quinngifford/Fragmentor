@@ -2,6 +2,7 @@ import type { FolderToStart, MenuCommand, ProjectLoad } from "../ipc.js";
 import {
   INSPECTOR_WIDTH,
   forgetBlocks,
+  lookForExport,
   rememberInspectorWidth,
   requireSnapshot,
   roleColours,
@@ -596,6 +597,22 @@ async function showCommands(): Promise<void> {
   openCommandsWindow(selectedBlock()?.path ?? null);
 }
 
+/** Makes the project into one page anyone can open, drawn as it looks now, and says what went into it. */
+async function exportProject(): Promise<void> {
+  if (!ui.dir) return;
+  const result = await window.fragmentor.exportPage(ui.dir, lookForExport());
+  if (!result.ok) {
+    ui.status = { text: `Could not export: ${result.error}`, tone: "bad" };
+  } else if (result.value !== null) {
+    const { file, bytes, inside } = result.value;
+    ui.status = {
+      text: `Exported ${file} (${Math.max(1, Math.round(bytes / 1024))} KB): the drawing and the executions the agent wrote down, without code, notes or tests.${inside ? " It is inside the project, so your agent may commit it." : ""}`,
+      tone: "good",
+    };
+  }
+  renderStatus();
+}
+
 /** What the application menu hands the window: which project is open, and what to ask its agent. */
 function wireMenu(): void {
   const actions: Record<MenuCommand, () => Promise<void>> = {
@@ -604,6 +621,7 @@ function wireMenu(): void {
     "close-project": closeProject,
     "reload-project": reloadByHand,
     "show-commands": showCommands,
+    "export-project": exportProject,
   };
   window.fragmentor.onMenuCommand((command) => {
     // A shortcut pressed while a dialog is up would start a second thing on

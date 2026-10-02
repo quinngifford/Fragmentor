@@ -1,7 +1,7 @@
 import { cpSync, mkdirSync, mkdtempSync, watch, writeFileSync } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { access, appendFile, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BrowserWindow, ClipboardItem, Menu, app, clipboard, dialog, ipcMain, shell } from "electron";
@@ -48,6 +48,7 @@ import { compareWithVersion } from "../src/run/versions.js";
 import type { VersionComparison } from "../src/run/versions.js";
 import { commitExampleHistory, filesOf, gitIn, writeWorkedExample } from "../src/project/exampleHistory.js";
 import { findPython } from "../src/run/python.js";
+import { checkLook, exportData, exportPage, saveName } from "./exportPage.js";
 
 /**
  * The main process owns everything with side effects: the window, the disk,
@@ -327,6 +328,27 @@ async function pickFolder(contents: Electron.WebContents, options: Electron.Open
   const window = BrowserWindow.fromWebContents(contents);
   const picked = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
   return picked.canceled ? undefined : picked.filePaths[0];
+}
+
+/** Where to save an exported page: Documents to begin with, under a name every disk will take. */
+async function pickSaveFile(contents: Electron.WebContents, projectName: string): Promise<string | undefined> {
+  const name = `${saveName(projectName)}.html`;
+  // Nobody is there to answer during the self-check either.
+  if (selfCheck) return path.join(selfCheck.root, "export", name);
+  const options: Electron.SaveDialogOptions = {
+    title: "Export",
+    defaultPath: path.join(app.getPath("documents"), name),
+    filters: [{ name: "Web page", extensions: ["html"] }],
+  };
+  const window = BrowserWindow.fromWebContents(contents);
+  const picked = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options);
+  return picked.canceled ? undefined : picked.filePath;
+}
+
+/** Today, as the page says when it was made: YYYY-MM-DD, in this computer's own time. */
+function today(): string {
+  const now = new Date();
+  return [now.getFullYear(), now.getMonth() + 1, now.getDate()].map((part) => String(part).padStart(2, "0")).join("-");
 }
 
 /* -------------------------------------------------------------------------- */
@@ -883,6 +905,42 @@ function registerHandlers(): void {
       return failed(error);
     }
   });
+
+  /**
+   * The page is built and searched before anyone is asked where to save it,
+   * so a page that cannot be made says so before a place is picked.
+   */
+  ipcMain.handle(
+    CHANNELS.exportPage,
+    async (event, dir: unknown, look: unknown): Promise<Result<{ file: string; bytes: number; inside: boolean } | null>> => {
+      try {
+        const folder = sent(dir, "A project's folder");
+        const snapshot = await projectSnapshot(folder);
+        if (snapshot.systems.length === 0) throw new Error("There is nothing to export yet: the agent has not drawn a system.");
+        const renderer = path.join(here, "renderer");
+        const [index, css, script] = await Promise.all(
+          ["index.html", "styles.css", "viewer.bundle.js"].map((name) => readFile(path.join(renderer, name), "utf8")),
+        );
+        const home = homedir();
+        const page = exportPage(
+          { index: index!, css: css!, script: script! },
+          exportData(snapshot, checkLook(look, snapshot), { date: today(), home }),
+          [folder, snapshot.dir, home],
+        );
+
+        const file = await pickSaveFile(event.sender, snapshot.name);
+        if (file === undefined) return ok(null);
+        await mkdir(path.dirname(file), { recursive: true });
+        await writeFile(file, page, "utf8");
+        const from = path.relative(snapshot.dir, file);
+        // `..notes.html` is a name inside the project; only `..` itself, or `..` then a separator, leaves it.
+        const inside = from !== ".." && !from.startsWith(`..${path.sep}`) && !path.isAbsolute(from);
+        return ok({ file, bytes: Buffer.byteLength(page, "utf8"), inside });
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
 
   ipcMain.handle(CHANNELS.copyText, async (_event, text: unknown): Promise<Result<null>> => {
     try {
@@ -2255,6 +2313,43 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         Number(value("largeFitted", "scale")) < 0.6 &&
         value("largeFitted", "allInView") === true,
     ],
+    [
+      "a project exports as one page that opens with nothing of Fragmentor behind it, drawn as the person arranged it",
+      (() => {
+        const page = report.exportPage ?? {};
+        const opened = page.opened as { count?: string; page?: string } | undefined;
+        return (
+          value("exportArranged", "arranged") === true &&
+          value("exportArranged", "folded") === true &&
+          /Exported .*Messenger\.html/.test(String(value("exported", "said"))) &&
+          page.written === true &&
+          page.smallEnough === true &&
+          page.noFolder === true &&
+          page.bridge === "undefined" &&
+          page.blocks === value("exportArranged", "blocks") &&
+          page.folded === true &&
+          page.functionColour === "#12ab34" &&
+          page.colourBy === "Colour: by kind" &&
+          page.dependencies === "shown" &&
+          opened?.count === value("exportArranged", "count") &&
+          /^Step /.test(String(opened?.page)) &&
+          page.stepOffered === true &&
+          /^\d+ of \d+$/.test(String(page.stepped)) &&
+          page.stepped !== opened?.count &&
+          page.marks === 1 &&
+          page.chips === "Written down" &&
+          page.declaredNote === true &&
+          JSON.stringify(page.appControls) === "[]" &&
+          page.legendReset === false &&
+          page.swatches === 9 &&
+          page.swatchesLocked === true &&
+          /Made with Fragmentor/.test(String(page.footer)) &&
+          JSON.stringify(page.outside) === "[]" &&
+          JSON.stringify(page.complaints) === "[]" &&
+          value("exportRestored", "restored") === true
+        );
+      })(),
+    ],
     // The Python leg runs only where the machine has a Python Fragmentor can
     // use; skipped, it said so and left nothing in the report to hold to.
     ...(report.pythonRun === undefined
@@ -2373,7 +2468,8 @@ function attachSelfCheck(
           reloadIsTheProject: menuItem("reload-project").label === "Reload Project" && menuItem("reload-project").accelerator === "CmdOrCtrl+R",
           // Reloading the page would put the open project away, so it is not offered.
           noPageReload: !(Menu.getApplicationMenu()?.items ?? []).some((top) => (top.submenu?.items ?? []).some((item) => item.role === "reload" || item.role === "forceReload")),
-          closedWithNothingOpen: !menuItem("close-project").enabled && !menuItem("reload-project").enabled && !menuItem("show-commands").enabled,
+          closedWithNothingOpen:
+            !menuItem("close-project").enabled && !menuItem("reload-project").enabled && !menuItem("show-commands").enabled && !menuItem("export-project").enabled,
           toolbar: (await window.webContents.executeJavaScript(
             `[...document.querySelectorAll(".toolbar button")].map((b) => b.id).join(" ")`,
           )) as string,
@@ -5344,6 +5440,163 @@ function attachSelfCheck(
         `);
         await capture(window, "self-check-flow");
 
+        // The person arranges the drawing their way and exports it: coloured
+        // by kind with a colour of their own, dependencies shown, a block
+        // folded, and a step picked.
+        await run("exportArranged", `
+          const chip = (label) => [...document.querySelectorAll("#exec-bar .chip")].find((c) => c.textContent === label);
+          chip("Tree").click();
+          await wait(500);
+          // How the drawing looked before, for putting it back afterwards.
+          window.__beforeExport = {
+            colourBy: text("#colour-by"),
+            dependencies: text("#show-dependencies"),
+            functionColour: getComputedStyle(document.documentElement).getPropertyValue("--role-function").trim(),
+          };
+          const colourBy = document.getElementById("colour-by");
+          if (!/by kind/.test(colourBy.textContent)) colourBy.click();
+          const swatch = await until(() => document.querySelector('#legend .legend-row[data-role="function"] input'));
+          if (!swatch) return { arranged: false, stage: "no swatch for code" };
+          swatch.value = "#12ab34";
+          swatch.dispatchEvent(new Event("input", { bubbles: true }));
+          const dependencies = document.getElementById("show-dependencies");
+          if (!/shown/.test(dependencies.textContent)) dependencies.click();
+          await wait(400);
+          const workers = document.querySelector('.block-box[data-id="workers"]');
+          if (!workers) return { arranged: false, stage: "no workers block to fold" };
+          workers.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+          await wait(600);
+          return {
+            arranged: true,
+            blocks: document.querySelectorAll("#node-layer .block-box").length,
+            folded: !document.querySelector('.block-box[data-id="deliver-notification"]'),
+            count: text(".exec-count"),
+          };
+        `);
+        pick("export-project");
+        await run("exported", `
+          const said = await until(() => (/Exported/.test(text("#status")) ? text("#status") : null), 20000);
+          return { said: said || text("#status") };
+        `);
+
+        // The file, opened as a reader would: in a window of its own with
+        // nothing of Fragmentor behind it, no way to leave the page, and
+        // every request beyond the file itself refused and counted.
+        report.exportPage = await (async () => {
+          const file = path.join(check.root, "export", "Messenger.html");
+          if (!(await exists(file))) return { written: false };
+          const page = await readFile(file, "utf8");
+          const outside: string[] = [];
+          const complaints: string[] = [];
+          const reader = new BrowserWindow({
+            show: false,
+            width: 1400,
+            height: 900,
+            webPreferences: { sandbox: true, partition: "export-check", backgroundThrottling: false },
+          });
+          try {
+            reader.webContents.on("will-navigate", (event) => event.preventDefault());
+            reader.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+            reader.webContents.session.webRequest.onBeforeRequest((details, callback) => {
+              const own = details.url.startsWith("file:");
+              if (!own) outside.push(details.url);
+              callback({ cancel: !own });
+            });
+            reader.webContents.on("console-message", (event) => {
+              if (event.level === "error" || event.level === "warning") complaints.push(event.message);
+            });
+            await reader.loadFile(file);
+            // Every page opened from a file shares one store, so a reader's
+            // own remembered colours are there before the page's: the page's
+            // must win.
+            await reader.webContents.executeJavaScript(
+              `localStorage.setItem("fragmentor.roleColours", JSON.stringify({ function: "#ff0000" })); localStorage.setItem("fragmentor.colourBy", "block");`,
+            );
+            await reader.loadFile(file);
+            reader.showInactive();
+            const seen = (await reader.webContents.executeJavaScript(`(async () => {
+              ${STEP_HELPERS}
+              await until(() => document.body.dataset.ready === "true");
+              await wait(800);
+              const bar = document.getElementById("exec-bar");
+              const opened = {
+                count: (bar.querySelector(".exec-count") || {}).textContent || "",
+                page: text("#inspector h2"),
+              };
+              const step = [...bar.querySelectorAll("button")].find((b) => b.textContent === "Step");
+              const stepOffered = Boolean(step && !step.disabled);
+              if (stepOffered) step.click();
+              await wait(500);
+              const panel = document.getElementById("inspector");
+              return {
+                bridge: typeof window.fragmentor,
+                blocks: document.querySelectorAll("#node-layer .block-box").length,
+                folded: !document.querySelector('.block-box[data-id="deliver-notification"]'),
+                functionColour: getComputedStyle(document.documentElement).getPropertyValue("--role-function").trim(),
+                colourBy: text("#colour-by"),
+                // Whether the arrows are showing, which is a setting on the drawing, not whether any exist.
+                dependencies: document.getElementById("canvas-svg").dataset.dependencies || "",
+                opened,
+                stepOffered,
+                stepped: (bar.querySelector(".exec-count") || {}).textContent || "",
+                // The one step showing: an arrow, or the chip an effect leaves.
+                marks: document.querySelectorAll("#exec-layer .exec-line-group, #exec-layer .exec-effect").length,
+                chips: [...bar.querySelectorAll(".exec-source")].map((c) => c.textContent).join(" "),
+                declaredNote: /written down/i.test((bar.querySelector(".exec-source") || {}).title || ""),
+                appControls: [...panel.querySelectorAll("button")].map((b) => b.textContent).filter((label) => /note|Open the code|Run|Record/.test(label)),
+                legendReset: Boolean(document.querySelector(".legend-reset")),
+                swatches: document.querySelectorAll("#legend .legend-row input").length,
+                swatchesLocked: [...document.querySelectorAll("#legend .legend-row input")].every((input) => input.disabled),
+                footer: text("#status"),
+              };
+            })()`)) as Record<string, unknown>;
+            await capture(reader, "self-check-export");
+            return {
+              written: true,
+              smallEnough: page.length < 1_000_000,
+              // The check's own folder, which every project here is inside, in no form at all.
+              noFolder: !page.toLowerCase().includes(path.basename(check.root).toLowerCase()),
+              ...seen,
+              outside,
+              complaints,
+            };
+          } catch (error) {
+            return { written: true, error: messageOf(error) };
+          } finally {
+            reader.destroy();
+          }
+        })();
+
+        // The person's own colours and choices go back as they were, so
+        // nothing after this is drawn the way the export was.
+        await run("exportRestored", `
+          const before = window.__beforeExport;
+          if (!before) return { restored: false, stage: "nothing recorded before the export" };
+          // The swatch is in the legend, which is there only while coloured by kind.
+          const swatch = document.querySelector('#legend .legend-row[data-role="function"] input');
+          if (swatch) {
+            swatch.value = before.functionColour;
+            swatch.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          const colourBy = document.getElementById("colour-by");
+          if (colourBy.textContent !== before.colourBy) colourBy.click();
+          const dependencies = document.getElementById("show-dependencies");
+          if (dependencies.textContent !== before.dependencies) dependencies.click();
+          const workers = document.querySelector('.block-box[data-id="workers"]');
+          if (workers && !document.querySelector('.block-box[data-id="deliver-notification"]')) workers.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+          await wait(500);
+          const now = {
+            colourBy: text("#colour-by"),
+            dependencies: text("#show-dependencies"),
+            functionColour: getComputedStyle(document.documentElement).getPropertyValue("--role-function").trim(),
+          };
+          return {
+            restored: JSON.stringify(now) === JSON.stringify(before) && Boolean(document.querySelector('.block-box[data-id="deliver-notification"]')),
+            before,
+            now,
+          };
+        `);
+
         // A function drawn because its code does not import the contract it
         // has offers to have the agent hold it to that contract. One whose
         // ports are written in words has no contract, and no offer.
@@ -5720,6 +5973,8 @@ function setUpMenu(): void {
         { id: "open-project", label: "Open Project…", accelerator: "CmdOrCtrl+O", click: send("open-project") },
         { id: "close-project", label: "Close Project", enabled: false, click: send("close-project") },
         { type: "separator" },
+        { id: "export-project", label: "Export…", enabled: false, click: send("export-project") },
+        { type: "separator" },
         mac ? { role: "close" } : { role: "quit" },
       ],
     },
@@ -5744,9 +5999,9 @@ function setUpMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-/** Closing or reloading a project, and the commands for its agent, are only offered while one is open. */
+/** Closing, reloading or exporting a project, and the commands for its agent, are only offered while one is open. */
 function offerProjectMenu(open: boolean): void {
-  for (const id of ["close-project", "reload-project", "show-commands"]) {
+  for (const id of ["close-project", "reload-project", "show-commands", "export-project"]) {
     const item = Menu.getApplicationMenu()?.getMenuItemById(id);
     if (item) item.enabled = open;
   }

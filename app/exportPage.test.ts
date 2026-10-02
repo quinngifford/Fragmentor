@@ -149,6 +149,23 @@ describe("what an exported page carries", () => {
     expect(said(`${tickets.dir}-old${path.sep}db.json`)).toBe(`${tickets.dir}-old${path.sep}db.json`);
   });
 
+  it("finds a folder of one name only with its drive, so the same name elsewhere in a path is left alone", () => {
+    const planted = structuredClone(tickets);
+    planted.dir = "D:\\api";
+    planted.goal = "POST /api/messages answers from src/api/auth.ts#check, kept at D:\\api\\src and /d/api/docs";
+    // A block path ending in the same name is the project's own, and stays whole.
+    planted.blocks["tickets/api"] = { ...planted.blocks["tickets"]!, path: "tickets/api" };
+    const shared = exportData(planted, look, { date: DATE, home: HOME }).snapshot;
+    expect(shared.goal).toBe("POST /api/messages answers from src/api/auth.ts#check, kept at src and docs");
+    expect(Object.keys(shared.blocks)).toContain("tickets/api");
+    expect(Object.keys(shared.blocks)).toContain("tickets");
+
+    // On a disk with no drive letters, one name alone names nobody, and is not looked for.
+    planted.dir = "/srv";
+    planted.goal = "served from /srv/app";
+    expect(exportData(planted, look, { date: DATE, home: HOME }).snapshot.goal).toBe("served from /srv/app");
+  });
+
   it("takes the deeper folder out first, so one inside the other is never cut short", () => {
     const planted = structuredClone(tickets);
     planted.dir = "C:\\Users";

@@ -179,26 +179,33 @@ function project(value: ProjectSnapshot, pointer: Pointer): ProjectSnapshot {
 
 /** A separator in any spelling of a path: either slash, a backslash as JSON writes it, or percent-encoded. */
 const SEP = "(?:[\\\\/]|%2[fF]|%5[cC])+";
-/**
- * How a path can name its drive before its first folder: `C:`, `/c` as Git
- * Bash writes it, `/mnt/c` as WSL does, each perhaps after `file:`.
- */
-const DRIVE = `(?:file:(?:${SEP})?)?(?:[A-Za-z]:|${SEP}mnt${SEP}[A-Za-z]|${SEP}[A-Za-z](?=${SEP}))?`;
+/** How a path can name its drive before its first folder: `C:`, `/c` as Git Bash writes it, `/mnt/c` as WSL does. */
+const DRIVE = `(?:[A-Za-z]:|${SEP}mnt${SEP}[A-Za-z]|${SEP}[A-Za-z](?=${SEP}))`;
+/** The start of a file URL, which may come before any of them. */
+const FILE_URL = `(?:file:(?:${SEP})?)?`;
 /** The end of a folder's last name: anything but more of a name, so `tickets` is not found inside `tickets-old`. */
 const END = "(?![\\p{L}\\p{N}_\\-])";
+/** The start of a path: nothing of a name just before, so `/api` is never found inside `src/api`. */
+const START = "(?<![\\p{L}\\p{N}_\\-])";
 
 /**
- * A folder as a pattern matching it however a path writes it: from its first
- * folder name on, whatever drive spelling comes before, with either kind of
- * slash, a slash written twice as JSON writes a backslash, spaces as `%20`,
- * and in any case, as Windows reads paths. Null for a folder with no name in
- * it, such as a drive's root, which would match far more than itself.
+ * A folder as a pattern matching it however a path writes it, starting where
+ * a path starts: its drive in any spelling, or none, then its names, with
+ * either kind of slash, a slash written twice as JSON writes a backslash,
+ * spaces as `%20`, and in any case, as Windows reads paths.
+ *
+ * A folder of one name has to be found with its drive, since one name alone,
+ * such as `api`, is part of countless paths that are not it; one with no drive
+ * at all, such as `/srv`, names nobody and is not looked for. Null for those,
+ * and for a folder with no name in it, such as a drive's root.
  */
-function folderPattern(folder: string): { core: string; depth: number } | null {
+function folderPattern(folder: string): { pattern: string; depth: number } | null {
   const names = folder.split(/[\\/]+/).filter((part) => part !== "" && !/^[A-Za-z]:$/.test(part));
-  if (names.length === 0) return null;
+  const drive = /^[A-Za-z]:/.test(folder);
+  if (names.length === 0 || (names.length === 1 && !drive)) return null;
   const escaped = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "(?: |%20)"));
-  return { core: `${SEP}${escaped.join(SEP)}${END}`, depth: names.length };
+  const drivePart = names.length === 1 ? DRIVE : `${DRIVE}?`;
+  return { pattern: `${START}${FILE_URL}${drivePart}${SEP}${escaped.join(SEP)}${END}`, depth: names.length };
 }
 
 /**
@@ -209,9 +216,9 @@ function folderPattern(folder: string): { core: string; depth: number } | null {
 function scrubber(projectDir: string, home: string): (text: string) => string {
   const replacements: { depth: number; pattern: RegExp; by: string }[] = [];
   const own = folderPattern(projectDir);
-  if (own !== null) replacements.push({ depth: own.depth, pattern: new RegExp(`${DRIVE}${own.core}(?:${SEP})?`, "giu"), by: "" });
+  if (own !== null) replacements.push({ depth: own.depth, pattern: new RegExp(`${own.pattern}(?:${SEP})?`, "giu"), by: "" });
   const theirs = folderPattern(home);
-  if (theirs !== null) replacements.push({ depth: theirs.depth, pattern: new RegExp(`${DRIVE}${theirs.core}`, "giu"), by: "~" });
+  if (theirs !== null) replacements.push({ depth: theirs.depth, pattern: new RegExp(theirs.pattern, "giu"), by: "~" });
   replacements.sort((a, b) => b.depth - a.depth);
   return (text) => replacements.reduce((each, { pattern, by }) => each.replace(pattern, by), text);
 }
@@ -371,7 +378,7 @@ export function exportPage(assets: { index: string; css: string; script: string 
 
   for (const folder of forbidden) {
     const pattern = folderPattern(folder);
-    if (pattern !== null && new RegExp(pattern.core, "iu").test(page)) throw new ExportLeakError(`the folder ${folder}`);
+    if (pattern !== null && new RegExp(pattern.pattern, "iu").test(page)) throw new ExportLeakError(`the folder ${folder}`);
   }
   return page;
 }
