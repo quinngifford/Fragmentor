@@ -222,15 +222,16 @@ export function paintExecution(): void {
   renderBar();
 }
 
-/** Starts a recording of an execution, which the window hands in as it starts. */
-let record: (execution: SnapshotExecution) => void = () => {};
+/** Starts a recording of an execution, which the window hands in as it starts. Null where nothing can be recorded. */
+let record: ((execution: SnapshotExecution) => void) | null = null;
 
 /**
  * Called once, as the window starts: the canvas asks for the flow when it is
  * showing one. `recordIt` is how the bar's Record button records, which this
- * module cannot do itself, since it asks nothing of the main process.
+ * module cannot do itself, since it asks nothing of the main process. A page
+ * that runs nothing passes null, and the bar then offers no recording at all.
  */
-export function setUpExecutions(recordIt: (execution: SnapshotExecution) => void): void {
+export function setUpExecutions(recordIt: ((execution: SnapshotExecution) => void) | null): void {
   record = recordIt;
   onFlowWanted(() => {
     const step = currentStep();
@@ -263,13 +264,14 @@ function stopPlaying(): void {
 
 function choose(id: string | null): void {
   stopPlaying();
+  const wasFlow = ui.shows === "flow";
   ui.execution = id === null ? null : { id, at: 0, trace: "declared" };
   // Nothing to draw a flow of without an execution.
   if (id === null) ui.shows = "tree";
   showStep();
   // The flow is a drawing of the execution picked, so picking another is a
-  // different drawing.
-  notify({ redraw: ui.shows === "flow" });
+  // different drawing, and picking none takes it away for the tree.
+  notify({ redraw: wasFlow });
   paintExecution();
 }
 
@@ -316,6 +318,11 @@ function arrive(event: TraceEvent, unfold: boolean): void {
   }
   notify({ redraw: unfolded || ui.shows === "flow" });
   paintExecution();
+  keepStepInView();
+}
+
+/** Brings the blocks the step showing joins into view, when they are off screen. */
+export function keepStepInView(): void {
   const mark = currentMark();
   if (mark) keepInView([mark.from, mark.to].filter((each): each is string => each !== null));
 }
@@ -492,15 +499,16 @@ function buildBar(
     // of what it said before would be let go of as soon as it was made.
     () => {
       const now = selectedExecution();
-      if (now) record(now);
+      if (now) record?.(now);
     },
   );
   recordButton.disabled = runs === null;
+  const recording = record !== null;
   // Why not is said where it can be read, not only when the button is hovered.
-  if (execution.unrecordable) host.append(el("div", "exec-why", execution.unrecordable));
+  if (recording && execution.unrecordable) host.append(el("div", "exec-why", execution.unrecordable));
 
   if (!shown.trace) {
-    controls.append(recordButton);
+    if (recording) controls.append(recordButton);
     controls.append(el("span", "exec-count", "nothing written down for it yet"));
     return { key, select, steps: null };
   }
@@ -526,9 +534,11 @@ function buildBar(
   }
   controls.append(shows);
 
-  // Which trace is on screen: the agent's, or what Fragmentor saw. Never left to be guessed.
+  // Which trace is on screen: the agent's, or what Fragmentor saw. Never left
+  // to be guessed — so where nothing can be recorded, the one chip still says
+  // the trace was written down.
   const sources = el("div", "exec-shows");
-  for (const trace of ["declared", "recorded"] as const) {
+  for (const trace of recording ? (["declared", "recorded"] as const) : (["declared"] as const)) {
     const there = trace === "declared" ? shown.written !== null : shown.recording !== null;
     const chip = el("button", "chip exec-source", SOURCE_WORDS[trace]);
     chip.type = "button";
@@ -540,7 +550,7 @@ function buildBar(
     sources.append(chip);
   }
   controls.append(sources);
-  controls.append(recordButton);
+  if (recording) controls.append(recordButton);
   const agreement = agreementOf(execution);
   if (agreement) controls.append(agreementPill(agreement));
 

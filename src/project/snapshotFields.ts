@@ -1,4 +1,16 @@
-import type { ProjectSnapshot, SnapshotAccess, SnapshotBlock, SnapshotCode, SnapshotExecution, SnapshotPort } from "./snapshot.js";
+import type { Address, Effect, Interaction, Return, Trace } from "../model/trace.js";
+import type { Granularity } from "./project.js";
+import type {
+  ProjectSnapshot,
+  SnapshotAccess,
+  SnapshotBlock,
+  SnapshotCapability,
+  SnapshotCode,
+  SnapshotExecution,
+  SnapshotExposed,
+  SnapshotPort,
+  SnapshotSystem,
+} from "./snapshot.js";
 
 /**
  * Every field of a snapshot, and what is done with it by whatever reads a
@@ -30,13 +42,26 @@ export interface FieldUse {
 /** One entry for each field of T, optional ones included, and no other. */
 export type FieldTable<T> = { [K in keyof T]-?: FieldUse };
 
-const compared: FieldUse = { change: "compared", export: "kept" };
-const ignored: FieldUse = { change: "ignored", export: "kept" };
-/** Compared, but never on the exported page. */
-const comparedPrivate: FieldUse = { change: "compared", export: "dropped" };
-const ignoredPrivate: FieldUse = { change: "ignored", export: "dropped" };
+/**
+ * The same, for a type inside one of the fields above: what is inside an
+ * execution's trace, or a block's exposed entries. These decide only whether
+ * each part leaves the computer. The diff reads such parts by hand, where it
+ * reads them at all, so a part added to one of these types has to be looked
+ * at in changes.ts as well; nothing here makes it.
+ */
+export type ExportTable<T> = { [K in keyof T]-?: { export: FieldUse["export"] } };
 
-export const projectFields: FieldTable<ProjectSnapshot> = {
+// Each entry keeps its literal type, so the exporter can tell at compile time
+// which fields it has to put something in the place of.
+const compared = { change: "compared", export: "kept" } as const satisfies FieldUse;
+const ignored = { change: "ignored", export: "kept" } as const satisfies FieldUse;
+/** Compared, but never on the exported page. */
+const comparedPrivate = { change: "compared", export: "dropped" } as const satisfies FieldUse;
+const ignoredPrivate = { change: "ignored", export: "dropped" } as const satisfies FieldUse;
+const kept = { export: "kept" } as const;
+const dropped = { export: "dropped" } as const;
+
+export const projectFields = {
   // Where it is on this computer.
   dir: ignoredPrivate,
   // How the project was set up says nothing about what was built.
@@ -59,9 +84,9 @@ export const projectFields: FieldTable<ProjectSnapshot> = {
   diagnostics: ignoredPrivate,
   // What the code reaches is not read at a commit, and the files are the codebase's.
   reachUnpointed: ignoredPrivate,
-};
+} satisfies FieldTable<ProjectSnapshot>;
 
-export const blockFields: FieldTable<SnapshotBlock> = {
+export const blockFields = {
   path: compared,
   // The last part of its path.
   id: ignored,
@@ -99,9 +124,9 @@ export const blockFields: FieldTable<SnapshotBlock> = {
   code: compared,
   // Not read at a commit, and it names the codebase's files.
   reachNotChecked: ignoredPrivate,
-};
+} satisfies FieldTable<SnapshotBlock>;
 
-export const codeFields: FieldTable<SnapshotCode> = {
+export const codeFields = {
   pointer: compared,
   // The pointer's own file.
   file: ignored,
@@ -111,18 +136,18 @@ export const codeFields: FieldTable<SnapshotCode> = {
   // Code never leaves unasked, not even as a fingerprint of it.
   excerpt: ignoredPrivate,
   hash: comparedPrivate,
-};
+} satisfies FieldTable<SnapshotCode>;
 
-export const portFields: FieldTable<SnapshotPort> = {
+export const portFields = {
   name: compared,
   // As written; its structure is compared, so the order of an object's fields is not a change.
   type: ignored,
   // A page that runs nothing needs only the type as written.
   typeIr: comparedPrivate,
   description: compared,
-};
+} satisfies FieldTable<SnapshotPort>;
 
-export const accessFields: FieldTable<SnapshotAccess> = {
+export const accessFields = {
   text: compared,
   // All part of the text.
   from: ignored,
@@ -132,9 +157,9 @@ export const accessFields: FieldTable<SnapshotAccess> = {
   // What the text leads to, so rewording it to reach the same thing is told apart from reaching something else.
   resourcePath: compared,
   resourceName: ignored,
-};
+} satisfies FieldTable<SnapshotAccess>;
 
-export const executionFields: FieldTable<SnapshotExecution> = {
+export const executionFields = {
   id: compared,
   name: compared,
   description: compared,
@@ -152,4 +177,110 @@ export const executionFields: FieldTable<SnapshotExecution> = {
   // nothing records nothing.
   records: ignoredPrivate,
   unrecordable: ignoredPrivate,
-};
+} satisfies FieldTable<SnapshotExecution>;
+
+/* -------------------------------------------------------------------------- */
+/* Inside the fields above, for the exported page                             */
+/* -------------------------------------------------------------------------- */
+
+// Only whether each part leaves the computer is decided here; ExportTable says why.
+
+export const systemFields = {
+  rootBlock: kept,
+  language: kept,
+  displayName: kept,
+  known: kept,
+  reachRead: kept,
+} satisfies ExportTable<SnapshotSystem>;
+
+export const granularityFields = {
+  level: kept,
+  maxDepth: kept,
+} satisfies ExportTable<Granularity>;
+
+export const exposedFields = {
+  name: kept,
+  accepts: kept,
+  returns: kept,
+  block: kept,
+  route: kept,
+  description: kept,
+  fields: kept,
+} satisfies ExportTable<SnapshotExposed>;
+
+export const routeStepFields = {
+  path: kept,
+  entry: kept,
+} satisfies ExportTable<SnapshotExposed["route"][number]>;
+
+export const exposedPartFields = {
+  name: kept,
+  type: kept,
+  optional: kept,
+} satisfies ExportTable<SnapshotExposed["fields"][number]>;
+
+export const capabilityFields = {
+  name: kept,
+  capability: kept,
+  description: kept,
+} satisfies ExportTable<SnapshotCapability>;
+
+export const blockFilesFields = {
+  code: kept,
+  contract: kept,
+} satisfies ExportTable<SnapshotBlock["files"]>;
+
+export const triggerFields = {
+  at: kept,
+  kind: kept,
+  description: kept,
+  code: kept,
+  // What the agent wrote down as setting it going, as it wrote every step.
+  payload: kept,
+} satisfies ExportTable<SnapshotExecution["trigger"]>;
+
+export const traceFields = {
+  source: kept,
+  execution: kept,
+  events: kept,
+  // What stores held at the end, which only a recording knows, and which is real data.
+  state: dropped,
+} satisfies ExportTable<Trace>;
+
+export const addressFields = {
+  path: kept,
+  entry: kept,
+} satisfies ExportTable<Address>;
+
+export const interactionFields = {
+  type: kept,
+  id: kept,
+  description: kept,
+  code: kept,
+  cause: kept,
+  from: kept,
+  to: kept,
+  kind: kept,
+  payload: kept,
+} satisfies ExportTable<Interaction>;
+
+export const returnFields = {
+  type: kept,
+  id: kept,
+  of: kept,
+  from: kept,
+  to: kept,
+  response: kept,
+  error: kept,
+} satisfies ExportTable<Return>;
+
+export const effectFields = {
+  type: kept,
+  id: kept,
+  description: kept,
+  code: kept,
+  cause: kept,
+  at: kept,
+  kind: kept,
+  detail: kept,
+} satisfies ExportTable<Effect>;

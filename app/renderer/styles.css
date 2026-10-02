@@ -359,6 +359,11 @@ body[data-resizing="true"] { cursor: col-resize; }
 
 body[data-project="open"] .welcome { display: none; }
 
+/* An exported page: the drawing and the panel beside it, and nothing that
+   edits, runs or asks the application for anything. */
+body[data-export] :is(#agent-commands, #toggle-rail, #toggle-inspector, .toolbar-sep, #rail, #inspector-splitter,
+  #crumbs, #run-bar, #notes-bar, #changes-bar, #panels, .breakpoint) { display: none; }
+
 .welcome h1 {
   margin: 0;
   font-size: 26px;

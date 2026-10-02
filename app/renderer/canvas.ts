@@ -643,14 +643,15 @@ export function fitToView(animated = false): void {
   tween(320, (t) => setCamera(between(start, target, t)), () => id === moves);
 }
 
-/** The canvas has no size until layout settles, so keep asking. */
-export function fitWhenReady(attempts: number): void {
+/** The canvas has no size until layout settles, so keep asking. `then` follows the fit, once there is one. */
+export function fitWhenReady(attempts: number, then?: () => void): void {
   const rect = element("canvas-svg").getBoundingClientRect();
   if (rect.width > 0 && rect.height > 0) {
     fitToView();
+    then?.();
     return;
   }
-  if (attempts > 0) requestAnimationFrame(() => fitWhenReady(attempts - 1));
+  if (attempts > 0) requestAnimationFrame(() => fitWhenReady(attempts - 1, then));
 }
 
 /** Eases the canvas over to a point, without changing how far out it is zoomed. */

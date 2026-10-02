@@ -494,3 +494,59 @@ export const blockColours = {
     writeStore(BLOCK_COLOURS_KEY, next);
   },
 };
+
+/**
+ * How the drawing looked when it was exported: the person's colours and
+ * choices, what was folded and which execution was picked. Plain values only,
+ * so it travels as JSON, and block colours by block path alone, since the
+ * page has no folder to key them by.
+ */
+export interface ExportLook {
+  colourBy: ColourBy;
+  roleColours: Record<string, string>;
+  blockColours: Record<string, string>;
+  showDependencies: boolean;
+  legendCollapsed: boolean;
+  folded: string[];
+  execution: { id: string; at: number } | null;
+}
+
+/** The look on screen now, for an export of this project. */
+export function lookForExport(): ExportLook {
+  const ours = blockColours.key("", "");
+  // The bar falls back to the written trace when a recording has gone stale,
+  // so it is what is on screen, not what was asked for, that decides.
+  const picked = selectedExecution();
+  const onRecording = ui.execution?.trace === "recorded" && picked !== null && recordingOf(picked) !== null;
+  return {
+    colourBy: viewSettings.colourBy,
+    roleColours: { ...roleColours.all } as Record<string, string>,
+    blockColours: Object.fromEntries(
+      Object.entries(blockColours.all)
+        .filter(([key]) => key.startsWith(ours))
+        .map(([key, colour]) => [key.slice(ours.length), colour]),
+    ),
+    showDependencies: ui.showDependencies,
+    legendCollapsed: ui.legendCollapsed,
+    folded: [...ui.folded],
+    // The page holds only what was written down, so a recording on screen
+    // exports as the written trace, from its start.
+    execution: ui.execution === null ? null : { id: ui.execution.id, at: onRecording ? 0 : ui.execution.at },
+  };
+}
+
+/**
+ * Draws with an exported look in place of whatever this browser remembers,
+ * without writing any of it down: every page opened from a file shares one
+ * store, and one page's look must never become another's.
+ */
+export function useLook(look: ExportLook): void {
+  roleColours.all = { ...look.roleColours } as Partial<Record<Role, string>>;
+  blockColours.all = Object.fromEntries(Object.entries(look.blockColours).map(([path, colour]) => [blockColours.key("", path), colour]));
+  viewSettings.colourBy = look.colourBy;
+  ui.showDependencies = look.showDependencies;
+  ui.legendCollapsed = look.legendCollapsed;
+  ui.folded = new Set(look.folded);
+  ui.execution = look.execution === null ? null : { ...look.execution, trace: "declared" };
+  roleColours.apply();
+}

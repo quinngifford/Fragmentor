@@ -1,8 +1,8 @@
 import type { SnapshotBlock, SnapshotCode } from "../../src/project/snapshot.js";
 import type { ProjectDiagnostic } from "../../src/project/project.js";
 import { blockColours, requireSnapshot, selectedBlock, ui, viewSettings } from "./state.js";
-import { accessPanel, blockAbout, blockHead, interfaceSection, multiPanel, reachesSection } from "./detail.js";
-import type { EntryRoute } from "./detail.js";
+import { accessPanel, blockAbout, blockHead, entryLeads, interfaceSection, multiPanel, reachesSection, routesOf } from "./detail.js";
+import type { Leads } from "./detail.js";
 import { accessArrows, blockColour, hasCode, hasDetails, revealBlock, treeInView } from "./canvas.js";
 import { openBlockWindow, openCodeAt } from "./popup.js";
 import { STEP_LINK, stepPage } from "./execution.js";
@@ -287,53 +287,6 @@ function blockColourControl(block: SnapshotBlock): HTMLElement | null {
 
   row.append(el("span", "block-colour-label", "Colour"), swatch, reset);
   return row;
-}
-
-/** One of this block's entries, and where what happens when it is used ends up. */
-interface Leads {
-  entry: string;
-  /** The way there in words, for the entry's own row. */
-  route: string;
-  /** Where it ends up. */
-  last: SnapshotBlock;
-}
-
-/**
- * Where each of this block's entries leads.
- *
- * A button on a client calls an operation on a service; that operation says
- * which block answers it; and that block is code, with a contract and a test
- * bench. The kernel follows those links end to end, as it does to find the
- * code a recording runs, and one route answers two questions here — where
- * does this button go, and can it be pressed — so the row saying where it
- * leads and the button that runs it can never disagree about it.
- */
-function entryLeads(block: SnapshotBlock): Leads[] {
-  if (!block.architecture) return [];
-  const blocks = requireSnapshot().blocks;
-
-  return block.exposes.flatMap((entry) => {
-    const rest = entry.route.slice(1).map((step) => ({ block: blocks[step.path]!, entry: step.entry }));
-    const last = rest.at(-1);
-    if (!last) return [];
-
-    return [
-      {
-        entry: entry.name,
-        route: rest.map((step) => (step.entry ? `${step.block.name} · ${step.entry}` : step.block.name)).join("  →  "),
-        last: last.block,
-      },
-    ];
-  });
-}
-
-/** The same routes, as the entries' own rows want them. */
-function routesOf(leads: Leads[]): EntryRoute[] {
-  return leads.map(({ entry, route, last }) => ({
-    entry,
-    route,
-    endsAt: last.architecture ? null : last.path,
-  }));
 }
 
 function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
