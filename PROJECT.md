@@ -98,7 +98,7 @@ Access is drawn per direction rather than per pair, because direction is the mos
 
 The arrangement says something, so it has to be true. A diagram reads left to right from whoever sets the system going, through what they call, to what that calls in turn. Stores and queues are not steps in that: a service reads and writes a database in the same breath, and putting it further along would say it came after. They sit underneath instead, and the connection loops clockwise around the block — out of its right, down, and back up into its left. A queue written and never read is an endpoint but not the destination, because the system's answer goes back to whoever asked for it; it belongs under the flow rather than at the end of it.
 
-Colour says which world a thing belongs to, and runs from what is most yours to what is least: your code, the data it holds, the data it keeps, your own separate programs, the people you serve, and the services you do not control. Which exact colours those are is the person's, not the project's: a kind's colour is changed from the legend and a single block's from the inspector, and both stay in that person's browser rather than in the files everyone shares. Green is your own code. Red is spent on none of them: on this panel it means something is wrong.
+Colour says which world a thing belongs to, and runs from what is most yours to what is least: your code, the data it holds, the data it keeps, your own separate programs, the people you serve, and the services you do not control. Which exact colours those are is the person's, not the project's: a kind's colour is changed from the legend and a single block's from the inspector, and both stay in that person's browser rather than in the files everyone shares, though a page the person exports carries them. Green is your own code. Red is spent on none of them: on this panel it means something is wrong.
 
 A dashed line means one thing and only one thing: not built yet. Everything planned is grey and dashed, blocks and connections alike, whatever colour it would otherwise have taken.
 
@@ -200,6 +200,8 @@ The interface is a visual canvas — dark, high-contrast, structural — where t
 
 **Fragmentor is a desktop application.** There is no web version. The work is local: a project is a directory of files, the tools it drives are local, and nothing needs a server. The kernel is a library that the application and the agent's command both consume, never a tool the user drives directly.
 
+The person can export a project as one read-only page, the drawing and the executions the agent wrote down, which opens in any browser. It is a document, not a version of the application: nothing in it can be edited, run or noted on, it makes no requests, it holds no code, notes or tests, and Fragmentor writes it only to a file the person picks.
+
 If projects are ever shared, that happens through an ordinary repository holding the blocks and their code, rather than by moving the application online. Nothing in the file format should assume otherwise.
 
 ## Systems and languages
@@ -222,7 +224,7 @@ Not in scope now:
 - Fragmentor calling AI models itself; the AI is always an agent working in the project folder
 - connecting systems to each other, in the same language or across languages
 - a browser version of the application, or any hosted service
-- sharing projects between people, which would be a repository integration rather than a feature of the application
+- sharing projects between people, which would be a repository integration rather than a feature of the application; the one exception is a read-only page the person exports
 - deploying or operating the software Fragmentor builds
 
 ## Development strategy
