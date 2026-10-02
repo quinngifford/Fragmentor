@@ -1,3 +1,4 @@
+import { mkdtempSync, rmSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -6,8 +7,19 @@ import { afterEach, describe, expect, it } from "vitest";
 import { compareWithVersion } from "./versions.js";
 import type { ComparedBlock, VersionComparison } from "./versions.js";
 import type { CaseResult } from "./run.js";
-import { commitExampleHistory, filesOf, gitIn } from "../project/exampleHistory.js";
+import { findPython } from "./python.js";
+import { commitExampleHistory, filesOf, gitIn, writeWorkedExample } from "../project/exampleHistory.js";
 import { saveVersion, swapToVersion, undoLastSwap } from "../project/history.js";
+
+/** A Python Fragmentor can run (3.11 or later), probed in an empty folder of its own. */
+const python311 = (() => {
+  const probe = mkdtempSync(path.join(tmpdir(), "fragmentor-versions-gate-"));
+  try {
+    return findPython(probe).ok;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
 
 /**
  * Comparing pricing with its older version, in which a part of its own took a
@@ -164,6 +176,49 @@ export async function price(input: { amount: number }, caps: any) {
     expect(await filesOf(dir)).toEqual(project);
     expect(await copies()).toEqual(before);
   }, 60_000);
+
+  it.skipIf(!python311)("compares a Python block with an older commit, running both versions' tests in copies", async () => {
+    // The guide's worked example in Python, whose older version priced every
+    // order at double, with a test of its own saying so.
+    const dir = path.join(await scratch(), "python app");
+    const git = gitIn(dir);
+    await writeWorkedExample(dir, "python");
+    await git("init", "--quiet");
+    const priceOrder = path.join(dir, "src", "pricing", "price_order.py");
+    const cases = path.join(dir, "blocks", "price-orders", "price-order", "cases.json");
+    const shipped = { code: await readFile(priceOrder, "utf8"), cases: await readFile(cases, "utf8") };
+    await writeFile(priceOrder, shipped.code.replace('return {"total": sum(', 'return {"total": 2 * sum('), "utf8");
+    await write(dir, {
+      "blocks/price-orders/price-order/cases.json": [
+        { name: "doubles every line", input: { order: { id: "A-1", lines: [{ quantity: 2, unitPrice: 3.5 }] } }, expected: { total: 14 } },
+      ],
+    });
+    await git("add", "--all");
+    await git("commit", "--quiet", "-m", "Double");
+    const doubled = (await git("rev-parse", "HEAD")).trim();
+    await writeFile(priceOrder, shipped.code, "utf8");
+    await writeFile(cases, shipped.cases, "utf8");
+    await git("add", "--all");
+    await git("commit", "--quiet", "-m", "Sum the lines");
+    const before = await copies();
+    const project = await filesOf(dir);
+
+    const compared = await compareWithVersion(dir, "price-orders/price-order", { commit: doubled });
+
+    expect(outcomes(compared.inside[0])).toEqual({
+      "adds quantity times price across the lines": "passed / failed",
+      "an order with no lines costs nothing": "passed / passed",
+      "doubles every line": "failed / passed",
+    });
+    // The block that calls it comes out differently too.
+    expect(compared.outside.map((block) => [block.blockPath, outcomes(block)])).toEqual([
+      ["price-orders/report-totals", { "prices a file of orders": "passed / failed" }],
+    ]);
+    // Nothing is left behind: no copy, no change, no compiled Python.
+    expect(await copies()).toEqual(before);
+    expect(await filesOf(dir)).toEqual(project);
+    expect((await readdir(dir, { recursive: true })).filter((each) => each.includes("__pycache__"))).toEqual([]);
+  }, 120_000);
 
   it("says when a version's saved tests could not be read, and calls none of the others new", async () => {
     const { dir, git } = await ticketsHistory();
