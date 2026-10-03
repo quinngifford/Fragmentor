@@ -309,9 +309,6 @@ describe("the Python pack", () => {
     expect(pack.contractSpecifier("blocks/_contracts/rank_jobs/score_posting/contract.py", "src/jobs/score.py")).toBe(
       "blocks._contracts.rank_jobs.score_posting.contract",
     );
-    // Bound code is checked and run, exactly as TypeScript is.
-    expect(pack.canCheck).toBe(true);
-    expect(pack.canRun).toBe(true);
   });
 
   it("says why a file Python could not import can never be bound", () => {

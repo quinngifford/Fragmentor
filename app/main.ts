@@ -951,15 +951,6 @@ function registerHandlers(): void {
     }
   });
 
-  ipcMain.handle(CHANNELS.revealBlock, async (_event, dir: string, blockPath: string): Promise<Result<null>> => {
-    try {
-      shell.showItemInFolder(resolveInside(blockDir(dir, blockPath), "block.json"));
-      return ok(null);
-    } catch (error) {
-      return failed(error);
-    }
-  });
-
   ipcMain.handle(
     CHANNELS.readCode,
     async (_event, dir: string, pointer: string): Promise<Result<{ file: string; line: number | null; text: string | null }>> => {

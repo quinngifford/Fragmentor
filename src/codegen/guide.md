@@ -13,7 +13,7 @@ The person you work with sees this project in Fragmentor as a diagram of **block
 3. {{reviewStep}}
 4. {{codeStep}}
 5. Write down what happens when something sets the system going, under `executions/`: each with the block that starts it, once that block exists. A plan has none.
-6. Run `fragmentor check`{{testCommand}} until it passes.
+6. Run `fragmentor check` and `fragmentor test` until it passes.
 7. Commit each block you build as soon as it passes: its folder under `blocks/` and the code it points at, together, with a message saying what the block does now. Each commit is a version the person can compare with today's and go back to. A rebuild or a plan commits once, when it is done. The versions the person saves by name are kept in `.fragmentor/versions/`: commit them with everything else, and never change or delete them.
 
 When the design changes, change the `block.json` files first, then the code. If the `fragmentor` command is not found, ask the person to run `npm link` once in Fragmentor's folder.

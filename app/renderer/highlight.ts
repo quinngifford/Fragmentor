@@ -375,9 +375,9 @@ export function codeFragment(code: string, language: Language): DocumentFragment
  * The same shapes are read down a contract, beside a table's name and above a
  * store's rows, so they are built once here and never assembled by hand.
  */
-export function typeLine(type: string, className = "ptype"): HTMLDivElement {
+export function typeLine(type: string): HTMLDivElement {
   const node = document.createElement("div");
-  node.className = className;
+  node.className = "ptype";
   node.append(codeFragment(type, "type"));
   return node;
 }

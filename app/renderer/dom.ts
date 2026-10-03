@@ -13,6 +13,13 @@
  * other. The sections say what they are; that is enough.
  */
 
+/** An element the window's markup always has, by id. */
+export function element<T extends Element = HTMLElement>(id: string): T {
+  const found = document.getElementById(id);
+  if (!found) throw new Error(`The interface is missing #${id}.`);
+  return found as unknown as T;
+}
+
 export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className?: string,

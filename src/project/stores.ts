@@ -1,5 +1,4 @@
 import { CAPABILITIES, canRead, reachesResource } from "../model/capabilities.js";
-import { describeType } from "../model/types.js";
 import type { PortType } from "../model/types.js";
 import { resolveAccess } from "./project.js";
 import type { LoadedBlock, Project } from "./project.js";
@@ -21,8 +20,6 @@ import type { LoadedBlock, Project } from "./project.js";
 export interface BoundStore {
   /** The capability port on the block, as its code refers to it. */
   port: string;
-  /** `Store` or `Queue`. */
-  capability: string;
   /**
    * What it is a way into, as one name: `support-desk/accounts-file.accounts`.
    *
@@ -78,7 +75,6 @@ export function boundStores(project: Project, node: LoadedBlock): BoundStore[] {
     const shape: PortType | null = entry.returns ?? entry.accepts;
     found.push({
       port,
-      capability: declared.capability,
       target: storeTarget(resource.path, bound.entry),
       resourceName: resource.block.name,
       entry: bound.entry,
@@ -103,11 +99,4 @@ export function boundStores(project: Project, node: LoadedBlock): BoundStore[] {
 export function storesForRun(project: Project, blockPath: string): BoundStore[] {
   const node = project.byPath.get(blockPath);
   return node ? boundStores(project, node) : [];
-}
-
-/** `Store<{ id: string }>`, or `Store` for a port with nothing to fill in. */
-export function describeBound(store: BoundStore): string {
-  const parameter = CAPABILITIES[store.capability]?.parameter;
-  if (!parameter) return store.capability;
-  return `${store.capability}<${store.shape ? describeType(store.shape) : "unknown"}>`;
 }

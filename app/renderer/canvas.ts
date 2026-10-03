@@ -5,7 +5,7 @@ import { boxOfStep, buildFlow } from "./flow.js";
 import type { Flow, FlowBox } from "./flow.js";
 import { BLOCK_PALETTE, COLOUR_BY, blockColours, requireSnapshot, roleColours, ui, viewSettings } from "./state.js";
 import type { ColourBy } from "./state.js";
-import { el } from "./dom.js";
+import { el, element } from "./dom.js";
 import { ROLES, ROLE_IDS } from "../../src/model/roles.js";
 import type { Role } from "../../src/model/roles.js";
 
@@ -100,12 +100,6 @@ function svgEl<K extends keyof SVGElementTagNameMap>(
   return node;
 }
 
-function element<T extends Element>(id: string): T {
-  const found = document.getElementById(id);
-  if (!found) throw new Error(`The interface is missing #${id}.`);
-  return found as unknown as T;
-}
-
 export function applyViewport(): void {
   element("viewport").setAttribute("transform", `translate(${ui.panX} ${ui.panY}) scale(${ui.zoom})`);
   element("zoom-level").textContent = `${Math.round(ui.zoom * 100)}%`;
@@ -122,7 +116,7 @@ export function applyViewport(): void {
  * A colour chosen by hand wins, and is remembered in this profile.
  */
 export function blockColour(path: string): string {
-  const chosen = blockColours.get("", path);
+  const chosen = blockColours.get(path);
   if (chosen) return chosen;
 
   // Taken from where the block sits in the hierarchy, so it is the same
@@ -276,8 +270,7 @@ function arrowEnds(a: TreeNode, b: TreeNode): { start: Point; end: Point; round:
  * Where the whole arrow runs: between two blocks, or between a block and
  * outside the system, which is a place off to that block's left rather than a
  * box of its own. Either end can be the outside one: a trigger arrives from
- * there, and an answer to one would go back there, although nothing writes
- * such an answer down yet.
+ * there, and the answer a recording ends on goes back there.
  */
 function markEnds(
   from: TreeNode | null,

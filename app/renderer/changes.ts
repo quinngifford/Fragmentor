@@ -1,5 +1,5 @@
 import type { BlockChange, ProjectChanges } from "../../src/project/changes.js";
-import { changesBetween, changesText } from "../../src/project/changes.js";
+import { CHANGE_GROUPS, changesBetween, changesText, plural } from "../../src/project/changes.js";
 import type { ChangePoints, ProjectAt } from "../../src/project/history.js";
 import type { ProjectSnapshot, SnapshotBlock } from "../../src/project/snapshot.js";
 import { revealBlock } from "./canvas.js";
@@ -38,7 +38,6 @@ export function onChangesChange(callback: () => void): void {
 /** Where the person last looked: the commit that was newest then. Before any commit there is no bookmark at all. */
 interface Bookmark {
   commit: string;
-  date: string;
 }
 
 const bookmarkKey = (dir: string) => `fragmentor.lastLooked:${dir}`;
@@ -51,7 +50,7 @@ function readBookmark(dir: string): Bookmark | null {
     // An older Fragmentor could bookmark a project before its first commit,
     // and such a mark would list the whole project as new for ever.
     if (typeof commit !== "string") return null;
-    return { commit, date: String((raw as { date?: unknown }).date ?? "") };
+    return { commit };
   } catch {
     return null;
   }
@@ -125,7 +124,7 @@ export async function refreshChanges(): Promise<void> {
   // commit would list the whole project as new after a restart.
   let startedLooking = false;
   if (firstEver && facts.unavailable === null && facts.head !== null) {
-    bookmark = { commit: facts.head.hash, date: new Date().toISOString() };
+    bookmark = { commit: facts.head.hash };
     seenSnapshot = ui.snapshot;
     writeBookmark(dir, bookmark);
     // The commits were read against no bookmark at all, which is the whole
@@ -141,7 +140,7 @@ function markSeen(): void {
   const dir = ui.dir;
   if (dir === null || ui.snapshot === null || facts === null || facts.unavailable !== null || facts.head === null) return;
   seenSnapshot = ui.snapshot;
-  bookmark = { commit: facts.head.hash, date: new Date().toISOString() };
+  bookmark = { commit: facts.head.hash };
   writeBookmark(dir, bookmark);
   listOpen = false;
   redrawAll();
@@ -153,7 +152,7 @@ function markSeen(): void {
 function startFromHead(): void {
   const dir = ui.dir;
   if (dir === null || facts === null || facts.unavailable !== null || facts.head === null) return;
-  bookmark = { commit: facts.head.hash, date: new Date().toISOString() };
+  bookmark = { commit: facts.head.hash };
   writeBookmark(dir, bookmark);
   redrawAll();
   void refreshChanges();
@@ -214,20 +213,9 @@ function changesFor(which: Point): { then: ProjectSnapshot | null; changes: Proj
   return made;
 }
 
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
-
 /** "2 new · 1 built · 3 changed · 1 removed · 1 execution", leaving out whatever there is none of. */
 function summary(changes: ProjectChanges): string {
-  const count = (test: (change: BlockChange) => boolean) => changes.blocks.filter(test).length;
-  const parts = (
-    [
-      [count((change) => change.kind === "new"), "new"],
-      [count((change) => change.built), "built"],
-      [count((change) => change.kind === "moved" && !change.built), "moved"],
-      [count((change) => change.kind === "changed" && !change.built), "changed"],
-      [count((change) => change.kind === "removed"), "removed"],
-    ] as const
-  )
+  const parts = CHANGE_GROUPS.map(([title, test]) => [changes.blocks.filter(test).length, title.toLowerCase()] as const)
     .filter(([n]) => n > 0)
     .map(([n, word]) => `${n} ${word}`);
   if (changes.executions.length > 0) parts.push(plural(changes.executions.length, "execution"));
@@ -436,11 +424,7 @@ export function projectChangesSection(): HTMLElement {
     part.append(list);
     node.append(part);
   };
-  group("New", changes.blocks.filter((change) => change.kind === "new"));
-  group("Built", changes.blocks.filter((change) => change.built));
-  group("Moved", changes.blocks.filter((change) => change.kind === "moved" && !change.built));
-  group("Changed", changes.blocks.filter((change) => change.kind === "changed" && !change.built));
-  group("Removed", changes.blocks.filter((change) => change.kind === "removed"));
+  for (const [title, test] of CHANGE_GROUPS) group(title, changes.blocks.filter(test));
 
   if (changes.executions.length > 0) {
     const part = subsection(`Executions (${changes.executions.length})`);

@@ -18,8 +18,19 @@ import {
 } from "./canvas.js";
 import { STEP_LINK, keepStepInView, onExecutionChange, paintExecution, setUpExecutions, showStep, stepPage } from "./execution.js";
 import { openDetailsWindow, openWindow, setUpWindows } from "./popup.js";
-import { accessPanel, blockAbout, blockHead, entryLeads, interfaceSection, multiPanel, reachesSection, routesOf } from "./detail.js";
-import { el, section } from "./dom.js";
+import {
+  accessPanel,
+  blockAbout,
+  blockHead,
+  entryLeads,
+  interfaceSection,
+  multiPanel,
+  projectHead,
+  reachesSection,
+  routesOf,
+  systemsSection,
+} from "./detail.js";
+import { el, element, section } from "./dom.js";
 
 /**
  * The script of an exported page: the project drawn as the window draws it,
@@ -28,12 +39,6 @@ import { el, section } from "./dom.js";
  * what a reader sees is what the person saw, and the build refuses a bundle
  * that brings in any module that talks to the application.
  */
-
-function element(id: string): HTMLElement {
-  const found = document.getElementById(id);
-  if (!found) throw new Error(`The page is missing #${id}.`);
-  return found;
-}
 
 const data = JSON.parse(element("fragmentor-export").textContent ?? "") as ExportData;
 
@@ -91,27 +96,7 @@ function blockPage(panel: HTMLElement, block: SnapshotBlock): void {
 
 function projectPage(panel: HTMLElement): void {
   const snapshot = requireSnapshot();
-  const head = el("div", "insp-head");
-  head.append(el("h2", undefined, snapshot.name));
-  const badges = el("div", "badges");
-  badges.append(el("span", "badge", `granularity ${snapshot.granularity.level}`));
-  if (snapshot.language) badges.append(el("span", "badge", snapshot.language));
-  head.append(badges);
-  panel.append(head);
-  if (snapshot.goal) panel.append(el("p", "responsibility", snapshot.goal));
-
-  const systems = section("Systems");
-  const list = el("div", "ports");
-  for (const system of snapshot.systems) {
-    const root = snapshot.blocks[system.rootBlock];
-    const row = el("div", "port-row");
-    row.append(el("div", "pname", root?.name ?? system.rootBlock));
-    row.append(el("div", "ptype", system.known ? system.displayName : `${system.language} — no language pack`));
-    if (root) row.append(el("div", "pdesc", root.responsibility));
-    list.append(row);
-  }
-  systems.append(list);
-  panel.append(systems);
+  panel.append(...projectHead(snapshot), systemsSection(snapshot));
 
   const about = section("About this page");
   about.append(

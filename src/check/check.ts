@@ -3,7 +3,7 @@ import type { EmitResult } from "../codegen/emit.js";
 import type { NoteAuthor } from "../project/notes.js";
 import { loadProject } from "../project/project.js";
 import type { ProjectDiagnostic } from "../project/project.js";
-import { packFor, readAllCode } from "../project/code.js";
+import { boundBlocks, packFor, readAllCode } from "../project/code.js";
 import { projectSnapshot } from "../project/snapshot.js";
 import type { SnapshotRule } from "../project/rules.js";
 import { checkPythonSystem } from "./python.js";
@@ -28,7 +28,7 @@ export interface SystemCheck {
   rootBlock: string;
   language: string;
   displayName: string;
-  /** False when Fragmentor cannot check code in this language yet, or has no pack for it. */
+  /** False when Fragmentor has no pack for this language, and so cannot check its code. */
   codeChecked: boolean;
   /** How many of the system's blocks are held to a contract, and so checked. */
   codeHeld: number;
@@ -106,11 +106,7 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
   const systems: SystemCheck[] = await Promise.all(
     project.systems.map(async (system) => {
       const pack = packFor(project, system.rootBlock);
-      const codeChecked = pack?.canCheck ?? false;
-      const held = [...code].filter(
-        ([blockPath, found]) =>
-          found.bound && (blockPath === system.rootBlock || blockPath.startsWith(`${system.rootBlock}/`)),
-      );
+      const codeChecked = pack !== null;
       // Each language checks its own way: TypeScript compiles in this
       // process, Python asks the project's interpreter and bundled pyright.
       const python =
@@ -120,7 +116,7 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
         language: system.language,
         displayName: pack?.displayName ?? (system.language || "unspecified"),
         codeChecked,
-        codeHeld: held.length,
+        codeHeld: boundBlocks(project, system.rootBlock, code).length,
         codeProblems: python ? python.problems : codeChecked ? checkSystemCode(project, system.rootBlock, code) : [],
         ...(python?.interpreter ? { interpreter: python.interpreter } : {}),
         reachRead: snapshot.systems.find((each) => each.rootBlock === system.rootBlock)?.reachRead ?? false,

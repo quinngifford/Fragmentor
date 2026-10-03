@@ -36,11 +36,6 @@ export interface BlockChange {
   from?: string;
   /** What shows a moved block is the one that was at `from`: "same code: src/x.ts#f", "same name", or, for a system renamed, "its parts went with it". */
   by?: string;
-  /**
-   * How many of its parts were removed. For a block still there, each is a
-   * removed row of its own; for a removed one, they went with it and have none.
-   */
-  removedParts: number;
   /** Each change to it, as a line of its own. */
   lines: string[];
 }
@@ -69,7 +64,16 @@ function listNames(names: string[]): string {
   return names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
 
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+export const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+/** How changed blocks are grouped, in order, wherever they are listed or counted. */
+export const CHANGE_GROUPS: [title: string, test: (change: BlockChange) => boolean][] = [
+  ["New", (change) => change.kind === "new"],
+  ["Built", (change) => change.built],
+  ["Moved", (change) => change.kind === "moved" && !change.built],
+  ["Changed", (change) => change.kind === "changed" && !change.built],
+  ["Removed", (change) => change.kind === "removed"],
+];
 
 /** A value as JSON with its objects' keys sorted, so writing them in another order is not a change. */
 function canonical(value: unknown): string {
@@ -443,7 +447,6 @@ export function changesBetween(then: ProjectSnapshot | null, now: ProjectSnapsho
       name: was[blockPath]!.name,
       kind: "removed",
       built: false,
-      removedParts: parts,
       lines: parts === 0 ? [] : [`and ${plural(parts, "part")} of it`],
     });
   }
@@ -452,7 +455,7 @@ export function changesBetween(then: ProjectSnapshot | null, now: ProjectSnapsho
     const found = cameFrom.get(blockPath);
     if (found === undefined) {
       const lines = declaredPlanned(now.blocks, blockPath) ? ["planned, and nothing of it is built or run yet"] : [];
-      blocks.push({ path: blockPath, name: block.name, kind: "new", built: false, removedParts: 0, lines });
+      blocks.push({ path: blockPath, name: block.name, kind: "new", built: false, lines });
       continue;
     }
     const lines = blockLines(was, found.from, now.blocks, blockPath, map);
@@ -467,7 +470,6 @@ export function changesBetween(then: ProjectSnapshot | null, now: ProjectSnapsho
       kind: moved ? "moved" : "changed",
       built,
       ...(moved ? { from: found.from, by: found.by! } : {}),
-      removedParts: removed.length,
       lines,
     });
   }
@@ -511,11 +513,7 @@ export function changesText(changes: ProjectChanges, since: string): string {
       lines: change.lines,
     }));
 
-  group("New", rows((change) => change.kind === "new"));
-  group("Built", rows((change) => change.built));
-  group("Moved", rows((change) => change.kind === "moved" && !change.built));
-  group("Changed", rows((change) => change.kind === "changed" && !change.built));
-  group("Removed", rows((change) => change.kind === "removed"));
+  for (const [title, test] of CHANGE_GROUPS) group(title, rows(test));
   group(
     "Executions",
     changes.executions.map((change) => ({ head: `${change.id}  ${change.name}: ${change.kind}, set going by ${change.trigger}`, lines: change.lines })),

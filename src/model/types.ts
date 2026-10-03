@@ -1,7 +1,5 @@
 import { z } from "zod/v4";
 
-export { typesEqual } from "./typesEqual.js";
-
 /**
  * The type language used to describe what flows through a port.
  *

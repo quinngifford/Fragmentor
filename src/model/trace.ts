@@ -10,8 +10,8 @@
  *
  * A trace never depends on what is on screen. Every event names the real
  * component it happened at. How much of the architecture is expanded decides
- * only how finely the trace is drawn: `project` gathers events into whatever
- * is visible, and nothing is ever dropped from the trace to do it.
+ * only how finely the trace is drawn: `place` gathers events into whatever is
+ * visible, and nothing is ever dropped from the trace to do it.
  */
 
 /**

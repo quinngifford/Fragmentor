@@ -51,7 +51,7 @@ export interface Flow {
   height: number;
 }
 
-const words = (kind: string) => kind.replace(/-/g, " ");
+export const words = (kind: string) => kind.replace(/-/g, " ");
 
 /** Which way a step runs, as blocks: an answer travels back to whoever asked. */
 function ends(event: TraceEvent): { from: string | null; to: string | null } | null {

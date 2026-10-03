@@ -419,13 +419,11 @@ body[data-export] :is(#agent-commands, #toggle-rail, #toggle-inspector, .toolbar
 
 /* The breakpoint sits beside the block, inside the same group, so anything
    that lights up the whole group would reach out and take the breakpoint in
-   with it — and the capability dots below. Hovering is answered by the plate,
-   and the plate is the part that can be focused. */
+   with it. Hovering is answered by the plate, and the plate is the part that
+   can be focused. */
 .block-body:hover .block-plate { stroke: var(--signal-dim); }
 .block-plate:focus-visible { outline: none; stroke: var(--signal); stroke-width: 2; }
 .block-box[data-selected="true"] .block-plate { stroke: var(--signal); stroke-width: 1.8; }
-.block-box[data-boundary="true"] .block-plate { fill: var(--panel); stroke-dasharray: 3 3; }
-.block-head { fill: var(--panel); pointer-events: none; }
 
 /* The rest of the system. Hue says which world a thing belongs to, and runs
    from what is most yours to what is least: your code, your separate
@@ -445,55 +443,23 @@ body[data-export] :is(#agent-commands, #toggle-rail, #toggle-inspector, .toolbar
 [data-role="structure"] { --role: var(--role-structure); }
 [data-role="client"] { --role: var(--role-client); }
 
-.block-box[data-role="function"] { --role: var(--role-function); }
-.block-box[data-role="component"] { --role: var(--role-component); }
-.block-box[data-role="service"] { --role: var(--role-service); }
-.block-box[data-role="external"] { --role: var(--role-external); }
-.block-box[data-role="database"] { --role: var(--role-database); }
-.block-box[data-role="storage"] { --role: var(--role-storage); }
-.block-box[data-role="queue"] { --role: var(--role-queue); }
-.block-box[data-role="structure"] { --role: var(--role-structure); }
-.block-box[data-role="client"] { --role: var(--role-client); }
-
 .block-box[data-tinted="true"] .block-plate {
   fill: color-mix(in srgb, var(--role) 5%, var(--panel));
   stroke: color-mix(in srgb, var(--role) 55%, var(--ground));
   stroke-width: 1.6;
 }
-.block-box[data-tinted="true"] .block-head { fill: color-mix(in srgb, var(--role) 9%, var(--ground)); }
 .block-box[data-tinted="true"] .block-kind { fill: var(--role); }
-.block-box[data-tinted="true"] .block-divider { stroke: color-mix(in srgb, var(--role) 30%, var(--ground)); }
 .block-box[data-tinted="true"] .block-body:hover .block-plate { stroke: var(--role); }
-
-/* What a resource holds, drawn down its middle. */
-.exposed-plate { fill: var(--panel-high); stroke: color-mix(in srgb, var(--role) 22%, var(--ground)); stroke-width: 1; }
-.exposed-name { font-family: var(--mono); font-size: 10px; fill: var(--role); letter-spacing: 0.04em; pointer-events: none; }
-.exposed-field { font-family: var(--mono); font-size: 9px; fill: var(--ink-dim); pointer-events: none; }
 
 /* An access takes the colour of whatever it reaches, so a line and the block
    at the end of it are plainly the same subject. Solid, because dashed on
    this canvas means not built yet and nothing else. */
-.access-group[data-role="function"] { --role: var(--role-function); }
-.access-group[data-role="component"] { --role: var(--role-component); }
-.access-group[data-role="service"] { --role: var(--role-service); }
-.access-group[data-role="external"] { --role: var(--role-external); }
-.access-group[data-role="database"] { --role: var(--role-database); }
-.access-group[data-role="storage"] { --role: var(--role-storage); }
-.access-group[data-role="queue"] { --role: var(--role-queue); }
-.access-group[data-role="structure"] { --role: var(--role-structure); }
-.access-group[data-role="client"] { --role: var(--role-client); }
-
 .access { fill: none; stroke: var(--role); stroke-width: 1.6; opacity: 0.6; }
 /* The arrowhead takes the line's own colour rather than one of its own. */
 .access-arrow { fill: context-stroke; }
 .access-group:hover .access { opacity: 1; stroke-width: 2.6; }
 .access-group[data-selected="true"] .access { opacity: 1; stroke-width: 3; }
 .access-label { font-family: var(--mono); font-size: 9px; fill: var(--role); opacity: 0.85; pointer-events: none; }
-
-/* Gathered from a block inside this one rather than declared here, so it is
-   drawn as the summary it is. */
-.access-group[data-within="true"] .access { opacity: 0.38; }
-.access-group[data-within="true"] .access-label { opacity: 0.6; }
 
 /* A relationship that was already there, rather than a value on its way, so
    it appears rather than being drawn along its length. */
@@ -513,14 +479,8 @@ body[data-export] :is(#agent-commands, #toggle-rail, #toggle-inspector, .toolbar
   stroke: var(--rule-bright);
   stroke-dasharray: 5 4;
 }
-.block-box[data-planned="true"] .block-head { fill: transparent; }
-.block-box[data-planned="true"] .block-divider { stroke: var(--rule-bright); }
-.block-box[data-planned="true"] .exposed-plate { fill: transparent; stroke: var(--rule-bright); }
-.block-box[data-planned="true"] .exposed-name { fill: var(--pending); }
-.block-box[data-planned="true"] .block-head { fill: transparent; }
 .block-box[data-planned="true"] .block-name { fill: var(--ink-dim); }
 .block-box[data-planned="true"] .block-kind { fill: var(--pending); }
-.block-box[data-planned="true"] .port-label { fill: var(--ink-faint); }
 
 /* The mark in the corner saying what kind of block this is. Strokes only, so
    it takes whatever colour the block is drawn in. */
@@ -531,12 +491,6 @@ body[data-export] :is(#agent-commands, #toggle-rail, #toggle-inspector, .toolbar
 
 .block-name { font-family: var(--sans); font-size: 12.5px; font-weight: 600; fill: var(--ink); pointer-events: none; }
 .block-kind { font-family: var(--mono); font-size: 9px; fill: var(--ink-faint); letter-spacing: 0.08em; pointer-events: none; }
-.group-label { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; fill: var(--ink-faint); pointer-events: none; }
-.port-label { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-dim); pointer-events: none; }
-.block-divider { stroke: var(--rule-bright); pointer-events: none; }
-
-.cap-line { stroke: var(--effect); stroke-width: 1.2; stroke-dasharray: 2 3; opacity: 0.65; pointer-events: none; }
-.cap-dot { fill: var(--panel); stroke: var(--effect); stroke-width: 1.5; }
 
 .line-hit { fill: none; stroke: transparent; stroke-width: 16; cursor: pointer; }
 
@@ -796,17 +750,6 @@ pre.code-view { max-height: 420px; overflow: auto; }
 .code-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 .swatches { display: flex; gap: 6px; flex-wrap: wrap; }
-
-.swatch-btn {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  border: 1px solid var(--rule-bright);
-  cursor: pointer;
-  padding: 0;
-}
-
-.swatch-btn[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset: 2px; }
 
 .bench-note { font-size: 11.5px; color: var(--ink-dim); margin: 0; }
 .bench-note.bad { color: var(--bad); }
@@ -1259,18 +1202,6 @@ button.problem:hover .problem-where { color: var(--signal); }
 .level-scale { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
 .dialog-note { margin: 0; min-height: 1.5em; font-size: 12px; color: var(--ink-dim); }
 
-.language-slot select, .language-slot input {
-  width: 100%;
-  font-family: var(--mono);
-  font-size: 12px;
-  background: var(--ground);
-  border: 1px solid var(--rule-bright);
-  border-radius: var(--radius);
-  color: var(--ink);
-  padding: 7px 8px;
-}
-
-.language-slot select:disabled { color: var(--ink-faint); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 /* ---- a new project's first steps ---- */
@@ -1298,10 +1229,7 @@ button.problem:hover .problem-where { color: var(--signal); }
 .first-command dt { font-family: var(--mono); font-size: 11px; color: var(--ink); }
 .first-command dd { margin: 0; color: var(--ink-dim); }
 
-/* ---- visual mode ---- */
-
-.status .mode-tag { text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-faint); }
-.status .mode-tag.visual { color: var(--effect); }
+/* ---- a block's code ---- */
 
 .code-where { margin-bottom: 8px; font-family: var(--mono); font-size: 11.5px; color: var(--signal-dim); word-break: break-all; }
 pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
@@ -1399,9 +1327,6 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
 .exec-effect-text { font-family: var(--mono); font-size: 9px; fill: var(--effect); pointer-events: none; }
 .exec-effect[data-current="true"] .exec-effect-chip { stroke-width: 2; fill: color-mix(in srgb, var(--effect) 30%, var(--ground)); }
 
-.exec-inside text { font-family: var(--mono); font-size: 9px; fill: var(--exec-trigger); }
-.exec-inside[data-current="true"] text { fill: var(--ink); font-weight: 600; }
-
 .exec-bar {
   display: flex;
   flex-direction: column;
@@ -1449,20 +1374,6 @@ pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
 
 .exec-caption { display: flex; align-items: baseline; gap: 8px; padding: 0 4px 1px; min-width: 0; }
 .exec-caption-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-dim); user-select: text; }
-
-.exec-reveal {
-  flex: none;
-  padding: 0;
-  font-family: var(--mono);
-  font-size: 11px;
-  background: none;
-  border: none;
-  color: var(--exec-trigger);
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.exec-reveal:hover { color: var(--ink); }
 
 /* ---- the test bench, in a window that can be moved off the drawing ---- */
 

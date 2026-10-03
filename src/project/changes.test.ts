@@ -150,8 +150,8 @@ describe("what changed between two snapshots", () => {
       ["moved", "shop/api/prices/price"],
       ["removed", "shop/api/pricing"],
     ]);
-    expect(find(changes, "shop/api")).toMatchObject({ removedParts: 1, lines: ["part removed: Pricing"] });
-    expect(find(changes, "shop/api/pricing")).toMatchObject({ removedParts: 0, lines: [] });
+    expect(find(changes, "shop/api")).toMatchObject({ lines: ["part removed: Pricing"] });
+    expect(find(changes, "shop/api/pricing")).toMatchObject({ lines: [] });
 
     // A group that keeps its name where it moves carries its parts, which are not listed again.
     const carried = changesBetween(
@@ -183,7 +183,7 @@ describe("what changed between two snapshots", () => {
     };
     const changes = changesBetween(before, await snapshotOf(renamed));
     expect(changes.blocks).toEqual([
-      { path: "store", name: "Store", kind: "moved", built: false, from: "shop", by: "its parts went with it", removedParts: 0, lines: ['renamed "Store", was "Shop"'] },
+      { path: "store", name: "Store", kind: "moved", built: false, from: "shop", by: "its parts went with it", lines: ['renamed "Store", was "Shop"'] },
     ]);
     expect(changes.executions).toEqual([]);
 
@@ -219,7 +219,7 @@ describe("what changed between two snapshots", () => {
       ["removed", "shop"],
     ]);
     expect(find(changes, "analytics/shop-db")).toMatchObject({ from: "shop/shop-db", by: "same name" });
-    expect(find(changes, "shop")).toMatchObject({ removedParts: 5, lines: ["and 5 parts of it"] });
+    expect(find(changes, "shop")).toMatchObject({ lines: ["and 5 parts of it"] });
   });
 
   it("counts a part removed once, on the part it was in where that part moved away", async () => {
@@ -235,8 +235,8 @@ describe("what changed between two snapshots", () => {
       ["removed", "shop/api/pricing/discount"],
       ["moved", "shop/pricing"],
     ]);
-    expect(find(changes, "shop/api")).toMatchObject({ removedParts: 1, lines: ["and 1 part of it"] });
-    expect(find(changes, "shop/pricing")).toMatchObject({ removedParts: 1, lines: ["part removed: Discount"] });
+    expect(find(changes, "shop/api")).toMatchObject({ lines: ["and 1 part of it"] });
+    expect(find(changes, "shop/pricing")).toMatchObject({ lines: ["part removed: Discount"] });
   });
 
   it("says a block was pointed elsewhere when its code is not there on either side", async () => {
@@ -299,7 +299,7 @@ describe("what changed between two snapshots", () => {
         ["removed", "shop/api/pricing/price"],
       ]),
     );
-    expect(find(changes, "shop/api/pricing")).toMatchObject({ removedParts: 2, lines: ["2 parts removed: Discount and Price"] });
+    expect(find(changes, "shop/api/pricing")).toMatchObject({ lines: ["2 parts removed: Discount and Price"] });
   });
 
   it("does not count the order an object's fields are written in, and says a description changed only in words", async () => {
@@ -468,7 +468,6 @@ describe("the fields a change is made of", () => {
     roleLabel: (then) => (then.blocks[findEvent]!.roleLabel = "SERVICE"),
     architecture: (then) => (then.blocks[findEvent]!.architecture = true),
     planned: (then) => (then.blocks[findEvent]!.planned = true),
-    functionName: (then) => (then.blocks[findEvent]!.functionName = "other"),
     inputs: (then) => (then.blocks[findEvent]!.inputs = []),
     outputs: (then) => (then.blocks[findEvent]!.outputs = []),
     exposes: (then) => (then.blocks["tickets/tickets-db"]!.exposes = []),

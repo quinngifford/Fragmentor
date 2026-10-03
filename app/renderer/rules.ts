@@ -13,8 +13,9 @@ import { ui } from "./state.js";
  * A rule is made from two blocks picked out together — "Workers must never
  * reach Client" — and from then on Fragmentor holds every change to it, in
  * the window and in the agent's `fragmentor check`. The rules live in
- * `.fragmentor/rules.json`, which only the application writes, because a
- * guard rail written by the party it constrains guards nothing.
+ * `.fragmentor/rules.json`, which the agent may change only to re-point a
+ * rule at a block it moved, because a guard rail written by the party it
+ * constrains guards nothing.
  *
  * What is kept here is only what the person is in the middle of: whether
  * the offers are open, the reason being typed, and which Remove is waiting

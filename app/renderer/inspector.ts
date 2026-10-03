@@ -1,7 +1,18 @@
 import type { SnapshotBlock, SnapshotCode } from "../../src/project/snapshot.js";
 import type { ProjectDiagnostic } from "../../src/project/project.js";
 import { blockColours, requireSnapshot, selectedBlock, ui, viewSettings } from "./state.js";
-import { accessPanel, blockAbout, blockHead, entryLeads, interfaceSection, multiPanel, reachesSection, routesOf } from "./detail.js";
+import {
+  accessPanel,
+  blockAbout,
+  blockHead,
+  entryLeads,
+  interfaceSection,
+  multiPanel,
+  projectHead,
+  reachesSection,
+  routesOf,
+  systemsSection,
+} from "./detail.js";
 import type { Leads } from "./detail.js";
 import { accessArrows, blockColour, hasCode, hasDetails, revealBlock, treeInView } from "./canvas.js";
 import { openBlockWindow, openCodeAt } from "./popup.js";
@@ -275,13 +286,13 @@ function blockColourControl(block: SnapshotBlock): HTMLElement | null {
   swatch.value = blockColour(block.path);
   swatch.title = `What "${block.name}" is drawn in`;
   swatch.addEventListener("input", () => {
-    blockColours.set("", block.path, swatch.value);
+    blockColours.set(block.path, swatch.value);
     notify();
   });
 
   const reset = el("button", "btn quiet tiny", "Default");
   reset.addEventListener("click", () => {
-    blockColours.set("", block.path, null);
+    blockColours.set(block.path, null);
     notify();
   });
 
@@ -486,14 +497,7 @@ function build(panel: HTMLElement): void {
   }
 
   // Nothing is selected and the canvas is showing the project itself.
-  const head = el("div", "insp-head");
-  head.append(el("h2", undefined, snapshot.name), el("div", "insp-id", snapshot.dir));
-  const badges = el("div", "badges");
-  badges.append(el("span", "badge", `granularity ${snapshot.granularity.level}`));
-  if (snapshot.language) badges.append(el("span", "badge", snapshot.language));
-  head.append(badges);
-  panel.append(head);
-  if (snapshot.goal) panel.append(el("p", "responsibility", snapshot.goal));
+  panel.append(...projectHead(snapshot));
 
   const problems = problemsSection(snapshot.diagnostics, true);
   if (problems) panel.append(problems);
@@ -506,18 +510,7 @@ function build(panel: HTMLElement): void {
   panel.append(projectNotesSection());
   panel.append(projectChangesSection());
 
-  const systems = section("Systems");
-  const list = el("div", "ports");
-  for (const system of snapshot.systems) {
-    const root = snapshot.blocks[system.rootBlock];
-    const row = el("div", "port-row");
-    row.append(el("div", "pname", root?.name ?? system.rootBlock));
-    row.append(el("div", "ptype", system.known ? system.displayName : `${system.language} — no language pack`));
-    if (root) row.append(el("div", "pdesc", root.responsibility));
-    list.append(row);
-  }
-  systems.append(list);
-  panel.append(systems);
+  panel.append(systemsSection(snapshot));
 
   panel.append(
     el(

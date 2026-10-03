@@ -1,10 +1,11 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
-import { isGeneratedSource } from "../codegen/emit.js";
 import type { FileReach, ReachReader, Target, Uses } from "../lang/index.js";
 import { packFor } from "./code.js";
 import type { BlockCode } from "./code.js";
-import { IGNORES_CASE, under } from "./history.js";
+// Windows and macOS find a file whatever the case it is written in, so a
+// pointer written differently still covers it.
+import { fold, under } from "./history.js";
 import { LARGEST_SHOWN, resolveAccess } from "./project.js";
 import type { Project, ProjectDiagnostic } from "./project.js";
 import { isArchitecture } from "../model/roles.js";
@@ -57,9 +58,6 @@ export interface ProjectReach {
   /** By system: whether its language's reach can be read at all. */
   systemsRead: Record<string, boolean>;
 }
-
-/** Windows and macOS find a file whatever the case it is written in, so a pointer written differently still covers it. */
-const fold = (file: string): string => (IGNORES_CASE ? file.toLowerCase() : file);
 
 /** The deepest block holding all of these, or "" when they are in different systems. */
 function holding(blockPaths: string[]): string {
@@ -207,7 +205,6 @@ export async function readProjectReach(project: Project, code: Map<string, Block
       return `${file} could not be read`;
     }
     if (text.length > LARGEST_SHOWN) return `${file} is too large to read`;
-    if (isGeneratedSource(text)) return null;
     try {
       return readingOf(reader)(file, text);
     } catch {

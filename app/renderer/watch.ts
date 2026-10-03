@@ -14,7 +14,7 @@ import { shownAt } from "./tree.js";
 import type { Tree } from "./tree.js";
 import { basisOf, requireSnapshot, ui } from "./state.js";
 import type { Watch, WatchedCall } from "./state.js";
-import { showRecording } from "./execution.js";
+import { barButton, showRecording } from "./execution.js";
 import { el, section, subsection } from "./dom.js";
 import { codeBlock } from "./highlight.js";
 
@@ -426,14 +426,6 @@ export function resetWatching(): void {
 /* -------------------------------------------------------------------------- */
 /* Controls                                                                    */
 /* -------------------------------------------------------------------------- */
-
-function barButton(label: string, title: string, action: () => void): HTMLButtonElement {
-  const button = el("button", "run-btn", label);
-  button.type = "button";
-  button.title = title;
-  button.addEventListener("click", action);
-  return button;
-}
 
 function renderRunBar(): void {
   const bar = document.getElementById("run-bar");

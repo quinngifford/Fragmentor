@@ -5,8 +5,10 @@ import type { PortType } from "../model/types.js";
  * Everything Fragmentor needs to know about a target language.
  *
  * The block model, the validator and the project format know nothing about
- * any language. This is the one seam where that knowledge lives, so that
- * adding a language means adding a pack rather than editing the kernel.
+ * any language. How a language's contracts are written, and how its code is
+ * named and read for reach, lives in its pack. How its code is checked and run
+ * lives in `src/check/<language>.ts` and `src/run/<language>.ts`, chosen by
+ * pack id, and the guide says a little per language the same way.
  *
  * A pack owns the whole of each file it produces rather than filling holes in
  * a shared template, because a template that suited two languages at once
@@ -123,10 +125,9 @@ export interface LanguagePack {
   /**
    * What a block's code writes to import its contract, which is how it says it
    * is held to it. Both paths are relative to the project: the contract from
-   * `contractPath`, and the file the import would be written in. Null where
-   * the language has no settled answer, and so no block of it is ever bound.
+   * `contractPath`, and the file the import would be written in.
    */
-  contractSpecifier(contractPath: string, fromFile: string): string | null;
+  contractSpecifier(contractPath: string, fromFile: string): string;
 
   /**
    * Why this language could not import the file a block's code pointer names,
@@ -143,15 +144,6 @@ export interface LanguagePack {
    * all, and the why becomes the reason it is drawn.
    */
   contractProblem?(block: Block): string | null;
-
-  /**
-   * Whether Fragmentor can execute a block in this language yet. A pack is
-   * useful for generating code before it is useful for running it.
-   */
-  canRun: boolean;
-
-  /** Whether `fragmentor check` can typecheck code in this language yet. */
-  canCheck: boolean;
 
   /** How to read what this language's code reaches. A pack without it cannot say. */
   reach?: ReachReader;
@@ -183,7 +175,7 @@ export function isKnownLanguage(id: string): boolean {
  * A language named as a person writes it, as the packs know it: `TypeScript`
  * is the `typescript` pack.
  *
- * Meaning the language Fragmentor can check and writing its name the ordinary
+ * Meaning a language Fragmentor can check and writing its name the ordinary
  * way should not cost anyone the checks, and a name no pack answers to is left
  * exactly as it was written, because it is theirs to say what their code is in.
  */

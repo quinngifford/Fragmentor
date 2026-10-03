@@ -115,7 +115,8 @@ interface VersionRow {
   label: string;
 }
 
-function when(date: string | Date): string {
+/** A moment, in the reader's own way: date and time, briefly. */
+export function when(date: string | Date): string {
   return new Date(date).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 

@@ -12,9 +12,11 @@ import type { ExportLook } from "./renderer/state.js";
 /**
  * The whole surface between the interface and the kernel.
  *
- * The renderer has no filesystem access and no kernel code in it. It is handed
- * a snapshot and sends back edits, which is what keeps the drawing code free
- * of paths and the kernel free of anything to do with drawing.
+ * The renderer has no filesystem access. The only kernel code it runs is plain
+ * modules that need none, such as those for traces, recordings, rules and
+ * changes, and it asks the main process for everything else over these
+ * channels. That keeps the drawing code free of paths and the kernel free of
+ * anything to do with drawing.
  */
 
 export const CHANNELS = {
@@ -27,7 +29,6 @@ export const CHANNELS = {
   recentProjects: "project:recent",
   exampleProjects: "project:examples",
   writeImpl: "block:write-impl",
-  revealBlock: "block:reveal",
   revealCode: "code:reveal",
   readCode: "code:read",
   watchRun: "run:start",
@@ -152,8 +153,6 @@ export interface FragmentorApi {
   /** Example projects shipped with Fragmentor, so there is something to open. */
   exampleProjects(): Promise<Result<{ dir: string; name: string }[]>>;
   writeImpl(request: WriteImplRequest): Promise<Result<null>>;
-  /** Shows a block's folder in the system file manager. */
-  revealBlock(dir: string, blockPath: string): Promise<Result<null>>;
   /** Shows the file a block points at, given relative to the project. */
   revealCode(dir: string, file: string): Promise<Result<null>>;
   /** The whole of the file a block points at, for reading in a window of its own. */

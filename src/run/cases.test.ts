@@ -120,7 +120,6 @@ describe("running saved tests", () => {
 describe("storeKeyProblems", () => {
   const store = (port: string, target: string, seedable = true): BoundStore => ({
     port,
-    capability: seedable ? "Store" : "Queue",
     target,
     resourceName: "Shop Database",
     entry: target.split(".").at(-1)!,

@@ -5,8 +5,8 @@ import type { Trace } from "../../src/model/trace.js";
 import type { RecordingScope } from "../../src/model/recorded.js";
 
 /**
- * What the interface is currently showing. Kernel types are imported for their
- * shapes only — no kernel code runs in the renderer, which has no filesystem.
+ * What the interface is currently showing. Kernel types are imported here for
+ * their shapes only.
  */
 
 /** One block call in a watched run, as far as the playback has shown it. */
@@ -237,7 +237,7 @@ export const ui: UiState = {
       // arrows over it are a different question, asked when it is asked.
       return localStorage.getItem("fragmentor.showDependencies") === "true";
     } catch {
-      return true;
+      return false;
     }
   })(),
   setShowDependencies(value: boolean): void {
@@ -479,14 +479,16 @@ export const roleColours = {
 /** What one block is drawn in, when the diagram is coloured block by block. */
 export const blockColours = {
   all: readStore(BLOCK_COLOURS_KEY),
-  key(view: string, blockKey: string): string {
-    return `${ui.snapshot?.dir ?? ""}|${view}|${blockKey}`;
+  key(blockPath: string): string {
+    // The empty part between the bars was once the diagram a block was drawn
+    // on; it stays so that colours already chosen still match.
+    return `${ui.snapshot?.dir ?? ""}||${blockPath}`;
   },
-  get(view: string, blockKey: string): string | undefined {
-    return this.all[this.key(view, blockKey)];
+  get(blockPath: string): string | undefined {
+    return this.all[this.key(blockPath)];
   },
-  set(view: string, blockKey: string, colour: string | null): void {
-    const key = this.key(view, blockKey);
+  set(blockPath: string, colour: string | null): void {
+    const key = this.key(blockPath);
     const next = { ...this.all };
     if (colour === null) delete next[key];
     else next[key] = colour;
@@ -513,7 +515,7 @@ export interface ExportLook {
 
 /** The look on screen now, for an export of this project. */
 export function lookForExport(): ExportLook {
-  const ours = blockColours.key("", "");
+  const ours = blockColours.key("");
   // The bar falls back to the written trace when a recording has gone stale,
   // so it is what is on screen, not what was asked for, that decides.
   const picked = selectedExecution();
@@ -542,7 +544,7 @@ export function lookForExport(): ExportLook {
  */
 export function useLook(look: ExportLook): void {
   roleColours.all = { ...look.roleColours } as Partial<Record<Role, string>>;
-  blockColours.all = Object.fromEntries(Object.entries(look.blockColours).map(([path, colour]) => [blockColours.key("", path), colour]));
+  blockColours.all = Object.fromEntries(Object.entries(look.blockColours).map(([path, colour]) => [blockColours.key(path), colour]));
   viewSettings.colourBy = look.colourBy;
   ui.showDependencies = look.showDependencies;
   ui.legendCollapsed = look.legendCollapsed;

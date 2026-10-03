@@ -37,11 +37,7 @@ export interface BlockCode {
   contract: string | null;
   /** What the code has to import to be held to that contract. */
   contractImport: string | null;
-  /**
-   * True when the code imports its contract, which is what lets Fragmentor
-   * check, run and test it — as far as its language can go: a bound block in
-   * a language Fragmentor cannot run yet is still only drawn, and says so.
-   */
+  /** True when the code imports its contract, which is what lets Fragmentor check, run and test it. */
   bound: boolean;
   /**
    * Why Fragmentor draws this block's code rather than checking and running
@@ -68,7 +64,7 @@ function portsAreTyped(block: Block): boolean {
  * The contract file Fragmentor writes for a block, relative to the project, or
  * null where it writes none.
  *
- * The pack says where, so everything Fragmentor generates stays inside
+ * The pack says where, so every contract Fragmentor generates stays inside
  * `blocks/` and nothing of its appears in the codebase's own tree.
  */
 function contractPathOf(node: LoadedBlock, pack: LanguagePack | null): string | null {
@@ -142,8 +138,9 @@ export async function readBlockCode(project: Project, node: LoadedBlock): Promis
   // mentions the name is one the runner would refuse.
   const declared = location.text !== null && functionName !== null && declaresSymbol(location.text, functionName);
   const imports = specifier !== null && location.text !== null && location.text.includes(specifier);
-  // The same file under another extension, which a codebase importing with
-  // `.ts` extensions may well write, and which Fragmentor does not take as the import.
+  // The contract imported some other way, which Fragmentor does not take as the
+  // import: in TypeScript the same file under another extension, such as `.ts`;
+  // in Python its package, as `from blocks._contracts.<path> import contract`.
   const importsOtherwise =
     !imports && specifier !== null && location.text !== null && location.text.includes(specifier.replace(/[.][^./]+$/, ""));
   // A method, `Class.method`, is called on an object, never on its own with a
@@ -160,23 +157,19 @@ export async function readBlockCode(project: Project, node: LoadedBlock): Promis
     contractImport: specifier,
     bound,
     drawnBecause: drawn(
-      specifier === null
-        ? `Fragmentor cannot hold ${pack?.displayName ?? "this"} code to a contract yet, so it draws this code`
-        : fileProblem !== null
-          ? fileProblem
-          : unread
-            ? `Fragmentor could not read ${location.file}, so it draws this block rather than checking or running it`
-            : !declared
-              ? `${location.file} does not declare ${functionName ?? "this block's function"}, so there is nothing for Fragmentor to call`
-              : bound
-                ? pack!.canRun
-                  ? null
-                  : `Fragmentor cannot run ${pack!.displayName} code yet, so this block is not run or tested`
-                : imports
-                  ? `${functionName} is a method, and Fragmentor can only call a function on its own, with a value and \`caps\`, so it draws this code rather than running it`
-                  : importsOtherwise
-                    ? `${location.file} imports its contract, but not as "${specifier}", which is how Fragmentor knows to hold code to it, so it draws this code as it stands`
-                    : `${location.file} does not import its contract, so Fragmentor draws this code as it stands rather than checking or running it`,
+      fileProblem !== null
+        ? fileProblem
+        : unread
+          ? `Fragmentor could not read ${location.file}, so it draws this block rather than checking or running it`
+          : !declared
+            ? `${location.file} does not declare ${functionName ?? "this block's function"}, so there is nothing for Fragmentor to call`
+            : bound
+              ? null
+              : imports
+                ? `${functionName} is a method, and Fragmentor can only call a function on its own, with a value and \`caps\`, so it draws this code rather than running it`
+                : importsOtherwise
+                  ? `${location.file} imports its contract, but not as "${specifier}", which is how Fragmentor knows to hold code to it, so it draws this code as it stands`
+                  : `${location.file} does not import its contract, so Fragmentor draws this code as it stands rather than checking or running it`,
     ),
     functionName,
   };
@@ -187,4 +180,23 @@ export async function readAllCode(project: Project): Promise<Map<string, BlockCo
   const all = new Map<string, BlockCode>();
   for (const [blockPath, node] of project.byPath) all.set(blockPath, await readBlockCode(project, node));
   return all;
+}
+
+/**
+ * The blocks of one system whose code is held to a contract, and where it is.
+ * They are what is checked, compiled and stood in for, so they are all a run hears.
+ */
+export function boundBlocks(
+  project: Project,
+  systemRoot: string,
+  code: Map<string, BlockCode>,
+): { path: string; file: string; functionName: string; contract: string }[] {
+  return [...project.byPath.keys()].flatMap((blockPath) => {
+    if (blockPath !== systemRoot && !blockPath.startsWith(`${systemRoot}/`)) return [];
+    const found = code.get(blockPath);
+    // Bound code was found, declares its function and imports a contract.
+    return found?.bound
+      ? [{ path: blockPath, file: found.location!.file, functionName: found.functionName!, contract: found.contract! }]
+      : [];
+  });
 }

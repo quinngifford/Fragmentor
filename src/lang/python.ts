@@ -291,9 +291,6 @@ export const pythonPack: LanguagePack = {
       ? null
       : `its capability port "${shadowing}" is a name the contract itself needs, so no contract can be written for it; rename the port`;
   },
-
-  canRun: true,
-  canCheck: true,
 };
 
 registerPack(pythonPack);

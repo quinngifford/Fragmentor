@@ -6,7 +6,6 @@ import { guideLine, startProject, writeAgentFiles } from "./codegen/emit.js";
 import type { NewProjectSettings } from "./codegen/emit.js";
 import { COMMANDS } from "./codegen/commands.js";
 import { GUIDE_FILE, skillName } from "./codegen/guide.js";
-import { getPack, isKnownLanguage } from "./lang/index.js";
 import { readAllCode } from "./project/code.js";
 import { loadExecutions } from "./project/executions.js";
 import type { Execution } from "./project/executions.js";
@@ -40,10 +39,11 @@ const USAGE = `Usage: fragmentor <command> [--project <folder>]
 
 Commands:
   init --granularity <1-5> [--language <language>] [--existing-code] [--start <plan|build>]
-                         Start a project in a folder: writes fragmentor.json, FRAGMENTOR.md, AGENTS.md and CLAUDE.md.
+                         Start a project in a folder: writes fragmentor.json, FRAGMENTOR.md, AGENTS.md, CLAUDE.md
+                         and the slash commands in .claude/skills/, and starts a git repository where there is none.
                          --existing-code says the folder already holds code to work from.
                          --start plan draws the architecture as planned blocks before any of it is built.
-                         In a folder that is already a project, brings FRAGMENTOR.md up to date.
+                         In a folder that is already a project, brings FRAGMENTOR.md and the slash commands up to date.
   check                  Check the diagram, regenerate generated code, check the code, and list unfinished work.
   test [block-path ...]  Run the saved tests of every block, or of the named blocks only. With no block named,
                          also run each execution whose code is held to its contract, and hold what is written
@@ -176,7 +176,7 @@ function formatReport(report: CheckReport): string {
   lines.push(...problems.map(problemLine));
 
   // Only files whose contents changed are written, so each one listed here is
-  // news: a new block's implementation to fill in, or code that moved.
+  // news: a contract that changed with its block, say.
   lines.push("", "Generated files");
   for (const problem of report.generated.problems) lines.push(`  ERROR  ${problem}`);
   if (report.generated.problems.length === 0 && report.generated.written.length === 0) {
@@ -388,10 +388,8 @@ async function test(dir: string, requested: string[]): Promise<number> {
 
     // Code Fragmentor is only drawing cannot be run, so its saved tests are
     // not run either, and saying so beats reporting each of them as an error.
-    // A bound block can still be drawn — its language has no runner yet — and
-    // asking for tests nothing could run would be worse than saying why.
     const found = code.get(blockPath);
-    if (found && (!found.bound || found.drawnBecause !== null)) {
+    if (found && !found.bound) {
       drawn.push(`${blockPath}: ${found.problem ?? found.drawnBecause ?? "Fragmentor does not run this block."}`);
       continue;
     }
@@ -408,16 +406,9 @@ async function test(dir: string, requested: string[]): Promise<number> {
     }
 
     console.log(`\n${blockPath}`);
-    const language = systemOf(project, blockPath)?.language ?? "";
-    const pack = isKnownLanguage(language) ? getPack(language) : null;
-    if (!pack?.canRun) {
-      console.log(`  SKIP   ${plural(saved.cases.length, "test")}: Fragmentor cannot run ${pack?.displayName ?? language} blocks yet`);
-      counts.skipped += saved.cases.length;
-      continue;
-    }
     // A machine without Python cannot run these, which is the machine's news
     // and not each test's failure, so the tests are skipped with the reason.
-    if (pack.id === "python") {
+    if (systemOf(project, blockPath)?.language === "python") {
       if (missingPython === undefined) {
         const found = findPython(dir);
         missingPython = found.ok ? null : found.problem;

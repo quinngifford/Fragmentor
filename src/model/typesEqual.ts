@@ -2,14 +2,10 @@ import type { PortType } from "./types.js";
 
 /*
  * Kept apart from types.ts, which needs zod to read block.json, so the window
- * can compare two types without loading it. types.ts gives it on, so nothing
- * that imported it from there changes.
+ * can compare two types without loading it.
  */
 
-/**
- * Structural equality, used to decide whether a contract change invalidates
- * the blocks that depend on it. Object field order is not significant.
- */
+/** Structural equality of two port types. Object field order is not significant. */
 export function typesEqual(a: PortType, b: PortType): boolean {
   if (a.kind !== b.kind) return false;
 

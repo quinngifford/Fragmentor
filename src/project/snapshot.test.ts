@@ -75,7 +75,6 @@ describe("projectSnapshot", () => {
       typeIr: { kind: "number" },
       description: "The number to double.",
     });
-    expect(root.functionName).toBe("doubleIt");
     expect(root.code).toMatchObject({ pointer: "src/double-it.ts#doubleIt", file: "src/double-it.ts", line: 3 });
     // Its code imports the contract, so Fragmentor holds it to it and can run it.
     expect(root.runnable).toBe(true);

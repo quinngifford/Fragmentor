@@ -1,4 +1,4 @@
-import type { SnapshotBlock } from "../../src/project/snapshot.js";
+import type { ProjectSnapshot, SnapshotBlock } from "../../src/project/snapshot.js";
 import { ROLES } from "../../src/model/roles.js";
 import { accessArrows, revealBlock, treeInView } from "./canvas.js";
 import type { AccessArrow } from "./canvas.js";
@@ -25,7 +25,7 @@ import { typeLine } from "./highlight.js";
 function shapeLine(label: string | null, shape: string): HTMLElement {
   const line = el("div", "pshape");
   if (label) line.append(el("span", "pshape-label", label));
-  line.append(typeLine(shape, "ptype"));
+  line.append(typeLine(shape));
   return line;
 }
 
@@ -306,6 +306,35 @@ export function blockAbout(block: SnapshotBlock): HTMLElement[] {
     );
   }
   return about;
+}
+
+/** The project's name, folder, badges and goal, at the top of its panel. */
+export function projectHead(snapshot: ProjectSnapshot): HTMLElement[] {
+  const head = el("div", "insp-head");
+  head.append(el("h2", undefined, snapshot.name));
+  // An exported page names no folder.
+  if (snapshot.dir !== "") head.append(el("div", "insp-id", snapshot.dir));
+  const badges = el("div", "badges");
+  badges.append(el("span", "badge", `granularity ${snapshot.granularity.level}`));
+  if (snapshot.language) badges.append(el("span", "badge", snapshot.language));
+  head.append(badges);
+  return snapshot.goal ? [head, el("p", "responsibility", snapshot.goal)] : [head];
+}
+
+/** The project's systems, each with its top block and what it is written in. */
+export function systemsSection(snapshot: ProjectSnapshot): HTMLElement {
+  const systems = section("Systems");
+  const list = el("div", "ports");
+  for (const system of snapshot.systems) {
+    const root = snapshot.blocks[system.rootBlock];
+    const row = el("div", "port-row");
+    row.append(el("div", "pname", root?.name ?? system.rootBlock));
+    row.append(el("div", "ptype", system.known ? system.displayName : `${system.language} — no language pack`));
+    if (root) row.append(el("div", "pdesc", root.responsibility));
+    list.append(row);
+  }
+  systems.append(list);
+  return systems;
 }
 
 /** One dependency arrow picked out on the tree. */

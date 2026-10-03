@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { importsOnlyTypes, isBuiltin } from "../lang/typescriptReach.js";
+import { boundBlocks } from "../project/code.js";
 import type { BlockCode } from "../project/code.js";
 import type { LoadedBlock, Project } from "../project/project.js";
 
@@ -217,11 +218,8 @@ function importProblems(
 export function checkSystemCode(project: Project, rootBlock: string, code: Map<string, BlockCode>): CodeProblem[] {
   /** The file each block of this system is held to its contract in. */
   const files = new Map<string, LoadedBlock>();
-  for (const node of project.byPath.values()) {
-    if (node.path !== rootBlock && !node.path.startsWith(`${rootBlock}/`)) continue;
-    const found = code.get(node.path);
-    if (!found?.bound || found.location === null) continue;
-    files.set(path.join(project.dir, ...found.location.file.split("/")), node);
+  for (const block of boundBlocks(project, rootBlock, code)) {
+    files.set(path.join(project.dir, ...block.file.split("/")), project.byPath.get(block.path)!);
   }
 
   if (files.size === 0) return [];

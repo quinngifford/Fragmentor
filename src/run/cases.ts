@@ -7,9 +7,9 @@ import type { BoundStore } from "../project/stores.js";
 /**
  * Saved tests for a block.
  *
- * They live in the block's own folder, next to its code and its contract, so a
- * block carries its tests with it: move the folder and the tests move too, and
- * a project shared as a repository brings them along.
+ * They live in the block's own folder, next to its `block.json`, so a block
+ * carries its tests with it: move the folder and the tests move too, and a
+ * project shared as a repository brings them along.
  *
  * A test without an expected value still runs; it just reports what came back
  * rather than passing or failing. That makes saving a case worthwhile before

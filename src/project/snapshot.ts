@@ -8,7 +8,7 @@ import type { Role } from "../model/roles.js";
 import { describeType } from "../model/types.js";
 import type { PortType } from "../model/types.js";
 import { answeringRoute, loadProject, locateCode, resolveAccess, systemOf, validateProject } from "./project.js";
-import { packFor, readAllCode } from "./code.js";
+import { readAllCode } from "./code.js";
 import type { BlockCode } from "./code.js";
 import { EXECUTIONS_DIR, architectureOf, checkExecution, loadExecutions } from "./executions.js";
 import type { TriggerKind } from "./executions.js";
@@ -18,7 +18,7 @@ import type { Expectations } from "../run/expect.js";
 import { answeringBlock } from "../run/record.js";
 import type { CodeLocation, Granularity, LoadedBlock, Project, ProjectDiagnostic, Start } from "./project.js";
 import { getPack, isKnownLanguage } from "../lang/index.js";
-import { boundStores, describeBound, storeEntries } from "./stores.js";
+import { boundStores, storeEntries } from "./stores.js";
 import { NOTES_DIR, loadNotes, waitingOn } from "./notes.js";
 import { readProjectReach, undeclaredReach } from "./reach.js";
 import type { ProjectReach } from "./reach.js";
@@ -103,21 +103,12 @@ export interface SnapshotCapability {
  * be run against an empty one.
  */
 export interface SnapshotStore {
-  /** The capability port, as the block's code refers to it. */
-  port: string;
-  /** `Store` or `Queue`. */
-  capability: string;
-  /** Written as the port's type: `Store<{ id: string }>`. */
-  type: string;
   /** The name a run keeps this store's contents under: `app/orders-db.orders`. */
   target: string;
-  /** Where it is in the project, for showing the person what they are filling in. */
-  resourcePath: string;
   resourceName: string;
   entry: string;
   /** What one row looks like, written out. Null when the entry is described in words. */
   shape: string | null;
-  shapeIr: PortType | null;
   /** Whether rows can be put there before a run, or only watched as the run puts them there. */
   seedable: boolean;
 }
@@ -171,7 +162,6 @@ export interface SnapshotBlock {
    * nothing generated, checked or run for it.
    */
   planned: boolean;
-  functionName: string;
   inputs: SnapshotPort[];
   outputs: SnapshotPort[];
   /** Architecture blocks only: the tables, channels or operations it offers. */
@@ -199,10 +189,7 @@ export interface SnapshotBlock {
    * has written it yet or it has moved, which Fragmentor cannot tell apart.
    */
   implemented: boolean;
-  /**
-   * Whether Fragmentor can run this block: its code is held to its contract,
-   * in a language it can run.
-   */
+  /** Whether Fragmentor can run this block: its code is held to its contract. */
   runnable: boolean;
   /**
    * Why Fragmentor draws this block's code rather than checking and running
@@ -270,14 +257,6 @@ export interface ProjectSnapshot {
   diagnostics: ProjectDiagnostic[];
   /** Files whose code reaches something but lies under no block's pointer, so nothing accounts for it. */
   reachUnpointed: string[];
-}
-
-async function readIfPresent(filePath: string): Promise<string | null> {
-  try {
-    return await readFile(filePath, "utf8");
-  } catch {
-    return null;
-  }
 }
 
 /** Lines shown from a block's code in the inspector: enough to recognise it, not the whole file. */
@@ -451,7 +430,6 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
     const block = node.block;
     const language = systemOf(project, blockPath)?.language ?? "";
     const found = code.get(blockPath)!;
-    const pack = packFor(project, blockPath);
 
     /** A shape's named parts, so a table can be drawn as its columns. */
     const fieldsOf = (type: PortType | null) =>
@@ -515,7 +493,6 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
       roleLabel: roleLabel(block.role, block.subtype),
       architecture: isArchitecture(block.role),
       planned: block.planned,
-      functionName: found.functionName ?? "",
       inputs: ports(block.inputs),
       outputs: ports(block.outputs),
       exposes,
@@ -526,15 +503,10 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
         description: cap.description ?? null,
       })),
       stores: boundStores(project, node).map((store) => ({
-        port: store.port,
-        capability: store.capability,
-        type: describeBound(store),
         target: store.target,
-        resourcePath: store.target.slice(0, store.target.length - store.entry.length - 1),
         resourceName: store.resourceName,
         entry: store.entry,
         shape: store.shape === null ? null : describeType(store.shape),
-        shapeIr: store.shape,
         seedable: store.seedable,
       })),
       children: node.children.map((child) => child.path),
@@ -543,14 +515,14 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
         contract:
           found.contract === null
             ? null
-            : await readIfPresent(path.join(projectDir, ...found.contract.split("/"))),
+            : await readFile(path.join(projectDir, ...found.contract.split("/")), "utf8").catch(() => null),
       },
       language,
       files: { code: found.location?.file ?? found.pointer ?? "", contract: found.contract ?? "" },
       implemented: found.location !== null,
-      runnable: found.bound && (pack?.canRun ?? false),
+      runnable: found.bound,
       drawnBecause: found.drawnBecause,
-      cases: found.bound && (pack?.canRun ?? false) ? await casesFor(blockPath, node) : [],
+      cases: found.bound ? await casesFor(blockPath, node) : [],
       code: where,
       reachNotChecked: reach?.notChecked[blockPath] ?? [],
     };

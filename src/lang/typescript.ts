@@ -137,8 +137,6 @@ export const typescriptPack: LanguagePack = {
   // `contract.js` for `contract.d.ts`, which is where TypeScript looks for it.
   contractSpecifier: (contractPath, fromFile) => relativeFrom(fromFile, contractPath).replace(/([.]d)?[.]ts$/, ".js"),
 
-  canRun: true,
-  canCheck: true,
   reach: typescriptReach,
 };
 

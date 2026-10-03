@@ -5,13 +5,12 @@ import { recordedTrace } from "../model/recorded.js";
 import type { HeardEvent, RecordingScope } from "../model/recorded.js";
 import { answeringRoute, loadProject, systemOf } from "../project/project.js";
 import type { Project } from "../project/project.js";
-import { readAllCode } from "../project/code.js";
+import { boundBlocks, readAllCode } from "../project/code.js";
 import type { BlockCode } from "../project/code.js";
 import { loadExecutions } from "../project/executions.js";
 import type { Execution } from "../project/executions.js";
 import { storesForRun } from "../project/stores.js";
 import { startRun, whyNotRunnable } from "./run.js";
-import { boundBlocks } from "./typescript.js";
 import type { RunControl, RunEvent, RunOutcome } from "./run.js";
 
 /**

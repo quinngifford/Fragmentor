@@ -17,8 +17,10 @@ import type { ProjectSnapshot } from "./snapshot.js";
  * A block's earlier versions, and putting one back.
  *
  * A version is the whole of a block at one moment: its folder and its parts',
- * their saved tests and contracts, and the code files they point at, because
- * a block without its parts or its code is not the block as it was. A block
+ * with their saved tests and, in TypeScript, their contracts, and the code
+ * files they point at, because a block without its parts or its code is not
+ * the block as it was. A Python contract lives outside the block's folder and
+ * is written again from the block, so it is not part of a version. A block
  * has two kinds. Its git history is the commits of whatever git repository
  * holds the project that changed any of that, from the commit that added its
  * block.json. Its saved versions are the few the person chose to keep, each
@@ -185,6 +187,9 @@ function isFile(file: string): Promise<boolean> {
 
 /** Windows and macOS keep names' capitals but, by default, find a file whatever the capitals asked for. */
 export const IGNORES_CASE = process.platform === "win32" || process.platform === "darwin";
+
+/** A path as such a disk compares it. */
+export const fold = (file: string): string => (IGNORES_CASE ? file.toLowerCase() : file);
 
 /**
  * Two names for one file on a disk that ignores case, or null.
@@ -782,7 +787,6 @@ export async function blockVersions(projectDir: string, blockPath: string, since
  */
 function claims(project: Project, blockPath: string, paths: string[], doing: "swapping" | "saving"): string | null {
   const name = project.byPath.get(blockPath)!.block.name;
-  const fold = IGNORES_CASE ? (file: string) => file.toLowerCase() : (file: string) => file;
   const inside = (root: string, file: string) => under(fold(root), fold(file));
   // What swapping would change that is not the block's, and the block holding
   // all of it, if one does, to take whole instead.

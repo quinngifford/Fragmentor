@@ -38,25 +38,9 @@ import { forgetVersions, onVersionsChange, refreshVersions } from "./versions.js
 import { forgetNotes, noteOn, onNotesChange, openCommandsWindow, renderNotesBar, showNotesOf } from "./notes.js";
 import { forgetRules, onRulesChange } from "./rules.js";
 import { forgetChanges, markedOnDrawing, onChangesChange, refreshChanges, renderChangesBar } from "./changes.js";
+import { el, element } from "./dom.js";
 
 /** The shell: panels, hierarchy, breadcrumbs, toolbar and status. */
-
-function element<T extends HTMLElement>(id: string): T {
-  const found = document.getElementById(id);
-  if (!found) throw new Error(`The interface is missing #${id}.`);
-  return found as T;
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className?: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
 
 /**
  * The blocks the hierarchy showed last time, so that one the agent adds stands
@@ -211,7 +195,7 @@ async function openPath(dir: string): Promise<void> {
 /**
  * Puts the project away and shows the start screen again. Nothing is written:
  * closing is only about this window, and everything the project holds — its
- * layout, its tests, its code — is already on disk.
+ * tests, its code — is already on disk.
  */
 async function closeProject(): Promise<void> {
   if (!ui.dir) return;
@@ -364,8 +348,8 @@ function setUpSplitter(): void {
     handle.dataset.dragging = "true";
     document.body.dataset.resizing = "true";
 
-    // Tracked on the window, as dragging a block is: the pointer leaves the
-    // handle the moment it starts moving.
+    // Tracked on the window, as dragging the bench window is: the pointer
+    // leaves the handle the moment it starts moving.
     const move = (at: PointerEvent) => {
       if (at.pointerId === event.pointerId) setWidth(window.innerWidth - at.clientX);
     };

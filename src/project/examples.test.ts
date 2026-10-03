@@ -52,10 +52,11 @@ describe("the tickets example", () => {
     const project = await loadProject(tickets);
     const node = project.byPath.get("tickets/booking-api/book-seats")!;
 
-    expect(boundStores(project, node).map((store) => [store.port, store.capability, store.target])).toEqual([
-      ["events", "Store", EVENTS],
-      ["bookings", "Store", BOOKINGS],
-      ["confirmations", "Queue", CONFIRMATIONS],
+    // A queue is only watched, never seeded.
+    expect(boundStores(project, node).map((store) => [store.port, store.seedable, store.target])).toEqual([
+      ["events", true, EVENTS],
+      ["bookings", true, BOOKINGS],
+      ["confirmations", false, CONFIRMATIONS],
     ]);
   });
 

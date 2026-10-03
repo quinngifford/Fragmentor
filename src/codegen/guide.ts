@@ -411,8 +411,12 @@ function filesSection(pack: LanguagePack | null): string {
         : [contract, "its types", "generated"],
     );
   }
-  if (pack?.canRun) rows.push(["  cases.json", "its tests", "you write, for a block Fragmentor runs"]);
-  if (pack) rows.push([`blocks/${pack.capabilitiesFile}`, "the capability interfaces", "generated"]);
+  if (pack) {
+    rows.push(
+      ["  cases.json", "its tests", "you write, for a block Fragmentor runs"],
+      [`blocks/${pack.capabilitiesFile}`, "the capability interfaces", "generated"],
+    );
+  }
   rows.push(
     ["src/…", "the code", "you write, wherever it belongs"],
     ["executions/<name>.json", "one thing that sets the system going", "you write"],
@@ -463,9 +467,6 @@ function fragmentorRole(pack: LanguagePack | null, named: string | null): string
   if (pack === null) {
     return `Fragmentor draws the diagram and checks that it holds together. It has no language pack for ${named ?? "this project's language"}, so it writes nothing, checks no code and runs nothing here.`;
   }
-  if (!pack.canRun) {
-    return `Fragmentor draws the diagram, checks that it holds together, and writes each function block's types. It cannot check or run ${pack.displayName} code yet.`;
-  }
   return "Fragmentor draws the diagram, checks that it holds together, writes each function block's types, checks the code against them, and runs the block and its tests.";
 }
 
@@ -486,14 +487,6 @@ function contractsSection(pack: LanguagePack | null): string {
   lines.push(
     `Where a function block's inputs and outputs are written as types, Fragmentor writes them into \`${contractOf("<the block>")}\`${besideItsBlock ? ", beside its \`block.json\`," : ","} along with the capabilities it asks for. A block whose ports are words gets none, and is drawn rather than checked or run.`,
   );
-
-  if (!pack.canRun) {
-    lines.push(
-      "",
-      `Read it, and write each block as a function taking a value and \`caps\`, so the code says the same thing the diagram does. Fragmentor cannot hold ${pack.displayName} code to a contract, run a block or run tests yet, so every block here is drawn and read.`,
-    );
-    return lines.join("\n");
-  }
 
   const codeFile = pack.id === "python" ? pythonPointer(workedExample.codeFile) : workedExample.codeFile;
   const shown = pack.id === "python" ? workedExample.python[codeFile]! : workedExample.code;
@@ -574,7 +567,7 @@ function existingCodeSection(manifest: Manifest, pack: LanguagePack | null): str
     "- A function block's inputs are named after the function's parameters, and its one output is what the function returns. Where the code reaches a store directly, such as through an ORM client or a file, its `access` line has no port. Giving an operation and its block the same shape, field for field, is for code being built.",
     "- Point at a method as `file#Class.method`. Where no named function makes a step, such as top-level script code or an anonymous route handler, the step's `code` is the file alone, and an operation such a handler answers leaves out `block`: its executions are then not recorded, only held to their own expectations, and that is normal.",
   ];
-  if (pack?.canRun) {
+  if (pack !== null) {
     lines.push(
       "- New code the person asks for is written against its contract wherever it is a function of its own. A small addition inside existing code follows the code around it, and stays drawn.",
       "- When the person asks you to hold a block to its contract, add to the file its code is in a small exported function that takes a value and `caps`, imports the contract and calls that code, and point the block at it. The existing code and whatever calls it stay as they are. The file is then held to the import rules above; where it cannot be, tell the person rather than change the code.",
@@ -603,16 +596,13 @@ function reviewStep(manifest: Manifest): string {
 /** Where the code comes from: the folder, or the agent. */
 function codeStep(manifest: Manifest, pack: LanguagePack | null): string {
   if (manifest.existingCode) return "Point each block at the code it stands for, as **Code that was already here** below says.";
-  return `Point each block at its code, writing whatever is not there yet.${pack?.canRun ? " Where Fragmentor writes a contract, import it and write the block's tests." : ""}`;
+  return `Point each block at its code, writing whatever is not there yet.${pack !== null ? " Where Fragmentor writes a contract, import it and write the block's tests." : ""}`;
 }
 
 function languageRule(manifest: Manifest, chosen: ReturnType<typeof guideLanguage>): string {
   if (chosen.unnamed) {
     const choices = knownLanguages()
-      .map(({ id, displayName }) => {
-        const each = getPack(id);
-        return `\`"${id}"\` (${each.canRun ? "Fragmentor checks and runs it" : `Fragmentor writes its types but cannot check or run ${displayName} yet`})`;
-      })
+      .map(({ id }) => `\`"${id}"\` (Fragmentor checks and runs it)`)
       .join(" or ");
     return `The person left the language to you: give each system a \`"language"\`, ${choices}, or the name of whatever else its code is written in, which Fragmentor will draw and nothing more. The rest of this guide is written for TypeScript; in another language the file names and naming conventions follow that language.`;
   }
@@ -659,17 +649,16 @@ export function agentGuide(manifest: Manifest): string {
     reviewStep: reviewStep(manifest),
     codeStep: codeStep(manifest, pack),
     existingCode: existingCodeSection(manifest, pack),
-    testCommand: " and `fragmentor test`",
     commands: COMMANDS.map((command) => `- **\`${usageOf(command)}\`** — ${command.steps}`).join("\n"),
     // Only a block Fragmentor runs can have a run go wrong for the person to flag.
-    flaggedRuns: pack?.canRun
+    flaggedRuns: pack !== null
       ? "\n- A note flagged from a failed run carries its input, what was expected and what came back. Make that run pass, and add it as a saved test if it is not one."
       : "",
     // Only code Fragmentor runs can be recorded, so where none is, an
     // execution is held to what its own file says must happen and no more.
     // Where it is, agents pinned values the run could never see, and wrote
     // random codes a rerun could never match, until told where a run starts.
-    executionTest: pack?.canRun
+    executionTest: pack !== null
       ? "runs each execution whose trigger leads to code held to its contract, and holds what you wrote down to what ran. The run starts at the block the trigger is handed to, so the hand-off and anything HTTP-level cannot be checked: pin values at what that block returns, which a `response` at the operation is compared with. Leave `Clock` and `Random` values out of steps and expectations, as out of tests."
       : "holds each execution to its own expectations, which catches a file that contradicts itself and cannot catch one that is wrong about the code, since both halves are your reading of it.",
     files: filesSection(pack),

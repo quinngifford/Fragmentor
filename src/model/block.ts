@@ -489,14 +489,3 @@ export function blockToFileShape(block: Block): Record<string, unknown> {
   if (block.pinnedAsLeaf) file.pinnedAsLeaf = true;
   return file;
 }
-
-/** `rank-jobs` -> `rankJobs`. The block's exported function name. */
-export function functionNameOf(id: string): string {
-  return id.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
-}
-
-/** `rank-jobs` -> `RankJobs`. The stem for the block's generated type names. */
-export function typeStemOf(id: string): string {
-  const fn = functionNameOf(id);
-  return fn.charAt(0).toUpperCase() + fn.slice(1);
-}

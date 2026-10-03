@@ -196,10 +196,6 @@ export function isKnownCapability(name: string): boolean {
   return Object.hasOwn(CAPABILITIES, name);
 }
 
-export function capabilityNames(): string[] {
-  return Object.keys(CAPABILITIES);
-}
-
 /**
  * Whether a capability of this kind is a way into one particular block on the
  * diagram, and so needs an access naming the port to say which.

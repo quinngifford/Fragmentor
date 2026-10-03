@@ -8,12 +8,12 @@ import type { LoadedBlock, LoadedSystem, Project } from "../project/project.js";
 import type { LanguagePack } from "../lang/pack.js";
 import * as typescript from "./typescript.js";
 import * as python from "./python.js";
-import type { CompiledRun, CompiledSystem, RunEvent, SpawnOptions } from "./typescript.js";
+import type { CompiledRun, CompiledSystem, RunEvent, SpawnOptions, StoreEffect } from "./typescript.js";
 import { hasExpectation, loadCases, storeKeyProblems } from "./cases.js";
 import type { TestCase } from "./cases.js";
 import { compareValues } from "./compare.js";
 
-export type { RunEvent } from "./typescript.js";
+export type { RunEvent, StoreEffect } from "./typescript.js";
 
 /**
  * Running blocks.
@@ -59,11 +59,6 @@ export interface RunControl {
 
 /** What the stores a block reaches hold before it runs: target -> key -> row. */
 export type StoreSeeds = Record<string, Record<string, unknown>>;
-
-/** What a store was left holding, or a channel was given, by the time a run ended. */
-export type StoreEffect =
-  | { kind: "store"; rows: Record<string, unknown> }
-  | { kind: "queue"; sent: unknown[] };
 
 export interface RunOutcome {
   ok: boolean;
@@ -164,7 +159,6 @@ export function whyNotRunnable(project: Project, code: Map<string, BlockCode>, b
   if (pack === null) {
     return `Fragmentor has no language pack for ${system.language || "this system's language"}, so it draws this code but cannot run it.`;
   }
-  if (!pack.canRun) return `Fragmentor cannot run ${pack.displayName} blocks yet, so this one can only be read.`;
 
   const own = code.get(blockPath)!;
   if (own.problem !== null) return `"${node.block.name}" points at code that is not there: ${own.problem}`;

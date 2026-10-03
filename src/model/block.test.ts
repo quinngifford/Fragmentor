@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { blockFromFile, blockToFileShape, functionNameOf, parseAccessText, parseBlockFile, typeStemOf } from "./block.js";
-import { describeType, typesEqual } from "./types.js";
+import { blockFromFile, blockToFileShape, parseAccessText, parseBlockFile } from "./block.js";
+import { describeType } from "./types.js";
+import { typesEqual } from "./typesEqual.js";
 import { t } from "./testing.js";
 
 const minimal = { responsibility: "Rate how well a posting matches the profile." };
@@ -132,16 +133,6 @@ describe("a block describing code that already exists", () => {
     expect(describeType(block.outputs.score!.type)).toBe("Promise<number>");
     expect(block.code).toBe("src/score.ts#score");
     expect(blockToFileShape(block)).toMatchObject({ code: "src/score.ts#score", inputs: { posting: "Posting" } });
-  });
-});
-
-describe("name derivation", () => {
-  it("turns block ids into function and type names", () => {
-    expect(functionNameOf("rank-jobs")).toBe("rankJobs");
-    expect(functionNameOf("score")).toBe("score");
-    expect(functionNameOf("find-top-3-matches")).toBe("findTop3Matches");
-    expect(typeStemOf("rank-jobs")).toBe("RankJobs");
-    expect(typeStemOf("score")).toBe("Score");
   });
 });
 

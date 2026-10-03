@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { boundBlocks } from "../project/code.js";
 import type { BlockCode } from "../project/code.js";
 import type { Project } from "../project/project.js";
 
@@ -34,24 +35,6 @@ export interface CompiledSystem {
   /** Where each block's code ended up, by block path. */
   files: Map<string, string>;
   dispose(): Promise<void>;
-}
-
-/**
- * The blocks of one system whose code is held to a contract, and where it is.
- * They are what a run compiles and stands in for, so they are all it hears.
- */
-export function boundBlocks(
-  project: Project,
-  systemRoot: string,
-  code: Map<string, BlockCode>,
-): { path: string; file: string; functionName: string | null }[] {
-  return [...project.byPath.values()].flatMap((node) => {
-    if (node.path !== systemRoot && !node.path.startsWith(`${systemRoot}/`)) return [];
-    const found = code.get(node.path);
-    return found?.bound && found.location !== null
-      ? [{ path: node.path, file: found.location.file, functionName: found.functionName }]
-      : [];
-  });
 }
 
 /** Compiles the code of every block in one system that is held to a contract. */
@@ -185,11 +168,7 @@ export interface HarnessChannel {
  * person, not stuck — maps what comes back, and settles exactly once, on the
  * result, a timeout, a stop, or the child dying with its stderr as the story.
  */
-export function drive(
-  child: ReturnType<typeof spawn>,
-  channel: HarnessChannel,
-  options: { start: object; timeoutMs: number; onEvent?: (event: RunEvent) => void },
-): CompiledRun {
+export function drive(child: ReturnType<typeof spawn>, channel: HarnessChannel, options: SpawnOptions): CompiledRun {
   let remaining = options.timeoutMs;
   let since = 0;
   let timer: NodeJS.Timeout | undefined;
@@ -249,7 +228,21 @@ export function drive(
   child.on("error", (error) => settle({ ok: false, error: error.message, logs: [] }));
   child.on("close", () => settle({ ok: false, error: stderr.trim() || "The block stopped without reporting what happened.", logs: [] }));
 
-  tell(options.start);
+  tell({
+    type: "start",
+    spec: {
+      file: options.blocks.find((block) => block.path === options.blockPath)?.file,
+      functionName: options.functionName,
+      blocks: options.blocks,
+      trace: Boolean(options.onEvent),
+      breakpoints: options.breakpoints ?? [],
+      capabilities: options.capabilities,
+      projectDir: options.projectDir,
+      copyOf: options.copyOf ?? null,
+      input: options.input ?? {},
+      root: options.compiledDir,
+    },
+  });
   startClock();
 
   return {
@@ -284,23 +277,6 @@ export function startCompiledBlock(options: SpawnOptions): CompiledRun {
       },
       hear: (handler) => child.on("message", handler),
     },
-    {
-      start: {
-        type: "start",
-        spec: {
-          file: options.blocks.find((block) => block.path === options.blockPath)?.file,
-          functionName: options.functionName,
-          blocks: options.blocks,
-          trace: Boolean(options.onEvent),
-          breakpoints: options.breakpoints ?? [],
-          capabilities: options.capabilities,
-          projectDir: options.projectDir,
-          copyOf: options.copyOf ?? null,
-          input: options.input ?? {},
-        },
-      },
-      timeoutMs: options.timeoutMs,
-      onEvent: options.onEvent,
-    },
+    options,
   );
 }

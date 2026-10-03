@@ -7,7 +7,7 @@ import type { TriggerKind } from "../../src/project/executions.js";
 import type { NoteAnchor } from "../../src/project/notes.js";
 import { applyExecutionMark, keepInView, onFlowWanted, onStepChosen, revealBlock, treeInView } from "./canvas.js";
 import type { ExecutionMark } from "./canvas.js";
-import { buildFlow } from "./flow.js";
+import { buildFlow, words } from "./flow.js";
 import { shownAt } from "./tree.js";
 import { recordingOf, requireSnapshot, selectedExecution, ui } from "./state.js";
 import type { Recording } from "./state.js";
@@ -84,7 +84,6 @@ function carried(value: unknown, most = 70): string {
   return `: ${text.length > most ? `${text.slice(0, most - 1)}…` : text}`;
 }
 
-const words = (kind: string) => kind.replace(/-/g, " ");
 
 /** One event in words, as the bar says it while stepping. */
 export function describeStep(event: TraceEvent, start: Start, most?: number): string {
@@ -407,7 +406,7 @@ function jump(at: number): void {
 /* Controls                                                                    */
 /* -------------------------------------------------------------------------- */
 
-function barButton(label: string, title: string, action: () => void): HTMLButtonElement {
+export function barButton(label: string, title: string, action: () => void): HTMLButtonElement {
   const button = el("button", "run-btn", label);
   button.type = "button";
   button.title = title;

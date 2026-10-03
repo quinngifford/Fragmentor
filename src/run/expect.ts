@@ -1,6 +1,6 @@
 import { activates, enters, formatAddress, isInside } from "../model/trace.js";
 import type { Address, Effect, Interaction, InteractionKind, Return, Trace, TraceEvent, TraceSource } from "../model/trace.js";
-import { compareValues } from "./compare.js";
+import { compareValues, isPlainObject } from "./compare.js";
 
 /**
  * Tests over what happened, rather than over what came back.
@@ -173,9 +173,6 @@ function matchEach<E extends { id: string }, W>(
 
   return failures;
 }
-
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
 
 /** A store's keys compared exactly, so a missing row is a difference; each row compared partially. */
 function stateDifferences(actual: unknown, wanted: unknown, target: string): string[] {

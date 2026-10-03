@@ -12,9 +12,10 @@ import type { ProjectReach } from "./reach.js";
 /**
  * The person's rules over the architecture, and what stands with them.
  *
- * A rule is made and removed by clicking in the window, never written by the
- * agent: a guard rail written by the party it constrains guards nothing. The
- * file is committed with the project, like notes, so the rules travel with
+ * A rule is made and removed by clicking in the window, never by the agent: a
+ * guard rail written by the party it constrains guards nothing. The one edit
+ * the agent may make is to re-point a rule at a block it moved. The file is
+ * committed with the project, like notes, so the rules travel with
  * it and git records every change. Each rule is checked against everything
  * known about reach — the access the diagram declares and what the code was
  * read to do — every time the project is read, so the agent's `fragmentor

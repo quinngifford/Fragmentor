@@ -1,5 +1,6 @@
 import { formatAddress, isInside } from "./trace.js";
 import type { Address, Interaction, Trace, TraceEvent } from "./trace.js";
+import { isPlainObject } from "../run/compare.js";
 import { describeWanted, describeWantedEffect, evaluate } from "../run/expect.js";
 import type { EffectExpectation, Expectations, InteractionExpectation } from "../run/expect.js";
 
@@ -19,7 +20,7 @@ import type { EffectExpectation, Expectations, InteractionExpectation } from "..
  * turn a run into a trace and compare it without asking the main process.
  */
 
-/** One report from the harness about a watched run, as a recording reads it. `src/run/harness.cjs` sends them. */
+/** One report from the harness about a watched run, as a recording reads it. `src/run/harness.cjs` and `harness.py` send them. */
 export type HeardEvent =
   | { type: "call"; id: number; parent: number | null; block: string; input: unknown }
   | { type: "return"; id: number; output: unknown }
@@ -227,9 +228,6 @@ export interface RecordingCheck {
 }
 
 const STOPPED = "The recording ends before the run did, so this may not have happened yet.";
-
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
 
 /** `a`, `a and b`, `a, b and c`, or the first three and how many more. */
 function listed(items: string[]): string {

@@ -4,9 +4,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { boundBlocks } from "../project/code.js";
 import type { BlockCode } from "../project/code.js";
 import type { Project } from "../project/project.js";
-import { boundBlocks, drive } from "./typescript.js";
+import { drive } from "./typescript.js";
 import type { CompiledRun, CompiledSystem, SpawnOptions } from "./typescript.js";
 
 /**
@@ -164,25 +165,7 @@ export function startCompiledBlock(options: SpawnOptions): CompiledRun {
       },
       close: () => child.stdin!.end(),
     },
-    {
-      start: {
-        type: "start",
-        spec: {
-          file: options.blocks.find((block) => block.path === options.blockPath)?.file,
-          functionName: options.functionName,
-          blocks: options.blocks,
-          trace: Boolean(options.onEvent),
-          breakpoints: options.breakpoints ?? [],
-          capabilities: options.capabilities,
-          projectDir: options.projectDir,
-          copyOf: options.copyOf ?? null,
-          input: options.input ?? {},
-          root: options.compiledDir,
-        },
-      },
-      timeoutMs: options.timeoutMs,
-      onEvent: options.onEvent,
-    },
+    options,
   );
 }
 

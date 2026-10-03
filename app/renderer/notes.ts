@@ -8,7 +8,7 @@ import { el, keepingFocus, section, subsection } from "./dom.js";
 import { goToStep } from "./execution.js";
 import { closeWindow, openCodeAt, openWindow } from "./popup.js";
 import { ui } from "./state.js";
-import { actOnVersion, onVersionsRead, versionBefore } from "./versions.js";
+import { actOnVersion, onVersionsRead, versionBefore, when } from "./versions.js";
 
 /**
  * Notes on blocks: the person and their coding agent, asking and answering
@@ -98,10 +98,6 @@ onVersionsRead(() => {
 
 /** The block a note is on, as a note needs it: by path, and called something. One that has gone is called by its path. */
 type Where = Pick<SnapshotBlock, "path" | "name">;
-
-function when(date: string): string {
-  return new Date(date).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 

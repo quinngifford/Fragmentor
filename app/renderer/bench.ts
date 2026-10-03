@@ -213,7 +213,7 @@ function storesForm(block: SnapshotBlock): HTMLElement | null {
     const wrap = labelled(`${store.resourceName} · ${store.entry}`, area);
     if (store.shape) {
       const shape = el("div", "pdesc pshape");
-      shape.append(el("span", "pshape-label", "each row"), typeLine(store.shape, "ptype"));
+      shape.append(el("span", "pshape-label", "each row"), typeLine(store.shape));
       wrap.append(shape);
     }
     wrap.append(problem);
@@ -315,7 +315,7 @@ function resultPanel(block: SnapshotBlock): HTMLElement | null {
 /** Whether the bench can run this block at all, and if not, why not. */
 function whyNotRunnable(block: SnapshotBlock): string | null {
   if (!block.implemented) return "This block has no implementation yet, so there is nothing to run.";
-  if (!block.runnable) return block.drawnBecause ?? `Fragmentor cannot run ${block.language} blocks yet.`;
+  if (!block.runnable) return block.drawnBecause ?? "Fragmentor does not run this block.";
   return null;
 }
 

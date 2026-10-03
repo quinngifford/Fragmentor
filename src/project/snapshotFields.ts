@@ -98,8 +98,6 @@ export const blockFields = {
   roleLabel: ignored,
   architecture: ignored,
   planned: compared,
-  // Follows from its code pointer, or its id.
-  functionName: ignored,
   inputs: compared,
   outputs: compared,
   exposes: compared,

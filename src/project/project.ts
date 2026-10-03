@@ -4,7 +4,8 @@ import { z } from "zod/v4";
 import { blockIdPattern, blockToFileShape, formatAccess, parseBlockFile } from "../model/block.js";
 import type { Access, Block, Exposed, Port } from "../model/block.js";
 import { normaliseLanguage } from "../lang/index.js";
-import { describeType, typesEqual } from "../model/types.js";
+import { describeType } from "../model/types.js";
+import { typesEqual } from "../model/typesEqual.js";
 import type { PortType } from "../model/types.js";
 import { CAPABILITIES, capabilitiesReaching, reachesResource } from "../model/capabilities.js";
 import { ROLES, isArchitecture } from "../model/roles.js";
@@ -200,11 +201,6 @@ export function blockDir(projectDir: string, blockPath: string): string {
 export function systemOf(project: Project, blockPath: string): LoadedSystem | undefined {
   const rootId = blockPath.split("/")[0];
   return project.systems.find((system) => system.rootBlock === rootId);
-}
-
-/** The language a block's code is written in. */
-export function languageOf(project: Project, blockPath: string): string | undefined {
-  return systemOf(project, blockPath)?.language;
 }
 
 /** Reads fragmentor.json alone, which is enough to know how the project is set up. */

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getPack } from "../lang/index.js";
+import { boundBlocks } from "../project/code.js";
 import type { BlockCode } from "../project/code.js";
 import type { Project } from "../project/project.js";
 import { findPython } from "../run/python.js";
@@ -69,21 +70,17 @@ interface BoundBlock {
 }
 
 /** The system's bound blocks, as rules.py and pyright are told about them. */
-function boundBlocks(project: Project, rootBlock: string, code: Map<string, BlockCode>): BoundBlock[] {
+function pythonBlocks(project: Project, rootBlock: string, code: Map<string, BlockCode>): BoundBlock[] {
   const pack = getPack("python");
-  const blocks: BoundBlock[] = [];
-  for (const [blockPath, found] of code) {
-    if (blockPath !== rootBlock && !blockPath.startsWith(`${rootBlock}/`)) continue;
-    if (!found.bound || found.location === null || found.contract === null) continue;
-    const id = project.byPath.get(blockPath)!.block.id;
-    blocks.push({
-      file: found.location.file,
-      function: found.functionName ?? pack.functionName(id),
+  return boundBlocks(project, rootBlock, code).map((block) => {
+    const id = project.byPath.get(block.path)!.block.id;
+    return {
+      file: block.file,
+      function: block.functionName,
       types: [pack.typeName(id, "Input"), pack.typeName(id, "Caps"), pack.typeName(id, "Output")],
-      contract: found.contract,
-    });
-  }
-  return blocks;
+      contract: block.contract,
+    };
+  });
 }
 
 async function runRules(project: Project, blocks: BoundBlock[], interpreter: string): Promise<CodeProblem[]> {
@@ -159,7 +156,7 @@ export async function checkPythonSystem(
   rootBlock: string,
   code: Map<string, BlockCode>,
 ): Promise<{ problems: CodeProblem[]; interpreter: string | null }> {
-  const blocks = boundBlocks(project, rootBlock, code);
+  const blocks = pythonBlocks(project, rootBlock, code);
   if (blocks.length === 0) return { problems: [], interpreter: null };
 
   const python = findPython(project.dir);
