@@ -93,11 +93,11 @@ Any block declares what it reaches as **access**: `reads app-db.users`, `writes 
 
 An access is a dependency: a fact about the architecture, saying what is able to reach what. It is not a record of what happened, which is an execution's, and the two are never merged. A button's access, an operation saying which block answers it, and that block's contract together say where pressing the button leads, and the application can run it from there.
 
-Access is drawn per direction rather than per pair, because direction is the most important thing about it: a database that is read and written gets a line each way, not one line saying the two are connected. Everything leaves a block on its right and arrives on its left, the way its ports are drawn.
+Access is drawn as an arrow from the block that reaches to the block it reaches, one arrow for each thing it does there, labelled with it: a database that is read and written gets two arrows, not one line saying the two are connected, because what a block does to a thing matters as much as that it reaches it. The arrows are shown only when asked for, since the tree's own lines mean containment and nothing else.
 
 ## How a diagram is arranged and coloured
 
-The arrangement says something, so it has to be true. A diagram reads left to right from whoever sets the system going, through what they call, to what that calls in turn. Stores and queues are not steps in that: a service reads and writes a database in the same breath, and putting it further along would say it came after. They sit underneath instead, and the connection loops clockwise around the block — out of its right, down, and back up into its left. A queue written and never read is an endpoint but not the destination, because the system's answer goes back to whoever asked for it; it belongs under the flow rather than at the end of it.
+The arrangement says one thing, so that it is always true: what is part of what. The tree runs top down, each block under the block it is part of, its parts in the order of their folder names. Nothing is placed by role or by what calls what, because the order in which things happen is what an execution shows, and a layout that tried to say it too would be wrong for every execution but one.
 
 Coloured by block, the default, every block has a colour of its own. Coloured by kind, colour says which world a thing belongs to, and runs from what is most yours to what is least: your code, the data it holds, the data it keeps, your own separate programs, the people you serve, and the services you do not control. Which exact colours those are is the person's, not the project's: a kind's colour is changed from the legend and a single block's from the inspector, and both stay in that person's browser rather than in the files everyone shares, though a page the person exports carries them. Green is your own code. Red is spent on none of them: on this panel it means something is wrong.
 
@@ -105,7 +105,7 @@ A dashed line means one thing and only one thing: not built yet. Everything plan
 
 A store is drawn once, under the block it belongs to, so where a store sits in the hierarchy is a decision that shows.
 
-An arrangement is a default, not a rule. A person can move any block, and where they left it is remembered. So is a colour: which colour a kind or a single block takes is the person's, and stays in their browser rather than in the files everyone shares.
+Nothing is placed by hand. What a person changes is what is folded away, and the colours.
 
 Nothing is generated, checked or run for a block that is not a function. The code that receives real requests and opens real connections is the framework's, and no block stands for it. The functions **inside** a service are ordinary blocks, checked, run and tested as usual, which is what lets a project hold an honest end-to-end architecture and a fully verified set of functions inside it.
 
@@ -189,7 +189,7 @@ Every function has tests, written by the agent alongside its code. This is not o
 
 Beyond automated tests, each function has an interactive test bench. Its input schema generates an input form, capability ports are filled with substitutes, stores can be given rows before the run, and the user runs the function and sees what it returned and what it left behind in the stores.
 
-Running a function records every call it makes, anywhere in the system, with the call that made it. The user can watch the parts of the architecture light up as the run reaches them, stop the run at a breakpoint before any function, and step through it. This is the start of what executions complete: a trace of everything a trigger set off, stepped through on the tree or read end to end as its own drawing.
+Running a function records every call it makes, anywhere in the system, with the call that made it. The user can watch the parts of the architecture light up as the run reaches them, stop the run at a breakpoint before any function, and step through it. A run watched this way stays a run of one function; an execution is what is stepped through on the tree or read end to end as its own drawing, from a trace written down or recorded.
 
 Each block carries a state: specified, implemented, tests passing, or stale. A block becomes stale when a contract it depends on changes. Stale propagation is what keeps a large hierarchy honest as it evolves.
 
