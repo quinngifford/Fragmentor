@@ -1,0 +1,2006 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'sha256-kH5HqPTyBS9H2NLxJqIN6U8VLWFF3Cc1QatQ6tCRifQ='; style-src 'sha256-4LdMB4lx2UqKBekWn0Mifa/zuQCvkwyBZiadPpa5MtA='; img-src data:; base-uri 'none'; form-action 'none'"
+    />
+    <title>Tickets</title>
+    <style>/* An instrument panel, not a web page. The phosphor green is signal colour:
+   it marks what carries data. Everything else stays quiet so it can. */
+
+:root {
+  --ground: #07090a;
+  --panel: #0d1113;
+  --panel-high: #131a1c;
+  --rule: #1d2629;
+  --rule-bright: #2b3a3e;
+  --ink: #c6d5d0;
+  --ink-dim: #6b807b;
+  --ink-faint: #475855;
+  --signal: #4fe38f;
+  --signal-dim: #2b8d5c;
+  --signal-deep: #1a4b34;
+  --effect: #e2a54b;
+  /* An execution's steps that carry nothing: a trigger, a call made for its
+     own sake. They light up rather than flow, in a colour of their own. */
+  --exec-trigger: #9fd3ff;
+  --pending: #7a8b96;
+  --bad: #e3778c;
+  --flag-red: rgb(235, 42, 74);
+  /* What kind of thing a block is: set on the document by the renderer, which
+     holds the defaults and whatever the person has changed them to. */
+  /* Code colours. Quiet enough to sit beside the diagram, and distinct enough
+     to be read apart at 11px. None of them is the signal green, which on this
+     panel means something else. */
+  --code-comment: #52655f;
+  --code-keyword: #7aa6d6;
+  --code-string: #a8d68f;
+  --code-number: #d9a86c;
+  --code-type: #7fd1c4;
+  --code-name: #d6cf8a;
+  --code-punct: #77908a;
+  --radius: 3px;
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "Cascadia Mono", Consolas, ui-monospace, "SF Mono", Menlo, monospace;
+  /* Scrollbars and the browser's own controls are drawn dark to match. A pale
+     scrollbar down the side of a code box was the loudest thing on the panel. */
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow: hidden;
+  user-select: none;
+}
+
+.shell { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; }
+
+/* ---- top bar ---- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--panel);
+  -webkit-app-region: drag;
+}
+
+.topbar button, .topbar .crumbs { -webkit-app-region: no-drag; }
+
+.mark { padding-right: 14px; border-right: 1px solid var(--rule); }
+
+.mark strong {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--signal);
+}
+
+.crumbs { display: flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 12px; }
+
+.crumb {
+  background: none;
+  border: 0;
+  padding: 3px 7px;
+  border-radius: var(--radius);
+  font: inherit;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.crumb:hover { color: var(--signal); background: var(--panel-high); }
+.crumb[aria-current="true"] { color: var(--ink); background: var(--panel-high); cursor: default; }
+.crumb-sep { color: var(--ink-faint); }
+
+.toolbar { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.toolbar-sep { width: 1px; height: 20px; background: var(--rule); margin: 0 4px; }
+
+.toggle, .zoom-btn, .chip {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule-bright);
+  background: none;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.toggle:hover, .zoom-btn:hover, .chip:hover { color: var(--ink); background: var(--panel-high); }
+.toggle[aria-pressed="true"] { color: var(--signal); border-color: var(--signal-dim); }
+
+/* With no project open, Commands is hidden, and the line after it would
+   divide nothing from the panel switches. */
+#agent-commands[hidden] + .toolbar-sep { display: none; }
+.chip[aria-pressed="true"] { color: var(--signal); border-color: var(--signal-dim); background: var(--signal-deep); }
+
+/* ---- panes ---- */
+
+.panes { display: grid; min-height: 0; grid-template-columns: 232px minmax(0, 1fr) 5px 360px; }
+
+.rail, .inspector { background: var(--panel); overflow-y: auto; min-height: 0; }
+.rail { border-right: 1px solid var(--rule); }
+.inspector { border-left: 1px solid var(--rule); }
+
+/* The handle between the diagram and the inspector. Thin, and lit while it is
+   being used, so it reads as an edge rather than a gap. */
+.splitter {
+  cursor: col-resize;
+  background: var(--rule);
+  touch-action: none;
+}
+
+.splitter:hover, .splitter[data-dragging="true"] { background: var(--signal-dim); }
+body[data-resizing="true"] { cursor: col-resize; }
+
+.pane-title {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 12px 16px 6px;
+}
+
+/* ---- hierarchy ---- */
+
+.tree { padding: 0 8px 20px; display: flex; flex-direction: column; gap: 1px; }
+
+.node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.node:hover { background: var(--panel-high); color: var(--ink); }
+.node[aria-selected="true"] { background: var(--signal-deep); color: var(--signal); }
+.node .glyph { color: var(--ink-faint); flex: none; width: 11px; text-align: center; }
+.node[aria-selected="true"] .glyph { color: var(--signal); }
+.node .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- canvas ---- */
+
+.canvas-wrap { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--ground); }
+#canvas-svg { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+#canvas-svg.panning { cursor: grabbing; }
+#canvas-svg.dragging { cursor: move; }
+
+.canvas-empty {
+  position: absolute;
+  inset: 26px auto auto 26px;
+  color: var(--ink-dim);
+  font-size: 13px;
+  max-width: 52ch;
+  white-space: pre-wrap;
+  font-family: var(--mono);
+}
+
+/* What to do while the agent has not started: a card laid out as the
+   first-steps window is, rather than the plain words of any other message. */
+.canvas-empty.waiting-card {
+  width: min(560px, calc(100% - 52px));
+  max-width: none;
+  max-height: calc(100% - 52px);
+  overflow-y: auto;
+  padding: 22px 24px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  white-space: normal;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  user-select: text;
+}
+.waiting-card .dialog-lede { margin: -14px 0 0; }
+
+.zoom-bar {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  padding: 4px;
+}
+
+/* `display: flex` above would otherwise beat the hidden attribute's own rule. */
+.zoom-bar[hidden] { display: none; }
+
+.zoom-btn { border-color: transparent; min-width: 28px; text-align: center; }
+.zoom-level { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); min-width: 44px; text-align: center; }
+.zoom-divider { width: 1px; align-self: stretch; background: var(--rule-bright); margin: 0 3px; }
+
+/* What the colours on this diagram mean, for as long as they mean anything.
+   It sits above the zoom bar, out of the way of the blocks. */
+.legend {
+  position: absolute;
+  left: 14px;
+  bottom: 56px;
+  max-height: calc(100% - 92px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  padding: 7px 9px;
+}
+
+/* `display: flex` above would otherwise beat the hidden attribute's own rule. */
+.legend[hidden] { display: none; }
+
+/* The heading on the left, the arrow that folds it away on the right. */
+.legend-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.legend-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.legend-toggle {
+  background: none;
+  border: none;
+  padding: 0 0 0 4px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+.legend-toggle:hover { color: var(--ink-dim); }
+.legend[data-collapsed="false"] .legend-head { margin-bottom: 3px; }
+
+.legend-row { display: flex; align-items: center; gap: 7px; }
+/* A kind that is not on this diagram is still listed, because the legend is
+   where its colour is chosen, but it is kept quiet. */
+.legend-row[data-here="false"] { opacity: 0.45; }
+
+/* The swatch is the colour input itself, stripped back to the colour. */
+.legend-swatch {
+  width: 20px;
+  height: 11px;
+  padding: 0;
+  border: 1px solid var(--rule-bright);
+  border-radius: 2px;
+  background: var(--role);
+  cursor: pointer;
+  appearance: none;
+  flex: none;
+}
+.legend-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+.legend-swatch::-webkit-color-swatch { border: none; border-radius: 1px; }
+.legend-swatch.fixed {
+  cursor: default;
+  background: repeating-linear-gradient(90deg, var(--pending) 0 5px, transparent 5px 9px);
+}
+.legend-text { font-family: var(--mono); font-size: 10px; color: var(--ink-dim); letter-spacing: 0.03em; }
+
+.legend-reset {
+  margin-top: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink-faint);
+  cursor: pointer;
+  text-align: left;
+}
+.legend-reset:hover { color: var(--signal); }
+
+/* Where one block's colour is chosen, when the diagram is coloured that way. */
+.block-colour { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.block-colour-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* What sits along the top of the canvas, side by side while there is room and
+   wrapping when there is not, so none of it can land on the rest. */
+.canvas-top {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.canvas-top > * { pointer-events: auto; }
+
+.hint {
+  margin-left: auto;
+  padding-top: 2px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  pointer-events: none;
+}
+
+/* ---- welcome ---- */
+
+.welcome {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--ground);
+  text-align: center;
+  padding: 40px;
+}
+
+body[data-project="open"] .welcome { display: none; }
+
+/* An exported page: the drawing and the panel beside it, and nothing that
+   edits, runs or asks the application for anything. */
+body[data-export] :is(#agent-commands, #toggle-rail, #toggle-inspector, .toolbar-sep, #rail, #inspector-splitter,
+  #crumbs, #run-bar, #notes-bar, #changes-bar, #panels, .breakpoint) { display: none; }
+
+.welcome h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--signal);
+}
+
+.welcome p { margin: 0 0 12px; color: var(--ink-dim); max-width: 48ch; }
+.welcome-body { display: flex; flex-direction: column; gap: 18px; align-items: center; }
+.welcome-group { display: flex; flex-direction: column; gap: 4px; align-items: stretch; min-width: 340px; }
+
+.welcome-group h3 {
+  margin: 0 0 2px;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 500;
+  text-align: left;
+}
+
+.welcome-link {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-align: left;
+  padding: 6px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--ink-dim);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+}
+
+.welcome-link:hover { color: var(--signal); border-color: var(--signal-dim); }
+
+/* A mark of its own in the rail for a block that is not code, in the colour
+   it is drawn in on the canvas. */
+.node[data-architecture="true"] .glyph { color: var(--role); }
+
+.btn.tiny { padding: 1px 6px; font-size: 10px; }
+.ptype.bad { color: var(--bad); }
+
+/* ---- blocks ---- */
+
+.block-box { cursor: move; }
+.block-plate { fill: var(--panel-high); stroke: var(--rule-bright); stroke-width: 1; }
+
+/* The breakpoint sits beside the block, inside the same group, so anything
+   that lights up the whole group would reach out and take the breakpoint in
+   with it. Hovering is answered by the plate, and the plate is the part that
+   can be focused. */
+.block-body:hover .block-plate { stroke: var(--signal-dim); }
+.block-plate:focus-visible { outline: none; stroke: var(--signal); stroke-width: 2; }
+.block-box[data-selected="true"] .block-plate { stroke: var(--signal); stroke-width: 1.8; }
+
+/* The rest of the system. Hue says which world a thing belongs to, and runs
+   from what is most yours to what is least: your code, your separate
+   programs, the data you keep, the data in motion, the people you serve, and
+   the services you do not control. Green is your own code. Red is not spent
+   here; on this panel it means something is wrong.
+
+   These come before the planned rules deliberately: a planned database should
+   read as planned first. */
+[data-role="function"] { --role: var(--role-function); }
+[data-role="component"] { --role: var(--role-component); }
+[data-role="service"] { --role: var(--role-service); }
+[data-role="external"] { --role: var(--role-external); }
+[data-role="database"] { --role: var(--role-database); }
+[data-role="storage"] { --role: var(--role-storage); }
+[data-role="queue"] { --role: var(--role-queue); }
+[data-role="structure"] { --role: var(--role-structure); }
+[data-role="client"] { --role: var(--role-client); }
+
+.block-box[data-tinted="true"] .block-plate {
+  fill: color-mix(in srgb, var(--role) 5%, var(--panel));
+  stroke: color-mix(in srgb, var(--role) 55%, var(--ground));
+  stroke-width: 1.6;
+}
+.block-box[data-tinted="true"] .block-kind { fill: var(--role); }
+.block-box[data-tinted="true"] .block-body:hover .block-plate { stroke: var(--role); }
+
+/* An access takes the colour of whatever it reaches, so a line and the block
+   at the end of it are plainly the same subject. Solid, because dashed on
+   this canvas means not built yet and nothing else. */
+.access { fill: none; stroke: var(--role); stroke-width: 1.6; opacity: 0.6; }
+/* The arrowhead takes the line's own colour rather than one of its own. */
+.access-arrow { fill: context-stroke; }
+.access-group:hover .access { opacity: 1; stroke-width: 2.6; }
+.access-group[data-selected="true"] .access { opacity: 1; stroke-width: 3; }
+.access-label { font-family: var(--mono); font-size: 9px; fill: var(--role); opacity: 0.85; pointer-events: none; }
+
+/* A relationship that was already there, rather than a value on its way, so
+   it appears rather than being drawn along its length. */
+.access-group.appearing { animation: fade-in 500ms ease-out backwards; }
+
+/* Nothing about a plan is settled, including what runs between its blocks. */
+.access-group[data-planned="true"] { --role: var(--pending); }
+.access-group[data-planned="true"] .access { stroke-dasharray: 6 5; opacity: 0.3; }
+.access-group[data-planned="true"] .access-label { opacity: 0.55; }
+
+/* Planned: drawn, not built. It has to read as a block of the same kind as
+   the others and still be unmistakably not one of them, so it keeps its shape
+   and loses its solidity — a dashed edge, a flat plate, quiet lettering. */
+.block-box[data-planned="true"] { --role: var(--pending); }
+.block-box[data-planned="true"] .block-plate {
+  fill: var(--ground);
+  stroke: var(--rule-bright);
+  stroke-dasharray: 5 4;
+}
+.block-box[data-planned="true"] .block-name { fill: var(--ink-dim); }
+.block-box[data-planned="true"] .block-kind { fill: var(--pending); }
+
+/* The mark in the corner saying what kind of block this is. Strokes only, so
+   it takes whatever colour the block is drawn in. */
+.role-icon-line { fill: none; stroke: var(--role, var(--ink-faint)); stroke-width: 1.1; stroke-linecap: round; stroke-linejoin: round; }
+.role-icon { opacity: 0.75; }
+.block-body:hover .role-icon { opacity: 1; }
+.block-box[data-planned="true"] .role-icon { opacity: 0.5; }
+
+.block-name { font-family: var(--sans); font-size: 12.5px; font-weight: 600; fill: var(--ink); pointer-events: none; }
+.block-kind { font-family: var(--mono); font-size: 9px; fill: var(--ink-faint); letter-spacing: 0.08em; pointer-events: none; }
+
+.line-hit { fill: none; stroke: transparent; stroke-width: 16; cursor: pointer; }
+
+/* ---- inspector ---- */
+
+/* More room between two sections than a section leaves between its own parts,
+   so the gaps agree with the headings about what contains what. */
+.inspector-body { padding: 0 16px 24px; display: flex; flex-direction: column; gap: 20px; user-select: text; }
+
+.insp-head { display: flex; flex-direction: column; gap: 6px; }
+.insp-head h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.insp-id { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; }
+
+.badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+
+.badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 2px;
+  border: 1px solid var(--rule-bright);
+  color: var(--ink-dim);
+}
+
+.badge.state { border-color: #3d4a52; color: var(--pending); }
+.badge.state.planned { border-color: var(--rule-bright); color: var(--ink-faint); border-style: dashed; }
+.badge.role { border-color: color-mix(in srgb, var(--role) 45%, var(--ground)); color: var(--role); }
+
+
+.responsibility { margin: 0; font-size: 13px; color: var(--ink); }
+
+/* What kind of thing a block stands for. Quiet: it explains, it does not warn. */
+.role-note { margin: 0; font-size: 12px; color: var(--ink-dim); }
+.role-note-kind { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; color: var(--role); }
+
+.planned-note {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--ink-dim);
+  border: 1px dashed var(--rule-bright);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+/* The panel reads as three rungs and no more: the subject, the sections it is
+   divided into, and the named parts of a section. Each step inwards is set
+   further in than the last, so what sits under what is a matter of where it
+   starts on the page rather than of how loud its lettering is.
+       SECTION ──────────────      flush left, lit bar, rule to the edge
+         Part                      indented, quiet, no rule
+           name                    indented again, on a spine of its own
+             shape                                                          */
+
+/* The heading hangs out to the left of everything under it, which is what
+   makes the indent read as containment rather than as a margin. */
+.section { display: flex; flex-direction: column; gap: 9px; padding-left: 13px; }
+
+.section > h4, .dialog-field > legend {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 0 -13px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+/* A short bar in signal colour marks where a section starts, and a rule runs
+   from its title to the edge of the panel. Only this rung is marked this way:
+   one kind of heading, drawn once. */
+.section > h4::before, .dialog-field > legend::before {
+  content: "";
+  width: 3px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--signal-dim);
+  flex: none;
+}
+
+.section > h4::after, .dialog-field > legend::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--rule-bright);
+}
+
+/* A named part of a section: a kind of port, a table, one value in a run. Its
+   heading is plainly quieter, and what it holds is indented again. */
+.subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 11px;
+}
+
+.subsection h5 {
+  margin: 0 0 1px -11px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+
+.subsection h5.good { color: var(--signal); }
+.subsection h5.bad { color: var(--bad); }
+
+.ports { display: flex; flex-direction: column; gap: 9px; }
+
+.port-row { display: flex; flex-direction: column; gap: 2px; padding-left: 10px; border-left: 2px solid var(--signal-deep); }
+.port-row.cap { border-left-color: var(--effect); }
+
+/* A shape, with the word that says which way it goes kept out of its light. */
+.pshape { display: flex; align-items: baseline; gap: 6px; }
+/* Without this a long shape refuses to shrink and runs off the panel. */
+.pshape .ptype { min-width: 0; }
+
+/* What a row reaches, with the way to it beside it rather than under it. */
+.pwhere { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+
+/* Where pressing this entry leads, on the entry's own row. */
+.proute { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+
+/* Fragmentor's own word in front of the author's: `in`, `out`, `runs`,
+   `each row`. Quiet, so the thing it labels is what is read. */
+.pshape-label,
+.proute-label {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.proute-text { font-family: var(--mono); font-size: 11px; color: var(--exec-trigger); min-width: 0; word-break: break-word; }
+
+/* One way into the bench: the button, and what pressing it does. */
+.run-way { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
+.run-way .btn { width: fit-content; }
+/* A name, a shape and a line about it. Not scoped to a row: the bench names a
+   store and its shape the same way, outside any row, and scoped these three
+   inherited the body's 14px and came out louder than the heading above them. */
+.pname { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+/* A shape is coloured token by token, so this is only what is left over: the
+   words in a type written in prose, and the plain text of a row that names a
+   resource rather than a shape. */
+.ptype { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); word-break: break-word; }
+.pdesc { font-size: 11.5px; color: var(--ink-dim); }
+
+.btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--signal-dim);
+  background: var(--signal-deep);
+  color: var(--signal);
+  cursor: pointer;
+}
+
+.btn:hover { background: var(--signal-dim); color: var(--ground); }
+.btn[disabled] { border-color: var(--rule-bright); background: transparent; color: var(--ink-faint); cursor: not-allowed; }
+.btn.quiet { border-color: var(--rule-bright); background: transparent; color: var(--ink-dim); }
+.btn.quiet:hover { color: var(--ink); background: var(--panel-high); }
+
+pre.code {
+  margin: 0;
+  padding: 10px;
+  background: var(--ground);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.code-tabs { display: flex; gap: 4px; }
+
+.t-comment { color: var(--code-comment); font-style: italic; }
+.t-keyword { color: var(--code-keyword); }
+.t-string { color: var(--code-string); }
+.t-number { color: var(--code-number); }
+.t-type { color: var(--code-type); }
+.t-name { color: var(--code-name); }
+.t-punct { color: var(--code-punct); }
+/* The name of a field, in a shape or in JSON. It takes the colour a name
+   takes in code rather than a type's, because in a shape the two sit next to
+   each other on every line and would otherwise be one colour. */
+.t-key { color: var(--code-name); }
+
+pre.code-view { max-height: 420px; overflow: auto; }
+
+/*
+ * A code box that can be typed in and is still coloured.
+ *
+ * The coloured copy and the box itself sit in the same grid cell, in the same
+ * font at the same size, so the text lines up character for character. The box
+ * shows nothing but its caret and its selection; everything read is the copy
+ * underneath. The box is the one that scrolls and the one that can be resized,
+ * and the copy is told to follow it.
+ */
+.code-edit { position: relative; }
+
+.code-edit-view,
+.code-edit-input {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 10px;
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  white-space: pre;
+  overflow-wrap: normal;
+  tab-size: 2;
+}
+
+/* Taken out of the flow, so the box is the one that decides how tall this is
+   and the copy simply fills it. Left in the flow, the copy would be as tall as
+   the whole file and the box would be stretched to match it. */
+.code-edit-view {
+  position: absolute;
+  inset: 0;
+  background: var(--ground);
+  color: var(--ink);
+  overflow: hidden;
+  pointer-events: none;
+  /* The box has a scrollbar and the copy does not, so both keep room for one
+     or the coloured text would run a scrollbar's width past the box's. */
+  scrollbar-gutter: stable;
+}
+
+.code-edit-input {
+  display: block;
+  width: 100%;
+  min-height: 260px;
+  height: 260px;
+  resize: vertical;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--signal);
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.code-edit-input::selection { background: rgba(79, 227, 143, 0.22); color: transparent; }
+.code-edit-input:focus-visible { outline: 1px solid var(--signal-dim); outline-offset: 0; }
+.code-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.bench-note { font-size: 11.5px; color: var(--ink-dim); margin: 0; }
+.bench-note.bad { color: var(--bad); }
+
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field > label { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
+
+.field input, .field select, .field textarea {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--ground);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  color: var(--ink);
+  padding: 6px 8px;
+  width: 100%;
+}
+
+/* Tall enough that a few rows of JSON are readable without dragging it first,
+   which is what a box two lines high made necessary every time. */
+.field textarea { min-height: 96px; resize: vertical; }
+.field input[type="checkbox"] { width: auto; accent-color: var(--signal); }
+.subfields { display: flex; flex-direction: column; gap: 8px; padding-left: 10px; border-left: 1px solid var(--rule); }
+
+/* ---- status ---- */
+
+.status {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  padding: 7px 14px;
+  border-top: 1px solid var(--rule);
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.status b { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; }
+.status .project-name { color: var(--signal); }
+.status .warn b { color: var(--pending); }
+.status .bad b { color: var(--bad); }
+.status .good b { color: var(--signal); }
+.status .message { overflow: hidden; text-overflow: ellipsis; }
+.status .message.good { color: var(--signal); }
+.status .message.bad { color: var(--bad); }
+
+:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+/* ---- motion ---- */
+
+/* While the canvas moves between diagrams, nothing on it can be clicked. */
+#canvas-svg.moving #viewport { pointer-events: none; }
+
+/* A block the agent has just added grows into place, its outline lit for a
+   moment so the eye finds it. */
+.block-body.appearing {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: block-arrive 560ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+.block-body.appearing .block-plate { animation: plate-lit 1800ms ease-out backwards; animation-delay: inherit; }
+
+@keyframes block-arrive {
+  from { opacity: 0; transform: scale(0.82); }
+  60% { opacity: 1; }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* A glow rather than a change of outline: an outline drawn in a mix of the
+   block's colour cannot be animated towards without Chromium passing through
+   colours that are nothing like either end. */
+@keyframes plate-lit {
+  from, 30% { filter: drop-shadow(0 0 4px var(--signal)); stroke-width: 2; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+
+/* A block the agent has just added, anywhere in the hierarchy. */
+.node.appearing { animation: tree-arrive 1600ms ease-out; }
+
+@keyframes tree-arrive {
+  from, 25% { background: var(--signal-deep); color: var(--signal); }
+}
+
+/* ---- watching a run ---- */
+
+.block-box[data-run="running"] .block-plate {
+  stroke: var(--signal);
+  stroke-width: 2;
+  animation: block-running 900ms ease-in-out infinite alternate;
+}
+
+@keyframes block-running {
+  to { stroke: var(--signal-dim); }
+}
+
+.block-box[data-run="done"] .block-plate { stroke: var(--signal-dim); stroke-width: 1.5; }
+/* A failure glows red, so it is found at a glance on a large tree: a run
+   that failed in the block, or a failure flagged there for the agent. It
+   wins over being picked out or pointed at, which would otherwise hide it. */
+.block-box[data-run="failed"] .block-plate,
+.block-box[data-failing="true"] .block-plate,
+.block-box[data-run="failed"] .block-body:hover .block-plate,
+.block-box[data-failing="true"] .block-body:hover .block-plate {
+  stroke: var(--bad);
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--bad) 80%, transparent));
+}
+.block-box[data-run="paused"] .block-plate { stroke: var(--effect); stroke-width: 2.5; }
+.block-box[data-run="stopped"] .block-plate { stroke: var(--pending); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.block-box[data-run="stopped"] .run-note { fill: var(--pending); }
+
+.run-note { font-family: var(--mono); font-size: 9px; letter-spacing: 0.04em; fill: var(--signal-dim); pointer-events: none; }
+.block-box[data-run="running"] .run-note { fill: var(--signal); }
+.block-box[data-run="paused"] .run-note { fill: var(--effect); }
+.block-box[data-run="failed"] .run-note { fill: var(--bad); }
+
+/* A breakpoint sits beside a block's name: faint on hover, red when set. */
+.breakpoint-hit { fill: transparent; cursor: pointer; }
+.breakpoint-dot { fill: transparent; stroke: transparent; stroke-width: 1.5; pointer-events: none; }
+.block-box:hover .breakpoint-dot { stroke: var(--ink-faint); }
+.breakpoint:hover .breakpoint-dot { stroke: var(--bad); }
+.block-box[data-breakpoint="true"] .breakpoint-dot { fill: var(--bad); stroke: var(--bad); }
+
+.run-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 6px 5px 12px;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink);
+}
+
+.run-bar[hidden] { display: none; }
+.run-state { margin-right: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-state[data-tone="paused"] { color: var(--effect); }
+.run-state[data-tone="good"] { color: var(--signal); }
+.run-state[data-tone="bad"] { color: var(--bad); }
+
+.run-btn {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 9px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule-bright);
+  background: none;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.run-btn:hover { color: var(--ink); background: var(--panel-high); }
+.run-btn:disabled { color: var(--ink-faint); cursor: default; background: none; }
+
+.watch-toggle { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--ink-dim); cursor: pointer; }
+.watch-toggle input { margin: 0; accent-color: var(--bad); }
+.call-picker { display: flex; gap: 8px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
+
+.watch-section pre.code { max-height: 240px; overflow: auto; white-space: pre-wrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+/* A system root in the hierarchy says which language it targets. */
+.node .lang {
+  margin-left: auto;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  flex: none;
+}
+
+.node[aria-selected="true"] .lang { color: var(--signal-dim); }
+
+/* ---- test bench results ---- */
+
+.run-result { display: flex; flex-direction: column; gap: 10px; margin-top: 2px; }
+
+.run-problems ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.run-result pre.code { max-height: 320px; overflow: auto; white-space: pre-wrap; }
+.field textarea[data-invalid="true"] { border-color: var(--bad); }
+
+/* ---- inspector section divisions ---- */
+
+/* Sections are told apart by the space around their titles rather than by a
+   rule of their own: a rule between every section made the panel look like a
+   table. */
+.inspector-body > .section { padding-top: 8px; }
+.inspector-body > .insp-head { padding-bottom: 2px; }
+
+/* ---- saved tests ---- */
+
+.cases { display: flex; flex-direction: column; gap: 6px; }
+
+/* The name has the row to itself, with how it went and what can be done to it
+   underneath. Sharing one line with three buttons left room for about eight
+   characters of it. */
+.case-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 5px 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--ground);
+}
+
+.case-row .case-name {
+  grid-column: 1 / -1;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.case-row .case-status {
+  grid-column: 1;
+  justify-self: start;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.case-status.passed { color: var(--signal); }
+.case-status.failed, .case-status.error { color: var(--bad); }
+.case-status.unchecked { color: var(--pending); }
+
+.case-actions { grid-column: 2; justify-self: end; display: flex; gap: 4px; }
+
+.case-actions button {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 3px 7px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule-bright);
+  background: none;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.case-actions button:hover:not(:disabled) { color: var(--ink); background: var(--panel-high); }
+.case-actions button:disabled { opacity: 0.45; cursor: default; }
+
+/* A box rather than an indent: this one is something to fill in, not another
+   named part of what is above it, so its heading sits inside the box. */
+.subsection.case-new {
+  padding: 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--ground);
+  gap: 8px;
+}
+
+.subsection.case-new h5 { margin-left: 0; }
+
+.case-new-row { display: flex; gap: 8px; align-items: center; }
+
+.case-new-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  color: var(--ink);
+  padding: 6px 8px;
+}
+
+.case-new-row input[type="text"]::placeholder { color: var(--ink-faint); }
+.case-new-row .btn { flex: none; }
+
+.case-expect { display: flex; gap: 8px; align-items: center; font-size: 11.5px; color: var(--ink-dim); }
+
+.case-expect input[type="checkbox"] {
+  flex: none;
+  width: auto;
+  margin: 0;
+  accent-color: var(--signal);
+}
+
+.case-expect label { cursor: pointer; }
+.case-expect input:disabled + label { color: var(--ink-faint); cursor: default; }
+
+.case-summary { font-family: var(--mono); font-size: 11.5px; }
+.case-summary.passed { color: var(--signal); }
+.case-summary.failed { color: var(--bad); }
+
+/* ---- following the agent ---- */
+
+/* Shown over the last good diagram when the newest files could not be read. */
+.load-error {
+  flex-basis: 100%;
+  max-width: min(64ch, 100%);
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--bad);
+  border-radius: var(--radius);
+  color: var(--bad);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.load-error[hidden] { display: none; }
+
+.welcome-actions { display: flex; gap: 8px; }
+
+.problems { display: flex; flex-direction: column; gap: 8px; }
+
+.problem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 0 0 10px;
+  border: 0;
+  border-left: 2px solid var(--pending);
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+}
+
+.problem.error { border-left-color: var(--bad); }
+button.problem { cursor: pointer; }
+button.problem:hover .problem-where { color: var(--signal); }
+
+.problem-level {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pending);
+}
+
+.problem.error .problem-level { color: var(--bad); }
+.problem-where { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; }
+.problem-text { font-size: 12px; }
+
+/* ---- new project ---- */
+
+.new-project {
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  padding: 22px 24px 18px;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  user-select: text;
+  /* The tree grows as it is answered, and the last question has to stay
+     reachable on a short window. */
+  overflow-y: auto;
+}
+
+.new-project::backdrop { background: rgba(4, 6, 7, 0.72); }
+.new-project h2, .waiting-card h2 { margin: 0; font-size: 17px; font-weight: 600; }
+.dialog-lede { margin: 4px 0 18px; font-size: 12.5px; color: var(--ink-dim); }
+
+/* A question is headed the way a panel's section is, with the answers
+   indented under it, so the question reads louder than they do. */
+.dialog-field { border: 0; margin: 0 0 18px; padding: 0 0 0 13px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+/* A question that does not apply is not asked. Without this the fieldset's
+   own display would override the hidden attribute and show it anyway. */
+.dialog-field[hidden] { display: none; }
+.choices { display: flex; flex-direction: column; gap: 8px; }
+
+/* A legend is not one of the fieldset's flex items, so the gap under it is
+   its own, and it is widened to reach back over the indent to the edge. */
+.dialog-field > legend { padding: 0; margin-bottom: 8px; width: calc(100% + 13px); }
+
+.field-tag { font-weight: 500; letter-spacing: 0.06em; text-transform: lowercase; color: var(--ink-dim); }
+
+.choice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  background: var(--ground);
+  cursor: pointer;
+}
+
+.choice:hover { border-color: var(--signal-dim); }
+.choice:has(input:checked) { border-color: var(--signal); background: var(--signal-deep); }
+.choice input { flex: none; margin: 3px 0 0; accent-color: var(--signal); }
+.choice-body { display: flex; flex-direction: column; gap: 3px; }
+.choice-title { font-size: 13px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+
+.choice-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--signal);
+  border: 1px solid var(--signal-dim);
+  border-radius: var(--radius);
+  padding: 1px 5px;
+}
+.choice-text { font-size: 12px; color: var(--ink-dim); }
+
+.levels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.level { position: relative; }
+.level input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+
+.level span {
+  display: block;
+  padding: 7px 0;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 13px;
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  background: var(--ground);
+  color: var(--ink-dim);
+}
+
+.level:hover span { border-color: var(--signal-dim); color: var(--ink); }
+.level input:checked + span { border-color: var(--signal); background: var(--signal-deep); color: var(--signal); }
+.level input:focus-visible + span { outline: 2px solid var(--signal); outline-offset: 2px; }
+.level-scale { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+.dialog-note { margin: 0; min-height: 1.5em; font-size: 12px; color: var(--ink-dim); }
+
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+/* ---- a new project's first steps ---- */
+
+.first-steps-body { margin-bottom: 18px; }
+.first-step-text { margin: 0; font-size: 12.5px; color: var(--ink); }
+
+/* The one thing to send first, set large enough to be the thing on the page. */
+.first-phrase { padding: 10px 12px; border: 1px solid var(--signal); border-radius: var(--radius); background: var(--signal-deep); }
+.first-phrase > span:empty { display: none; }
+.first-phrase .note-phrase-words { font-size: 13px; padding: 3px 8px; border-color: var(--signal-dim); color: var(--signal); }
+.first-phrase .run-btn { margin-left: auto; }
+
+/* On a short screen the window would outgrow it, half-hiding Got it, so the
+   command list is what gives way and carries the scroll. A section keeps its
+   content's height unless its min-height says otherwise, so only these two shrink. */
+.first-steps { display: flex; flex-direction: column; overflow: hidden; }
+/* The steps scroll too on a window shorter still, rather than pushing the button out. */
+.first-steps-body { min-height: 0; overflow-y: auto; }
+.first-steps-body > .section.first-later { min-height: 0; }
+.first-later .first-commands { overflow-y: auto; min-height: 0; }
+
+.first-commands { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; font-size: 12px; }
+.first-command { display: contents; }
+.first-command dt { font-family: var(--mono); font-size: 11px; color: var(--ink); }
+.first-command dd { margin: 0; color: var(--ink-dim); }
+
+/* ---- a block's code ---- */
+
+.code-where { margin-bottom: 8px; font-family: var(--mono); font-size: 11.5px; color: var(--signal-dim); word-break: break-all; }
+pre.code-excerpt { max-height: 420px; overflow: auto; padding: 8px 0; }
+.excerpt-line { display: block; padding-right: 10px; }
+.excerpt-line.target { background: var(--signal-deep); }
+
+.excerpt-number {
+  display: inline-block;
+  width: 4.5ch;
+  margin-right: 1.5ch;
+  text-align: right;
+  color: var(--ink-faint);
+  user-select: none;
+}
+
+/* ---- the tree ---- */
+
+/* What is part of what, and nothing else: plain lines, no arrowheads, no
+   colour. Anything that carries meaning of its own is drawn as an arrow. */
+.branch { fill: none; stroke: var(--rule-bright); stroke-width: 1.3; }
+
+/* Where a block's parts are folded away and brought back. */
+.fold { cursor: pointer; }
+.fold-hit { fill: transparent; }
+.fold-dot { fill: var(--panel); stroke: var(--rule-bright); stroke-width: 1.2; }
+.fold-mark { fill: none; stroke: var(--ink-dim); stroke-width: 1.4; stroke-linecap: round; }
+.fold:hover .fold-dot { stroke: var(--ink-dim); }
+.fold:hover .fold-mark { stroke: var(--ink); }
+
+/* The windows a block can open. They keep out of the way of its name until
+   the pointer is on the block. */
+.block-button { cursor: pointer; opacity: 0; }
+.block-box:hover .block-button,
+.block-box[data-selected="true"] .block-button { opacity: 1; }
+.block-button-plate { fill: var(--panel); stroke: var(--rule-bright); stroke-width: 1; }
+.block-button-text { font-family: var(--mono); font-size: 8px; fill: var(--ink-dim); pointer-events: none; }
+.block-button:hover .block-button-plate { stroke: var(--signal-dim); }
+.block-button:hover .block-button-text { fill: var(--ink); }
+
+#canvas-svg[data-dependencies="hidden"] #access-layer { display: none; }
+
+/* ---- an execution on the diagram ---- */
+
+/* What exists steps back while what happened is shown. */
+#canvas-svg.tracing #access-layer { opacity: 0.2; }
+#canvas-svg.tracing #branch-layer { opacity: 0.55; }
+#canvas-svg.tracing .block-box[data-current="true"] .block-plate { stroke: var(--exec-trigger); stroke-width: 2.2; }
+
+.exec-line { fill: none; stroke: var(--exec-trigger); stroke-width: 1.8; opacity: 0.8; }
+.exec-arrow { fill: context-stroke; }
+/* Something travelled along it: it flows, the way the data went — which is
+   the way the arrow points, on either drawing, because an answer coming back
+   is an arrow out of whoever was called rather than the call it answers run
+   backwards. */
+.exec-line-group[data-data="true"] .exec-line {
+  stroke: var(--signal);
+  stroke-dasharray: 7 5;
+  animation: exec-flow 900ms linear infinite;
+}
+/* Nothing did: it lights up. */
+.exec-line-group[data-data="false"] .exec-line { filter: drop-shadow(0 0 3px var(--exec-trigger)); }
+.exec-line-group .exec-line { opacity: 1; stroke-width: 2.6; }
+
+@keyframes exec-flow {
+  to { stroke-dashoffset: -12; }
+}
+
+.exec-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  fill: var(--ink);
+  paint-order: stroke;
+  stroke: var(--ground);
+  stroke-width: 3px;
+  pointer-events: none;
+}
+
+/* The word on an arrow carries its own plate, because the arrow is drawn over
+   the blocks and the word can land on one. The halo on .exec-label above is
+   for the flow, whose words have no plate; under a plate it paints nothing. */
+.exec-label-plate { fill: var(--ground); stroke: var(--rule-bright); stroke-width: 1; }
+
+/* The step is drawn over the blocks so it is never hidden, which means it must
+   not take their clicks: an arrow meets a block exactly where that block's
+   fold dot and breakpoint sit. So the whole layer is see-through to the
+   pointer, and the step is opened from its own word, which is put where no
+   block is. */
+#exec-layer { pointer-events: none; }
+#exec-layer .exec-label-plate { pointer-events: auto; cursor: pointer; }
+
+.exec-outside-dot { fill: var(--ground); stroke: var(--exec-trigger); stroke-width: 1.8; }
+.exec-outside-label { font-family: var(--mono); font-size: 9px; fill: var(--exec-trigger); pointer-events: none; }
+
+.exec-effect-chip { fill: color-mix(in srgb, var(--effect) 14%, var(--ground)); stroke: var(--effect); stroke-width: 1; }
+.exec-effect-text { font-family: var(--mono); font-size: 9px; fill: var(--effect); pointer-events: none; }
+.exec-effect[data-current="true"] .exec-effect-chip { stroke-width: 2; fill: color-mix(in srgb, var(--effect) 30%, var(--ground)); }
+
+.exec-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-width: min(780px, 100%);
+  padding: 5px 6px;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink);
+}
+
+.exec-bar[hidden] { display: none; }
+.exec-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+.exec-select {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 3px 6px;
+  max-width: 240px;
+  background: var(--panel-high);
+  color: var(--ink);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+}
+
+/* Where a trace came from is never left to be guessed. The one written down
+   keeps the dashed border that says nobody has seen it run. */
+.exec-source[data-source="declared"] { border-style: dashed; }
+.exec-source:disabled, .exec-source:disabled:hover { opacity: 0.45; cursor: default; color: var(--ink-dim); background: none; }
+
+/* What the recording says of the steps written down. Quiet when it agrees;
+   red, and a way to the trouble, when it does not. */
+.exec-verdict { font-family: var(--mono); font-size: 11.5px; color: var(--signal); padding: 0 4px; white-space: nowrap; }
+.exec-verdict[data-none="true"] { color: var(--ink-dim); }
+.chip.exec-verdict[data-bad="true"] { color: var(--bad); border-color: var(--bad); padding: 4px 10px; }
+
+/* Why the execution picked cannot be recorded, readable without hovering. */
+.exec-why { padding: 0 4px 1px; color: var(--ink-dim); }
+
+.exec-count { color: var(--ink-dim); padding-left: 2px; white-space: nowrap; }
+
+.exec-caption { display: flex; align-items: baseline; gap: 8px; padding: 0 4px 1px; min-width: 0; }
+.exec-caption-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-dim); user-select: text; }
+
+/* ---- the test bench, in a window that can be moved off the drawing ---- */
+
+/* The host covers the canvas and lets every pointer through, so what is behind
+   a bench window can still be dragged, zoomed and clicked. */
+.panels {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.panels[hidden] { display: none; }
+
+.bench-window {
+  position: absolute;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+/* Rolled up to its title, so the drawing underneath is clear without losing
+   the values typed into it. */
+.bench-window[data-minimised="true"] { height: auto; }
+
+/* The edges and corners it is pulled by. The window clips what it draws, so
+   they sit just inside its border rather than straddling it: anything hanging
+   outside would be neither seen nor catchable. */
+.bench-grip { position: absolute; touch-action: none; z-index: 1; }
+.bench-grip-n { top: 0; left: 12px; right: 12px; height: 5px; cursor: ns-resize; }
+.bench-grip-s { bottom: 0; left: 12px; right: 12px; height: 5px; cursor: ns-resize; }
+.bench-grip-e { right: 0; top: 12px; bottom: 12px; width: 5px; cursor: ew-resize; }
+.bench-grip-w { left: 0; top: 12px; bottom: 12px; width: 5px; cursor: ew-resize; }
+.bench-grip-ne { top: 0; right: 0; width: 14px; height: 14px; cursor: nesw-resize; }
+.bench-grip-nw { top: 0; left: 0; width: 14px; height: 14px; cursor: nwse-resize; }
+.bench-grip-se { bottom: 0; right: 0; width: 14px; height: 14px; cursor: nwse-resize; }
+.bench-grip-sw { bottom: 0; left: 0; width: 14px; height: 14px; cursor: nesw-resize; }
+
+/* The corner that is pulled most often says so, quietly. */
+.bench-grip-se::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border-right: 1px solid var(--rule-bright);
+  border-bottom: 1px solid var(--rule-bright);
+}
+
+.bench-window.sizing { box-shadow: 0 22px 52px rgba(0, 0, 0, 0.66); }
+.bench-window.sizing .bench-grip-se::after { border-color: var(--signal-dim); }
+
+/* While an edge is being pulled the pointer leaves the thin strip it started
+   on, so the cursor is held by the whole window instead of flickering. */
+body[data-sizing="ns"] { cursor: ns-resize; }
+body[data-sizing="ew"] { cursor: ew-resize; }
+body[data-sizing="nesw"] { cursor: nesw-resize; }
+body[data-sizing="nwse"] { cursor: nwse-resize; }
+
+/* Dragged by its head, which says so by the cursor it shows. */
+.bench-window-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px 9px 13px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--panel-high);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.bench-window.dragging { box-shadow: 0 22px 52px rgba(0, 0, 0, 0.66); }
+.bench-window.dragging .bench-window-head { cursor: grabbing; }
+.bench-window-head h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+
+/* Laid out in columns as soon as there is room for them, so a form, what came
+   back and the saved tests sit side by side instead of down one long strip.
+   Aligned to the top, because a short column must not stretch to match a tall
+   one. */
+.bench-window-body {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  padding: 12px 14px 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  align-content: start;
+  align-items: start;
+  gap: 18px 20px;
+}
+
+/* A grid item is as wide as its widest child unless told otherwise, so one
+   long line of JSON would otherwise push its column past the window. */
+.bench-window-body > * { min-width: 0; }
+.bench-fields > .field { min-width: 0; }
+
+/* The values a run starts from, side by side while the window is wide enough.
+   Anything that needs the width — a nested shape, a box of JSON — takes the
+   whole row rather than being squeezed into a column. */
+.bench-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  align-items: start;
+  gap: 10px 14px;
+}
+
+.bench-fields > .field:has(textarea),
+.bench-fields > .field:has(.subfields) { grid-column: 1 / -1; }
+
+/* Roll up and close, in the corner of the head. */
+.window-buttons { display: flex; gap: 5px; margin-left: auto; flex: none; }
+.window-buttons .window-close { margin-left: 0; }
+
+/* ---- a window over the drawing ---- */
+
+/* A block on the tree says what it is; everything else about it is read here,
+   in a window big enough for it. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 26px;
+  background: rgba(4, 6, 7, 0.74);
+}
+
+.overlay[hidden] { display: none; }
+
+.window {
+  display: flex;
+  flex-direction: column;
+  width: min(980px, 100%);
+  max-height: 100%;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.window-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.window-names h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.window-sub { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; }
+
+.window-close {
+  margin-left: auto;
+  flex: none;
+  padding: 2px 8px;
+  font-size: 13px;
+  color: var(--ink-dim);
+  background: none;
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.window-close:hover { color: var(--ink); background: var(--panel-high); }
+
+.window-body { overflow: auto; padding: 14px 16px 20px; user-select: text; }
+.window-sections { display: flex; flex-direction: column; gap: 18px; }
+.window-code { max-height: none; font-size: 12px; }
+.window-foot { display: flex; gap: 12px; align-items: center; }
+
+.insp-windows { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+
+/* A button beside what it acts on, rather than stretched across the row. */
+.port-row .btn { width: fit-content; }
+
+/* ---- a block's versions ---- */
+
+/* A version is a saved test's row: its subject on a line of its own, and when
+   and by whom underneath, where a test says how it went. A comparison is the
+   same rows again, with the other version's result where the buttons go. */
+.version-row .version-meta { grid-column: 1; font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+.version-row > .bench-note, .version-row > .version-save, .version-compare { grid-column: 1 / -1; }
+.version-compare { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.version-compare > .btn { align-self: flex-start; }
+.compare-row .case-status.compare-then { grid-column: 2; justify-self: end; }
+.compare-row[data-differs="true"] { border-color: var(--rule-bright); }
+.case-saved { color: var(--ink-faint); }
+
+/* Saved versions and git history are the section's two named parts. A button
+   sits beside a list rather than stretched across it. What the person wrote
+   about a saved version is kept as they wrote it, line breaks included. */
+.version-part { margin-top: 4px; }
+.version-part > .btn { align-self: flex-start; }
+.version-row > .version-about { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Which version the block is on. The one it is exactly as is lit, as a chip
+   that is on; the one it has changed since is marked, but quietly. Neither is
+   anything wrong, so neither is ever red. The same badges say it in the
+   panel's header. */
+.version-row[data-in-use="true"] { border-color: var(--signal-dim); }
+.version-row[data-changed-from="true"] { border-color: var(--rule-bright); }
+.version-line { grid-column: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.version-line .badge { padding: 1px 6px; }
+.badge.in-use { color: var(--signal); border-color: var(--signal-dim); background: var(--signal-deep); }
+
+/* The form for saving one is a box, like the one for saving a test: something
+   to fill in rather than another part of what is above it. */
+.version-save {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--ground);
+}
+
+.version-save .field input, .version-save .field textarea { background: var(--panel); }
+.version-save .field textarea { min-height: 64px; }
+.version-save-actions { display: flex; gap: 6px; }
+
+/* ---- one execution, end to end ---- */
+
+/* Which of the two drawings is on the canvas. */
+.exec-shows { display: flex; gap: 4px; margin-right: 2px; }
+
+/* A box of the flow is where the run was, not a part of the architecture, so
+   it is drawn flatter than a block on the tree. */
+.flow-box { cursor: pointer; }
+.flow-box .block-plate { stroke-dasharray: none; }
+.flow-box[data-current="true"] .block-plate { stroke: var(--exec-trigger); stroke-width: 2.2; }
+#canvas-svg .exec-line-group[data-current="none"] .exec-line { opacity: 0.5; }
+
+/* ---- notes ---- */
+
+/* A note is a conversation, not a problem: nothing about it is wrong, so it is
+   never red. What waits for the person is amber, the colour of something to
+   look at; what is with the agent is quiet, because there is nothing to do
+   about it here but wait. */
+
+/* The count on a block's corner, straddling it so it covers neither the name
+   nor the buttons that show on the pointer. */
+.note-mark { cursor: pointer; }
+.note-mark-dot { fill: var(--panel-high); stroke: var(--ink-dim); stroke-width: 1.2; }
+.note-mark-count { font-family: var(--mono); font-size: 9px; font-weight: 700; fill: var(--ink); pointer-events: none; }
+.note-mark[data-waiting="person"] .note-mark-dot { fill: var(--effect); stroke: var(--effect); }
+.note-mark[data-waiting="person"] .note-mark-count { fill: var(--ground); }
+.note-mark:hover .note-mark-dot { stroke: var(--ink); }
+
+/* The bar above the drawing, beside the run bar and drawn like it. The
+   changes bar sits beside it and is drawn the same. */
+.notes-bar,
+.changes-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  max-width: 100%;
+  padding: 5px 6px 5px 12px;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink);
+}
+
+.notes-bar[hidden], .changes-bar[hidden] { display: none; }
+.notes-bar-part { display: flex; align-items: center; gap: 6px; }
+.notes-bar-part[data-waiting="person"] > span { color: var(--effect); }
+
+/* What to tell the agent: the words themselves, set as something to type, with
+   a button to copy them. */
+.note-phrase { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 11.5px; color: var(--ink-dim); }
+.note-phrase.quiet { font-size: 11px; color: var(--ink-faint); }
+.note-phrase-words {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--rule-bright);
+  border-radius: 2px;
+  background: var(--ground);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.note-phrase .run-btn, .notes-bar .run-btn, .changes-bar .run-btn { padding: 2px 8px; font-size: 10.5px; }
+
+/* What changed, said on the bar itself; pressing it opens the list. */
+.changes-open {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.changes-open:hover { color: var(--signal); }
+
+/* One change: the block, where it is, and each difference on a line. */
+.change-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 0 0 10px;
+  border: 0;
+  border-left: 2px solid var(--ink-faint);
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+}
+button.change-row { cursor: pointer; }
+button.change-row:hover .change-where { color: var(--signal); }
+.change-head { font-size: 12px; }
+.change-where { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); word-break: break-all; }
+.change-line { font-size: 12px; color: var(--ink-dim); }
+.change-row .btn { align-self: flex-start; margin-top: 2px; }
+
+/* The two points the list can start from. */
+.changes-point { display: flex; align-items: center; gap: 8px; }
+.changes-point label { font-size: 12px; color: var(--ink-dim); }
+
+.changes-actions { display: flex; gap: 8px; }
+
+/* The neutral dot on a changed block while the list is open: a marker only,
+   drawn like a note's count, so it never takes a click from the block. */
+.change-mark { pointer-events: none; }
+.change-mark-dot { fill: var(--panel-high); stroke: var(--ink-dim); stroke-width: 1.2; }
+
+/* One note: whose turn it is and when, then each message in turn. */
+.note-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--ink-faint);
+  border-radius: var(--radius);
+  background: var(--ground);
+}
+
+.note-card[data-waiting="person"] { border-left-color: var(--effect); }
+.note-card[data-waiting="none"] { opacity: 0.8; }
+.note-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.note-state { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-dim); }
+.note-card[data-waiting="person"] .note-state { color: var(--effect); }
+.note-when { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); }
+.note-message { display: flex; flex-direction: column; gap: 2px; }
+.note-from { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+.note-message[data-from="agent"] .note-from { color: var(--ink-dim); }
+.note-text { margin: 0; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note-card .case-actions { align-self: flex-end; }
+
+/* A run carried by a note, folded to one line until it is wanted. */
+.note-run { font-size: 11.5px; color: var(--ink-dim); }
+.note-run > summary { cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--bad); }
+.note-run[open] { display: flex; flex-direction: column; gap: 6px; }
+.note-run pre.code { max-height: 200px; overflow: auto; white-space: pre-wrap; }
+.note-run ul { margin: 0; padding-left: 16px; }
+
+/* Writing one is a box, like saving a version: something to fill in. */
+.note-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--ground);
+}
+
+.note-form textarea {
+  font: inherit;
+  font-size: 12px;
+  min-height: 64px;
+  resize: vertical;
+  background: var(--panel);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  color: var(--ink);
+  padding: 6px 8px;
+  width: 100%;
+}
+
+.note-form textarea::placeholder { color: var(--ink-faint); }
+.note-form-actions { display: flex; gap: 6px; }
+.note-leave, .note-resolved-toggle { align-self: flex-start; }
+.problem.note-row { border-left-color: var(--ink-faint); }
+.problem.note-row[data-waiting="person"] { border-left-color: var(--effect); }
+.problem.note-row[data-waiting="person"] .problem-level { color: var(--effect); }
+
+/* Under a run that went wrong in the bench: whether to flag it for the agent. */
+.flag-offer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 11.5px; color: var(--ink-dim); }
+.flag-offer .run-btn { padding: 2px 8px; font-size: 10.5px; }
+
+/* The red flag on a block's corner: a run failed in it, or a note flags a
+   failure there. Red is spent here because something is wrong. */
+.block-flag { display: none; pointer-events: bounding-box; }
+.block-box[data-run-flag="true"] .block-flag,
+.block-box[data-failing="true"] .block-flag { display: inline; }
+.block-flag-pole { fill: none; stroke: var(--flag-red); stroke-width: 1.5; stroke-linecap: round; }
+.block-flag-cloth { fill: var(--flag-red); stroke: var(--flag-red); stroke-width: 1; stroke-linejoin: round; }
+.block-box[data-run-flag="true"] .block-flag-cloth { filter: drop-shadow(0 0 3px color-mix(in srgb, var(--bad) 80%, transparent)); }
+
+/* While the agent works on a note, a ring spreads out from its count. */
+.note-mark-ring { fill: none; stroke: var(--ink); stroke-width: 1.5; transform-box: fill-box; transform-origin: center; animation: note-working 1.8s ease-out infinite; pointer-events: none; }
+@keyframes note-working {
+  from { transform: scale(1); opacity: 0.9; }
+  to { transform: scale(1.9); opacity: 0; }
+}
+
+/* What a note is about, when it is narrower than its block, and what the
+   agent is doing with it. */
+.note-on { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-dim); }
+.note-on .run-btn { padding: 1px 7px; font-size: 10px; }
+.note-working { margin: 0; font-size: 11px; color: var(--ink); }
+.note-card[data-working="true"] { border-left-color: var(--ink); }
+/* A note flagging something that went wrong says so first, in red. */
+.note-error { margin: 0; font-size: 12px; color: var(--bad); overflow-wrap: anywhere; }
+.note-error-word { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; margin-right: 4px; }
+.note-retry { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.note-retry .run-btn { padding: 2px 8px; font-size: 10.5px; }
+
+/* The commit an answer was made in, and what can be done with it. */
+.note-commit { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 11px; color: var(--ink-dim); }
+.note-commit code { font-family: var(--mono); color: var(--ink); }
+.note-commit .case-actions { margin-left: auto; }
+
+/* Running what a note flags again: put right in green, still wrong in red. */
+.note-rerun { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 11.5px; color: var(--ink-dim); }
+.note-rerun[data-tone="good"] > span { color: var(--signal); }
+.note-rerun[data-tone="bad"] > span { color: var(--bad); }
+.note-rerun .run-btn { padding: 2px 8px; font-size: 10.5px; }
+
+.note-commands { align-self: flex-start; }
+
+/* A problem on a block, with a way to flag it for the agent beside it. */
+.problem-line { display: flex; align-items: flex-start; gap: 6px; }
+.problem-line > .problem { flex: 1; min-width: 0; }
+.problem-flag { flex: none; padding: 1px 7px; font-size: 10px; }
+.problem-flagged { flex: none; font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); }
+
+/* Every command, in its window. */
+.commands .command-summary { margin: 0; font-size: 12px; color: var(--ink); }
+.commands .command-usage { font-family: var(--mono); font-size: 10.5px; }
+
+/* Without the ring's movement, the count says the agent is working on it by
+   a heavier outline instead. */
+@media (prefers-reduced-motion: reduce) {
+  .note-mark[data-working="true"] .note-mark-dot { stroke: var(--ink); stroke-width: 2.5; }
+}
+
+/* ---- rules ---- */
+
+/* The two rules offered between two picked-out blocks, each a button worded
+   as the sentence it would make. */
+.rule-offer { display: flex; flex-direction: column; gap: 4px; }
+.rule-offer-made { font-size: 12px; color: var(--ink); }
+.rule-why {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--ground);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  color: var(--ink);
+  padding: 6px 8px;
+  width: 100%;
+}
+.rule-why::placeholder { color: var(--ink-faint); }
+
+/* One rule on the project's panel: the sentence, where it stands, and what
+   can be done with it. */
+.rule-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--ground);
+}
+.rule-words { font-size: 12px; color: var(--ink); }
+.rule-paths { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); }
+.rule-state { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; font-size: 11.5px; color: var(--ink-dim); }
+.rule-state.bad { color: var(--bad); }
+/* The breaks, grouped by how sure Fragmentor is: red only where it is sure
+   something is wrong, amber for a guess, on the words and the chips alike. */
+.rule-broke { display: contents; }
+.rule-broke.bad { color: var(--bad); }
+.rule-broke.warn { color: var(--effect); }
+.rule-broke .btn { color: inherit; border-color: color-mix(in srgb, currentColor 45%, transparent); }
+.rule-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.rule-remove { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+</style>
+  </head>
+  <body data-export data-project="open">
+    <div class="shell">
+      <header class="topbar">
+        <div class="mark"><strong>Fragmentor</strong></div>
+        <nav class="crumbs" id="crumbs" aria-label="Block hierarchy"></nav>
+        <div class="toolbar">
+          <!-- New, open and close are under File in the application menu, so
+               the one thing on the toolbar to do with a project is this. -->
+          <button class="toggle" id="agent-commands" title="Everything you can ask your coding agent to do, with the words to send it">Commands</button>
+          <span class="toolbar-sep"></span>
+          <button class="toggle" id="toggle-rail" aria-pressed="true">Hierarchy</button>
+          <button class="toggle" id="toggle-inspector" aria-pressed="true">Inspector</button>
+        </div>
+      </header>
+
+      <div class="panes" id="panes">
+        <aside class="rail" id="rail">
+          <div class="pane-title">Hierarchy</div>
+          <div class="tree" id="tree" role="tree"></div>
+        </aside>
+
+        <div class="canvas-wrap" id="canvas-wrap">
+          <svg id="canvas-svg">
+            <defs>
+              <!-- Which way an access runs: out to a store, or back from one. -->
+              <marker id="access-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                <path d="M 0 0 L 8 4 L 0 8 z" class="access-arrow" fill="context-stroke" />
+              </marker>
+              <!-- Which way a step of an execution went. -->
+              <marker id="exec-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                <path d="M 0 0 L 8 4 L 0 8 z" class="exec-arrow" fill="context-stroke" />
+              </marker>
+            </defs>
+            <g id="viewport">
+              <g id="branch-layer"></g>
+              <g id="access-layer"></g>
+              <g id="node-layer"></g>
+              <!-- The step showing goes over the blocks: it is the one thing
+                   on the drawing that must never be hidden by them. -->
+              <g id="exec-layer"></g>
+            </g>
+          </svg>
+
+          <!-- The bar and the hint mean nothing until there is a drawing. -->
+          <div class="zoom-bar" hidden>
+            <button class="zoom-btn" id="zoom-out" title="Zoom out">&minus;</button>
+            <span class="zoom-level" id="zoom-level">100%</span>
+            <button class="zoom-btn" id="zoom-in" title="Zoom in">+</button>
+            <button class="zoom-btn" id="zoom-fit" title="Fit the diagram">Fit</button>
+            <span class="zoom-divider"></span>
+            <button class="zoom-btn" id="colour-by" title="What the colours mean"></button>
+            <button class="zoom-btn" id="show-dependencies" title="Show or hide the lines saying what each block reaches"></button>
+          </div>
+
+          <div class="legend" id="legend" hidden></div>
+
+          <!-- Along the top, side by side while there is room for them. -->
+          <div class="canvas-top">
+            <div class="load-error" id="load-error" role="alert" hidden></div>
+            <div class="exec-bar" id="exec-bar" hidden></div>
+            <div class="run-bar" id="run-bar" role="status" hidden></div>
+            <div class="notes-bar" id="notes-bar" role="status" hidden></div>
+            <div class="changes-bar" id="changes-bar" role="status" hidden></div>
+            <div class="hint" hidden>drag to move &middot; scroll to zoom &middot; click a block to inspect it &middot; ctrl-click to add another</div>
+          </div>
+
+          <!-- Trying a block out, in a window that can be moved off the drawing. -->
+          <div class="panels" id="panels" hidden></div>
+
+          <!-- A block's code, or what it holds, read in a window over the tree. -->
+          <div class="overlay" id="overlay" hidden></div>
+
+          <section class="welcome" id="welcome">
+            <h1>Fragmentor</h1>
+            <p>Software built as blocks, with the connections between them written down. Your coding agent builds it; Fragmentor shows it and checks it.</p>
+            <div class="welcome-body" id="welcome-body"></div>
+          </section>
+        </div>
+
+        <div
+          class="splitter"
+          id="inspector-splitter"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Drag to change how wide the inspector is"
+          tabindex="0"
+        ></div>
+
+        <aside class="inspector" id="inspector-pane">
+          <div class="pane-title">Inspector</div>
+          <div class="inspector-body" id="inspector"></div>
+        </aside>
+      </div>
+
+      <footer class="status" id="status"></footer>
+    </div>
+
+    <script type="application/json" id="fragmentor-export">{"snapshot":{"dir":"","name":"Tickets","goal":"Sell seats for events, let people cancel them, and send each booking a confirmation.","existingCode":false,"start":"build","language":null,"granularity":{"level":3,"maxDepth":4},"systems":[{"rootBlock":"tickets","language":"typescript","displayName":"TypeScript","known":true,"reachRead":true}],"blocks":{"tickets":{"path":"tickets","id":"tickets","name":"Tickets","responsibility":"The ticket office: people book seats at an event or cancel a booking, and are sent a confirmation.","role":"component","subtype":null,"roleLabel":"COMPONENT","architecture":true,"planned":false,"inputs":[],"outputs":[],"exposes":[],"access":[],"capabilities":[],"stores":[],"children":["tickets/booking-api","tickets/box-office","tickets/outbox","tickets/reminders","tickets/tickets-db"],"sources":{"code":null,"contract":null},"language":"typescript","files":{"code":"","contract":""},"implemented":false,"runnable":false,"drawnBecause":null,"cases":[],"code":null,"reachNotChecked":[]},"tickets/booking-api":{"path":"tickets/booking-api","id":"booking-api","name":"Booking API","responsibility":"Answers booking and cancelling requests. The server that receives them lives outside blocks/.","role":"service","subtype":"REST API","roleLabel":"SERVICE: REST API","architecture":true,"planned":false,"inputs":[],"outputs":[],"exposes":[{"name":"bookSeats","accepts":"{ eventId: string; seats: number; email: string }","returns":"{ booked: boolean; message: string; total: number }","block":"book-seats","route":[{"path":"tickets/booking-api","entry":"bookSeats"},{"path":"tickets/booking-api/book-seats","entry":null}],"description":null,"fields":[{"name":"booked","type":"boolean","optional":false},{"name":"message","type":"string","optional":false},{"name":"total","type":"number","optional":false}]},{"name":"cancelBooking","accepts":"{ bookingId: string }","returns":"{ refunded: number; message: string }","block":"cancel-booking","route":[{"path":"tickets/booking-api","entry":"cancelBooking"},{"path":"tickets/booking-api/cancel-booking","entry":null}],"description":null,"fields":[{"name":"refunded","type":"number","optional":false},{"name":"message","type":"string","optional":false}]}],"access":[],"capabilities":[],"stores":[],"children":["tickets/booking-api/book-seats","tickets/booking-api/cancel-booking","tickets/booking-api/find-event","tickets/booking-api/pricing"],"sources":{"code":null,"contract":null},"language":"typescript","files":{"code":"","contract":""},"implemented":false,"runnable":false,"drawnBecause":null,"cases":[],"code":null,"reachNotChecked":[]},"tickets/booking-api/book-seats":{"path":"tickets/booking-api/book-seats","id":"book-seats","name":"Book Seats","responsibility":"Book seats at one event for one person when there are enough left, and say what happened.","role":"function","subtype":null,"roleLabel":"FUNCTION","architecture":false,"planned":false,"inputs":[{"name":"eventId","type":"string","typeIr":{"kind":"unknown"},"description":null},{"name":"seats","type":"number","typeIr":{"kind":"unknown"},"description":"How many seats, from 1."},{"name":"email","type":"string","typeIr":{"kind":"unknown"},"description":null}],"outputs":[{"name":"booked","type":"boolean","typeIr":{"kind":"unknown"},"description":null},{"name":"message","type":"string","typeIr":{"kind":"unknown"},"description":null},{"name":"total","type":"number","typeIr":{"kind":"unknown"},"description":"What the seats cost altogether; 0 when nothing was booked."}],"exposes":[],"access":[{"text":"events reads tickets-db.events","from":"events","verb":"reads","resource":"tickets-db","entry":"events","resourcePath":"tickets/tickets-db","resourceName":"Tickets Database"},{"text":"events writes tickets-db.events","from":"events","verb":"writes","resource":"tickets-db","entry":"events","resourcePath":"tickets/tickets-db","resourceName":"Tickets Database"},{"text":"bookings writes tickets-db.bookings","from":"bookings","verb":"writes","resource":"tickets-db","entry":"bookings","resourcePath":"tickets/tickets-db","resourceName":"Tickets Database"},{"text":"confirmations writes outbox.confirmations","from":"confirmations","verb":"writes","resource":"outbox","entry":"confirmations","resourcePath":"tickets/outbox","resourceName":"Outbox"}],"capabilities":[{"name":"events","capability":"Store","description":"Every event, by id."},{"name":"bookings","capability":"Store","description":"Every booking, by id."},{"name":"confirmations","capability":"Queue","description":"Where the confirmation email is sent from."}],"stores":[],"children":["tickets/booking-api/book-seats/reserve"],"sources":{"code":null,"contract":null},"language":"typescript","files":{"code":"src/booking/book-seats.ts","contract":"blocks/tickets/booking-api/book-seats/contract.d.ts"},"implemented":true,"runnable":true,"drawnBecause":null,"cases":[],"code":{"pointer":"src/booking/book-seats.ts#bookSeats","file":"src/booking/book-seats.ts","line":13,"excerptStart":11,"excerpt":null,"hash":null},"reachNotChecked":[]},"tickets/booking-api/book-seats/reserve":{"path":"tickets/booking-api/book-seats/reserve","id":"reserve","name":"Reserve","responsibility":"Take the seats off the event, record the booking, and send the confirmation.","role":"function","subtype":null,"roleLabel":"FUNCTION","architecture":false,"planned":false,"inputs":[{"name":"event","type":"{ id: string; name: string; seatsLeft: number; price: number }","typeIr":{"kind":"unknown"},"description":null},{"name":"seats","type":"number","typeIr":{"kind":"unknown"},"description":null},{"name":"email","type":"string","typeIr":{"kind":"unknown"},"description":null},{"name":"total","type":"number","typeIr":{"kind":"unknown"},"description":null}],"outputs":[{"name":"bookingId","type":"string","typeIr":{"kind":"unknown"},"description":null}],"exposes":[],"access":[{"text":"events writes tickets-db.events","from":"events","verb":"writes","resource":"tickets-db","entry":"events","resourcePath":"tickets/tickets-db","resourceName":"Tickets Database"},{"text":"bookings writes tickets-db.bookings","from":"bookings","verb":"writes","resource":"tickets-db","entry":"bookings","resourcePath":"tickets/tickets-db","resourceName":"Tickets Database"},{"text":"confirmations writes outbox.confirmations","from":"confirmations","verb":"writes","resource":"outbox","entry":"confirmations","resourcePath":"tickets/outbox","resourceName":"Outbox"}],"capabilities":[{"name":"events","capability":"Store","description":"Every event, by id."},{"name":"bookings","capability":"Store","description":"Every booking, by id."},{"name":"confirmations","capability":"Queue","description":"Where the confirmation email is sent from."}],"stores":[],"children":[],"sources":{"code":null,"contract":null},"language":"typescript","files":{"code":"src/booking/reserve.ts","contract":"blocks/tickets/booking-api/book-seats/reserve/contract.d.ts"},"implemented":true,"runnable":true,"drawnBecause":null,"cases":[],"code":{"pointer":"src/booking/reserve.ts#reserve","file":"src/booking/reserve.ts","line":11,"excerptStart":9,"excerpt":null,"hash":null},"reachNotChecked":[]},"tickets/booking-api/cancel-booking":{"path":"tickets/booking-api/cancel-booking","id":"cancel-booking","name":"Cancel Booking","responsibility":"Cancel one booking, put its seats back on sale, and say how much is refunded.","role":"function","subtype":null,"roleLabel":"FUNCTION","architecture":false,"planned":false,"inputs":[{"name":"bookingId","type":"string","typeIr":{"kind":"unknown"},"description":null}],"outputs":[{"name":"refunded","type":"number","typeIr":{"kind":"unknown"},"description":null},{"name":"message","type":"string","typeIr":{"kind":"unknown"},"description":null}],"exposes":[],"access":[{"text":"bookings reads tickets-db.bookings","from":"bookings","verb":"reads","resource":"tickets-db","entry":"bookings","resourcePath":"tickets/tickets-db","resourceName":"Tickets Database"},{"text":"bookings writes tickets-db.bookings","from":"bookings","verb":"writes","resource":"tickets-db","entry":"bookings","resourcePath":"tickets/tickets-db","resourceName":"Tickets Database"},{"text":"events reads tickets-db.events","from":"events","verb":"reads","resource":"tickets-db","entry":"events","resourcePath":"tickets/tickets-db","resourceName":"Tickets Database"},{"text":"events writes tickets-db.events","from":"events","verb":"writes","resource":"tickets-db","entry":"events","resourcePath":"tickets/tickets-db","resourceName":"Tickets Database"}],"capabilities":[{"name":"events","capability":"Store","description":"Every event, by id."},{"name":"bookings","capability":"Store","description":"Every booking, by id."}],"stores":[],"children":[],"sources":{"code":null,"contract":null},"language":"typescript","files":{"code":"src/booking/cancel-booking.ts","contract":"blocks/tickets/booking-api/cancel-booking/contract.d.ts"},"implemented":true,"runnable":true,"drawnBecause":null,"cases":[],"code":{"pointer":"src/booking/cancel-booking.ts#cancelBooking","file":"src/booking/cancel-booking.ts","line":6,"excerptStart":4,"excerpt":null,"hash":null},"reachNotChecked":[]},"tickets/booking-api/find-event":{"path":"tickets/booking-api/find-event","id":"find-event","name":"Find Event","responsibility":"Find the event someone asked about, or say there is none. Both booking and cancelling use it, so it sits beside them.","role":"function","subtype":null,"roleLabel":"FUNCTION","architecture":false,"planned":false,"inputs":[{"name":"eventId","type":"string","typeIr":{"kind":"unknown"},"description":null}],"outputs":[{"name":"event","type":"{ id: string; name: string; seatsLeft: number; price: number } | null","typeIr":{"kind":"unknown"},"description":null}],"exposes":[],"access":[{"text":"events reads tickets-db.events","from":"events","verb":"reads","resource":"tickets-db","entry":"events","resourcePath":"tickets/tickets-db","resourceName":"Tickets Database"}],"capabilities":[{"name":"events","capability":"Store","description":"Every event, by id."}],"stores":[],"children":[],"sources":{"code":null,"contract":null},"language":"typescript","files":{"code":"src/booking/find-event.ts","contract":"blocks/tickets/booking-api/find-event/contract.d.ts"},"implemented":true,"runnable":true,"drawnBecause":null,"cases":[],"code":{"pointer":"src/booking/find-event.ts#findEvent","file":"src/booking/find-event.ts","line":4,"excerptStart":2,"excerpt":null,"hash":null},"reachNotChecked":[]},"tickets/booking-api/pricing":{"path":"tickets/booking-api/pricing","id":"pricing","name":"Pricing","responsibility":"What seats cost, and what comes back when a booking is cancelled.","role":"component","subtype":"module","roleLabel":"COMPONENT: module","architecture":true,"planned":false,"inputs":[],"outputs":[],"exposes":[],"access":[],"capabilities":[],"stores":[],"children":["tickets/booking-api/pricing/price-seat","tickets/booking-api/pricing/refund-for"],"sources":{"code":null,"contract":null},"language":"typescript","files":{"code":"","contract":""},"implemented":false,"runnable":false,"drawnBecause":null,"cases":[],"code":null,"reachNotChecked":[]},"tickets/booking-api/pricing/price-seat":{"path":"tickets/booking-api/pricing/price-seat","id":"price-seat","name":"Price Seat","responsibility":"Price one seat of a booking: the fifth seat onwards is ten percent off.","role":"function","subtype":null,"roleLabel":"FUNCTION","architecture":false,"planned":false,"inputs":[{"name":"fullPrice","type":"number","typeIr":{"kind":"unknown"},"description":null},{"name":"seat","type":"number","typeIr":{"kind":"unknown"},"description":"Which seat of the booking, from 1."}],"outputs":[{"name":"price","type":"number","typeIr":{"kind":"unknown"},"description":null}],"exposes":[],"access":[],"capabilities":[],"stores":[],"children":[],"sources":{"code":null,"contract":null},"language":"typescript","files":{"code":"src/booking/price-seat.ts","contract":"blocks/tickets/booking-api/pricing/price-seat/contract.d.ts"},"implemented":true,"runnable":true,"drawnBecause":null,"cases":[],"code":{"pointer":"src/booking/price-seat.ts#priceSeat","file":"src/booking/price-seat.ts","line":8,"excerptStart":6,"excerpt":null,"hash":null},"reachNotChecked":[]},"tickets/booking-api/pricing/refund-for":{"path":"tickets/booking-api/pricing/refund-for","id":"refund-for","name":"Refund For","responsibility":"Say how much of a cancelled booking comes back: all of it, less a fee for each seat.","role":"function","subtype":null,"roleLabel":"FUNCTION","architecture":false,"planned":false,"inputs":[{"name":"total","type":"number","typeIr":{"kind":"unknown"},"description":null},{"name":"seats","type":"number","typeIr":{"kind":"unknown"},"description":null}],"outputs":[{"name":"refund","type":"number","typeIr":{"kind":"unknown"},"description":null}],"exposes":[],"access":[],"capabilities":[],"stores":[],"children":[],"sources":{"code":null,"contract":null},"language":"typescript","files":{"code":"src/booking/refund-for.ts","contract":"blocks/tickets/booking-api/pricing/refund-for/contract.d.ts"},"implemented":true,"runnable":true,"drawnBecause":null,"cases":[],"code":{"pointer":"src/booking/refund-for.ts#refundFor","file":"src/booking/refund-for.ts","line":7,"excerptStart":5,"excerpt":null,"hash":null},"reachNotChecked":[]},"tickets/box-office":{"path":"tickets/box-office","id":"box-office","name":"Box Office","responsibility":"Where someone picks an event, books seats or cancels a booking, and reads what happened.","role":"client","subtype":"web page","roleLabel":"CLIENT: web page","architecture":true,"planned":false,"inputs":[],"outputs":[],"exposes":[{"name":"bookSeats","accepts":"{ eventId: string; seats: number; email: string }","returns":"{ booked: boolean; message: string; total: number }","block":null,"route":[{"path":"tickets/box-office","entry":"bookSeats"},{"path":"tickets/booking-api","entry":"bookSeats"},{"path":"tickets/booking-api/book-seats","entry":null}],"description":"Pressed once, when someone confirms how many seats they want.","fields":[{"name":"booked","type":"boolean","optional":false},{"name":"message","type":"string","optional":false},{"name":"total","type":"number","optional":false}]},{"name":"cancelBooking","accepts":"{ bookingId: string }","returns":"{ refunded: number; message: string }","block":null,"route":[{"path":"tickets/box-office","entry":"cancelBooking"},{"path":"tickets/booking-api","entry":"cancelBooking"},{"path":"tickets/booking-api/cancel-booking","entry":null}],"description":"Pressed from the booking someone wants to give back.","fields":[{"name":"refunded","type":"number","optional":false},{"name":"message","type":"string","optional":false}]}],"access":[{"text":"bookSeats calls booking-api.bookSeats","from":"bookSeats","verb":"calls","resource":"booking-api","entry":"bookSeats","resourcePath":"tickets/booking-api","resourceName":"Booking API"},{"text":"cancelBooking calls booking-api.cancelBooking","from":"cancelBooking","verb":"calls","resource":"booking-api","entry":"cancelBooking","resourcePath":"tickets/booking-api","resourceName":"Booking API"}],"capabilities":[],"stores":[],"children":[],"sources":{"code":null,"contract":null},"language":"typescript","files":{"code":"src/box-office.ts","contract":""},"implemented":true,"runnable":false,"drawnBecause":null,"cases":[],"code":{"pointer":"src/box-office.ts","file":"src/box-office.ts","line":null,"excerptStart":1,"excerpt":null,"hash":null},"reachNotChecked":[]},"tickets/outbox":{"path":"tickets/outbox","id":"outbox","name":"Outbox","responsibility":"Carries emails away from the request that caused them, so nobody waits for one to send before seeing their booking.","role":"queue","subtype":"message queue","roleLabel":"QUEUE: message queue","architecture":true,"planned":false,"inputs":[],"outputs":[],"exposes":[{"name":"confirmations","accepts":"{ email: string; event: string; seats: number; total: number }","returns":null,"block":null,"route":[{"path":"tickets/outbox","entry":"confirmations"}],"description":"One message per booking made.","fields":[{"name":"email","type":"string","optional":false},{"name":"event","type":"string","optional":false},{"name":"seats","type":"number","optional":false},{"name":"total","type":"number","optional":false}]},{"name":"reminders","accepts":"{ email: string; event: string }","returns":null,"block":null,"route":[{"path":"tickets/outbox","entry":"reminders"}],"description":"One message per booking whose event is tomorrow.","fields":[{"name":"email","type":"string","optional":false},{"name":"event","type":"string","optional":false}]}],"access":[],"capabilities":[],"stores":[],"children":[],"sources":{"code":null,"contract":null},"language":"typescript","files":{"code":"","contract":""},"implemented":false,"runnable":false,"drawnBecause":null,"cases":[],"code":null,"reachNotChecked":[]},"tickets/reminders":{"path":"tickets/reminders","id":"reminders","name":"Reminders","responsibility":"Every morning, reminds everyone whose event is tomorrow. Not built yet.","role":"service","subtype":"scheduled job","roleLabel":"SERVICE: scheduled job","architecture":true,"planned":true,"inputs":[],"outputs":[],"exposes":[],"access":[{"text":"reads tickets-db.bookings","from":null,"verb":"reads","resource":"tickets-db","entry":"bookings","resourcePath":"tickets/tickets-db","resourceName":"Tickets Database"},{"text":"writes outbox.reminders","from":null,"verb":"writes","resource":"outbox","entry":"reminders","resourcePath":"tickets/outbox","resourceName":"Outbox"}],"capabilities":[],"stores":[],"children":[],"sources":{"code":null,"contract":null},"language":"typescript","files":{"code":"","contract":""},"implemented":false,"runnable":false,"drawnBecause":null,"cases":[],"code":null,"reachNotChecked":[]},"tickets/tickets-db":{"path":"tickets/tickets-db","id":"tickets-db","name":"Tickets Database","responsibility":"Every event on sale, and every booking made for one.","role":"database","subtype":"PostgreSQL","roleLabel":"DATABASE: PostgreSQL","architecture":true,"planned":false,"inputs":[],"outputs":[],"exposes":[{"name":"events","accepts":"{ id: string; name: string; seatsLeft: number; price: number }","returns":"{ id: string; name: string; seatsLeft: number; price: number }","block":null,"route":[{"path":"tickets/tickets-db","entry":"events"}],"description":"One row per event, by id.","fields":[{"name":"id","type":"string","optional":false},{"name":"name","type":"string","optional":false},{"name":"seatsLeft","type":"number","optional":false},{"name":"price","type":"number","optional":false}]},{"name":"bookings","accepts":"{ id: string; eventId: string; email: string; seats: number; total: number }","returns":"{ id: string; eventId: string; email: string; seats: number; total: number }","block":null,"route":[{"path":"tickets/tickets-db","entry":"bookings"}],"description":"One row per booking, by id.","fields":[{"name":"id","type":"string","optional":false},{"name":"eventId","type":"string","optional":false},{"name":"email","type":"string","optional":false},{"name":"seats","type":"number","optional":false},{"name":"total","type":"number","optional":false}]}],"access":[],"capabilities":[],"stores":[],"children":[],"sources":{"code":null,"contract":null},"language":"typescript","files":{"code":"","contract":""},"implemented":false,"runnable":false,"drawnBecause":null,"cases":[],"code":null,"reachNotChecked":[]}},"executions":[{"id":"book-seats","name":"Book seats","description":"Ada books five seats for the Night Gig: they come off the event, the booking is written down, and a confirmation is queued.","trigger":{"at":"tickets/box-office.bookSeats","kind":"action","description":"Ada confirms five seats for the Night Gig.","code":"src/box-office.ts#onBookPressed","payload":{"eventId":"gig","seats":5,"email":"ada@example.com"}},"declared":{"source":"declared","execution":"book-seats","events":[{"type":"interaction","id":"trigger","description":"Ada confirms five seats for the Night Gig.","code":"src/box-office.ts#onBookPressed","cause":null,"from":null,"to":{"path":"tickets/box-office","entry":"bookSeats"},"kind":"trigger","payload":{"eventId":"gig","seats":5,"email":"ada@example.com"}},{"type":"interaction","id":"#1","description":"The page has nothing to show until the API says whether the seats were hers.","code":"src/box-office.ts#onBookPressed","cause":"trigger","from":{"path":"tickets/box-office","entry":"bookSeats"},"to":{"path":"tickets/booking-api","entry":"bookSeats"},"kind":"call","payload":{"eventId":"gig","seats":5,"email":"ada@example.com"}},{"type":"interaction","id":"#2","description":"The server that takes the request is not a block; all it does is hand it to the block that answers this operation.","code":"src/server.ts#handle","cause":"#1","from":{"path":"tickets/booking-api","entry":"bookSeats"},"to":{"path":"tickets/booking-api/book-seats","entry":null},"kind":"call","payload":{"eventId":"gig","seats":5,"email":"ada@example.com"}},{"type":"interaction","id":"#3","description":"Nothing is priced, written or sent until the event is known to be on sale.","code":"src/booking/book-seats.ts#bookSeats","cause":"#2","from":{"path":"tickets/booking-api/book-seats","entry":null},"to":{"path":"tickets/booking-api/find-event","entry":null},"kind":"call","payload":{"eventId":"gig"}},{"type":"interaction","id":"#4","description":"The event is looked up by the id the request named.","code":"src/booking/find-event.ts#findEvent","cause":"#3","from":{"path":"tickets/booking-api/find-event","entry":null},"to":{"path":"tickets/tickets-db","entry":"events"},"kind":"read","payload":{"id":"gig"}},{"type":"return","id":"#4.returned","of":"#4","from":{"path":"tickets/booking-api/find-event","entry":null},"to":{"path":"tickets/tickets-db","entry":"events"},"response":{"id":"gig","name":"Night Gig","seatsLeft":10,"price":25}},{"type":"return","id":"#3.returned","of":"#3","from":{"path":"tickets/booking-api/book-seats","entry":null},"to":{"path":"tickets/booking-api/find-event","entry":null},"response":{"event":{"id":"gig","name":"Night Gig","seatsLeft":10,"price":25}}},{"type":"interaction","id":"#5","description":"Each of the five seats is priced on its own, all at once. The first four come back at 25, and from the fifth a booking pays a tenth less, which is the only reason the total is not 125.","code":"src/booking/book-seats.ts#bookSeats","cause":"#2","from":{"path":"tickets/booking-api/book-seats","entry":null},"to":{"path":"tickets/booking-api/pricing/price-seat","entry":null},"kind":"call","payload":{"fullPrice":25,"seat":5}},{"type":"return","id":"#5.returned","of":"#5","from":{"path":"tickets/booking-api/book-seats","entry":null},"to":{"path":"tickets/booking-api/pricing/price-seat","entry":null},"response":{"price":22.5}},{"type":"interaction","id":"#6","description":"Every price is back and the five seats come to 122.5, so the booking can be made.","code":"src/booking/book-seats.ts#bookSeats","cause":"#2","from":{"path":"tickets/booking-api/book-seats","entry":null},"to":{"path":"tickets/booking-api/book-seats/reserve","entry":null},"kind":"call","payload":{"event":{"id":"gig","name":"Night Gig","seatsLeft":10,"price":25},"seats":5,"email":"ada@example.com","total":122.5}},{"type":"interaction","id":"#7","description":"The seats come off the event first, so the next person to ask sees what is really left.","code":"src/booking/reserve.ts#reserve","cause":"#6","from":{"path":"tickets/booking-api/book-seats/reserve","entry":null},"to":{"path":"tickets/tickets-db","entry":"events"},"kind":"write","payload":{"id":"gig","name":"Night Gig","seatsLeft":5,"price":25}},{"type":"effect","id":"#8","description":"Five seats are left for whoever asks next.","code":"src/booking/reserve.ts#reserve","cause":"#7","at":{"path":"tickets/tickets-db","entry":"events"},"kind":"row-changed","detail":{"id":"gig","seatsLeft":5}},{"type":"interaction","id":"#9","description":"The booking is written down, numbered by the seats that were left when it was made.","code":"src/booking/reserve.ts#reserve","cause":"#6","from":{"path":"tickets/booking-api/book-seats/reserve","entry":null},"to":{"path":"tickets/tickets-db","entry":"bookings"},"kind":"write","payload":{"id":"gig-10","eventId":"gig","email":"ada@example.com","seats":5,"total":122.5}},{"type":"effect","id":"#10","description":"The booking can be found again, which is what giving it back later needs.","code":"src/booking/reserve.ts#reserve","cause":"#9","at":{"path":"tickets/tickets-db","entry":"bookings"},"kind":"row-changed","detail":{"id":"gig-10"}},{"type":"interaction","id":"#11","description":"The confirmation goes on the queue, so nobody waits for an email to send before seeing their booking.","code":"src/booking/reserve.ts#reserve","cause":"#6","from":{"path":"tickets/booking-api/book-seats/reserve","entry":null},"to":{"path":"tickets/outbox","entry":"confirmations"},"kind":"send","payload":{"email":"ada@example.com","event":"Night Gig","seats":5,"total":122.5}},{"type":"effect","id":"#12","description":"Whatever sends the emails will find it there.","code":"src/booking/reserve.ts#reserve","cause":"#11","at":{"path":"tickets/outbox","entry":"confirmations"},"kind":"message-published","detail":{"email":"ada@example.com"}},{"type":"return","id":"#6.returned","of":"#6","from":{"path":"tickets/booking-api/book-seats","entry":null},"to":{"path":"tickets/booking-api/book-seats/reserve","entry":null},"response":{"bookingId":"gig-10"}},{"type":"effect","id":"#13","description":"The API answers with what was booked and what it cost.","code":"src/server.ts#handle","cause":"#1","at":{"path":"tickets/booking-api","entry":"bookSeats"},"kind":"response","detail":{"booked":true,"message":"Booked 5 for Night Gig: booking gig-10.","total":122.5}},{"type":"return","id":"#1.returned","of":"#1","from":{"path":"tickets/box-office","entry":"bookSeats"},"to":{"path":"tickets/booking-api","entry":"bookSeats"},"response":{"booked":true,"message":"Booked 5 for Night Gig: booking gig-10.","total":122.5}},{"type":"effect","id":"#14","description":"The page shows what happened, which is the last thing Ada sees.","code":"src/box-office.ts#onBookPressed","cause":"trigger","at":{"path":"tickets/box-office","entry":"bookSeats"},"kind":"ui-changed","detail":{"showing":"Booked 5 for Night Gig: booking gig-10."}}]},"expects":true,"given":{},"expect":null,"records":null,"unrecordable":null},{"id":"booking-turned-away","name":"A booking turned away","description":"Ada asks for six seats at an event with five left. The request is refused before anything is priced, written or sent.","trigger":{"at":"tickets/box-office.bookSeats","kind":"action","description":"Ada confirms six seats for the Night Gig.","code":"src/box-office.ts#onBookPressed","payload":{"eventId":"gig","seats":6,"email":"ada@example.com"}},"declared":{"source":"declared","execution":"booking-turned-away","events":[{"type":"interaction","id":"trigger","description":"Ada confirms six seats for the Night Gig.","code":"src/box-office.ts#onBookPressed","cause":null,"from":null,"to":{"path":"tickets/box-office","entry":"bookSeats"},"kind":"trigger","payload":{"eventId":"gig","seats":6,"email":"ada@example.com"}},{"type":"interaction","id":"#1","description":"The page asks for the seats the same way it would if they were there.","code":"src/box-office.ts#onBookPressed","cause":"trigger","from":{"path":"tickets/box-office","entry":"bookSeats"},"to":{"path":"tickets/booking-api","entry":"bookSeats"},"kind":"call","payload":{"eventId":"gig","seats":6,"email":"ada@example.com"}},{"type":"interaction","id":"#2","description":"The server that takes the request is not a block; all it does is hand it to the block that answers this operation.","code":"src/server.ts#handle","cause":"#1","from":{"path":"tickets/booking-api","entry":"bookSeats"},"to":{"path":"tickets/booking-api/book-seats","entry":null},"kind":"call","payload":{"eventId":"gig","seats":6,"email":"ada@example.com"}},{"type":"interaction","id":"#3","description":"How many seats are left is only known from the event, so the lookup happens before it can be known whether the seats are hers.","code":"src/booking/book-seats.ts#bookSeats","cause":"#2","from":{"path":"tickets/booking-api/book-seats","entry":null},"to":{"path":"tickets/booking-api/find-event","entry":null},"kind":"call","payload":{"eventId":"gig"}},{"type":"interaction","id":"#4","description":"The event is there, with five seats left of the six Ada asked for.","code":"src/booking/find-event.ts#findEvent","cause":"#3","from":{"path":"tickets/booking-api/find-event","entry":null},"to":{"path":"tickets/tickets-db","entry":"events"},"kind":"read","payload":{"id":"gig"}},{"type":"return","id":"#4.returned","of":"#4","from":{"path":"tickets/booking-api/find-event","entry":null},"to":{"path":"tickets/tickets-db","entry":"events"},"response":{"id":"gig","name":"Night Gig","seatsLeft":5,"price":25}},{"type":"return","id":"#3.returned","of":"#3","from":{"path":"tickets/booking-api/book-seats","entry":null},"to":{"path":"tickets/booking-api/find-event","entry":null},"response":{"event":{"id":"gig","name":"Night Gig","seatsLeft":5,"price":25}}},{"type":"effect","id":"#5","description":"The request is turned away with the number that is really left: nothing is priced, nothing is written, nothing is queued.","code":"src/server.ts#handle","cause":"#1","at":{"path":"tickets/booking-api","entry":"bookSeats"},"kind":"response","detail":{"booked":false,"message":"Sorry, only 5 left for Night Gig.","total":0}},{"type":"return","id":"#1.returned","of":"#1","from":{"path":"tickets/box-office","entry":"bookSeats"},"to":{"path":"tickets/booking-api","entry":"bookSeats"},"response":{"booked":false,"message":"Sorry, only 5 left for Night Gig.","total":0}},{"type":"effect","id":"#6","description":"Ada is told why, with the number she could still have.","code":"src/box-office.ts#onBookPressed","cause":"trigger","at":{"path":"tickets/box-office","entry":"bookSeats"},"kind":"ui-changed","detail":{"showing":"Sorry, only 5 left for Night Gig."}}]},"expects":true,"given":{},"expect":null,"records":null,"unrecordable":null},{"id":"cancel-booking","name":"Cancel a booking","description":"Ada gives back the five seats she booked: the seats go on sale again, the booking is taken away, and she is refunded all but a fee for each seat.","trigger":{"at":"tickets/box-office.cancelBooking","kind":"action","description":"Ada presses cancel on the booking she made.","code":"src/box-office.ts#onCancelPressed","payload":{"bookingId":"gig-10"}},"declared":{"source":"declared","execution":"cancel-booking","events":[{"type":"interaction","id":"trigger","description":"Ada presses cancel on the booking she made.","code":"src/box-office.ts#onCancelPressed","cause":null,"from":null,"to":{"path":"tickets/box-office","entry":"cancelBooking"},"kind":"trigger","payload":{"bookingId":"gig-10"}},{"type":"interaction","id":"#1","description":"The page knows the booking by the number it was given when it was made.","code":"src/box-office.ts#onCancelPressed","cause":"trigger","from":{"path":"tickets/box-office","entry":"cancelBooking"},"to":{"path":"tickets/booking-api","entry":"cancelBooking"},"kind":"call","payload":{"bookingId":"gig-10"}},{"type":"interaction","id":"#2","description":"The server that takes the request is not a block; all it does is hand it to the block that answers this operation.","code":"src/server.ts#handle","cause":"#1","from":{"path":"tickets/booking-api","entry":"cancelBooking"},"to":{"path":"tickets/booking-api/cancel-booking","entry":null},"kind":"call","payload":{"bookingId":"gig-10"}},{"type":"interaction","id":"#3","description":"The booking has to be there to be given back, and it is what says how many seats and how much money are involved.","code":"src/booking/cancel-booking.ts#cancelBooking","cause":"#2","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/tickets-db","entry":"bookings"},"kind":"read","payload":{"id":"gig-10"}},{"type":"return","id":"#3.returned","of":"#3","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/tickets-db","entry":"bookings"},"response":{"id":"gig-10","eventId":"gig","email":"ada@example.com","seats":5,"total":122.5}},{"type":"interaction","id":"#4","description":"The event the booking was for is looked up, because the seats can only go back on sale if it is still there.","code":"src/booking/cancel-booking.ts#cancelBooking","cause":"#2","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/booking-api/find-event","entry":null},"kind":"call","payload":{"eventId":"gig"}},{"type":"interaction","id":"#5","description":"The event is still on sale, with the five seats Ada left it.","code":"src/booking/find-event.ts#findEvent","cause":"#4","from":{"path":"tickets/booking-api/find-event","entry":null},"to":{"path":"tickets/tickets-db","entry":"events"},"kind":"read","payload":{"id":"gig"}},{"type":"return","id":"#5.returned","of":"#5","from":{"path":"tickets/booking-api/find-event","entry":null},"to":{"path":"tickets/tickets-db","entry":"events"},"response":{"id":"gig","name":"Night Gig","seatsLeft":5,"price":25}},{"type":"return","id":"#4.returned","of":"#4","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/booking-api/find-event","entry":null},"response":{"event":{"id":"gig","name":"Night Gig","seatsLeft":5,"price":25}}},{"type":"interaction","id":"#6","description":"What comes back is the whole booking less a fee for each seat, which is the box office's to keep.","code":"src/booking/cancel-booking.ts#cancelBooking","cause":"#2","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/booking-api/pricing/refund-for","entry":null},"kind":"call","payload":{"total":122.5,"seats":5}},{"type":"return","id":"#6.returned","of":"#6","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/booking-api/pricing/refund-for","entry":null},"response":{"refund":112.5}},{"type":"interaction","id":"#7","description":"The five seats go back on sale, which is only done because the event turned out to still be there.","code":"src/booking/cancel-booking.ts#cancelBooking","cause":"#2","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/tickets-db","entry":"events"},"kind":"write","payload":{"id":"gig","name":"Night Gig","seatsLeft":10,"price":25}},{"type":"effect","id":"#8","description":"The Night Gig is back to the ten seats it started with.","code":"src/booking/cancel-booking.ts#cancelBooking","cause":"#7","at":{"path":"tickets/tickets-db","entry":"events"},"kind":"row-changed","detail":{"id":"gig","seatsLeft":10}},{"type":"interaction","id":"#9","description":"The booking is taken away once its seats are back, so it cannot be given back twice.","code":"src/booking/cancel-booking.ts#cancelBooking","cause":"#2","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/tickets-db","entry":"bookings"},"kind":"remove","payload":{"id":"gig-10"}},{"type":"effect","id":"#10","description":"Nothing is left of the booking but the refund on its way.","code":"src/booking/cancel-booking.ts#cancelBooking","cause":"#9","at":{"path":"tickets/tickets-db","entry":"bookings"},"kind":"row-removed","detail":{"id":"gig-10"}},{"type":"effect","id":"#11","description":"The API answers with what is coming back to her.","code":"src/server.ts#handle","cause":"#1","at":{"path":"tickets/booking-api","entry":"cancelBooking"},"kind":"response","detail":{"refunded":112.5,"message":"Cancelled booking gig-10: 112.5 is on its way back."}},{"type":"return","id":"#1.returned","of":"#1","from":{"path":"tickets/box-office","entry":"cancelBooking"},"to":{"path":"tickets/booking-api","entry":"cancelBooking"},"response":{"refunded":112.5,"message":"Cancelled booking gig-10: 112.5 is on its way back."}},{"type":"effect","id":"#12","description":"The page says the booking is gone and how much is refunded.","code":"src/box-office.ts#onCancelPressed","cause":"trigger","at":{"path":"tickets/box-office","entry":"cancelBooking"},"kind":"ui-changed","detail":{"showing":"Cancelled booking gig-10: 112.5 is on its way back."}}]},"expects":true,"given":{},"expect":null,"records":null,"unrecordable":null},{"id":"cancel-without-the-event","name":"Cancel without the event","description":"Ada cancels her booking for an event that has since been taken off sale. She is still refunded and the booking still goes, but the seats are never put back: cancel-booking writes the event row only when there is an event, and nothing on the diagram says that write is conditional.","trigger":{"at":"tickets/box-office.cancelBooking","kind":"action","description":"Ada presses cancel on a booking for an event that is no longer on sale.","code":"src/box-office.ts#onCancelPressed","payload":{"bookingId":"gig-10"}},"declared":{"source":"declared","execution":"cancel-without-the-event","events":[{"type":"interaction","id":"trigger","description":"Ada presses cancel on a booking for an event that is no longer on sale.","code":"src/box-office.ts#onCancelPressed","cause":null,"from":null,"to":{"path":"tickets/box-office","entry":"cancelBooking"},"kind":"trigger","payload":{"bookingId":"gig-10"}},{"type":"interaction","id":"#1","description":"The page itself knows nothing about refunds, so the press becomes a request and the page waits for the sentence it will show.","code":"src/box-office.ts#onCancelPressed","cause":"trigger","from":{"path":"tickets/box-office","entry":"cancelBooking"},"to":{"path":"tickets/booking-api","entry":"cancelBooking"},"kind":"call","payload":{"bookingId":"gig-10"}},{"type":"interaction","id":"#2","description":"The server hands the request straight to the block that answers it, which is the seam between the code Fragmentor checks and the code that receives real requests.","code":"src/server.ts#handle","cause":"#1","from":{"path":"tickets/booking-api","entry":"cancelBooking"},"to":{"path":"tickets/booking-api/cancel-booking","entry":null},"kind":"call","payload":{"bookingId":"gig-10"}},{"type":"interaction","id":"#3","description":"Nothing can be refunded until the booking is found, and a missing booking would end the run here with a refund of nothing.","code":"src/booking/cancel-booking.ts#cancelBooking","cause":"#2","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/tickets-db","entry":"bookings"},"kind":"read","payload":{"id":"gig-10"}},{"type":"return","id":"#3.returned","of":"#3","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/tickets-db","entry":"bookings"},"response":{"id":"gig-10","eventId":"gig","email":"ada@example.com","seats":5,"total":122.5}},{"type":"interaction","id":"#4","description":"The event is looked up because its seat count is what a cancellation would give back. This is the run where that lookup finds nothing.","code":"src/booking/cancel-booking.ts#cancelBooking","cause":"#2","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/booking-api/find-event","entry":null},"kind":"call","payload":{"eventId":"gig"}},{"type":"interaction","id":"#5","description":"The event row is asked for by id, and the table no longer has one: the event was removed while this booking was still outstanding.","code":"src/booking/find-event.ts#findEvent","cause":"#4","from":{"path":"tickets/booking-api/find-event","entry":null},"to":{"path":"tickets/tickets-db","entry":"events"},"kind":"read","payload":{"id":"gig"}},{"type":"return","id":"#5.returned","of":"#5","from":{"path":"tickets/booking-api/find-event","entry":null},"to":{"path":"tickets/tickets-db","entry":"events"},"response":null},{"type":"return","id":"#4.returned","of":"#4","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/booking-api/find-event","entry":null},"response":{"event":null}},{"type":"interaction","id":"#6","description":"The refund is worked out from the booking alone, so a missing event takes nothing away from what the person gets back: 50 paid, less 2 for each of the 2 seats.","code":"src/booking/cancel-booking.ts#cancelBooking","cause":"#2","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/booking-api/pricing/refund-for","entry":null},"kind":"call","payload":{"total":122.5,"seats":5}},{"type":"return","id":"#6.returned","of":"#6","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/booking-api/pricing/refund-for","entry":null},"response":{"refund":112.5}},{"type":"interaction","id":"#7","description":"The booking goes whether or not the event is still there. What a reader should notice is the step that is not here: on the run where the event exists, the event row is written back with the seats on sale again, and nothing on the diagram says that write was conditional.","code":"src/booking/cancel-booking.ts#cancelBooking","cause":"#2","from":{"path":"tickets/booking-api/cancel-booking","entry":null},"to":{"path":"tickets/tickets-db","entry":"bookings"},"kind":"remove","payload":{"id":"gig-10"}},{"type":"effect","id":"#8","description":"The booking is gone from the table, and no event row changed anywhere in this run.","code":"src/booking/cancel-booking.ts#cancelBooking","cause":"#7","at":{"path":"tickets/tickets-db","entry":"bookings"},"kind":"row-removed","detail":{"id":"gig-10"}},{"type":"return","id":"#2.returned","of":"#2","from":{"path":"tickets/booking-api","entry":"cancelBooking"},"to":{"path":"tickets/booking-api/cancel-booking","entry":null},"response":{"refunded":112.5,"message":"Cancelled booking gig-10: 112.5 is on its way back."}},{"type":"effect","id":"#9","description":"The caller is told the booking is cancelled and what is coming back. Nothing in the answer says the event had vanished, so the person sees the ordinary cancellation message.","code":"src/server.ts#handle","cause":"#1","at":{"path":"tickets/booking-api","entry":"cancelBooking"},"kind":"response","detail":{"refunded":112.5,"message":"Cancelled booking gig-10: 112.5 is on its way back."}},{"type":"return","id":"#1.returned","of":"#1","from":{"path":"tickets/box-office","entry":"cancelBooking"},"to":{"path":"tickets/booking-api","entry":"cancelBooking"},"response":{"refunded":112.5,"message":"Cancelled booking gig-10: 112.5 is on its way back."}},{"type":"effect","id":"#10","description":"The page shows the message it was given, which is all the state it keeps.","code":"src/box-office.ts#onCancelPressed","cause":"trigger","at":{"path":"tickets/box-office","entry":"cancelBooking"},"kind":"ui-changed","detail":{"showing":"Cancelled booking gig-10: 112.5 is on its way back."}}]},"expects":true,"given":{},"expect":null,"records":null,"unrecordable":null}],"notes":[],"rules":[],"diagnostics":[],"reachUnpointed":[]},"look":{"colourBy":"role","roleColours":{},"blockColours":{},"showDependencies":true,"legendCollapsed":true,"folded":[],"execution":{"id":"book-seats","at":0}},"exported":"2026-10-10","problems":{"errors":0,"warnings":0}}</script>
+    <noscript><p class="bench-note">This page needs JavaScript turned on to draw the project.</p></noscript>
+    <script>"use strict";(()=>{var To="fragmentor.inspectorWidth",G={least:280,most:900,standard:360};function Co(){try{let e=Number(localStorage.getItem(To));return!Number.isFinite(e)||e<=0?G.standard:Math.min(G.most,Math.max(G.least,e))}catch{return G.standard}}var u={snapshot:null,dir:null,waiting:!1,loadError:null,folded:new Set,shows:"tree",showDependencies:(()=>{try{return localStorage.getItem("fragmentor.showDependencies")==="true"}catch{return!1}})(),setShowDependencies(e){this.showDependencies=e;try{localStorage.setItem("fragmentor.showDependencies",String(e))}catch{}},execution:null,recordings:new Map,selection:new Set,selectedLink:null,zoom:1,panX:40,panY:30,showRail:!1,showInspector:!0,legendCollapsed:(()=>{try{return localStorage.getItem("fragmentor.legendCollapsed")==="true"}catch{return!1}})(),setLegendCollapsed(e){this.legendCollapsed=e;try{localStorage.setItem("fragmentor.legendCollapsed",String(e))}catch{}},inspectorWidth:Co(),codeTab:"code",bench:null,userAdjusted:!1,fitsWhole:!1,edits:new Map,benchInputs:new Map,benchStores:new Map,runs:new Map,ranWith:new Map,running:new Set,caseResults:new Map,runningCases:new Set,caseNames:new Map,breakpoints:new Set,watch:null,status:null};function Ye(){let e=u.execution?.id;return u.snapshot?.executions.find(t=>t.id===e)??null}function $o(e){return JSON.stringify([e.trigger,e.given])}function oe(e){let t=u.recordings.get(e.id);return t?t.basis===$o(e)?t:(u.recordings.delete(e.id),null):null}function M(){if(!u.snapshot)throw new Error("No project is open.");return u.snapshot}function Dt(){if(u.selection.size!==1)return null;let[e]=[...u.selection];return e===void 0?null:u.snapshot?.blocks[e]??null}function Mo(e,t,n){try{let o=localStorage.getItem(e);return t.includes(o)?o:n}catch{return n}}function Lo(e,t){try{localStorage.setItem(e,t)}catch{}}var re=["block","role"],B={colourBy:Mo("fragmentor.colourBy",re,"block"),setColourBy(e){this.colourBy=e,Lo("fragmentor.colourBy",e)}};function Vt(e,t){try{localStorage.setItem(e,JSON.stringify(t))}catch{}}function _t(e){try{let t=localStorage.getItem(e);return t===null?{}:JSON.parse(t)}catch{return{}}}var Ht={function:"#37dc89",component:"#A3E07A",structure:"#67D8FF",queue:"#FFD166",storage:"#5EEAD4",database:"#7C9CFF",service:"#C084FC",client:"#FFB86B",external:"#F472B6"},Ue=["#37dc89","#C084FC","#FFD166","#67D8FF","#FF8FA3","#7C9CFF","#FFB86B","#5EEAD4"],Ft="fragmentor.roleColours",Wt="fragmentor.blockColours",q={all:_t(Ft),get(e){return this.all[e]??Ht[e]},set(e,t){let n={...this.all};t===null?delete n[e]:n[e]=t,this.all=n,Vt(Ft,n),this.apply()},apply(){for(let e of Object.keys(Ht))document.documentElement.style.setProperty(`--role-${e}`,this.get(e))}},xe={all:_t(Wt),key(e){return`${u.snapshot?.dir??""}||${e}`},get(e){return this.all[this.key(e)]},set(e,t){let n=this.key(e),o={...this.all};t===null?delete o[n]:o[n]=t,this.all=o,Vt(Wt,o)}};function Gt(e){q.all={...e.roleColours},xe.all=Object.fromEntries(Object.entries(e.blockColours).map(([t,n])=>[xe.key(t),n])),B.colourBy=e.colourBy,u.showDependencies=e.showDependencies,u.legendCollapsed=e.legendCollapsed,u.folded=new Set(e.folded),u.execution=e.execution===null?null:{...e.execution,trace:"declared"},q.apply()}var x=168,w=40,Xe=22,Kt=46,qt=80,Ze=24,Ao=10,Ro=22;function zt(e){return e.y+w+Kt/2}function Je(e){return e.x+Ze/2}function Yt(e=new Set){let t=M(),n=new Map,o=0,s=0,r=(c,l)=>l?[]:c.children.filter(p=>t.blocks[p]),i=(c,l,p)=>{let m=t.blocks[c];if(!m)return null;s=Math.max(s,p+w);let b=r(m,e.has(c)),g=b.length>0&&b.every(y=>e.has(y)||t.blocks[y]?.children.length===0),f={path:c,block:m,depth:l,x:0,y:p,children:[],hasParts:m.children.length>0,folded:e.has(c),listed:g};if(n.set(c,f),g){f.x=o,o+=x+Ze+Xe;let y=o;return b.forEach((v,E)=>{let A=i(v,l+1,f.y+w+Ro+E*(w+Ao));A&&(A.x=f.x+Ze,f.children.push(A))}),o=y,f}for(let y of b){let v=i(y,l+1,(l+1)*(w+Kt));v&&f.children.push(v)}return f.children.length===0?(f.x=o,o+=x+Xe):f.x=(f.children[0].x+f.children[f.children.length-1].x)/2,f},a=[];for(let c of t.systems){let l=i(c.rootBlock,0,0);l&&(a.push(l),o+=qt)}return{roots:a,nodes:n,width:Math.max(0,o-Xe-(a.length>0?qt:0)),height:s}}function N(e,t){let n=t.split("/");for(let o=n.length;o>0;o-=1){let s=e.nodes.get(n.slice(0,o).join("/"));if(s)return s}return null}function S(e){return e.entry===null?e.path:`${e.path}.${e.entry}`}function Oo(e,t){return e===t||e.startsWith(`${t}/`)}function T(e,t){return t.entry!==null?e.path===t.path&&e.entry===t.entry:Oo(e.path,t.path)}function K(e){return e.type==="effect"?null:e.type==="return"?{from:e.to,to:e.from}:{from:e.from,to:e.to}}function et(e){return e.type==="effect"?[e.at]:e.from===null?[e.to]:[e.from,e.to]}function Ut(e,t){return et(e).some(n=>T(n,t))}function Xt(e,t){return e.type==="interaction"&&T(e.to,t)&&(e.from===null||!T(e.from,t))}function Qe(e,t){let n=e.path.split("/"),o=n[0];for(let s=1;s<n.length&&t.expanded.has(o);s+=1)o=`${o}/${n[s]}`;return o!==e.path?{path:o,entry:null}:t.expanded.has(o)||t.entries?.has(o)?e:{path:o,entry:null}}var Bo="(outside)";function tt(e,t){if(e.type==="effect"){let r=Qe(e.at,t);return{on:"effect",key:S(r),at:r}}let n=e.from===null?null:Qe(e.from,t),o=Qe(e.to,t);if(n!==null&&n.path===o.path){let r={path:o.path,entry:null};return{on:"inside",key:S(r),at:r}}return{on:"edge",key:`${n===null?Bo:S(n)}->${S(o)}`,from:n,to:o}}function Zt(e,t,n,o=!1){for(let s=Math.max(0,n+1);s<e.events.length;s+=1)if(o||tt(e.events[s],t).on!=="inside")return s;return null}var nt=104,ot=78,we=5,ke=e=>e.replace(/-/g," ");function Po(e){let t=K(e);return t===null?null:{from:t.from?.path??null,to:t.to?.path??null}}function Jt(e,t){let n=[],o=(r,i)=>{let a={path:r,x:0,y:0,arrow:i,effects:[],wrapped:!1};return n.push(a),a};e.events.forEach((r,i)=>{if(r.type==="effect"){let l=n[n.length-1];(!l||l.path!==r.at.path)&&o(r.at.path,null),n[n.length-1].effects.push({at:i,label:ke(r.kind)});return}let a=Po(r);if(!a)return;let c=n[n.length-1];(!c||c.path!==a.from)&&o(a.from,null),o(a.to,{at:i,label:t(r),data:r.type==="interaction"&&r.payload!==void 0||r.type==="return"&&r.response!==void 0,back:r.type==="return"})}),n.forEach((r,i)=>{let a=i%we;r.x=a*(x+nt),r.y=Math.floor(i/we)*(w+ot),r.wrapped=a===0&&i>0});let s=Math.ceil(n.length/we);return{boxes:n,width:Math.min(n.length,we)*(x+nt)-nt,height:Math.max(0,s*(w+ot)-ot)}}function Qt(e,t){return e.boxes.find(n=>n.arrow?.at===t)??e.boxes.find(n=>n.effects.some(o=>o.at===t))??null}function k(e){let t=document.getElementById(e);if(!t)throw new Error(`The interface is missing #${e}.`);return t}function d(e,t,n){let o=document.createElement(e);return t&&(o.className=t),n!==void 0&&(o.textContent=n),o}function C(e,t){let n=d("section",t?`section ${t}`:"section");return n.append(d("h4",void 0,e)),n}function H(e,t){let n=d("div","subsection");return n.append(d("h5",t,e)),n}var R={function:{label:"FUNCTION",description:"Code that runs: one function, which other code calls. It may take inputs and return outputs, or neither. This is what a block is unless it says otherwise.",entryNoun:"port",subtypes:[],isCode:!0},component:{label:"COMPONENT",description:"A part of the system made of smaller parts, when it is not one of the other kinds itself: a module, a package, a group of related pieces. It is never called; the parts inside it are.",entryNoun:"part",subtypes:["module","package","UI","infrastructure"],isCode:!1},service:{label:"SERVICE",description:"A program of ours that answers requests. The blocks inside one are ordinary blocks, written, checked and run as usual.",entryNoun:"operation",subtypes:["REST API","GraphQL API","worker","scheduled job"],isCode:!1},external:{label:"EXTERNAL",description:"Something outside the system we do not write: a third-party API, another team's service. A black box with a known interface.",entryNoun:"operation",subtypes:["payment provider","mail service","another team's API"],isCode:!1},database:{label:"DATABASE",description:"A database. Each entry is a table or collection, and its shape is that table's schema.",entryNoun:"table",subtypes:["PostgreSQL","MongoDB","SQLite"],isCode:!1},storage:{label:"STORAGE",description:"Files, objects or blobs kept outside the program. Each entry is a bucket, a path or a set of keys.",entryNoun:"store",subtypes:["JSON file","S3 bucket","object store"],isCode:!1},queue:{label:"QUEUE",description:"A queue, topic or event stream. Each entry is a channel, and its shape is the message carried on it.",entryNoun:"channel",subtypes:["Kafka topic","message queue","event stream"],isCode:!1},structure:{label:"DATA STRUCTURE",description:"Data the program holds in memory rather than keeps outside itself: an index, a cache, a table of state that several blocks read.",entryNoun:"part",subtypes:["dictionary","array","set","LRU cache"],isCode:!1},client:{label:"CLIENT",description:"Who or what sets the system going, and where data first comes from: a browser, a mobile app, a command-line tool, a scheduled job.",entryNoun:"action",subtypes:["browser","mobile app","command-line tool"],isCode:!1}},ve=Object.keys(R),ls=ve.filter(e=>!R[e].isCode);var W=()=>{};function an(e){W=e}var cn=[];var ln=()=>{};function dn(e){ln=e}var No=()=>{};var ct=()=>{};function un(e){ct=e}var Io=()=>{};var L=null,z=null,pn=()=>null;function fn(e){pn=e}var Ee=()=>{};function hn(e){Ee=e}var ie=new Map,lt=new Map;function U(){return L}function h(e,t={},n){let o=document.createElementNS("http://www.w3.org/2000/svg",e);for(let[s,r]of Object.entries(t))o.setAttribute(s,String(r));return n?.append(o),o}function ae(){k("viewport").setAttribute("transform",`translate(${u.panX} ${u.panY}) scale(${u.zoom})`),k("zoom-level").textContent=`${Math.round(u.zoom*100)}%`}function dt(e){let t=xe.get(e);if(t)return t;let n=u.snapshot,o=e.split("/").slice(0,-1).join("/"),s=o===""?n?.systems.map(a=>a.rootBlock)??[]:n?.blocks[o]?.children??[],r=e.split("/").length-1,i=Math.max(0,s.indexOf(e));return Ue[(r*3+i)%Ue.length]}function ce(){for(let[e,t]of ie)t.dataset.selected=String(u.selection.has(e));for(let[e,t]of lt)t.dataset.selected=String(u.selectedLink===e)}function jo(){for(let[e,t]of ie)t.dataset.breakpoint=String(u.breakpoints.has(e))}function gn(){k("canvas-svg").dataset.dependencies=u.showDependencies?"shown":"hidden"}var mn=null;function yn(e){mn=e,k("canvas-svg").classList.toggle("tracing",e!==null);let t=new Set(e?[e.from,e.to].filter(n=>n!==null):[]);for(let[n,o]of ie)o.dataset.current=String(t.has(n));Vo()}function bn(e,t){let n=Math.max(e.x,t.x)-Math.min(e.x+x,t.x+x),o=Math.max(e.y,t.y)-Math.min(e.y+w,t.y+w),s=Math.abs(e.y-t.y)<w*1.2,r=Math.abs(e.x-t.x)<x*.9;if(s&&n<90)return{start:{x:e.x+x/2,y:e.y},end:{x:t.x+x/2,y:t.y},round:"above"};if(r&&o<2*(F+se))return{start:{x:e.x+x,y:e.y+w/2},end:{x:t.x+x,y:t.y+w/2},round:"beside"};let i=rt({x:t.x+x/2,y:t.y+w/2},e);return{start:i,end:rt(i,t),round:null}}function Ho(e,t){if(e&&t)return{...bn(e,t),outside:null};let n=e??t;if(!n)return null;let o=Fo(n),s=rt(o,n);return e?{start:s,end:o,round:null,outside:o}:{start:o,end:s,round:null,outside:o}}var en=50,tn=26;function Fo(e){let t=e.y+w/2,n=[e.x-74,e.x-150,e.x+x+74];for(let o of[t,e.y-24,e.y+w+24])for(let s of n)if(ut(s-en/2,o-tn+7,en,tn))return{x:s,y:o};return{x:e.x-74,y:t}}function rt(e,t){let n={x:t.x+x/2,y:t.y+w/2};return Math.abs(e.x-n.x)>x/2?{x:e.x<n.x?t.x:t.x+x,y:n.y}:{x:n.x,y:e.y<n.y?t.y:t.y+w}}function xn(e,t,n=null){let o=Math.hypot(t.x-e.x,t.y-e.y)||1,s=Math.max(26,Math.min(70,o*.22)),r=n==="above"?{x:(e.x+t.x)/2,y:Math.min(e.y,t.y)-34-o*.06}:n==="beside"?{x:Math.max(e.x,t.x)+40+o*.06,y:(e.y+t.y)/2}:(()=>{let p=Math.abs(t.x-e.x)>=Math.abs(t.y-e.y)?{x:0,y:-1*Math.sign(t.x-e.x||1)}:{x:Math.sign(t.y-e.y||1),y:0};return{x:(e.x+t.x)/2+p.x*s,y:(e.y+t.y)/2+p.y*s}})(),i={x:t.x-r.x,y:t.y-r.y},a=Math.hypot(i.x,i.y)||1,c={x:t.x-i.x/a*9,y:t.y-i.y/a*9};return{d:`M ${e.x} ${e.y} Q ${r.x} ${r.y}, ${c.x} ${c.y}`,at:l=>({x:(1-l)*(1-l)*e.x+2*(1-l)*l*r.x+l*l*c.x,y:(1-l)*(1-l)*e.y+2*(1-l)*l*r.y+l*l*c.y})}}var wn=e=>e.length*5.6+14,Y=15,Wo=e=>e.length*5.9+12,F=14,se=7;function ut(e,t,n,o){for(let s of L?.nodes.values()??[])if(e<s.x+x&&s.x<e+n&&t<s.y+w&&s.y<t+o)return!1;return!0}function Do(e,t){let n=se+t/2;for(let s of[.5,.42,.58,.34,.66,.26,.74]){let r=e(s);for(let i of[{x:r.x,y:r.y-se-F},{x:r.x,y:r.y+se},{x:r.x+n,y:r.y-F/2},{x:r.x-n,y:r.y-F/2}])if(ut(i.x-t/2,i.y,t,F))return i}let o=e(.5);return{x:o.x,y:o.y-se-F}}function Vo(){let e=k("exec-layer");e.replaceChildren();let t=mn;if(!t||!L)return;if(t.effect!==null){let l=t.to===null?null:L.nodes.get(t.to);if(!l)return;let p=wn(t.effect),m=h("g",{class:"exec-effect","data-current":"true"},e),b=l.x+x/2-p/2,g=ut(b,l.y-22,p,Y)?l.y-22:l.y+w+7;h("rect",{x:b,y:g,width:p,height:Y,rx:Y/2,class:"exec-effect-chip"},m),h("text",{x:b+p/2,y:g+10.5,class:"exec-effect-text","text-anchor":"middle"},m).textContent=t.effect;return}let n=t.from===null?null:L.nodes.get(t.from)??null,o=t.to===null?null:L.nodes.get(t.to)??null;if(t.from!==null&&!n||t.to!==null&&!o)return;let s=Ho(n,o);if(!s)return;let r=xn(s.start,s.end,s.round);if(s.outside){let l=h("g",{class:"exec-outside"},e);h("circle",{cx:s.outside.x,cy:s.outside.y,r:4.5,class:"exec-outside-dot"},l),h("text",{x:s.outside.x,y:s.outside.y-9,class:"exec-outside-label","text-anchor":"middle"},l).textContent="outside"}let i=h("g",{class:"exec-line-group","data-data":String(t.data),"data-current":t.back?"back":"out"},e);h("path",{d:r.d,class:"exec-line","marker-end":"url(#exec-arrow)"},i),h("title",{},i).textContent=t.title;let a=Wo(t.label),c=Do(r.at,a);h("rect",{x:c.x-a/2,y:c.y,width:a,height:F,rx:3,class:"exec-label-plate"},i),h("text",{x:c.x,y:c.y+10.5,class:"exec-label","text-anchor":"middle"},i).textContent=t.label,i.addEventListener("pointerdown",l=>{l.stopPropagation(),ln()})}var kn=()=>window.matchMedia("(prefers-reduced-motion: reduce)").matches;function Me(){let e=k("canvas-svg").getBoundingClientRect();return{width:e.width,height:e.height}}function vn(){let{width:e,height:t}=Me();return{cx:(e/2-u.panX)/u.zoom,cy:(t/2-u.panY)/u.zoom,scale:u.zoom}}function Se(e){let{width:t,height:n}=Me();u.zoom=e.scale,u.panX=t/2-e.cx*e.scale,u.panY=n/2-e.cy*e.scale,ae()}function En(e,t,n){return{cx:e.cx+(t.cx-e.cx)*n,cy:e.cy+(t.cy-e.cy)*n,scale:e.scale*Math.pow(t.scale/e.scale,n)}}var _o=e=>e<.5?4*e*e*e:1-Math.pow(-2*e+2,3)/2;function Sn(e,t,n){let o=performance.now(),s=!1,r=()=>{s=!0,clearTimeout(i)},i=setTimeout(()=>{s||(n()&&t(1),r())},e+250),a=c=>{if(s)return;if(!n())return r();let l=Math.min(1,(c-o)/e);t(_o(l)),l<1?requestAnimationFrame(a):r()};requestAnimationFrame(a)}var Te=0;function Go(){return z?{x:-30,y:-30,width:z.width+60,height:z.height+90}:!L||L.nodes.size===0?null:qo(L)}function qo(e){let t=1/0,n=1/0,o=-1/0,s=-1/0;for(let r of e.nodes.values())t=Math.min(t,r.x-30),n=Math.min(n,r.y-34),o=Math.max(o,r.x+x+30),s=Math.max(s,r.y+w+30);return{x:t,y:n,width:o-t,height:s-n}}var Tn=.2,nn=.6;function on(e,t,n,o,s=0){let r=Math.min(1,Math.max(Tn,Math.min(t/e.width,n/e.height))),i={cx:e.x+e.width/2,cy:e.y+e.height/2};if(o===null||r>=nn)return{...i,scale:r};let a=nn,c=t/2/a;return{cx:e.width<=2*c?i.cx:Math.min(Math.max(o,e.x+c),e.x+e.width-c),cy:e.y+(n/2-s)/a,scale:a}}function Ko(){let e=Go(),{width:t,height:n}=Me();if(!e||!t||!n)return null;if(u.fitsWhole)return on(e,t,n,null);let o=z?null:L?.roots[0],s=document.querySelector(".canvas-top")?.getBoundingClientRect(),r=s?Math.max(0,s.bottom-k("canvas-svg").getBoundingClientRect().top):0;return on(e,t,n,o?o.x+x/2:e.x,r)}function pt(e=!1){let t=Ko();if(!t)return;let n=++Te;if(!e||kn()){Se(t);return}let o=vn();Sn(320,s=>Se(En(o,t,s)),()=>n===Te)}function ft(e,t){let n=k("canvas-svg").getBoundingClientRect();if(n.width>0&&n.height>0){pt(),t?.();return}e>0&&requestAnimationFrame(()=>ft(e-1,t))}function Cn(e,t){let n=++Te,o=vn(),s={cx:e,cy:t,scale:o.scale};kn()?Se(s):Sn(300,r=>Se(En(o,s,r)),()=>n===Te)}function le(e){let t=u.snapshot;if(!t||!t.blocks[e])return;let n=e.split("/"),o=!1;for(let r=1;r<n.length;r+=1)u.folded.delete(n.slice(0,r).join("/"))&&(o=!0);u.selection.clear(),u.selection.add(e),u.selectedLink=null,W({redraw:o}),o||ce();let s=L?.nodes.get(e);s&&Cn(s.x+x/2,s.y+w/2)}function $n(e){if(!L)return;let t=e.map(a=>L.nodes.get(a)).filter(a=>!!a);if(t.length===0)return;let{width:n,height:o}=Me();if(t.every(a=>{let c=a.x*u.zoom+u.panX,l=a.y*u.zoom+u.panY;return c>0&&l>0&&c+x*u.zoom<n&&l+w*u.zoom<o}))return;let r=t.reduce((a,c)=>a+c.x+x/2,0)/t.length,i=t.reduce((a,c)=>a+c.y+w/2,0)/t.length;Cn(r,i)}var rn=null,sn=!1;function Mn(){for(let e of["branch-layer","access-layer","node-layer","exec-layer"])k(e).replaceChildren();ie.clear(),lt.clear(),L=null,z=null,document.querySelectorAll(".canvas-empty").forEach(e=>e.remove()),$e(!1),ht(!1)}function ht(e){for(let t of document.querySelectorAll(".zoom-bar, .canvas-top .hint"))t.hidden=!e}function Ln(e){if(Mn(),typeof e!="string"){k("canvas-wrap").append(e);return}let t=document.createElement("p");t.className="canvas-empty",t.textContent=e,k("canvas-wrap").append(t)}var zo=70;function An(){if(Mn(),u.shows==="flow"){Yo();return}let e=Yt(u.folded);if(e.nodes.size===0){Ln("This project has no blocks yet.");return}ht(!0),L=e;let t=rn??(sn?new Set:null),n=t?[...e.nodes.keys()].filter(i=>!t.has(i)):[];Zo(e,k("branch-layer")),Qo(e,k("access-layer"));let o=k("node-layer"),s=nr(e),r=rr(e);for(let i of e.nodes.values()){let a=n.indexOf(i.path);ar(i,o,a===-1?null:Math.min(a,12)*zo,s.get(i.path),r.get(i.path))}$e(!0),rn=new Set(e.nodes.keys()),sn=!1,gn(),ce(),jo(),ae();for(let i of cn)i()}function Yo(){let e=pn();if(!e){Ln("Pick an execution above to see it from beginning to end.");return}ht(!0),z=e.flow;let t=k("node-layer"),n=k("branch-layer"),o=Qt(e.flow,e.at);e.flow.boxes.forEach((s,r)=>{let i=r>0?e.flow.boxes[r-1]:null;s.arrow&&i&&Xo(i,s,s===o,n),Uo(s,e.name(s.path),s===o,e.at,e.notSeen,t)}),ae();for(let s of cn)s()}function Uo(e,t,n,o,s,r){let i=(e.path===null?null:u.snapshot?.blocks[e.path])??null,a=e.arrow!==null&&s.has(e.arrow.at)||e.effects.some(p=>s.has(p.at)),c=h("g",{class:"block-box flow-box",transform:`translate(${e.x} ${e.y})`,"data-role":i?.role??"function","data-planned":String(!!i?.planned),"data-architecture":String(!!i?.architecture),"data-tinted":String(i!==null&&(B.colourBy==="block"||i.architecture)),"data-current":String(n),"data-failing":String(a),"data-key":e.path??"(outside)"},r);i&&B.colourBy==="block"&&!i.planned&&c.style.setProperty("--role",dt(i.path));let l=h("g",{class:"block-body"},c);if(h("rect",{x:0,y:0,width:x,height:w,rx:3,class:"block-plate"},l),h("text",{x:12,y:17,class:"block-name"},l).textContent=t.length>Ce?`${t.slice(0,Ce-1)}\u2026`:t,h("text",{x:12,y:30,class:"block-kind"},l).textContent=i?.roleLabel??"OUTSIDE THE SYSTEM",e.effects.forEach((p,m)=>{let b=wn(p.label),g=h("g",{class:"exec-effect","data-current":String(p.at===o)},c),f=w+8+m*(Y+4);h("rect",{x:0,y:f,width:b,height:Y,rx:Y/2,class:"exec-effect-chip"},g),h("text",{x:b/2,y:f+10.5,class:"exec-effect-text","text-anchor":"middle"},g).textContent=p.label,g.addEventListener("pointerdown",y=>{y.stopPropagation(),Ee(p.at)})}),e.arrow){let p=e.arrow.at;c.addEventListener("pointerdown",m=>{m.stopPropagation(),Ee(p)})}i&&(h("title",{},c).textContent=`${i.name} \u2014 ${i.responsibility}`)}function Xo(e,t,n,o){let s=t.arrow,i=e.y===t.y?{d:`M ${e.x+x} ${e.y+w/2} H ${t.x-9}`,middle:{x:(e.x+x+t.x)/2,y:e.y+w/2}}:(()=>{let c=e.x+x+26,l=t.x-26,p=(e.y+w+t.y)/2;return{d:`M ${e.x+x} ${e.y+w/2} H ${c} V ${p} H ${l} V ${t.y+w/2} H ${t.x-9}`,middle:{x:(c+l)/2,y:p}}})(),a=h("g",{class:"exec-line-group","data-data":String(s.data),"data-current":n?s.back?"back":"out":"none"},o);h("path",{d:i.d,class:"exec-line","marker-end":"url(#exec-arrow)"},a),h("path",{d:i.d,class:"line-hit"},a),h("text",{x:i.middle.x,y:i.middle.y-7,class:"exec-label","text-anchor":"middle"},a).textContent=s.label,a.addEventListener("pointerdown",c=>{c.stopPropagation(),Ee(s.at)})}function Zo(e,t){for(let n of e.nodes.values()){if(n.children.length===0)continue;if(n.listed){let i=Je(n),a=n.children[n.children.length-1];h("path",{d:`M ${i} ${n.y+w} V ${a.y+w/2}`,class:"branch"},t);for(let c of n.children)h("path",{d:`M ${i} ${c.y+w/2} H ${c.x}`,class:"branch"},t);continue}let o=zt(n),s=n.children[0],r=n.children[n.children.length-1];h("path",{d:`M ${n.x+x/2} ${n.y+w} V ${o}`,class:"branch"},t),n.children.length>1&&h("path",{d:`M ${s.x+x/2} ${o} H ${r.x+x/2}`,class:"branch"},t);for(let i of n.children)h("path",{d:`M ${i.x+x/2} ${o} V ${i.y}`,class:"branch"},t)}}function de(e){let t=M(),n=new Map;for(let o of Object.values(t.blocks)){let s=N(e,o.path);if(s)for(let r of o.access){if(r.resourcePath===null)continue;let i=N(e,r.resourcePath);if(!i||i.path===s.path)continue;let a=`${s.path}=>${i.path}:${r.verb}`,c=n.get(a)??{id:a,source:s.path,target:i.path,verb:r.verb,entries:[]};c.entries.some(l=>l.text===r.text)||c.entries.push(r),n.set(a,c)}}return n}function Jo(e,t){if(e.entries.length===1){let o=e.entries[0];return o.entry===null?o.verb:`${o.verb} ${o.entry}`}let n=e.entries.filter(o=>o.entry!==null).length;return n!==e.entries.length?e.verb:`${e.verb} ${n} ${R[t.role].entryNoun}s`}function Qo(e,t){for(let n of de(e).values()){let o=e.nodes.get(n.source),s=e.nodes.get(n.target);if(!o||!s)continue;let r=o.block.planned||s.block.planned,i=h("g",{class:"access-group","data-access":n.id,"data-planned":String(r),"data-role":s.block.role},t);B.colourBy==="block"&&!r&&i.style.setProperty("--role",dt(n.verb==="reads"?s.path:o.path));let a=bn(o,s),c=xn(a.start,a.end,a.round),l=c.at(.5);h("path",{d:c.d,class:"access","marker-end":"url(#access-arrow)"},i),h("path",{d:c.d,class:"line-hit"},i),h("title",{},i).textContent=[`${o.block.name} \u2192 ${s.block.name}`,...n.entries.map(p=>p.text),r?"Planned: not built yet.":""].filter(Boolean).join(`
+`),h("text",{x:l.x,y:l.y-5,class:"access-label","text-anchor":"middle"},i).textContent=Jo(n,s.block),i.addEventListener("pointerdown",p=>{p.stopPropagation(),u.selection.clear(),u.selectedLink=n.id,ce(),W({redraw:!1})}),lt.set(n.id,i)}}var er={function:["M4.5 3 L1.5 6 L4.5 9","M7.5 3 L10.5 6 L7.5 9"],component:["M1.5 1.5 H10.5 V10.5 H1.5 Z","M3.5 3.5 H6 V6 H3.5 Z","M6.8 6.2 H8.8 V8.5 H6.8 Z"],service:["M1.5 3 H10.5 V5.8 H1.5 Z","M1.5 7 H10.5 V9.8 H1.5 Z","M3 4.4 H3.01","M3 8.4 H3.01"],external:["M9.5 6.5 V10.5 H1.5 V2.5 H5.5","M7 5 L10.5 1.5","M7.5 1.5 H10.5 V4.5"],database:["M2 3 C2 1.7 3.8 1 6 1 C8.2 1 10 1.7 10 3 V9 C10 10.3 8.2 11 6 11 C3.8 11 2 10.3 2 9 Z","M2 3 C2 4.3 3.8 5 6 5 C8.2 5 10 4.3 10 3"],storage:["M1.5 2.5 H10.5 V10 H1.5 Z","M1.5 5.2 H10.5","M5 7.6 H7"],queue:["M1.5 3.5 H3.8 V8.5 H1.5 Z","M4.9 3.5 H7.2 V8.5 H4.9 Z","M8.3 3.5 H10.6 V8.5 H8.3 Z"],structure:["M5 1.8 C3.6 1.8 4.1 5 2.6 6 C4.1 7 3.6 10.2 5 10.2","M7 1.8 C8.4 1.8 7.9 5 9.4 6 C7.9 7 8.4 10.2 7 10.2"],client:["M4 4 A2 2 0 1 1 8 4 A2 2 0 1 1 4 4","M1.8 10.6 C1.8 7.6 10.2 7.6 10.2 10.6"]};function tr(e){return e.runnable}function Le(e){return e.code!==null}function gt(e){return e.exposes.length>0||e.inputs.length>0||e.outputs.length>0||e.access.length>0}function nr(e){let t=new Map;for(let n of u.snapshot?.notes??[]){if(n.waiting===null||!u.snapshot?.blocks[n.block])continue;let o=N(e,n.block);if(!o)continue;let s=t.get(o.path)??{forAgent:0,forPerson:0,first:n.block,inside:!1,working:!1,failing:!1};n.block!==o.path&&(s.inside=!0),n.waiting==="agent"&&n.working!==void 0&&(s.working=!0),n.waiting==="agent"&&n.messages.some(r=>r.from==="person"&&(r.run!==void 0||r.problem!==void 0))&&(s.failing=!0),n.waiting==="agent"?s.forAgent+=1:s.forPerson+=1,t.set(o.path,s)}return t}var or=()=>null;function rr(e){let t=new Map,n=or();if(!n)return t;for(let[o,s]of n){let r=N(e,o);if(!r)continue;let i=r.path!==o||t.has(r.path);t.set(r.path,i?"What changed is inside it. The Changes list has the details.":s)}return t}function sr(e,t){let n=t.forAgent+t.forPerson,o=h("g",{class:"note-mark",transform:`translate(${x} 0)`,"data-waiting":t.forPerson>0?"person":"agent","data-working":String(t.working)},e),s=[t.forPerson>0?`${t.forPerson} for you`:"",t.forAgent>0?`${t.forAgent} for your agent`:""].filter(Boolean).join(", "),r=t.inside?" on it or inside it":"",i=t.working?" Your agent is working on it now.":"";h("title",{},o).textContent=`${n} open note${n===1?"":"s"}${r}: ${s}.${i} Click to read them.`,t.working&&h("circle",{r:8,class:"note-mark-ring"},o),h("circle",{r:8,class:"note-mark-dot"},o),h("text",{y:3.5,class:"note-mark-count","text-anchor":"middle"},o).textContent=n>9?"9+":String(n),o.addEventListener("pointerdown",a=>a.stopPropagation()),o.addEventListener("dblclick",a=>a.stopPropagation()),o.addEventListener("click",a=>{a.stopPropagation(),Io(t.first)})}function ir(e){let t=h("g",{class:"block-flag",transform:`translate(${x-20} -9)`},e);h("title",{},t).textContent="Something went wrong here: in the run being watched, or in a run or problem flagged for your agent.",h("path",{d:"M0.75 0.5 V11",class:"block-flag-pole"},t),h("path",{d:"M1.5 0.5 H9.5 L7.25 3.75 L9.5 7 H1.5 Z",class:"block-flag-cloth"},t)}var Ce=21;function ar(e,t,n,o,s){let r=e.block,i=h("g",{class:"block-box",transform:`translate(${e.x} ${e.y})`,"data-planned":String(r.planned),"data-role":r.role,"data-architecture":String(r.architecture),"data-tinted":String(B.colourBy==="block"||r.architecture),"data-key":e.path,"data-id":r.id},t);B.colourBy==="block"&&!r.planned&&i.style.setProperty("--role",dt(e.path)),h("title",{},i).textContent=[`${r.name} \u2014 ${r.roleLabel.toLowerCase()}`,r.planned?"Planned: drawn, but not built yet.":"",r.responsibility].filter(Boolean).join(`
+
+`);let a=h("g",{class:"block-body"},i);n!==null&&(a.classList.add("appearing"),a.style.animationDelay=`${n}ms`),h("rect",{x:0,y:0,width:x,height:w,rx:3,class:"block-plate",tabindex:"0",role:"button","aria-label":r.name},a);let c=h("g",{class:"role-icon",transform:"translate(7 14)"},a);h("title",{},c).textContent=r.roleLabel;for(let p of er[r.role])h("path",{d:p,class:"role-icon-line"},c);let l=r.name.length>Ce?`${r.name.slice(0,Ce-1)}\u2026`:r.name;if(h("text",{x:25,y:17,class:"block-name"},a).textContent=l,h("text",{x:25,y:30,class:"block-kind"},a).textContent=r.planned?"PLANNED":r.roleLabel,h("text",{x:x-8,y:30,class:"run-note","text-anchor":"end"},a),cr(i,r),e.hasParts&&lr(i,e),o&&sr(i,o),s!==void 0){let p=h("g",{class:"change-mark"},i);h("title",{},p).textContent=s,h("circle",{r:4.5,class:"change-mark-dot"},p)}if(i.dataset.failing=String(o?.failing??!1),ir(i),tr(r)){let p=h("g",{class:"breakpoint",transform:`translate(-10 ${w/2})`},i);h("title",{},p).textContent="Pause here: a run stops before this block, so you can see what reaches it.";let m=h("circle",{r:9,class:"breakpoint-hit"},p);h("circle",{r:4.5,class:"breakpoint-dot"},p),m.addEventListener("pointerdown",b=>b.stopPropagation()),m.addEventListener("dblclick",b=>b.stopPropagation()),m.addEventListener("click",b=>{b.stopPropagation(),No(r.path)})}ie.set(e.path,i),dr(i,e)}function cr(e,t){let n=[];gt(t)&&n.push({kind:"details",label:"\u25A4",title:`${t.name}: its interface, and what it reaches`}),Le(t)&&n.push({kind:"code",label:"</>",title:`The code behind ${t.name}`}),n.forEach((o,s)=>{let r=h("g",{class:"block-button",transform:`translate(${x-6-(s+1)*22} 4)`},e);h("title",{},r).textContent=o.title,h("rect",{x:0,y:0,width:20,height:14,rx:2,class:"block-button-plate"},r),h("text",{x:10,y:10.5,class:"block-button-text","text-anchor":"middle"},r).textContent=o.label,r.addEventListener("pointerdown",i=>i.stopPropagation()),r.addEventListener("dblclick",i=>i.stopPropagation()),r.addEventListener("click",i=>{i.stopPropagation(),ct(o.kind,t.path)})})}function lr(e,t){let n=h("g",{class:"fold",transform:`translate(${t.listed?Je(t)-t.x:x/2} ${w})`},e);h("title",{},n).textContent=t.folded?`Show what ${t.block.name} is made of`:`Fold ${t.block.name}: put its parts away`,h("circle",{r:9,class:"fold-hit"},n),h("circle",{r:6,class:"fold-dot"},n),h("path",{d:t.folded?"M -3 0 H 3 M 0 -3 V 3":"M -3 0 H 3",class:"fold-mark"},n),n.addEventListener("pointerdown",o=>o.stopPropagation()),n.addEventListener("dblclick",o=>o.stopPropagation()),n.addEventListener("click",o=>{o.stopPropagation(),st(t.path)})}function st(e){u.folded.has(e)?u.folded.delete(e):u.folded.add(e),W({redraw:!0})}function dr(e,t){let n=o=>{o?u.selection.has(t.path)?u.selection.delete(t.path):u.selection.add(t.path):(u.selection.clear(),u.selection.add(t.path)),u.selectedLink=null,ce(),W({redraw:!1})};e.addEventListener("pointerdown",o=>{o.stopPropagation(),n(o.ctrlKey||o.metaKey)}),e.addEventListener("dblclick",o=>{o.stopPropagation(),t.hasParts?st(t.path):Le(t.block)&&ct("code",t.path)}),e.addEventListener("keydown",o=>{if(o.key==="Enter"&&t.hasParts){o.preventDefault(),st(t.path);return}o.key===" "&&(o.preventDefault(),n(!1))})}var it=!1;function Rn(){it=!0}function $e(e){let t=k("legend");if(!e||B.colourBy!=="role"){t.hidden=!0;return}t.hidden=!1,t.dataset.collapsed=String(u.legendCollapsed),t.replaceChildren();let n=d("div","legend-head");n.append(d("span","legend-title","Colours"));let o=d("button","legend-toggle");if(o.type="button",o.textContent=u.legendCollapsed?"\u25BE":"\u25B4",o.title=u.legendCollapsed?"Show what the colours mean":"Hide the colours",o.addEventListener("click",()=>{u.setLegendCollapsed(!u.legendCollapsed),$e(!0)}),n.append(o),t.append(n),u.legendCollapsed)return;let s=[...L?.nodes.values()??[]].map(c=>c.block),r=new Set(s.filter(c=>!c.planned).map(c=>c.role));for(let c of ve){let l=d("div","legend-row");l.dataset.role=c,l.dataset.here=String(r.has(c));let p=d("input","legend-swatch");p.type="color",p.value=q.get(c),p.title=`${R[c].label}: ${R[c].description}`,it&&(p.disabled=!0),p.addEventListener("input",()=>{q.set(c,p.value)});let m=d("span","legend-text",c==="function"?"code":R[c].label.toLowerCase());l.append(p,m),t.append(l)}let i=d("div","legend-row");if(i.dataset.role="planned",i.dataset.here=String(s.some(c=>c.planned)),i.append(d("span","legend-swatch fixed"),d("span","legend-text","planned, not built yet")),t.append(i),it)return;let a=d("button","legend-reset","Reset to default");a.type="button",a.addEventListener("click",()=>{for(let c of ve)q.set(c,null);$e(!0)}),t.append(a)}function On(){let e=k("canvas-svg"),t=null;e.addEventListener("pointerdown",o=>{let s=o.target;if(!(s.closest(".block-box")||s.closest(".access-group"))){t={x:o.clientX,y:o.clientY,panX:u.panX,panY:u.panY,moved:!1},e.classList.add("panning");try{e.setPointerCapture(o.pointerId)}catch{}}}),e.addEventListener("pointermove",o=>{t&&(u.panX=t.panX+(o.clientX-t.x),u.panY=t.panY+(o.clientY-t.y),(Math.abs(o.clientX-t.x)>2||Math.abs(o.clientY-t.y)>2)&&(t.moved=!0,u.userAdjusted=!0),ae())});let n=()=>{if(!t)return;e.classList.remove("panning");let o=!t.moved;t=null,o&&(u.selection.clear(),u.selectedLink=null,ce(),W({redraw:!1}))};e.addEventListener("pointerup",n),e.addEventListener("pointercancel",n),e.addEventListener("wheel",o=>{o.preventDefault();let s=e.getBoundingClientRect();at(o.clientX-s.left,o.clientY-s.top,o.deltaY<0?1.12:1/1.12)},{passive:!1})}function at(e,t,n){let o=Math.min(3,Math.max(Tn,u.zoom*n)),s=o/u.zoom;u.panX=e-(e-u.panX)*s,u.panY=t-(t-u.panY)*s,u.zoom=o,u.userAdjusted=!0,ae()}function Bn(){typeof ResizeObserver=="function"&&new ResizeObserver(()=>{u.userAdjusted||pt()}).observe(k("canvas-wrap"))}function Pn(){let e={block:"Colour: by block",role:"Colour: by kind"},t=k("colour-by"),n=()=>{t.textContent=e[B.colourBy]};t.addEventListener("click",()=>{let r=re.indexOf(B.colourBy);B.setColourBy(re[(r+1)%re.length]),n(),W({redraw:!0})});let o=k("show-dependencies"),s=()=>{o.textContent=u.showDependencies?"Dependencies: shown":"Dependencies: hidden",o.setAttribute("aria-pressed",String(u.showDependencies))};o.addEventListener("click",()=>{u.setShowDependencies(!u.showDependencies),s(),gn()}),n(),s(),k("zoom-in").addEventListener("click",()=>{let r=k("canvas-svg").getBoundingClientRect();at(r.width/2,r.height/2,1.2)}),k("zoom-out").addEventListener("click",()=>{let r=k("canvas-svg").getBoundingClientRect();at(r.width/2,r.height/2,1/1.2)}),k("zoom-fit").addEventListener("click",()=>{u.userAdjusted=!1,u.fitsWhole=!0,pt(!0)})}function Ae(e){return e===void 0?"nothing":e===null?"null":typeof e=="string"?JSON.stringify(e):typeof e=="number"||typeof e=="boolean"?String(e):Array.isArray(e)?`a list of ${e.length}`:"an object"}function D(e){return e!==null&&typeof e=="object"&&!Array.isArray(e)}function V(e,t,n="output",o=!1){if(Array.isArray(t)){if(!Array.isArray(e))return[`${n} should be a list but was ${Ae(e)}.`];let s=[];e.length!==t.length&&s.push(`${n} has ${e.length} items, expected ${t.length}.`);for(let r=0;r<Math.min(e.length,t.length);r+=1)s.push(...V(e[r],t[r],`${n}[${r}]`,o));return s}if(D(t)){if(!D(e))return[`${n} should be an object but was ${Ae(e)}.`];let s=[];for(let r of Object.keys(t)){if(!(r in e)){s.push(`${n}.${r} is missing.`);continue}s.push(...V(e[r],t[r],`${n}.${r}`,o))}if(!o)for(let r of Object.keys(e))r in t||s.push(`${n}.${r} was not expected.`);return s}return Object.is(e,t)?[]:[`${n} was ${Ae(e)}, expected ${Ae(t)}.`]}var Nn=e=>e===null?"outside":S(e);function Re(e){return`${e.kind?`A ${e.kind}`:"An interaction"}${e.from?` from ${S(e.from)}`:""}${e.to?` to ${S(e.to)}`:""}`}function Oe(e){return`${e.kind?`A "${e.kind}" effect`:"An effect"}${e.at?` at ${S(e.at)}`:""}`}function ur(e){return e.type==="effect"?`a "${e.kind}" effect at ${S(e.at)}`:e.type==="return"?`${S(e.to)} returning to ${Nn(e.from)}`:`a ${e.kind} from ${Nn(e.from)} to ${S(e.to)}`}function pr(e,t){return!(t.kind!==void 0&&e.kind!==t.kind||t.to!==void 0&&!T(e.to,t.to)||t.from!==void 0&&(e.from===null||!T(e.from,t.from)))}function fr(e,t,n){let o=[];return n.payload!==void 0&&o.push(...e.payload===void 0?["it carried nothing."]:V(e.payload,n.payload,"payload",!0)),n.response!==void 0&&o.push(...t?.error!==void 0?[`it threw instead: ${t.error}`]:t?.response===void 0?["nothing came back."]:V(t.response,n.response,"response",!0)),o}function In(e,t,n,o,s){let r=t.map(l=>e.filter(p=>n(p,l)&&o(p,l).length===0)),i=new Map,a=(l,p)=>{for(let m of r[l]){if(p.has(m.id))continue;p.add(m.id);let b=i.get(m.id);if(b===void 0||a(b,p))return i.set(m.id,l),!0}return!1},c=[];return t.forEach((l,p)=>{if(a(p,new Set))return;let m=r[p].length;if(m>0){c.push(`${s(l)} happened ${m===1?"once":`${m} times`}, which is not enough for every expectation asking for it.`);return}let b=e.find(g=>n(g,l));c.push(b?`${s(l)} happened, but not as expected: ${o(b,l).join(" ")}`:`${s(l)} never happened.`)}),c}function hr(e,t,n){let o=V(e,t,n,!0);if(D(e)&&D(t))for(let s of Object.keys(e))s in t||o.push(`${n}.${s} was not expected.`);return o}function X(e,t){let n=[],o=e.events.filter(a=>a.type==="interaction"),s=e.events.filter(a=>a.type==="effect"),r=new Map(e.events.filter(a=>a.type==="return").map(a=>[a.of,a]));for(let a of t.entered)e.events.some(c=>Xt(c,a))||n.push(`Nothing crossed into ${S(a)}.`);n.push(...In(o,t.interactions,pr,(a,c)=>fr(a,r.get(a.id),c),Re)),n.push(...In(s,t.effects,(a,c)=>(c.kind===void 0||a.kind===c.kind)&&(c.at===void 0||T(a.at,c.at)),(a,c)=>c.detail===void 0?[]:a.detail===void 0?["it said nothing more."]:V(a.detail,c.detail,"detail",!0),Oe));for(let a of t.never){let c=e.events.find(l=>Ut(l,a));c&&n.push(`Nothing should have happened in ${S(a)}, but there was ${ur(c)}.`)}let i=Object.entries(t.state);if(i.length>0&&e.state===void 0)n.push("This trace does not say what the stores held at the end, so what they should hold cannot be checked. Only a recorded run knows.");else for(let[a,c]of i)n.push(...hr(e.state[a],c,a));return{passed:n.length===0,failures:n,source:e.source}}var gr="trigger";var mr=["row-changed","row-removed","message-published","response"];function Be(e){let t=e.indexOf(".");return t===-1?{path:e,entry:null}:{path:e.slice(0,t),entry:e.slice(t+1)}}var ue=e=>({path:e,entry:null});var Z="The recording ends before the run did, so this may not have happened yet.";function yt(e){let t=e.length>3?[...e.slice(0,3),`${e.length-3} more`]:e;return t.length===1?t[0]:`${t.slice(0,-1).join(", ")} and ${t.at(-1)}`}function pe(e){let t=Object.entries(e.blocks).map(([n,o])=>[n,o.split("#")[0]]);return new Map(t.filter(([,n])=>t.filter(([,o])=>o===n).length>1))}function jn(e,t){if(t.length===0)return null;let n=pe(e);return`${[...new Set(t.map(r=>n.get(r)))].map(r=>`${yt([...n].flatMap(([i,a])=>a===r?[i]:[]))} share ${r}`).join("; ")}, and a call inside one file is not heard, so what one of them does may be heard as another's.`}var yr=(e,t)=>e.unseen.filter(n=>T(Be(n),t)),br=(e,t)=>[...pe(e).keys()].filter(n=>T(ue(n),t)),xr=(e,t)=>[...Object.keys(e.blocks),...e.stores].filter(n=>T(Be(n),t)&&!pe(e).has(n));function Hn(e,t){let n=[...new Set(t.flatMap(o=>yr(e,o)))];return n.length===0?null:`${yt(n)} ${n.length===1?"is":"are"} not part of what ran.`}function mt(e,t){return Hn(e,t)??jn(e,[...new Set(t.flatMap(n=>br(e,n)))])}function Fn(e,t){return t===void 0?null:jn(e,[...pe(e).keys()].filter(n=>T(t,ue(n))))}function Wn(e,t){return t.kind==="deliver"?"Fragmentor does not record a channel handing a message on.":t.kind==="trigger"?`The recording starts at ${e.runs}, so it cannot see what set the execution going.`:null}function Dn(e,t){return t.from===void 0?"It does not say where it comes from, and not everything that could have made it ran.":mt(e,t.to?[t.from,t.to]:[t.from])}function Vn(e,t){return t.at!==void 0&&t.kind==="response"&&e.answers.includes(S(t.at))?{...t,at:ue(e.runs)}:t}function _n(e,t){return t.kind!==void 0&&!mr.includes(t.kind)?`Fragmentor does not record "${t.kind}" effects.`:t.kind==="response"&&t.at!==void 0&&!T(ue(e.runs),t.at)?`Fragmentor records a response only from ${e.runs}, the block it runs.`:null}function Gn(e,t){return t.at===void 0?"It does not say where, and not everything that could have left it ran.":Hn(e,[t.at])}function qn(e,t){if(e.kind!=="read"&&e.kind!=="remove"||e.payload===void 0)return e;let{payload:n,...o}=e,s=D(n)?Object.values(n):[],r=s.length===1&&["string","number","boolean"].includes(typeof s[0])?String(s[0]):void 0,i=t.events.filter(c=>c.type==="interaction"&&c.kind===e.kind&&(e.to===void 0||T(c.to,e.to))&&(e.from===void 0||c.from!==null&&T(c.from,e.from))),a=i.length>0&&i.every(c=>c.payload===void 0);return r===void 0||a?o:{...o,payload:{key:r}}}var P=e=>({entered:[],interactions:[],effects:[],never:[],state:{},...e});function Kn(e,t,n,o){return{expectations:e.expect?wr(e.expect,t,n,o):{met:[],failures:[],setAside:[]},steps:e.declared?kr(e.declared,t,n,o):[],unwrittenCount:Er(e.declared,t,n),notSeeded:Object.keys(e.given).filter(s=>!n.stores.includes(s))}}function wr(e,t,n,o){let s=P({}),r=[],i=[],a=[],c=[],l=[],p=(g,f,y,v)=>{if(y===null)v(),c.push({expectation:g,alone:f});else{let E={expectation:g,why:y};r.push(E),l.push({expectation:g,alone:f,aside:E})}};for(let g of e.entered){let f=mt(n,[g])??(o?null:Z);p(`Something crosses into ${S(g)}`,P({entered:[g]}),f,()=>s.entered.push(g))}for(let g of e.interactions){let f=qn(g,t),y=Wn(n,f)??Fn(n,f.from),v=y??Dn(n,f)??(o?null:Z);y!==null?r.push({expectation:Re(g),why:y}):p(Re(g),P({interactions:[f]}),v,()=>s.interactions.push(f))}for(let g of e.effects){let f=Vn(n,g),y=_n(n,f),v=y??Gn(n,f)??(o?null:Z);y!==null?r.push({expectation:Oe(g),why:y}):p(Oe(g),P({effects:[f]}),v,()=>s.effects.push(f))}for(let g of e.never){let f=X(t,P({never:[g]}));if(!f.passed){i.push(...f.failures);continue}let y=xr(n,g),v=mt(n,[g]),E=`Nothing happens in ${S(g)}`;v!==null?r.push({expectation:E,why:y.length>0?`Checked only for ${yt(y)}.`:v}):o?a.push(E):r.push({expectation:E,why:Z})}for(let[g,f]of Object.entries(e.state)){let y=`What ${g} holds at the end`,v=n.stores.includes(g)?o?null:Z:`${g} is not part of what ran.`;v===null?(s.state[g]=f,c.push({expectation:y,alone:P({state:{[g]:f}})})):r.push({expectation:y,why:v})}i.unshift(...X(t,s).failures);let m=P({}),b=[];for(let{expectation:g,alone:f,aside:y}of[...c.map(v=>({...v,aside:null})),...l]){let v={entered:[...m.entered,...f.entered],interactions:[...m.interactions,...f.interactions],effects:[...m.effects,...f.effects],never:[],state:{...m.state,...f.state}};X(t,v).passed&&(m=v,b.push(g),y&&r.splice(r.indexOf(y),1))}return{met:[...b,...a],failures:i,setAside:r}}function kr(e,t,n,o){let s=new Map(e.events.flatMap(a=>a.type==="return"&&a.response!==void 0?[[a.of,a.response]]:[])),r=P({}),i=new Set;return e.events.flatMap(a=>{if(a.id===gr||a.type==="return")return[];let c=f=>[{id:a.id,verdict:"unchecked",reason:f}],l,p,m,b;if(a.type==="interaction"){let f=qn({from:a.from??void 0,to:a.to,kind:a.kind,...a.payload===void 0?{}:{payload:a.payload},...s.has(a.id)?{response:s.get(a.id)}:{}},t),y=Wn(n,f)??Fn(n,f.from);if(y!==null)return c(y);l={...r,interactions:[...r.interactions,f]},p=P({interactions:[f]}),m=()=>r.interactions.push(f),b=Dn(n,f)}else{let f=Vn(n,{at:a.at,kind:a.kind,...a.detail===void 0?{}:{detail:a.detail}}),y=_n(n,f);if(y!==null)return c(y);l={...r,effects:[...r.effects,f]},p=P({effects:[f]}),m=()=>r.effects.push(f),b=Gn(n,f)}let g=X(t,l);if(g.passed){m();let f=vr(t,p,i);return[{id:a.id,verdict:"seen",reason:null,...f===void 0?{}:{seenAs:f}}]}return b!==null?c(b):[{id:a.id,verdict:"not-seen",reason:o?g.failures.join(" "):Z}]})}function vr(e,t,n){let o=new Map(e.events.flatMap(c=>c.type==="return"?[[c.of,c]]:[])),[s]=t.interactions,[r]=t.effects,i=e.events.filter(c=>(c.type==="interaction"?s?.kind===c.kind:c.type==="effect"&&r?.kind===c.kind)&&X({...e,events:[c,...o.has(c.id)?[o.get(c.id)]:[]]},t).passed),a=(i.find(c=>!n.has(c.id))??i[0])?.id;return a!==void 0&&n.add(a),a}function Er(e,t,n){let o=(e?.events??[]).filter(i=>i.type==="interaction"),s=pe(n),r=(i,a)=>T(i,a)||[...s].some(([c,l])=>i.entry===null&&s.get(i.path)===l&&T(ue(c),a));return t.events.filter(i=>i.type==="interaction"&&i.kind!=="trigger"&&!o.some(a=>a.kind===i.kind&&a.from!==null&&i.from!==null&&r(i.from,a.from)&&T(i.to,a.to))).length}var Sr=new Set(["as","async","await","break","case","catch","class","const","continue","default","delete","do","else","enum","export","extends","false","finally","for","from","function","if","implements","import","in","instanceof","interface","is","keyof","let","new","null","of","private","protected","public","readonly","return","satisfies","static","super","switch","this","throw","true","try","type","typeof","undefined","var","void","while","yield"]),Tr=new Set(["and","as","assert","async","await","break","class","continue","def","del","elif","else","except","False","finally","for","from","global","if","import","in","is","lambda","None","nonlocal","not","or","pass","raise","return","True","try","while","with","yield"]),Cr={lineComment:"//",blockComment:["/*","*/"],quotes:['"',"'","`"],tripleQuotes:!1,keywords:Sr},$r={lineComment:"#",blockComment:null,quotes:['"',"'"],tripleQuotes:!0,keywords:Tr},Yn=/[A-Za-z_$]/,bt=/[A-Za-z0-9_$]/,Pe=/[0-9]/,xt=/[{}()[\];:,.<>=+\-*/%!?&|^~]/;function wt(){let e=[],t="";return{plain(n){t+=n},push(n,o){t&&e.push({text:t,kind:null}),t="",e.push({text:n,kind:o})},done(){return t&&e.push({text:t,kind:null}),t="",e}}}function zn(e,t){let n=wt(),o=(i,a)=>n.push(i,a),s=0,r=(i,a,c,l=!1)=>{let p=i;for(;p<e.length;){if(l&&e[p]===`
+`)return p;if(c&&e[p]==="\\"){p+=2;continue}if(e.startsWith(a,p))return p+a.length;p+=1}return e.length};for(;s<e.length;){let i=e.slice(s);if(i.startsWith(t.lineComment)){let l=e.indexOf(`
+`,s);o(e.slice(s,l===-1?e.length:l),"comment"),s=l===-1?e.length:l;continue}if(t.blockComment&&i.startsWith(t.blockComment[0])){let l=r(s+t.blockComment[0].length,t.blockComment[1],!1);o(e.slice(s,l),"comment"),s=l;continue}let a=t.tripleQuotes?t.quotes.map(l=>l.repeat(3)).find(l=>i.startsWith(l)):void 0;if(a){let l=r(s+3,a,!0);o(e.slice(s,l),"string"),s=l;continue}let c=t.quotes.find(l=>i.startsWith(l));if(c){let l=r(s+1,c,!0,c!=="`");o(e.slice(s,l),"string"),s=l;continue}if(Pe.test(e[s])){let l=s;for(;l<e.length&&/[0-9a-fA-FxXoObB._]/.test(e[l]);)l+=1;o(e.slice(s,l),"number"),s=l;continue}if(Yn.test(e[s])){let l=s;for(;l<e.length&&bt.test(e[l]);)l+=1;let p=e.slice(s,l);t.keywords.has(p)?o(p,"keyword"):/^[A-Z]/.test(p)?o(p,"type"):/^\s*\(/.test(e.slice(l))?o(p,"name"):n.plain(p),s=l;continue}if(xt.test(e[s])){o(e[s],"punct"),s+=1;continue}n.plain(e[s]),s+=1}return n.done()}function Mr(e){let t=wt(),n=(s,r)=>t.push(s,r),o=0;for(;o<e.length;){let s=e[o];if(s==='"'){let i=o+1;for(;i<e.length;){if(e[i]==="\\"){i+=2;continue}if(e[i]==='"'){i+=1;break}i+=1}n(e.slice(o,i),/^\s*:/.test(e.slice(i))?"key":"string"),o=i;continue}if(Pe.test(s)||s==="-"&&Pe.test(e[o+1]??"")){let i=o+1;for(;i<e.length&&/[0-9.eE+-]/.test(e[i]);)i+=1;n(e.slice(o,i),"number"),o=i;continue}let r=["true","false","null"].find(i=>e.startsWith(i,o));if(r&&!bt.test(e[o+r.length]??"")){n(r,"keyword"),o+=r.length;continue}if(xt.test(s)){n(s,"punct"),o+=1;continue}t.plain(s),o+=1}return t.done()}var Lr=new Set(["string","number","boolean","null","undefined","unknown","void","any","never","object","true","false","int","float","str","bool","bytes","None"]);function Ar(e){let t=wt(),n=(s,r)=>t.push(s,r),o=0;for(;o<e.length;){let s=e[o];if(s==='"'||s==="'"){let r=o+1;for(;r<e.length&&e[r]!==s;)r+=e[r]==="\\"?2:1;n(e.slice(o,Math.min(r+1,e.length)),"string"),o=Math.min(r+1,e.length);continue}if(Pe.test(s)){let r=o;for(;r<e.length&&/[0-9._]/.test(e[r]);)r+=1;n(e.slice(o,r),"number"),o=r;continue}if(Yn.test(s)){let r=o;for(;r<e.length&&bt.test(e[r]);)r+=1;let i=e.slice(o,r);/^\??:/.test(e.slice(r))?n(i,"key"):Lr.has(i)?n(i,"keyword"):/^[A-Z]/.test(i)?n(i,"type"):t.plain(i),o=r;continue}if(xt.test(s)){n(s,"punct"),o+=1;continue}t.plain(s),o+=1}return t.done()}function Rr(e,t){return t==="json"?Mr(e):t==="type"?Ar(e):t==="typescript"?zn(e,Cr):t==="python"?zn(e,$r):[{text:e,kind:null}]}function Or(e,t){if(t===null)return document.createTextNode(e);let n=document.createElement("span");return n.className=`t-${t}`,n.textContent=e,n}function Un(e,t){let n=[],o=()=>{let r=document.createElement("span");return r.className="code-line",n.push(r),r},s=o();for(let r of Rr(e,t))r.text.split(`
+`).forEach((i,a)=>{a>0&&(s=o()),i&&s.append(Or(i,r.kind))});return n}function Xn(e,t){let n=document.createDocumentFragment();return Un(e,t).forEach((o,s)=>{s>0&&n.append(document.createTextNode(`
+`)),n.append(o)}),n}function Zn(e){let t=document.createElement("div");return t.className="ptype",t.append(Xn(e,"type")),t}function Jn(e,t,n="code"){let o=document.createElement("pre");return o.className=n,o.append(Xn(e,t)),o}var je="step",te=()=>{};function eo(e){te=e}function He(e){if(e===null)return"outside";let t=u.snapshot?.blocks[e.path]?.name??e.path;return e.entry===null?t:`${t} \xB7 ${e.entry}`}var Br={trigger:"sets off",call:"calls",read:"reads",write:"writes",remove:"removes from",send:"sends to",deliver:"delivers to"},to={action:"Someone uses",request:"A request arrives at",schedule:"The clock starts",message:"A message arrives at",webhook:"A webhook arrives at"},Fe=(e,t)=>t.source==="recorded"?null:e.trigger.kind;function J(e,t=70){if(e===void 0)return"";let n=JSON.stringify(e)??"";return`: ${n.length>t?`${n.slice(0,t-1)}\u2026`:n}`}function Q(e,t,n){let o=s=>s===null&&t===null?"Fragmentor":He(s);return e.type==="effect"?`${ke(e.kind)} at ${o(e.at)}${J(e.detail,n)}`:e.type==="return"?e.error!==void 0?`${o(e.to)} throws to ${o(e.from)}${J(e.error,n)}`:e.response===void 0?`${o(e.to)} finishes for ${o(e.from)}`:`${o(e.to)} gives back to ${o(e.from)}${J(e.response,n)}`:e.from===null&&t===null?`Fragmentor runs ${o(e.to)}${e.payload===void 0?"":` with${J(e.payload,n).slice(1)}`}`:e.from===null?`${to[t]} ${o(e.to)}${J(e.payload,n)}`:`${o(e.from)} ${Br[e.kind]} ${o(e.to)}${J(e.payload,n)}`}function no(e,t){return e.type==="return"?e.error===void 0?"gives back":"throws":e.type==="effect"?ke(e.kind):e.from===null?t??"runs":e.kind}function oo(){let e=Object.keys(u.snapshot?.blocks??{}).filter(t=>!u.folded.has(t));return{expanded:new Set(["",...e])}}function Pr(e,t){let n=U();if(!n)return null;let o=oo(),s=tt(e,o),r=no(e,t),a=[e.type==="return"?void 0:e.description,Q(e,t,400)].filter(Boolean).join(`
+
+`);if(s.on!=="edge"){let g=N(n,s.at.path);if(!g)return null;let f=s.on==="effect"?r:`${r}, inside`;return{from:null,to:g.path,label:r,title:a,data:!1,back:!1,effect:f}}let c=K(e);if(!c)return null;let l=g=>g===null?null:N(n,g.path),p=l(c.from),m=l(c.to);if(c.from!==null&&!p||c.to!==null&&!m)return null;let b=e.type==="interaction"&&e.payload!==void 0||e.type==="return"&&e.response!==void 0;return{from:p?.path??null,to:m?.path??null,label:r,title:a,data:b,back:e.type==="return",effect:null}}function We(){let e=Ye();if(!e)return null;let t=e.declared&&e.declared.events.length>0?e.declared:null,n=oe(e),o=u.execution?.trace==="recorded"?n?.trace??t:t??n?.trace??null;return{execution:e,trace:o,written:t,recording:n}}function ge(){let e=We();if(!e?.trace||!u.execution)return null;let t=Math.min(u.execution.at,e.trace.events.length-1),n=e.trace.events[t];return n?{execution:e.execution,trace:e.trace,at:t,event:n}:null}var vt=null;function Nr(){return vt}function _(){let e=We();u.execution&&!e&&(u.execution=null,u.shows="tree");let t=ge();t&&u.execution&&(u.execution.at=t.at),vt=t&&u.shows==="tree"?Pr(t.event,Fe(t.execution,t.trace)):null,yn(vt),Ie()}var Et=null;function ro(e){Et=e,fn(()=>{let t=ge();if(!t)return null;let n=Fe(t.execution,t.trace),o=t.trace.source==="declared"?Ct(t.execution):null,s=new Set(t.trace.events.flatMap((r,i)=>o?.contradicted&&o.byStep.get(r.id)?.verdict==="not-seen"?[i]:[]));return{flow:Jt(t.trace,r=>no(r,n)),at:t.at,notSeen:s,name:r=>r===null?n===null?"Fragmentor":"Outside":u.snapshot?.blocks[r]?.name??r}}),hn(t=>{co(t)})}var ee,Ir=1100;function I(){ee!==void 0&&window.clearInterval(ee),ee=void 0}function jr(e){I();let t=u.shows==="flow";u.execution=e===null?null:{id:e,at:0,trace:"declared"},e===null&&(u.shows="tree"),j(),te({redraw:t}),_()}function j(){if(!u.execution){u.selectedLink===je&&(u.selectedLink=null);return}u.selection.clear(),u.selectedLink=je}function he(e){let t=ge();return t?Zt(t.trace,oo(),t.at,e):null}function St(e){let t=he(e),n=We();t===null||!n?.trace||!u.execution||(u.execution.at=t,j(),so(n.trace.events[t],e))}function so(e,t){let n=!1;if(t)for(let o of et(e)){let s=o.path.split("/");for(let r=1;r<=s.length;r+=1)u.folded.delete(s.slice(0,r).join("/"))&&(n=!0)}te({redraw:n||u.shows==="flow"}),_(),Tt()}function Tt(){let e=Nr();e&&$n([e.from,e.to].filter(t=>t!==null))}function Hr(){if(ee!==void 0){I(),Ie();return}u.execution&&(he(!1)===null&&(u.execution.at=0),_(),ee=window.setInterval(()=>{if(he(!1)===null){I(),Ie();return}St(!1)},Ir),Ie())}function io(e,t,n="declared"){let o=u.snapshot?.executions.find(i=>i.id===e),s=(o&&(n==="declared"?o.declared:oe(o)?.trace))?.events??[],r=s.findIndex(i=>i.id===t);return r===-1?!1:(I(),u.execution={id:e,at:r,trace:n},u.showInspector=!0,j(),so(s[r],!0),!0)}function ao(e){!u.execution||u.execution.trace===e||(I(),u.execution={...u.execution,at:0,trace:e},j(),te({redraw:u.shows==="flow"}),_())}function co(e){I(),u.execution&&(u.execution.at=e,j(),te({redraw:u.shows==="flow"}),_())}function fe(e,t,n){let o=d("button","run-btn",e);return o.type="button",o.title=t,o.addEventListener("click",n),o}var Fr={declared:"Written down by the agent from reading the code. Fragmentor has not seen it run.",recorded:"What Fragmentor saw when it ran the code answering this execution's trigger, with stores of its own standing in for the real ones. It starts at that code: nothing before it ran."},lo={declared:"Written down",recorded:"Recorded"},Ne=null;function Ie(){let e=document.getElementById("exec-bar");if(!e)return;let t=u.snapshot?.executions??[];if(e.hidden=t.length===0||u.waiting,e.hidden){e.replaceChildren(),Ne=null;return}let n=We(),o=JSON.stringify([t.map(s=>[s.id,s.name,s.records,s.unrecordable]),u.execution?.id??null,n?.trace?.source??null,!!n?.written,n?.recording?.at??null,u.shows,n?uo(n.execution):null]);Ne?.key!==o&&(Ne=Wr(e,o,t,n)),Dr(Ne,n)}function Wr(e,t,n,o){e.replaceChildren();let s=d("div","exec-controls"),r=d("select","exec-select");r.title="An execution to step through on the tree: one run of the system, from what set it going",r.append(new Option("Executions\u2026",""));for(let y of n)r.append(new Option(y.name,y.id));if(r.addEventListener("change",()=>jr(r.value===""?null:r.value)),s.append(r),e.append(s),!o)return{key:t,select:r,steps:null};let{execution:i}=o,a=i.records===null?null:u.snapshot?.blocks[i.records]?.name??i.records,c=fe(o.recording?"Record again":"Record",a===null?i.unrecordable??"":`Run ${a} with what this execution starts from, and see what the code really does. Nothing is saved.`,()=>{let y=Ye();y&&Et?.(y)});c.disabled=a===null;let l=Et!==null;if(l&&i.unrecordable&&e.append(d("div","exec-why",i.unrecordable)),!o.trace)return l&&s.append(c),s.append(d("span","exec-count","nothing written down for it yet")),{key:t,select:r,steps:null};let p=d("div","exec-shows");for(let[y,v,E]of[["tree","Tree","The architecture, with this step drawn on it"],["flow","Flow","This execution from beginning to end, as its own drawing"]]){let A=d("button","chip",v);A.type="button",A.title=E,A.setAttribute("aria-pressed",String(u.shows===y)),A.addEventListener("click",()=>{u.shows!==y&&(u.shows=y,te({redraw:!0}))}),p.append(A)}s.append(p);let m=d("div","exec-shows");for(let y of l?["declared","recorded"]:["declared"]){let v=y==="declared"?o.written!==null:o.recording!==null,E=d("button","chip exec-source",lo[y]);E.type="button",E.dataset.source=y,E.title=v?Fr[y]:y==="declared"?"Nothing is written down for it yet.":"Press Record to see what the code really does.",E.disabled=!v,E.setAttribute("aria-pressed",String(o.trace.source===y)),E.addEventListener("click",()=>ao(y)),m.append(E)}s.append(m),l&&s.append(c);let b=uo(i);b&&s.append(Vr(b));let g={restart:fe("Restart","Back to what set it going",()=>co(0)),step:fe("Step","On to the next step",()=>{I(),St(!1)}),into:fe("Step into","On to the very next thing that happened, unfolding whatever hides it",()=>{I(),St(!0)}),play:fe("Play","Step through it by itself",Hr),count:d("span","exec-count"),caption:d("span","exec-caption-text")};s.append(g.restart,g.step,g.into,g.play,g.count);let f=d("div","exec-caption");return f.append(g.caption),e.append(f),{key:t,select:r,steps:g}}function Dr(e,t){e.select.value=u.execution?.id??"";let{steps:n}=e,o=ge();if(!n||!t?.trace||!o)return;n.restart.disabled=o.at===0,n.step.disabled=he(!1)===null,n.into.disabled=he(!0)===null,n.play.textContent=ee===void 0?"Play":"Pause",n.count.textContent=`${o.at+1} of ${o.trace.events.length}`;let s=Fe(o.execution,o.trace);n.caption.textContent=Q(o.event,s),n.caption.title=Q(o.event,s,4e3)}var kt=(e,t,n=`${t}s`)=>`${e} ${e===1?t:n}`;function uo(e){let t=Ct(e);if(!t)return null;let{check:n,contradicted:o}=t,s=f=>n.steps.filter(y=>y.verdict===f).length,r=e.declared.events.filter(f=>f.type==="interaction"&&f.kind==="trigger").length,i=s("seen"),a=o?s("not-seen"):0,c=r+s("unchecked")+(o?0:s("not-seen")),l=n.expectations.failures.length,p=[a>0?`${kt(a,"step")} not seen`:"",l>0?`${kt(l,"expectation")} failed`:""].filter(Boolean),m=p.length>0?p.join(", "):i===0?o?"Nothing written down could be checked from this run":"The recording stopped before it saw any step":o?"Agrees with the recording, where it could see":"Agrees as far as the recording went",b=[`Of the ${kt(i+a+c,"step")} written down, not counting answers, ${i} seen, ${a} not seen, and ${c} that cannot be checked from this run.`,a>0?"Click to go to the first step not seen.":l>0?"Click to see the recording, whose page says what failed.":"Each step's own page says what the recording saw of it."].join(" "),g=o?n.steps.find(f=>f.verdict==="not-seen")?.id??null:null;return{execution:e.id,text:m,title:b,anySeen:i>0,first:g,failed:l}}function Vr(e){if(e.first===null&&e.failed===0){let s=d("span","exec-verdict",e.text);return s.title=e.title,e.anySeen||(s.dataset.none="true"),s}let{execution:t,first:n}=e,o=d("button","chip exec-verdict",e.text);return o.type="button",o.dataset.bad="true",o.title=e.title,o.addEventListener("click",()=>n===null?ao("recorded"):io(t,n)),o}function po(e,t){let{noteOn:n,openCode:o,problemsListed:s}=t,r=ge();if(!r)return!1;let i=M(),{event:a,execution:c}=r,l=r.trace.source==="recorded",p=Fe(c,r.trace),m=d("div","insp-head");m.append(d("h2",void 0,`Step ${r.at+1} of ${r.trace.events.length}`),d("div","insp-id",`${c.name} \xB7 ${lo[r.trace.source].toLowerCase()}`)),e.append(m);let b=a.type==="return"?void 0:a.description;e.append(d("p","responsibility",b??Q(a,p,400))),b&&e.append(d("p","bench-note",Q(a,p,400))),a.type==="return"&&a.error!==void 0&&e.append(d("p","bench-note bad",`Threw: ${a.error}`));let g=a.type==="effect"?null:K(a)??a,f=a.type==="effect"?a.at:g?.from??g?.to??null,y=l?null:Gr(c,a),v=y?.verdict.verdict==="not-seen"&&y.contradicted?`When Fragmentor recorded this execution, this step was not seen. ${y.verdict.reason??""}`.trim():void 0;if(n&&!l&&f&&i.blocks[f.path]){let $=d("button","btn quiet tiny","Leave a note on this step");$.title=`A note for your coding agent about this step, on ${i.blocks[f.path].name}.`,$.addEventListener("click",()=>n(f.path,{execution:c.id,step:a.id,description:b??Q(a,p,200)},v)),e.append($)}y&&e.append(qr(c.id,y));let E=C("Where"),A=d("div","ports"),Ot=!1,qe=($,O)=>{let be=d("div","port-row");if(be.append(d("div","pname",$)),O===null)be.append(d("div","ptype",l?"Fragmentor, from outside the system":"outside the system"));else{i.blocks[O.path]||(Ot=!0);let It=i.blocks[O.path],ze=d("div","pwhere");ze.append(d("span","ptype",O.entry===null?It?.name??O.path:`${It?.name??O.path} \xB7 ${O.entry}`));let jt=d("button","btn quiet tiny","Show");jt.addEventListener("click",()=>le(O.path)),ze.append(jt),be.append(ze)}A.append(be)};if(a.type==="effect")qe("at",a.at);else{let $=K(a)??a;qe("from",$.from),qe("to",$.to);let O=d("div","port-row");O.append(d("div","pname","kind"),d("div","ptype",a.type==="return"?"gives back":a.kind)),A.append(O)}E.append(A),e.append(E),Ot&&e.append(d("p","bench-note bad",`This step names a block that is not in the project, so there is nothing to draw it between.${s?" The problems list says which.":""}`));let Bt=a.type==="effect"?a.detail:a.type==="return"?a.response:a.payload;if(Bt!==void 0){let $=C(a.type==="return"?"What came back":"What it carried");$.append(Jn(JSON.stringify(Bt,null,2)??"","json")),e.append($)}let Pt=a.type==="return"?r.trace.events.find($=>$.id===a.of):void 0,Ke=a.type==="return"?Pt?.type==="interaction"?Pt.code:void 0:a.code,ne=C("Code");if(Ke===void 0)ne.append(d("p","bench-note","This step does not say which function makes it."));else if(ne.append(d("div","code-where",Ke)),ne.append(d("p","bench-note",a.type==="return"?"The function this answer comes back from.":"The function that makes this step.")),o){let $=d("button","btn","Open the code");$.addEventListener("click",()=>o(Ke,`Step ${r.at+1}: ${c.name}`)),ne.append($)}e.append(ne),r.trace.source==="declared"&&e.append(d("p","bench-note",y?"Written down by the agent from reading the code. What Fragmentor saw when it ran the code is above.":"Written down by the agent from reading the code. Fragmentor has not seen it run."));let Nt=l?oe(c):null;return Nt&&e.append(Kr(c,Nt)),!0}function _r(e){return e.trigger.description?e.trigger.description.replace(/\.$/,""):`${to[e.trigger.kind]} ${He(Be(e.trigger.at))}`}var Qn=new WeakMap;function fo(e,t){let n=Qn.get(t);if(n?.of===e)return n.check;let o=Kn(e,t.trace,t.scope,t.complete);return Qn.set(t,{of:e,check:o}),o}function Ct(e){let t=oe(e);if(!t||!e.declared||e.declared.events.length===0)return null;let n=fo(e,t);return{check:n,byStep:new Map(n.steps.map(o=>[o.id,o])),contradicted:t.complete,recording:t}}function Gr(e,t){let n=Ct(e);if(!n)return null;let{byStep:o,contradicted:s,recording:r}=n;if(t.type==="interaction"&&t.kind==="trigger"){let c=`The recording starts at ${He({path:r.scope.runs,entry:null})}, so it cannot see what set the execution going.`;return{verdict:{id:t.id,verdict:"unchecked",reason:c},answer:!1,contradicted:s}}let i=o.get(t.type==="return"?t.of:t.id);return i?{verdict:i,answer:t.type==="return",contradicted:s}:null}function qr(e,t){let n=C("In the recording"),{verdict:o,answer:s,contradicted:r}=t,i=s?"With the call it answers: ":"",a=(c,l=!1)=>{let p=d("p",l?"bench-note bad":"bench-note",`${i}${c}`);return p.dataset.verdict=o.verdict,p};if(o.verdict==="seen"){n.append(a("Seen. The code really did this when Fragmentor ran it."));let c=o.seenAs;if(c!==void 0){let l=d("button","btn quiet tiny","Show in the recording");l.title="Go to the step Fragmentor saw that this one is.",l.addEventListener("click",()=>io(e,c,"recorded")),n.append(l)}}else o.verdict==="not-seen"?n.append(r?a(`Not seen. ${o.reason??""}`.trim(),!0):a(`Not seen yet. ${o.reason??""}`.trim())):n.append(a(`Cannot be checked from this run, so it counts neither as seen nor as not seen. ${o.reason??""}`.trim()));return n}function Kr(e,t){let n=C("Recording"),o=He({path:t.scope.runs,entry:null}),s=fo(e,t),r=(m,b=!1)=>d("p",b?"bench-note bad":"bench-note",m);n.append(r(`Made at ${new Date(t.at).toLocaleTimeString()} by running ${o} with what this execution starts from. The stores it used were Fragmentor's own, standing in for the real ones, and nothing is saved.`),r(`It starts at ${o}, in place of what sets it going: ${_r(e)}. Nothing before ${o} ran.`)),s.notSeeded.length>0&&n.append(r(`Starting rows it had no way to put in, so it ran without them: ${s.notSeeded.join(", ")}.`));let i=t.trace.events[0],a=t.trace.events.find(m=>m.type==="return"&&i!==void 0&&m.of===i.id);if(t.stopped?n.append(r("It was stopped before the run ended, so what did not happen may just not have happened yet.")):t.truncated?n.append(r("The run made more calls than are recorded, so the end of it was not heard.")):a?.type==="return"&&a.error!==void 0?n.append(r(`${o} threw: ${a.error}`,!0)):n.append(r(`${o} returned.`)),e.expect===null)return n.append(r("This execution does not say what must happen, so there is nothing to hold the recording to.")),n;let{met:c,failures:l,setAside:p}=s.expectations;if(l.length>0){let m=H("Failed","bad");m.append(...l.map(b=>r(b,!0))),n.append(m)}if(c.length>0){let m=H("Met","good");m.append(...c.map(b=>r(b))),n.append(m)}if(p.length>0){let m=H("Set aside");m.append(r("What this recording could not see. None of it counts as met.")),m.append(...p.map(({expectation:b,why:g})=>r(`${b}: ${g}`))),n.append(m)}return n}function De(e,t){let n=d("div","pshape");return e&&n.append(d("span","pshape-label",e)),n.append(Zn(t)),n}function $t(e,t,n=!1){let o=H(e);if(t.length===0)return o.append(d("p","bench-note","None.")),o;let s=d("div","ports");for(let r of t){let i=d("div",`port-row${n?" cap":""}`);i.append(d("div","pname",r.name)),i.append(De(null,(n?r.capability:r.type)??"")),r.description&&i.append(d("div","pdesc",r.description)),s.append(i)}return o.append(s),o}function ho(e){if(!e.architecture)return[];let t=M().blocks;return e.exposes.flatMap(n=>{let o=n.route.slice(1).map(r=>({block:t[r.path],entry:r.entry})),s=o.at(-1);return s?[{entry:n.name,route:o.map(r=>r.entry?`${r.block.name} \xB7 ${r.entry}`:r.block.name).join("  \u2192  "),last:s.block}]:[]})}function go(e){return e.map(({entry:t,route:n,last:o})=>({entry:t,route:n,endsAt:o.architecture?null:o.path}))}function zr(e,t=[]){let n=R[e.role].entryNoun,o=H(`${n.charAt(0).toUpperCase()}${n.slice(1)}s`);if(e.exposes.length===0)return o.append(d("p","bench-note",e.role==="component"?"None listed. A group of parts offers whatever the parts inside it do.":`No ${n}s listed yet.`)),o;let s=d("div","ports");for(let r of e.exposes){let i=d("div","port-row");i.append(d("div","pname",r.name)),r.accepts!==null&&r.accepts===r.returns?i.append(De(null,r.accepts)):(r.accepts!==null&&i.append(De("in",r.accepts)),r.returns!==null&&i.append(De("out",r.returns))),r.description&&i.append(d("div","pdesc",r.description));let a=t.find(c=>c.entry===r.name);if(a){let c=d("div","proute");if(c.append(d("span","proute-label","runs"),d("span","proute-text",a.route)),a.endsAt!==null){let l=d("button","btn quiet tiny","Go there");l.title="Show the block where this is answered",l.addEventListener("click",()=>le(a.endsAt)),c.append(l)}i.append(c)}s.append(i)}return o.append(s),o}function Ve(e){if(e.access.length===0&&e.reachNotChecked.length===0)return null;let t=C("Reaches"),n=d("div","ports");for(let o of e.access){let s=d("div","port-row cap");if(s.append(d("div","pname",o.verb)),o.resourcePath===null){let r=d("div","ptype bad");r.textContent=`${o.resource} \u2014 nothing of that name is among its parts, beside it, or above it`,s.append(r)}else{let r=d("div","pwhere");r.append(d("span","ptype",o.entry===null?o.resourceName:`${o.resourceName} \xB7 ${o.entry}`));let i=d("button","btn quiet tiny","Show");i.addEventListener("click",()=>le(o.resourcePath)),r.append(i),s.append(r)}n.append(s)}return t.append(n),e.reachNotChecked.length>0&&t.append(d("p","bench-note",`Not checked in the code: ${e.reachNotChecked.join("; ")}.`)),t}function me(e,t=[]){let n=C("Interface");return e.architecture?(n.append(zr(e,t)),n):(n.append($t("Inputs",e.inputs)),n.append($t("Outputs",e.outputs)),e.capabilities.length>0&&n.append($t("Capabilities",e.capabilities,!0)),n)}function Yr(e){let t=d("span","badge role",e.roleLabel.toLowerCase());return t.dataset.role=e.role,t}function mo(e,t){let n=d("div","insp-head");n.append(d("h2",void 0,e.name),d("div","insp-id",e.path));let o=d("div","badges");o.append(Yr(e));let s=e.planned?"planned":e.code===null?null:e.implemented?e.runnable?t?.document?"held to its contract":"checked and runnable":"drawn":"code not found";return s&&o.append(d("span",`badge state${e.planned?" planned":""}`,s)),e.language&&o.append(d("span","badge",e.language)),n.append(o),{head:n,badges:o}}function yo(e){let t=[d("p","responsibility",e.responsibility)];if(e.architecture){let n=d("p","role-note"),o=d("span","role-note-kind",`${R[e.role].label}:`);o.dataset.role=e.role,n.append(o,document.createTextNode(` ${R[e.role].description}`)),t.push(n)}return e.planned&&t.push(d("p","planned-note","Planned: part of the architecture rather than of the program. Its ports say what is meant to flow rather than what does, its wiring can be as loose as the plan is, and Fragmentor generates, checks and runs nothing for it.")),t}function bo(e){let t=d("div","insp-head");t.append(d("h2",void 0,e.name)),e.dir!==""&&t.append(d("div","insp-id",e.dir));let n=d("div","badges");return n.append(d("span","badge",`granularity ${e.granularity.level}`)),e.language&&n.append(d("span","badge",e.language)),t.append(n),e.goal?[t,d("p","responsibility",e.goal)]:[t]}function xo(e){let t=C("Systems"),n=d("div","ports");for(let o of e.systems){let s=e.blocks[o.rootBlock],r=d("div","port-row");r.append(d("div","pname",s?.name??o.rootBlock)),r.append(d("div","ptype",o.known?o.displayName:`${o.language} \u2014 no language pack`)),s&&r.append(d("div","pdesc",s.responsibility)),n.append(r)}return t.append(n),t}function wo(e,t){let n=M(),o=n.blocks[t.source],s=n.blocks[t.target],r=d("div","insp-head");r.append(d("h2",void 0,`${o?.name??t.source} and ${s?.name??t.target}`)),r.append(d("div","insp-id","dependency")),e.append(r),e.append(d("p","responsibility","Something this block is able to reach. It says nothing about what happens, or when: that is what an execution shows."));let i=C("Reaches"),a=d("div","ports");for(let c of t.entries){let l=d("div","port-row cap");l.append(d("div","pname",c.verb)),l.append(d("div","ptype",c.entry===null?"the whole thing":c.entry)),a.append(l)}if(i.append(a),e.append(i),s?.architecture){let c=me(s);c.append(d("p","bench-note",`What ${s.name} offers, whoever reaches it.`)),e.append(c)}}function ko(e){let t=M(),n=[...u.selection],o=d("div","insp-head");o.append(d("h2",void 0,`${n.length} blocks selected`),d("div","insp-id",n.join(", "))),e.append(o);let s=U(),r=s?[...de(s).values()].filter(i=>u.selection.has(i.source)&&u.selection.has(i.target)):[];if(r.length>0){let i=C("Reaches"),a=d("div","ports");for(let c of r){let l=d("div","port-row");l.append(d("div","pname",`${t.blocks[c.source]?.name} \u2192 ${t.blocks[c.target]?.name}`)),l.append(d("div","ptype",c.entries.map(p=>p.text).join(", "))),a.append(l)}i.append(a),e.append(i)}e.append(d("p","bench-note","Ctrl-click a block to add or remove it from the selection."))}function ye(){let e=document.getElementById("overlay");if(!e)throw new Error("The interface is missing #overlay.");return e}function Mt(){let e=ye();e.replaceChildren(),e.hidden=!0}function Lt(e,t,n){let o=ye();o.replaceChildren(),o.hidden=!1;let s=d("div","window"),r=d("div","window-head"),i=d("div","window-names");i.append(d("h2",void 0,e),d("div","window-sub",t));let a=d("button","window-close","\u2715");a.type="button",a.title="Close (Esc)",a.addEventListener("click",Mt),r.append(i,a);let c=d("div","window-body");c.append(n),s.append(r,c),o.append(s),a.focus()}function Ur(){return!ye().hidden}function At(e){let t=d("div","window-sections");t.append(me(e));let n=Ve(e);n&&t.append(n);let o=M().blocks[e.path]?.children??[];if(o.length>0){let s=C("Made of"),r=d("div","ports");for(let i of o){let a=M().blocks[i];if(!a)continue;let c=d("div","port-row");c.append(d("div","pname",a.name),d("div","ptype",a.roleLabel.toLowerCase())),a.responsibility&&c.append(d("div","pdesc",a.responsibility)),r.append(c)}s.append(r),t.append(s)}Lt(e.name,`${R[e.role].label.toLowerCase()} \xB7 ${e.path}`,t)}function vo(e){window.addEventListener("keydown",t=>{t.key==="Escape"&&(Ur()?(t.preventDefault(),Mt()):e()&&t.preventDefault())}),ye().addEventListener("pointerdown",t=>{t.target===ye()&&Mt()})}var Ge=JSON.parse(k("fragmentor-export").textContent??""),Eo=new Date(`${Ge.exported}T00:00:00`).toLocaleDateString(void 0,{day:"numeric",month:"long",year:"numeric"});function So(e){let t=d("div","window-sections");t.append(d("p","bench-note","The code is not part of this page. It stays with the project, at:")),t.append(d("pre","code",e.code?.pointer??e.files.code)),Lt(e.name,e.path,t)}function Xr(e){if(e.planned){let n=C("Code");return n.append(d("p","bench-note","There is none: this block is planned.")),n}if(e.code===null&&e.architecture)return null;let t=C("Code");return e.code!==null?t.append(d("pre","code",e.code.pointer)):e.files.code!==""?t.append(d("pre","code",e.files.code),d("p","bench-note","Nothing was found there when this page was made.")):t.append(d("p","bench-note","This block does not say where its code is.")),t}function Zr(e,t){let{head:n}=mo(t,{document:!0}),o=d("div","insp-windows");if(gt(t)){let i=d("button","btn quiet tiny","Interface");i.title=`What ${t.name} can be used through, and what it reaches`,i.addEventListener("click",()=>At(t)),o.append(i)}if(Le(t)){let i=d("button","btn quiet tiny","Code");i.title=`Where the code behind ${t.name} is`,i.addEventListener("click",()=>So(t)),o.append(i)}o.childElementCount>0&&n.append(o),e.append(n,...yo(t)),e.append(me(t,go(ho(t))));let s=Ve(t);s&&e.append(s);let r=Xr(t);r&&e.append(r)}function Jr(e){let t=M();e.append(...bo(t),xo(t));let n=C("About this page");n.append(d("p","bench-note",`Exported from Fragmentor on ${Eo}. It shows the architecture and the executions the agent wrote down. The code, notes and tests stay with the project.`));let{errors:o,warnings:s}=Ge.problems,r=(i,a)=>`${i} ${a}${i===1?"":"s"}`;n.append(d("p","bench-note",o+s===0?"No problems were listed when it was exported.":`When it was exported, ${[o>0?r(o,"error"):"",s>0?r(s,"warning"):""].filter(Boolean).join(" and ")} ${o+s===1?"was":"were"} listed. They are not shown here.`)),e.append(n)}function Qr(){let e=k("inspector");if(e.replaceChildren(),u.selectedLink===je&&po(e,{}))return;let t=U();if(t&&u.selectedLink){let o=de(t).get(u.selectedLink);if(o){wo(e,o);return}}if(u.selection.size>1){ko(e);return}let n=Dt();n?Zr(e,n):Jr(e)}function es(){let e=k("status");e.replaceChildren(d("span","project-name",M().name),d("span",void 0,`exported ${Eo}`));let t=d("span",void 0,"Made with Fragmentor");t.style.marginLeft="auto",e.append(t)}function _e(){Qr(),es()}function Rt(){An(),_(),_e()}try{u.snapshot=Ge.snapshot,u.dir="",u.waiting=!1,Gt(Ge.look),Rn(),k("panes").style.gridTemplateColumns=`minmax(0, 1fr) ${G.standard}px`,an(({redraw:e})=>e?Rt():_e()),eo(({redraw:e})=>e?Rt():_e()),dn(()=>{j(),_e()}),un((e,t)=>{let n=u.snapshot?.blocks[t];n&&(e==="details"?At(n):So(n))}),On(),Bn(),Pn(),vo(()=>!1),ro(null),u.execution&&j(),Rt(),ft(20,Tt),document.body.dataset.ready="true"}catch(e){let t=d("pre","canvas-empty boot-error");throw t.textContent=`This page could not be drawn.
+
+${e instanceof Error?e.message:String(e)}`,document.getElementById("canvas-wrap")?.append(t),e}})();
+</script>
+  </body>
+</html>

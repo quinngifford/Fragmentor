@@ -35,4 +35,8 @@ If you asked to plan first, the agent draws the whole architecture before buildi
 
 The diagram updates as the agent works. When the agent's work changes the architecture, a bar above the drawing says what changed since you last looked. Fragmentor warns where TypeScript code reaches a database, service, queue or client the diagram does not say it reaches, and you can add rules of your own by selecting two blocks together: one must never reach the other, or only one may reach it. **File › Export…** saves the drawing and the executions written down as one read-only page that opens in any browser, with no code in it.
 
+## Website
+
+`site/` is the website: one page of static files, so any web host serves it as it is. Its live demo is a pair of real exports of the example projects; `npm run site:demos` makes them again after the examples or the export change. The stills in `site/img/` are crops of the screenshots `npm run check:app` leaves in `dist/`. The download button points at the repository's zip on GitHub.
+
 `PROJECT.md` describes what Fragmentor is for. `STATUS.md` describes where development stands.
