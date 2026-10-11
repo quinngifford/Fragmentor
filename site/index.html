@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <script>document.documentElement.className += " js";</script>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fragmentor</title>
   <meta name="description" content="Fragmentor draws a software system as blocks inside blocks, shows what happens when something sets it going, and checks that the code matches the drawing. A coding agent does the work. Fragmentor shows you what it did.">
   <meta name="theme-color" content="#07090a">
   <meta property="og:title" content="Fragmentor">
-  <meta property="og:description" content="See what your agent built. A block-based environment for software built with a coding agent.">
+  <meta property="og:description" content="See what your agent built. Fragmentor draws your software as blocks, steps through what it does, and checks that the code matches the drawing.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -36,38 +37,37 @@
         <p class="lede">Fragmentor draws a software system as blocks inside blocks, shows what happens when something sets it going, and checks that the code matches the drawing. A coding agent does the work in your project folder. Fragmentor shows you what it did.</p>
         <div class="actions">
           <a class="btn btn-primary" href="https://github.com/quinngifford/Fragmentor/archive/refs/heads/main.zip">Download</a>
-          <a class="btn btn-ghost" href="#demo">Try it in the browser</a>
+          <a class="btn btn-ghost" href="#demo">See the live demo</a>
         </div>
         <p class="fine">A desktop app. Needs Node.js. Works with Claude Code, Codex and other coding agents.</p>
       </div>
 
-      <div class="hero-stage" aria-label="The Tickets example, drawn as Fragmentor draws it, with its Book seats execution stepping through">
+      <div class="hero-stage">
         <div class="execbar">
           <div class="execbar-row">
             <span class="chip chip-on">Book seats</span>
-            <span class="chip chip-dashed">Written down</span>
             <button class="chip" id="exec-step" type="button">Step</button>
-            <button class="chip" id="exec-play" type="button" aria-pressed="true">Pause</button>
+            <button class="chip" id="exec-play" type="button">Pause</button>
             <span class="exec-count" id="exec-count"></span>
           </div>
-          <div class="exec-line" id="exec-line" aria-live="polite">Book seats · written down</div>
+          <div class="exec-line" id="exec-line" aria-live="off">Book seats, as the agent wrote it down</div>
           <div class="exec-words" id="exec-words"></div>
         </div>
-        <canvas id="hero-canvas"></canvas>
-        <p class="hint">examples/tickets, block for block · click a block to start the run there</p>
+        <canvas id="hero-canvas" role="img" aria-label="The Tickets example as Fragmentor draws it: Booking API, Box Office, Outbox, Reminders and Tickets Database inside Tickets; Book Seats, Cancel Booking, Find Event and Pricing inside Booking API; Reserve inside Book Seats; Price Seat and Refund For inside Pricing. The Book seats execution steps through it one arrow at a time, and the current step is read out above."></canvas>
+        <p class="hint">The Tickets example, every block of it. Click a block to start the run there.</p>
       </div>
     </section>
 
     <!-- ========================== Architecture ========================== -->
     <section class="band" id="architecture" data-status="Architecture">
-      <div class="wrap two" data-reveal>
-        <div class="copy">
+      <div class="wrap">
+        <div class="copy copy-wide" data-reveal>
           <p class="label">Architecture</p>
           <h2>The whole system, in one drawing.</h2>
           <p>Every block is drawn inside the block it is part of: functions, groups of them, and the databases, queues, services and clients they talk to. The lines mean one thing: this is part of that.</p>
           <p>Colour by kind, and the drawing says which world each thing belongs to. Show dependencies, and arrows say which part reads, writes or calls which. Click a block for its details. Fold one to put its parts away.</p>
         </div>
-        <figure class="panel">
+        <figure class="panel panel-big" data-reveal>
           <div class="panel-strip"><span>Messenger</span><span>coloured by kind · dependencies shown</span></div>
           <img src="img/tree-messenger.webp" width="1010" height="280" alt="The Messenger example drawn as a tree of blocks: API, Client, Infrastructure and Workers under Messenger, each with its parts, with dependency arrows between them" loading="lazy">
         </figure>
@@ -80,12 +80,12 @@
         <div class="copy copy-wide" data-reveal>
           <p class="label">Executions</p>
           <h2>What actually happens, one step at a time.</h2>
-          <p>For each thing that sets the system going, a button, a request, a scheduled job, the agent writes down every step the run takes through the architecture. Pick one and step through it a single arrow at a time, or switch to Flow to see the whole run laid out from beginning to end.</p>
-          <p>Where the code is held to its contract, Fragmentor records the run itself, lights up what it touched, and says of each step written down whether the run saw it.</p>
+          <p>Something sets the system going: a button, a request, a scheduled job. For each one, the agent writes down every step the run takes through the architecture. Pick one and step through it a single arrow at a time, or switch to Flow to see the whole run laid out from beginning to end.</p>
+          <p>Where the code imports its contract, press Record. Fragmentor runs the code, lights up what the run touched, and marks each written-down step as seen or not.</p>
         </div>
         <figure class="panel panel-big" data-reveal>
-          <div class="panel-strip"><span>Messenger · Send a message</span><span>Flow · 7 of 19</span></div>
-          <img src="img/window-flow.webp" width="1800" height="1029" alt="The Fragmentor window in the Flow view: the Send a message execution laid out left to right as rows of blocks joined by dashed arrows, with the hierarchy on the left and the inspector on the right showing step 7 of 19" loading="lazy">
+          <div class="panel-strip"><span>Messenger · Send a message</span><span>Flow · 6 of 19</span></div>
+          <img src="img/window-flow.webp" width="1584" height="935" alt="The Fragmentor window in the Flow view: the Send a message execution laid out left to right as rows of blocks joined by dashed arrows, with the inspector on the right showing step 6 of 19" loading="lazy">
         </figure>
         <div class="pair" data-reveal>
           <figure class="panel">
@@ -96,7 +96,7 @@
           <figure class="panel">
             <div class="panel-strip"><span>Seen</span></div>
             <img src="img/verdict.webp" width="494" height="85" alt="In the recording: Seen. The code really did this when Fragmentor ran it." loading="lazy">
-            <figcaption>Each step says whether the run saw it happen. A declared trace is never presented as something observed.</figcaption>
+            <figcaption>Each step says whether the run saw it happen. A step the agent wrote down is never shown as something Fragmentor saw.</figcaption>
           </figure>
         </div>
       </div>
@@ -106,26 +106,30 @@
     <section class="band band-demo" id="demo" data-status="Live demo">
       <div class="wrap">
         <div class="copy copy-wide" data-reveal>
-          <p class="label">Live</p>
+          <p class="label">Live demo</p>
           <h2>This is not a screenshot.</h2>
-          <p>A page Fragmentor exported from its Tickets example, with no code in it. Everything below works.</p>
+          <p>Pages Fragmentor exported from its two example projects, with no code in them. Everything below works.</p>
         </div>
         <div class="demo-wrap" data-reveal>
           <div class="demo-tabs">
             <button class="chip" type="button" data-demo-src="demo/tickets.html" aria-pressed="true">Tickets</button>
             <button class="chip" type="button" data-demo-src="demo/messenger.html" aria-pressed="false">Messenger</button>
-            <a class="demo-open" id="demo-full" href="demo/tickets.html" target="_blank" rel="noopener">Open full screen</a>
+            <a class="demo-open" id="demo-full" href="demo/tickets.html" target="_blank" rel="noopener">Open in a new tab</a>
           </div>
           <div class="demo-window" id="demo-window">
-            <div class="panel-strip demo-strip"><span>exported from Fragmentor · read-only</span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></div>
+            <div class="panel-strip demo-strip"><span>exported from Fragmentor · read-only</span><button class="chip demo-done" type="button">Done</button><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></div>
             <div class="demo-body">
               <iframe data-src="demo/tickets.html" title="Fragmentor's export of the Tickets example, live" loading="lazy"></iframe>
-              <button class="demo-shield" type="button"><span>Click to use the demo</span><small>Esc or move away to let the page scroll again</small></button>
+              <button class="demo-shield" type="button"><span>Click to use the demo</span><small>Esc, Done or moving away lets the page scroll again</small></button>
             </div>
           </div>
+          <figure class="panel demo-phone">
+            <img src="img/export.webp" width="380" height="229" alt="An exported page of the Tickets example open in a browser" loading="lazy">
+            <figcaption>The export needs more room than a phone has. <a href="demo/tickets.html" target="_blank" rel="noopener">Open it in a new tab</a>, where it works as it does on a laptop.</figcaption>
+          </figure>
           <ol class="try">
             <li><b>Drag</b> the drawing. <b>Scroll</b> to zoom.</li>
-            <li>Click <b>Book Seats</b>. Its contract opens on the right.</li>
+            <li>In Tickets, click <b>Book Seats</b>. Its contract opens on the right.</li>
             <li>Press <b>Step</b>, top left. The run goes through the system one arrow at a time.</li>
             <li>Press <b>Flow</b> to see the whole run laid out.</li>
           </ol>
@@ -139,7 +143,7 @@
         <div class="copy copy-wide" data-reveal>
           <p class="label">Verification</p>
           <h2>The code must match the drawing.</h2>
-          <p>A diagram that drifts from the code is worse than none. Fragmentor checks, and the <code>fragmentor check</code> command reports the same findings to the agent as text and an exit status, so the agent fixes what it reports.</p>
+          <p>A drawing that drifts from the code is worse than none. Fragmentor checks as you work. The agent runs <code>fragmentor check</code>, gets the same findings as text, and keeps going until they pass.</p>
         </div>
         <div class="grid4">
           <figure class="panel card" data-reveal style="--i:0">
@@ -152,11 +156,11 @@
           </figure>
           <figure class="panel card" data-reveal style="--i:2">
             <img src="img/rule.webp" width="494" height="116" alt="Problems: ERROR. Breaks the rule app/workers must never reach app/client" loading="lazy">
-            <figcaption><h3>Rules</h3><p>Select two blocks and say one must never reach the other, or that only one may. A broken rule stops the agent's check. Red is spent on nothing else.</p></figcaption>
+            <figcaption><h3>Rules</h3><p>Select two blocks and add a rule: one must never reach the other, or only this one may reach it. A rule the code definitely breaks stops the agent's check. Red means something is wrong, and nothing else.</p></figcaption>
           </figure>
           <figure class="panel card" data-reveal style="--i:3">
             <img src="img/tests.webp" width="438" height="154" alt="Saved tests: adds quantity times price across the lines, passed; an order with no lines costs nothing, passed" loading="lazy">
-            <figcaption><h3>Tests</h3><p>Every function has tests, written by the agent. Open a block, type values, run it, and save the run as a test. Fragmentor runs them all.</p></figcaption>
+            <figcaption><h3>Tests</h3><p>The agent writes tests for every function it builds. Open a block, type values, run it, and save the run as a test. Fragmentor runs them all.</p></figcaption>
           </figure>
         </div>
       </div>
@@ -168,7 +172,7 @@
         <div class="copy">
           <p class="label">Your agent</p>
           <h2>You and your agent, on the same drawing.</h2>
-          <p>Fragmentor has no AI in it. Your coding agent, Claude Code, Codex or another, works in the project folder and follows the guide Fragmentor writes there. The diagram updates as the agent works.</p>
+          <p>Fragmentor has no AI in it. Your coding agent, whether Claude Code, Codex or another, works in the project folder and follows the guide Fragmentor writes there. The drawing updates as the agent works.</p>
           <p>When something is wrong, leave a note on the block. Tell the agent <code>fragmentor notes</code> and it reads them, does what each asks, commits, and answers on the block.</p>
         </div>
         <div class="stack">
@@ -177,10 +181,10 @@
             <div class="t-body">
               <p class="t-cmd" data-line="cmd">fragmentor plan a ticket office</p>
               <p class="t-note" data-line="note">the agent draws the whole architecture first, greyed out</p>
-              <p class="t-cmd" data-line="cmd">fragmentor make the booking API</p>
+              <p class="t-cmd" data-line="cmd">fragmentor build</p>
               <p class="t-note" data-line="note">blocks turn solid as they are built</p>
               <p class="t-cmd" data-line="cmd">fragmentor check</p>
-              <p class="t-ok" data-line="ok">errors 0  warnings 0</p>
+              <p class="t-ok" data-line="ok">Result: no errors. Run fragmentor test to run the tests.</p>
             </div>
           </div>
           <figure class="panel">
@@ -195,7 +199,7 @@
     <section class="band" id="more" data-status="More">
       <div class="wrap">
         <div class="copy copy-wide" data-reveal>
-          <p class="label">And</p>
+          <p class="label">More</p>
           <h2>The rest of it.</h2>
         </div>
         <div class="bento">
@@ -236,18 +240,19 @@
           <p>Fragmentor is a desktop app. It needs Node.js and npm. A Python project also needs Python 3.11 or later.</p>
         </div>
         <div class="panel install" data-reveal>
-          <div class="panel-strip"><span>Install</span><span>three commands, once</span></div>
+          <div class="panel-strip"><span>Install</span><span>two to install, one to start</span></div>
           <pre class="commands"><code><span>npm install</span>
 <span>npm link</span>
 <span>npm run app</span></code></pre>
           <div class="install-actions">
             <a class="btn btn-primary btn-wide" href="https://github.com/quinngifford/Fragmentor/archive/refs/heads/main.zip">Download</a>
             <button class="btn btn-ghost" type="button" data-copy="npm install&#10;npm link&#10;npm run app">Copy the commands</button>
+            <span class="sr-only" role="status" id="copy-status"></span>
           </div>
           <ul class="notes">
-            <li><code>npm link</code> is needed once. It puts the <code>fragmentor</code> command on your PATH, which is how coding agents check their work.</li>
-            <li>Then choose <b>New project…</b>, answer its questions, and send your coding agent the first command Fragmentor shows you.</li>
             <li>The download is the source, zipped, from GitHub. Unzip it and run the commands inside the folder.</li>
+            <li><code>npm link</code> is needed once. It puts the <code>fragmentor</code> command on your PATH, which is how coding agents check their work.</li>
+            <li>When the window opens, choose <b>New project…</b>, answer its questions, and send your coding agent the first command Fragmentor shows you.</li>
           </ul>
         </div>
       </div>
@@ -258,18 +263,17 @@
   <footer class="foot">
     <div class="wrap foot-row">
       <span class="mark"><strong>Fragmentor</strong></span>
-      <span class="made">Made with Fragmentor</span>
       <a href="https://github.com/quinngifford/Fragmentor" rel="noopener">GitHub</a>
     </div>
   </footer>
 
-  <div class="statusbar" aria-hidden="true">
-    <span class="status-name">Fragmentor</span>
-    <span class="status-where" id="status-where">Start</span>
-    <span class="status-num">blocks <b id="status-blocks">13</b></span>
-    <span class="status-num">steps <b id="status-steps">20</b></span>
-    <span class="status-num">errors <b class="ok">0</b></span>
-    <span class="status-num">warnings <b class="ok">0</b></span>
+  <div class="statusbar">
+    <span class="status-name" aria-hidden="true">Fragmentor</span>
+    <span class="status-where" id="status-where" aria-hidden="true">Start</span>
+    <span class="status-num" aria-hidden="true">blocks <b id="status-blocks">13</b></span>
+    <span class="status-num" aria-hidden="true">steps <b id="status-steps">20</b></span>
+    <span class="status-num" aria-hidden="true">errors <b class="ok">0</b></span>
+    <span class="status-num" aria-hidden="true">warnings <b class="ok">0</b></span>
     <a class="status-dl" href="#download">Download</a>
   </div>
 

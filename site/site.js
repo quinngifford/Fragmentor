@@ -8,6 +8,17 @@
   "use strict";
 
   const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+      this.moveTo(x + r, y);
+      this.arcTo(x + w, y, x + w, y + h, r);
+      this.arcTo(x + w, y + h, x, y + h, r);
+      this.arcTo(x, y + h, x, y, r);
+      this.arcTo(x, y, x + w, y, r);
+      this.closePath();
+    };
+  }
   const FINE_POINTER = window.matchMedia("(pointer: fine)").matches;
 
   /* ------------------------------------------------------------------ */
@@ -27,7 +38,7 @@
     structure: "#67D8FF",
     planned: "#7a8b96",
   };
-  const INK = "#c6d5d0", INK_DIM = "#8a9e99", INK_FAINT = "#5c6f6b";
+  const INK = "#c6d5d0", INK_DIM = "#8a9e99", INK_FAINT = "#6f8580";
   const RULE = "#2a363d", PLATE = "#0d1113", GROUND = "#07090a";
   const SIGNAL = "#4fe38f", TRIGGER = "#9fd3ff", EFFECT = "#e2a54b";
   const SANS = '"Space Grotesk", "Segoe UI", system-ui, sans-serif';
@@ -56,17 +67,17 @@
 
   // examples/tickets/executions/book-seats.json, counted the way Fragmentor
   // counts it: the trigger, each interaction, each answer given back, and
-  // each effect. The words are the agent's own.
+  // each effect. The words are the agent's own; an answer shows what came back.
   const STEPS = [
     { from: "outside", to: "Box Office", kind: "action", text: "Ada confirms five seats for the Night Gig." },
     { from: "Box Office", to: "Booking API", kind: "call", text: "The page has nothing to show until the API says whether the seats were hers." },
     { from: "Booking API", to: "Book Seats", kind: "call", text: "The server that takes the request is not a block; all it does is hand it to the block that answers this operation." },
     { from: "Book Seats", to: "Find Event", kind: "call", text: "Nothing is priced, written or sent until the event is known to be on sale." },
     { from: "Find Event", to: "Tickets Database", kind: "read", text: "The event is looked up by the id the request named." },
-    { from: "Tickets Database", to: "Find Event", kind: "gives back", text: "Night Gig: 10 seats left, 25 each." },
-    { from: "Find Event", to: "Book Seats", kind: "gives back", text: "The event is on sale." },
-    { from: "Book Seats", to: "Price Seat", kind: "call", text: "Each of the five seats is priced on its own, all at once. From the fifth, a booking pays a tenth less." },
-    { from: "Price Seat", to: "Book Seats", kind: "gives back", text: "22.5 for the fifth seat." },
+    { from: "Tickets Database", to: "Find Event", kind: "gives back", text: '{"id":"gig","name":"Night Gig","seatsLeft":10,"price":25}' },
+    { from: "Find Event", to: "Book Seats", kind: "gives back", text: '{"event":{"id":"gig","name":"Night Gig","seatsLeft":10,"price":25}}' },
+    { from: "Book Seats", to: "Price Seat", kind: "call", text: "Each of the five seats is priced on its own, all at once. The first four come back at 25, and from the fifth a booking pays a tenth less, which is the only reason the total is not 125." },
+    { from: "Price Seat", to: "Book Seats", kind: "gives back", text: '{"price":22.5}' },
     { from: "Book Seats", to: "Reserve", kind: "call", text: "Every price is back and the five seats come to 122.5, so the booking can be made." },
     { from: "Reserve", to: "Tickets Database", kind: "write", text: "The seats come off the event first, so the next person to ask sees what is really left." },
     { effect: "row changed", at: "Tickets Database", text: "Five seats are left for whoever asks next." },
@@ -74,11 +85,13 @@
     { effect: "row changed", at: "Tickets Database", text: "The booking can be found again, which is what giving it back later needs." },
     { from: "Reserve", to: "Outbox", kind: "send", text: "The confirmation goes on the queue, so nobody waits for an email to send before seeing their booking." },
     { effect: "message published", at: "Outbox", text: "Whatever sends the emails will find it there." },
-    { from: "Reserve", to: "Book Seats", kind: "gives back", text: "Booking gig-10." },
+    { from: "Reserve", to: "Book Seats", kind: "gives back", text: '{"bookingId":"gig-10"}' },
     { effect: "response", at: "Booking API", text: "The API answers with what was booked and what it cost." },
-    { from: "Booking API", to: "Box Office", kind: "gives back", text: "Booked 5 for Night Gig: booking gig-10. Total 122.5." },
+    { from: "Booking API", to: "Box Office", kind: "gives back", text: '{"booked":true,"message":"Booked 5 for Night Gig: booking gig-10.","total":122.5}' },
     { effect: "ui changed", at: "Box Office", text: "The page shows what happened, which is the last thing Ada sees." },
   ];
+
+  const IN_RUN = new Set(STEPS.flatMap((s) => [s.from, s.to, s.at]).filter(Boolean));
 
   const VERB = { action: "uses", call: "calls", read: "reads", write: "writes", send: "sends to", "gives back": "gives back to" };
   function sentence(s) {
@@ -338,7 +351,7 @@
 
       const lit = litNow();
       const sinceStep = now - stepAt;
-      const ending = phase === "hold" ? 1 - easeOut((now - phaseAt - HOLD_MS + 500) / 500) : 1;
+      const ending = phase === "hold" && auto ? 1 - easeOut((now - phaseAt - HOLD_MS + 500) / 500) : 1;
       if (phase === "run" || phase === "hold") {
         const last = phase === "hold" ? STEPS.length - 1 : step;
         for (let i = 0; i <= last; i++) {
@@ -390,7 +403,7 @@
       chips = STEPS.slice(0, i).map((s, k) => (s.effect ? { step: k, at: s.at, text: s.effect, at_ms: 0 } : null)).filter(Boolean);
       auto = true;
       goTo(i);
-      if (!running) render();
+      still();
     }
 
     function update(ms) {
@@ -403,12 +416,21 @@
       } else if (phase === "hold" && auto) {
         if (now - phaseAt > HOLD_MS) restart();
       }
-      if (pans) {
-        const l = litNow();
-        const focus = l ? tree.byName[l[0]] : tree.byName["Booking API"];
-        camTarget = clamp(focus.x * scale + (BW * scale) / 2 - width / 2, 0, Math.max(0, tree.w * scale + 40 - width));
-        camX += (camTarget - camX) * 0.08;
-      }
+      follow(0.08);
+    }
+    function follow(k) {
+      if (!pans) return;
+      const l = litNow();
+      const focus = l ? tree.byName[l[0]] : tree.byName["Booking API"];
+      camTarget = clamp(focus.x * scale + (BW * scale) / 2 - width / 2, 0, Math.max(0, tree.w * scale + 40 - width));
+      camX += (camTarget - camX) * k;
+    }
+    // A change made by hand while nothing is animating: move time on and draw it.
+    function still() {
+      if (running) return;
+      now += STEP_MS;
+      follow(1);
+      render();
     }
 
     function frame(ms) {
@@ -418,7 +440,7 @@
       if (running) raf = requestAnimationFrame(frame);
     }
     function start() {
-      if (running || REDUCED) return;
+      if (running) return;
       running = true;
       raf = requestAnimationFrame(frame);
     }
@@ -426,13 +448,15 @@
       running = false;
       cancelAnimationFrame(raf);
     }
+    // Motion the page starts by itself stays off when the person asked for less of it.
+    function autoStart() { if (!REDUCED) start(); }
 
     // Pointing at a block brightens it; clicking one starts the run there.
     function blockAt(clientX, clientY) {
       const r = canvas.getBoundingClientRect();
       const px = opts.parallax ? (mouse.x - 0.5) * -10 : 0, py = opts.parallax ? (mouse.y - 0.5) * -6 : 0;
       const wx = (clientX - r.left - ox - px + camX) / scale, wy = (clientY - r.top - oy - py) / scale;
-      return tree.blocks.find((b) => wx >= b.x && wx <= b.x + BW && wy >= b.y && wy <= b.y + BH) || null;
+      return tree.blocks.find((b) => IN_RUN.has(b.name) && wx >= b.x && wx <= b.x + BW && wy >= b.y && wy <= b.y + BH) || null;
     }
     canvas.addEventListener("pointermove", (e) => {
       mouse.x = e.clientX / window.innerWidth;
@@ -448,10 +472,10 @@
     let onScreen = true;
     const io = new IntersectionObserver((entries) => {
       onScreen = entries[entries.length - 1].isIntersecting;
-      onScreen && !document.hidden ? start() : stop();
+      onScreen && !document.hidden ? autoStart() : stop();
     }, { threshold: 0 });
     io.observe(canvas);
-    document.addEventListener("visibilitychange", () => (document.hidden ? stop() : onScreen && start()));
+    document.addEventListener("visibilitychange", () => (document.hidden ? stop() : onScreen && autoStart()));
 
     if (REDUCED) {
       // One still: the whole run drawn, nothing moving. Step still works by hand.
@@ -462,12 +486,13 @@
     }
     if (document.fonts) document.fonts.ready.then(() => render());
     resize();
-    start();
+    autoStart();
 
     return {
-      step() { auto = false; now = running ? now : now + STEP_MS; next(); if (!running) render(); },
-      play() { auto = true; if (!running && !REDUCED) start(); },
-      pause() { auto = false; },
+      step() { auto = false; next(); still(); },
+      play() { auto = true; report(); start(); },
+      pause() { auto = false; report(); },
+      resize,
       blocks: tree.blocks.length,
       steps: STEPS.length,
     };
@@ -489,18 +514,19 @@
     const canvas = $("#hero-canvas");
     if (canvas) {
       const count = $("#exec-count"), line = $("#exec-line"), words = $("#exec-words");
-      const playBtn = $("#exec-play"), stepBtn = $("#exec-step"), lastWord = $("#built");
-      let litTimer = 0;
+      const playBtn = $("#exec-play"), stepBtn = $("#exec-step"), lastWord = $("#built"), bar = $(".execbar");
+      let litTimer = 0, playing = true;
       const diagram = livingDiagram(canvas, {
         parallax: !REDUCED && FINE_POINTER,
         maxScale: 1,
-        inset: (w) => (w >= 640 ? 96 : 56),
+        inset: () => bar.offsetHeight + 20,
         onStep(phase, step, total, s, auto) {
           if (phase === "build" || !s) { count.textContent = ""; line.textContent = "Book seats · written down"; words.textContent = ""; }
           else if (phase === "hold") { count.textContent = `${total} of ${total}`; line.textContent = "The run is over."; words.textContent = "Click a block to start it from there."; }
           else { count.textContent = `${step + 1} of ${total}`; line.textContent = sentence(s); words.textContent = s.text; }
+          playing = auto;
           playBtn.textContent = auto ? "Pause" : "Play";
-          playBtn.setAttribute("aria-pressed", String(auto));
+          line.setAttribute("aria-live", auto ? "off" : "polite");
         },
         onFinish() {
           if (!lastWord) return;
@@ -509,8 +535,9 @@
           litTimer = setTimeout(() => lastWord.classList.remove("is-lit"), 1600);
         },
       });
+      new ResizeObserver(() => diagram.resize()).observe(bar);
       stepBtn.addEventListener("click", () => diagram.step());
-      playBtn.addEventListener("click", () => (playBtn.getAttribute("aria-pressed") === "true" ? diagram.pause() : diagram.play()));
+      playBtn.addEventListener("click", () => (playing ? diagram.pause() : diagram.play()));
       const blocks = $("#status-blocks"), steps = $("#status-steps");
       if (blocks) blocks.textContent = String(diagram.blocks);
       if (steps) steps.textContent = String(diagram.steps);
@@ -548,14 +575,21 @@
         io.observe(demo);
       } else load();
       const cover = () => demo.classList.remove("is-live");
+      frame.addEventListener("load", () => {
+        try { frame.contentWindow.addEventListener("keydown", (e) => { if (e.key === "Escape") { cover(); shield.focus(); } }); } catch { /* not same-origin here */ }
+      });
       shield.addEventListener("click", () => { load(); demo.classList.add("is-live"); frame.focus({ preventScroll: true }); });
-      demo.addEventListener("pointerleave", () => { clearTimeout(rearm); rearm = setTimeout(cover, 900); });
+      demo.addEventListener("pointerleave", (e) => { if (e.pointerType !== "mouse") return; clearTimeout(rearm); rearm = setTimeout(cover, 900); });
+      const done = $(".demo-done", demo);
+      if (done) done.addEventListener("click", () => { cover(); shield.focus(); });
       demo.addEventListener("pointerenter", () => clearTimeout(rearm));
       document.addEventListener("keydown", (e) => { if (e.key === "Escape") cover(); });
       tabs.forEach((tab) => tab.addEventListener("click", () => {
+        if (tab.getAttribute("aria-pressed") === "true") return;
         tabs.forEach((t) => t.setAttribute("aria-pressed", String(t === tab)));
         frame.src = tab.dataset.demoSrc;
         frame.dataset.src = tab.dataset.demoSrc;
+        frame.title = `Fragmentor's export of the ${tab.textContent} example, live`;
         if (full) full.href = tab.dataset.demoSrc;
         cover();
       }));
@@ -590,9 +624,10 @@
       btn.addEventListener("click", async () => {
         try {
           await navigator.clipboard.writeText(btn.dataset.copy);
-          const was = btn.textContent;
+          const was = btn.textContent, status = $("#copy-status");
           btn.textContent = "Copied";
-          setTimeout(() => (btn.textContent = was), 1400);
+          if (status) status.textContent = "Copied";
+          setTimeout(() => { btn.textContent = was; if (status) status.textContent = ""; }, 1400);
         } catch { /* No clipboard here; the text is on the page to select. */ }
       });
     });
