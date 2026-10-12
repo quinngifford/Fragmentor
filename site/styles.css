@@ -198,63 +198,85 @@ button { font: inherit; color: inherit; }
   text-align: right;
 }
 
-/* ---- the live demo ---- */
+/* ---- the commands ---- */
 
 .band { padding: clamp(64px, 9vw, 120px) 0; border-top: 1px solid var(--rule); background: linear-gradient(var(--panel), var(--ground) 40%); }
 h2 { font-size: clamp(1.9rem, 3.8vw, 3.1rem); margin-bottom: 14px; }
 .sub { color: #b3c3bd; max-width: 60ch; margin-bottom: 28px; }
 
-.demo-tabs { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
-.demo-open { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--ink-dim); }
-.demo-open:hover { color: var(--signal); }
+.cmds { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.cmd { background: var(--panel); border: 1px solid var(--rule-bright); border-radius: var(--radius); overflow: hidden; }
 
-.demo-window { border: 1px solid var(--rule-bright); border-radius: var(--radius); overflow: hidden; background: var(--ground); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5); }
-.panel-strip {
-  display: flex; justify-content: space-between; align-items: center; gap: 12px;
-  padding: 7px 12px;
-  font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
-  color: var(--ink-dim);
-  border-bottom: 1px solid var(--rule-bright);
-  background: var(--ground);
-}
-.panel-strip span:first-child { color: var(--ink); }
-.demo-done { display: none; margin-left: auto; margin-right: 10px; padding: 2px 8px; }
-.is-live .demo-done { display: inline-flex; }
-.dots { display: inline-flex; gap: 6px; }
-.dots i { width: 8px; height: 8px; border: 1px solid var(--rule-bright); border-radius: 2px; }
+/* What was typed to the agent, and what came back. */
+.t { padding: 12px 14px; background: var(--ground); border-bottom: 1px solid var(--rule); font-family: var(--mono); font-size: 12.5px; line-height: 1.65; }
+.t p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.t .c { color: var(--ink); }
+.t .c::before { content: "$ "; color: var(--signal-dim); }
+.t .o { color: var(--ink-dim); }
+.t .o b { color: var(--ink); font-weight: 500; }
+.t .ok { color: var(--signal); }
 
-/* A fixed height rather than an aspect ratio with a minimum: a min-height
-   transfers through aspect-ratio into a min-width. */
-.demo-body { position: relative; height: clamp(520px, 50vw, 760px); overflow: hidden; }
-.demo-body iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--ground); }
-.demo-shield {
-  position: absolute; inset: 0;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
-  background: rgba(7, 9, 10, 0.18);
-  border: 0; cursor: pointer;
-  transition: opacity 200ms ease;
-}
-.demo-shield span {
-  font-family: var(--mono); font-size: 13px; color: var(--signal);
-  background: rgba(13, 17, 19, 0.95); border: 1px solid var(--signal-dim);
-  padding: 10px 16px; border-radius: var(--radius);
-  box-shadow: 0 0 30px rgba(79, 227, 143, 0.15);
-}
-.demo-shield small { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); background: rgba(7, 9, 10, 0.8); padding: 3px 8px; border-radius: 3px; }
-.demo-shield:hover span { background: var(--signal-deep); }
-.demo-shield:focus-visible { outline: none; }
-.demo-shield:focus-visible span { outline: 2px solid var(--signal); outline-offset: 2px; }
-.is-live .demo-shield { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 200ms ease, visibility 0s 200ms; }
-.is-live .demo-window { border-color: var(--signal-dim); }
+.cmd figcaption { padding: 10px 14px 14px; font-size: 14.5px; color: var(--ink-dim); line-height: 1.5; border-top: 1px solid var(--rule); }
 
-/* On a phone the export has no room to draw, so it opens in a tab of its own. */
-.demo-phone { display: none; }
-.panel { background: var(--panel); border: 1px solid var(--rule-bright); border-radius: var(--radius); overflow: hidden; }
-.panel img { width: 100%; }
-.panel figcaption { padding: 12px 14px 14px; font-size: 14.5px; color: var(--ink-dim); line-height: 1.5; }
-.panel figcaption a { color: var(--signal); }
+/* The drawings: the window's blocks, small. Colours by kind, as the app. */
+.sv { display: block; width: 100%; height: auto; padding: 10px 8px 6px; background: var(--panel); color: var(--ink); }
+.sv .line { fill: none; stroke: #2a363d; stroke-width: 1; }
+.sv .name { font: 600 9.5px var(--sans); fill: currentColor; }
+.sv .kind { font: 500 6.3px var(--mono); letter-spacing: 0.06em; fill: var(--k, var(--ink-faint)); }
+.sv rect.ghost, .sv-plan .b rect { fill: var(--ground); stroke: #7a8b96; stroke-dasharray: 4 3; stroke-width: 1; }
+.sv rect.solid { fill: #0d1113; stroke: var(--k); stroke-width: 1; }
+.k-function { --k: #37dc89; } .k-component { --k: #A3E07A; } .k-service { --k: #C084FC; }
+.k-client { --k: #FFB86B; } .k-queue { --k: #FFD166; } .k-database { --k: #7C9CFF; }
 
-.hint-line { margin-top: 14px; font-family: var(--mono); font-size: 12px; color: var(--ink-faint); }
+/* Plan: the blocks arrive, dashed. */
+.sv-plan .b { color: var(--ink-dim); opacity: 0; transition: opacity 500ms ease; transition-delay: var(--d); }
+.sv-plan .b .kind { fill: #7a8b96; }
+.is-in .sv-plan .b { opacity: 1; }
+
+/* Build: dashed turns solid, one block after another. */
+.sv-build .b { color: var(--ink-dim); }
+.sv-build .b.turns { transition: color 400ms ease; transition-delay: var(--d); }
+.sv-build .b .kind { fill: #7a8b96; }
+.sv-build .b.turns .kind { transition: fill 400ms ease; transition-delay: var(--d); }
+.sv-build .b .solid { opacity: 0; transition: opacity 400ms ease; transition-delay: var(--d); }
+.sv-build .b.turns .ghost { transition: opacity 400ms ease; transition-delay: var(--d); }
+.is-in .sv-build .b.turns { color: var(--ink); }
+.is-in .sv-build .b.turns .kind { fill: var(--k); }
+.is-in .sv-build .b.turns .solid { opacity: 1; }
+.is-in .sv-build .b.turns .ghost { opacity: 0; }
+.chip-ok rect { fill: var(--signal-deep); stroke: var(--signal-dim); stroke-width: 1; }
+.chip-ok text { font: 500 6.3px var(--mono); fill: var(--signal); }
+.sv-build .chip-ok { opacity: 0; transition: opacity 400ms ease; transition-delay: var(--d); }
+.is-in .sv-build .chip-ok { opacity: 1; }
+
+/* Check and notes: solid, with what the check says under each block. */
+.sv .b.on { color: var(--ink); }
+.sv .b.on .kind { fill: var(--k); }
+.sv .b:not(.on):not(.turns) { color: var(--ink-dim); }
+.sv .b:not(.on):not(.turns) .kind { fill: #7a8b96; }
+.tag text { font: 500 6.3px var(--mono); }
+.tag rect { stroke-width: 1; }
+.tag-ok rect { fill: var(--signal-deep); stroke: var(--signal-dim); } .tag-ok text { fill: var(--signal); }
+.tag-dim rect { fill: var(--ground); stroke: var(--rule-bright); } .tag-dim text { fill: var(--ink-dim); }
+.tag-faint rect { fill: var(--ground); stroke: #3f4d52; stroke-dasharray: 3 2; } .tag-faint text { fill: #7a8b96; }
+.sv-check .tag { opacity: 0; transition: opacity 400ms ease; transition-delay: var(--d); }
+.is-in .sv-check .tag { opacity: 1; }
+
+.badge circle { fill: #e2a54b; }
+.badge text { font: 600 8px var(--mono); fill: #1a1408; text-anchor: middle; }
+.sv-notes .badge { transform-origin: 100px 112px; }
+.is-in .sv-notes .badge { animation: pulse 1.6s ease-in-out 2; }
+@keyframes pulse { 50% { transform: scale(1.35); } }
+.note rect { fill: var(--ground); stroke: var(--rule-bright); stroke-width: 1; }
+.note-h { font: 500 6px var(--mono); letter-spacing: 0.1em; fill: #e2a54b; }
+.note-who { font: 500 6.3px var(--mono); fill: var(--ink-faint); }
+.note-t { font: 500 7.5px var(--sans); fill: var(--ink); }
+.note-ok { fill: var(--signal); }
+.sv-notes .note { opacity: 0; transform: translateY(6px); transition: opacity 500ms ease, transform 500ms ease; transition-delay: var(--d); }
+.is-in .sv-notes .note { opacity: 1; transform: none; }
+
+.hint-line { margin-top: 18px; font-family: var(--mono); font-size: 12px; color: var(--ink-faint); line-height: 1.7; }
+.hint-line b { color: var(--ink-dim); font-weight: 500; }
 
 /* ---- footer and status bar ---- */
 
@@ -293,9 +315,7 @@ h2 { font-size: clamp(1.9rem, 3.8vw, 3.1rem); margin-bottom: 14px; }
   .hero h1 { max-width: none; }
   .exec-words { display: none; }
   .hint { display: none; }
-  .demo-window { display: none; }
-  .demo-phone { display: block; }
-  .hint-line { display: none; }
+  .cmds { grid-template-columns: 1fr; }
   .status-num { display: none; }
   .statusbar { gap: 12px; }
   .foot-row .btn { width: 100%; }
@@ -305,5 +325,8 @@ h2 { font-size: clamp(1.9rem, 3.8vw, 3.1rem); margin-bottom: 14px; }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  .word, .btn, .demo-shield { transition: none; }
+  .word, .btn { transition: none; }
+  .sv * { transition: none !important; animation: none !important; }
+  .sv-plan .b, .sv-build .chip-ok, .sv-check .tag, .sv-notes .note { opacity: 1; transform: none; }
+  .sv-build .b.turns { color: var(--ink); } .sv-build .b.turns .kind { fill: var(--k); } .sv-build .b.turns .solid { opacity: 1; } .sv-build .b.turns .ghost { opacity: 0; }
 }

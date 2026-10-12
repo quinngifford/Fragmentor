@@ -20,7 +20,7 @@
   <header class="topbar">
     <a class="mark" href="#top"><strong>Fragmentor</strong></a>
     <nav class="topnav" aria-label="Page">
-      <a href="#demo">Live demo</a>
+      <a href="#commands">Commands</a>
       <a class="chip" href="https://github.com/quinngifford/Fragmentor/archive/refs/heads/main.zip">Download</a>
     </nav>
   </header>
@@ -35,7 +35,7 @@
         <p class="lede">Fragmentor draws a software system as blocks inside blocks, shows what happens when something sets it going, and checks that the code matches the drawing. Your coding agent does the work. You see it.</p>
         <div class="actions">
           <a class="btn btn-primary" href="https://github.com/quinngifford/Fragmentor/archive/refs/heads/main.zip">Download</a>
-          <a class="btn btn-ghost" href="#demo">See the live demo</a>
+          <a class="btn btn-ghost" href="#commands">See the commands</a>
         </div>
       </div>
 
@@ -57,28 +57,114 @@
       </div>
     </section>
 
-    <!-- ============================ Live demo =========================== -->
-    <section class="band" id="demo">
+    <!-- ============================= Commands =========================== -->
+    <section class="band" id="commands">
       <div class="wrap">
-        <h2>This is not a screenshot.</h2>
-        <p class="sub">Two pages Fragmentor exported from its example projects. Everything below works.</p>
-        <div class="demo-tabs">
-          <button class="chip" type="button" data-demo-src="demo/tickets.html" aria-pressed="true">Tickets</button>
-          <button class="chip" type="button" data-demo-src="demo/messenger.html" aria-pressed="false">Messenger</button>
-          <a class="demo-open" id="demo-full" href="demo/tickets.html" target="_blank" rel="noopener">Open in a new tab</a>
+        <h2>Tell your agent what to do.</h2>
+        <p class="sub">Fragmentor has no AI in it. Your coding agent reads the guide Fragmentor writes into the project and does the work. You send it a few words.</p>
+
+        <div class="cmds">
+
+          <!-- plan: the whole architecture, greyed out -->
+          <figure class="cmd" data-reveal>
+            <div class="t">
+              <p class="c">fragmentor plan a ticket office</p>
+              <p class="o">Drawn as 7 planned blocks, nothing built yet.</p>
+              <p class="o">Say <b>fragmentor build</b> when it looks right.</p>
+            </div>
+            <svg class="sv sv-plan" viewBox="0 0 440 180" role="img" aria-label="A tree of seven blocks, all drawn dashed and grey: Tickets, with Booking API, Box Office, Outbox and Tickets Database inside it, and Book Seats and Find Event inside Booking API">
+              <path class="line" d="M248 32v10H104v10M248 42h170v10M248 42H218v10M248 42h70v10M104 92v10H52v10M104 102h100v10"/>
+              <g class="b" style="--d:0s"><rect x="200" y="6" width="96" height="26" rx="3"/><text class="name" x="208" y="17">Tickets</text><text class="kind" x="208" y="27">PLANNED</text></g>
+              <g class="b" style="--d:.15s"><rect x="56" y="52" width="96" height="26" rx="3"/><text class="name" x="64" y="63">Booking API</text><text class="kind" x="64" y="73">PLANNED</text></g>
+              <g class="b" style="--d:.3s"><rect x="170" y="52" width="96" height="26" rx="3"/><text class="name" x="178" y="63">Box Office</text><text class="kind" x="178" y="73">PLANNED</text></g>
+              <g class="b" style="--d:.45s"><rect x="270" y="52" width="96" height="26" rx="3"/><text class="name" x="278" y="63">Outbox</text><text class="kind" x="278" y="73">PLANNED</text></g>
+              <g class="b" style="--d:.6s"><rect x="344" y="52" width="96" height="26" rx="3" transform="translate(-6 0)"/><text class="name" x="346" y="63">Tickets Database</text><text class="kind" x="346" y="73">PLANNED</text></g>
+              <g class="b" style="--d:.75s"><rect x="4" y="112" width="96" height="26" rx="3"/><text class="name" x="12" y="123">Book Seats</text><text class="kind" x="12" y="133">PLANNED</text></g>
+              <g class="b" style="--d:.9s"><rect x="156" y="112" width="96" height="26" rx="3"/><text class="name" x="164" y="123">Find Event</text><text class="kind" x="164" y="133">PLANNED</text></g>
+            </svg>
+            <figcaption>The agent draws the whole architecture first, greyed out, and waits for you to agree.</figcaption>
+          </figure>
+
+          <!-- build: blocks turn solid -->
+          <figure class="cmd" data-reveal>
+            <div class="t">
+              <p class="c">fragmentor build</p>
+              <p class="o">Find Event · checked, tests pass, committed</p>
+              <p class="o">Book Seats · checked, tests pass, committed</p>
+            </div>
+            <svg class="sv sv-build" viewBox="0 0 440 180" role="img" aria-label="The same tree, now mostly solid and coloured, with Outbox still dashed">
+              <path class="line" d="M248 32v10H104v10M248 42h170v10M248 42H218v10M248 42h70v10M104 92v10H52v10M104 102h100v10"/>
+              <g class="b turns k-component" style="--d:0s"><rect class="ghost" x="200" y="6" width="96" height="26" rx="3"/><rect class="solid" x="200" y="6" width="96" height="26" rx="3"/><text class="name" x="208" y="17">Tickets</text><text class="kind" x="208" y="27">COMPONENT</text></g>
+              <g class="b turns k-service" style="--d:.2s"><rect class="ghost" x="56" y="52" width="96" height="26" rx="3"/><rect class="solid" x="56" y="52" width="96" height="26" rx="3"/><text class="name" x="64" y="63">Booking API</text><text class="kind" x="64" y="73">SERVICE: REST API</text></g>
+              <g class="b turns k-client" style="--d:.4s"><rect class="ghost" x="170" y="52" width="96" height="26" rx="3"/><rect class="solid" x="170" y="52" width="96" height="26" rx="3"/><text class="name" x="178" y="63">Box Office</text><text class="kind" x="178" y="73">CLIENT: web page</text></g>
+              <g class="b k-queue" style="--d:.6s"><rect class="ghost" x="270" y="52" width="96" height="26" rx="3"/><text class="name" x="278" y="63">Outbox</text><text class="kind" x="278" y="73">PLANNED</text></g>
+              <g class="b turns k-database" style="--d:.6s"><rect class="ghost" x="338" y="52" width="96" height="26" rx="3"/><rect class="solid" x="338" y="52" width="96" height="26" rx="3"/><text class="name" x="346" y="63">Tickets Database</text><text class="kind" x="346" y="73">DATABASE: Postgres</text></g>
+              <g class="b turns k-function" style="--d:.8s"><rect class="ghost" x="4" y="112" width="96" height="26" rx="3"/><rect class="solid" x="4" y="112" width="96" height="26" rx="3"/><text class="name" x="12" y="123">Book Seats</text><text class="kind" x="12" y="133">FUNCTION</text></g>
+              <g class="b turns k-function" style="--d:1s"><rect class="ghost" x="156" y="112" width="96" height="26" rx="3"/><rect class="solid" x="156" y="112" width="96" height="26" rx="3"/><text class="name" x="164" y="123">Find Event</text><text class="kind" x="164" y="133">FUNCTION</text></g>
+              <g class="chip-ok" style="--d:1.2s"><rect x="4" y="146" width="56" height="13" rx="6.5"/><text x="12" y="155.5">tests pass</text></g>
+              <g class="chip-ok" style="--d:1.3s"><rect x="156" y="146" width="56" height="13" rx="6.5"/><text x="164" y="155.5">tests pass</text></g>
+            </svg>
+            <figcaption>Blocks turn solid as they are built, each one checked, tested and committed on its own.</figcaption>
+          </figure>
+
+          <!-- check: what is checked, what is only drawn -->
+          <figure class="cmd" data-reveal>
+            <div class="t">
+              <p class="c">fragmentor check</p>
+              <p class="o">tickets: typechecks against its contracts, and imports only what it can run with</p>
+              <p class="o">Planned · 1 block drawn but not built: tickets/outbox</p>
+              <p class="ok">Result: no errors. Run `fragmentor test` to run the tests.</p>
+            </div>
+            <svg class="sv sv-check" viewBox="0 0 440 180" role="img" aria-label="The tree with a small label under each block: checked under the functions, drawn under the parts that are not code, planned under Outbox">
+              <path class="line" d="M248 32v10H104v10M248 42h170v10M248 42H218v10M248 42h70v10M104 92v10H52v10M104 102h100v10"/>
+              <g class="b on k-component"><rect class="solid" x="200" y="6" width="96" height="26" rx="3"/><text class="name" x="208" y="17">Tickets</text><text class="kind" x="208" y="27">COMPONENT</text></g>
+              <g class="b on k-service"><rect class="solid" x="56" y="52" width="96" height="26" rx="3"/><text class="name" x="64" y="63">Booking API</text><text class="kind" x="64" y="73">SERVICE: REST API</text></g>
+              <g class="b on k-client"><rect class="solid" x="170" y="52" width="96" height="26" rx="3"/><text class="name" x="178" y="63">Box Office</text><text class="kind" x="178" y="73">CLIENT: web page</text></g>
+              <g class="b k-queue"><rect class="ghost" x="270" y="52" width="96" height="26" rx="3"/><text class="name" x="278" y="63">Outbox</text><text class="kind" x="278" y="73">PLANNED</text></g>
+              <g class="b on k-database"><rect class="solid" x="338" y="52" width="96" height="26" rx="3"/><text class="name" x="346" y="63">Tickets Database</text><text class="kind" x="346" y="73">DATABASE: Postgres</text></g>
+              <g class="b on k-function"><rect class="solid" x="4" y="112" width="96" height="26" rx="3"/><text class="name" x="12" y="123">Book Seats</text><text class="kind" x="12" y="133">FUNCTION</text></g>
+              <g class="b on k-function"><rect class="solid" x="156" y="112" width="96" height="26" rx="3"/><text class="name" x="164" y="123">Find Event</text><text class="kind" x="164" y="133">FUNCTION</text></g>
+              <g class="tag tag-dim" style="--d:.2s"><rect x="170" y="84" width="38" height="12" rx="6"/><text x="177" y="93">drawn</text></g>
+              <g class="tag tag-dim" style="--d:.3s"><rect x="338" y="84" width="38" height="12" rx="6"/><text x="345" y="93">drawn</text></g>
+              <g class="tag tag-faint" style="--d:.4s"><rect x="270" y="84" width="44" height="12" rx="6"/><text x="277" y="93">planned</text></g>
+              <g class="tag tag-ok" style="--d:.5s"><rect x="4" y="144" width="46" height="12" rx="6"/><text x="11" y="153">checked</text></g>
+              <g class="tag tag-ok" style="--d:.6s"><rect x="156" y="144" width="46" height="12" rx="6"/><text x="163" y="153">checked</text></g>
+            </svg>
+            <figcaption>The check says what it holds to a contract, what it only draws, and what is still a plan.</figcaption>
+          </figure>
+
+          <!-- notes: a conversation on a block -->
+          <figure class="cmd" data-reveal>
+            <div class="t">
+              <p class="c">fragmentor notes</p>
+              <p class="o">1 note is waiting for you.</p>
+              <p class="o">on tickets/booking-api/book-seats (Book Seats)</p>
+            </div>
+            <svg class="sv sv-notes" viewBox="0 0 440 180" role="img" aria-label="The Book Seats block with a note count on its corner, and beside it a note: the person asks for seats in row A to cost double, and the agent answers that it is done, naming its commit">
+              <path class="line" d="M248 32v10H104v10M248 42h170v10M248 42H218v10M248 42h70v10M104 92v10H52v10M104 102h100v10"/>
+              <g class="b on k-component"><rect class="solid" x="200" y="6" width="96" height="26" rx="3"/><text class="name" x="208" y="17">Tickets</text><text class="kind" x="208" y="27">COMPONENT</text></g>
+              <g class="b on k-service"><rect class="solid" x="56" y="52" width="96" height="26" rx="3"/><text class="name" x="64" y="63">Booking API</text><text class="kind" x="64" y="73">SERVICE: REST API</text></g>
+              <g class="b on k-client"><rect class="solid" x="170" y="52" width="96" height="26" rx="3"/><text class="name" x="178" y="63">Box Office</text><text class="kind" x="178" y="73">CLIENT: web page</text></g>
+              <g class="b on k-queue"><rect class="solid" x="270" y="52" width="96" height="26" rx="3"/><text class="name" x="278" y="63">Outbox</text><text class="kind" x="278" y="73">QUEUE: message queue</text></g>
+              <g class="b on k-database"><rect class="solid" x="338" y="52" width="96" height="26" rx="3"/><text class="name" x="346" y="63">Tickets Database</text><text class="kind" x="346" y="73">DATABASE: Postgres</text></g>
+              <g class="b on k-function noted"><rect class="solid" x="4" y="112" width="96" height="26" rx="3"/><text class="name" x="12" y="123">Book Seats</text><text class="kind" x="12" y="133">FUNCTION</text></g>
+              <g class="b on k-function"><rect class="solid" x="156" y="112" width="96" height="26" rx="3"/><text class="name" x="164" y="123">Find Event</text><text class="kind" x="164" y="133">FUNCTION</text></g>
+              <g class="badge"><circle cx="100" cy="112" r="7"/><text x="100" y="114.5">1</text></g>
+              <g class="note" style="--d:.3s">
+                <rect x="262" y="104" width="174" height="70" rx="3"/>
+                <text class="note-h" x="272" y="118">FOR YOUR AGENT</text>
+                <text class="note-who" x="272" y="133">You</text>
+                <text class="note-t" x="272" y="146">Seats in row A should cost double.</text>
+                <text class="note-who" x="272" y="160">Agent</text>
+                <text class="note-t note-ok" x="272" y="171">Done, in commit e68b017.</text>
+              </g>
+            </svg>
+            <figcaption>Leave a note on a block. The agent does what it asks, commits, and answers on the block.</figcaption>
+          </figure>
+
         </div>
-        <div class="demo-window" id="demo-window">
-          <div class="panel-strip demo-strip"><span>exported from Fragmentor · read-only</span><button class="chip demo-done" type="button">Done</button><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></div>
-          <div class="demo-body">
-            <iframe data-src="demo/tickets.html" title="Fragmentor's export of the Tickets example, live" loading="lazy"></iframe>
-            <button class="demo-shield" type="button"><span>Click to use the demo</span><small>Esc, Done or moving away lets the page scroll again</small></button>
-          </div>
-        </div>
-        <figure class="panel demo-phone">
-          <img src="img/export.webp" width="380" height="229" alt="An exported page of the Tickets example open in a browser" loading="lazy">
-          <figcaption>The export needs more room than a phone has. <a href="demo/tickets.html" target="_blank" rel="noopener">Open it in a new tab</a>, where it works as it does on a laptop.</figcaption>
-        </figure>
-        <p class="hint-line">Drag the drawing · scroll to zoom · click a block · press Step, top left · Flow lays the whole run out</p>
+
+        <p class="hint-line">Also <b>fragmentor make</b>, to build straight away · <b>fragmentor rebuild</b>, to draw code you already have · <b>review</b> · <b>explain</b> · <b>cover</b></p>
       </div>
     </section>
 

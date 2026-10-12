@@ -37,6 +37,6 @@ The diagram updates as the agent works. When the agent's work changes the archit
 
 ## Website
 
-`site/` is the website: one page of static files, so any web host serves it as it is. Its live demo is a pair of real exports of the example projects; `npm run site:demos` makes them again after the examples or the export change. The download button points at the repository's zip on GitHub.
+`site/` is the website: one page of static files, so any web host serves it as it is. The download button points at the repository's zip on GitHub.
 
 `PROJECT.md` describes what Fragmentor is for. `STATUS.md` describes where development stands.

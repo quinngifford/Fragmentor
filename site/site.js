@@ -1,8 +1,8 @@
 /* Fragmentor website. No dependencies.
    1. The living diagram: the Tickets example drawn in Fragmentor's own style,
       building itself and then stepping its real "Book seats" execution.
-   2. Page behaviour: the hero's controls and the live demo's click-to-use
-      shield.                                                              */
+   2. Page behaviour: the hero's controls, and the command panels that draw
+      themselves as they come into view.                                   */
 
 (() => {
   "use strict";
@@ -543,38 +543,14 @@
       if (steps) steps.textContent = String(diagram.steps);
     }
 
-    /* The live demo: a real exported page in a frame. It takes the wheel for
-       zooming, so it stays covered until asked for, and covers itself again
-       when the pointer has left. It is loaded only when the visitor nears it. */
-    const demo = $("#demo");
-    if (demo) {
-      const frame = $("iframe", demo), shield = $(".demo-shield", demo), tabs = demo.querySelectorAll("[data-demo-src]"), full = $("#demo-full");
-      let rearm = 0;
-      const load = () => { if (!frame.src) frame.src = frame.dataset.src; };
-      if ("IntersectionObserver" in window) {
-        const io = new IntersectionObserver(([e]) => { if (e.isIntersecting) { load(); io.disconnect(); } }, { rootMargin: "900px 0px" });
-        io.observe(demo);
-      } else load();
-      const cover = () => demo.classList.remove("is-live");
-      frame.addEventListener("load", () => {
-        try { frame.contentWindow.addEventListener("keydown", (e) => { if (e.key === "Escape") { cover(); shield.focus(); } }); } catch { /* not same-origin here */ }
-      });
-      shield.addEventListener("click", () => { load(); demo.classList.add("is-live"); frame.focus({ preventScroll: true }); });
-      demo.addEventListener("pointerleave", (e) => { if (e.pointerType !== "mouse") return; clearTimeout(rearm); rearm = setTimeout(cover, 900); });
-      const done = $(".demo-done", demo);
-      if (done) done.addEventListener("click", () => { cover(); shield.focus(); });
-      demo.addEventListener("pointerenter", () => clearTimeout(rearm));
-      document.addEventListener("keydown", (e) => { if (e.key === "Escape") cover(); });
-      tabs.forEach((tab) => tab.addEventListener("click", () => {
-        if (tab.getAttribute("aria-pressed") === "true") return;
-        tabs.forEach((t) => t.setAttribute("aria-pressed", String(t === tab)));
-        frame.src = tab.dataset.demoSrc;
-        frame.dataset.src = tab.dataset.demoSrc;
-        frame.title = `Fragmentor's export of the ${tab.textContent} example, live`;
-        if (full) full.href = tab.dataset.demoSrc;
-        cover();
-      }));
+    /* The command panels draw themselves as they come into view. */
+    const panels = document.querySelectorAll("[data-reveal]");
+    if (REDUCED || !("IntersectionObserver" in window)) panels.forEach((el) => el.classList.add("is-in"));
+    else {
+      const io = new IntersectionObserver((entries) => {
+        for (const e of entries) if (e.isIntersecting) { e.target.classList.add("is-in"); io.unobserve(e.target); }
+      }, { threshold: 0.35 });
+      panels.forEach((el) => io.observe(el));
     }
-
   });
 })();
