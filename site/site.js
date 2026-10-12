@@ -1,8 +1,8 @@
 /* Fragmentor website. No dependencies.
    1. The living diagram: the Tickets example drawn in Fragmentor's own style,
       building itself and then stepping its real "Book seats" execution.
-   2. Page behaviour: the status bar, reveals, the live demo's click-to-use
-      shield, the typed terminal, and copy buttons.                        */
+   2. Page behaviour: the hero's controls and the live demo's click-to-use
+      shield.                                                              */
 
 (() => {
   "use strict";
@@ -543,25 +543,6 @@
       if (steps) steps.textContent = String(diagram.steps);
     }
 
-    /* The status bar names the section in view. */
-    const where = $("#status-where");
-    if (where && "IntersectionObserver" in window) {
-      const io = new IntersectionObserver((entries) => {
-        for (const e of entries) if (e.isIntersecting) where.textContent = e.target.dataset.status;
-      }, { rootMargin: "-45% 0px -45% 0px" });
-      document.querySelectorAll("[data-status]").forEach((el) => io.observe(el));
-    }
-
-    /* Sections arrive as they are scrolled to. */
-    const revealed = document.querySelectorAll("[data-reveal]");
-    if (REDUCED || !("IntersectionObserver" in window)) revealed.forEach((el) => el.classList.add("is-in"));
-    else {
-      const io = new IntersectionObserver((entries) => {
-        for (const e of entries) if (e.isIntersecting) { e.target.classList.add("is-in"); io.unobserve(e.target); }
-      }, { threshold: 0.12, rootMargin: "0px 0px -6% 0px" });
-      revealed.forEach((el) => io.observe(el));
-    }
-
     /* The live demo: a real exported page in a frame. It takes the wheel for
        zooming, so it stays covered until asked for, and covers itself again
        when the pointer has left. It is loaded only when the visitor nears it. */
@@ -595,41 +576,5 @@
       }));
     }
 
-    /* The terminal types itself out once it is on screen. */
-    const term = $("#terminal");
-    if (term) {
-      const lines = [...term.querySelectorAll("[data-line]")];
-      const texts = lines.map((l) => l.textContent);
-      const typeAll = async () => {
-        for (let i = 0; i < lines.length; i++) {
-          const el = lines[i], text = texts[i];
-          el.classList.add("is-on");
-          if (el.dataset.line === "cmd") {
-            el.textContent = "";
-            for (let k = 1; k <= text.length; k++) { el.textContent = text.slice(0, k); await new Promise((r) => setTimeout(r, 26)); }
-          }
-          await new Promise((r) => setTimeout(r, el.dataset.line === "cmd" ? 350 : 650));
-        }
-        term.classList.add("is-done");
-      };
-      if (REDUCED || !("IntersectionObserver" in window)) { lines.forEach((l) => l.classList.add("is-on")); term.classList.add("is-done"); }
-      else {
-        const io = new IntersectionObserver(([e]) => { if (e.isIntersecting) { io.disconnect(); typeAll(); } }, { threshold: 0.4 });
-        io.observe(term);
-      }
-    }
-
-    /* Copy buttons. */
-    document.querySelectorAll("[data-copy]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(btn.dataset.copy);
-          const was = btn.textContent, status = $("#copy-status");
-          btn.textContent = "Copied";
-          if (status) status.textContent = "Copied";
-          setTimeout(() => { btn.textContent = was; if (status) status.textContent = ""; }, 1400);
-        } catch { /* No clipboard here; the text is on the page to select. */ }
-      });
-    });
   });
 })();
