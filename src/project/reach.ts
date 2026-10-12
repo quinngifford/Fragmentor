@@ -9,6 +9,7 @@ import { fold, under } from "./history.js";
 import { LARGEST_SHOWN, resolveAccess } from "./project.js";
 import type { Project, ProjectDiagnostic } from "./project.js";
 import { isArchitecture } from "../model/roles.js";
+import { holding } from "./analytics.js";
 
 /**
  * Which blocks each block's code reaches, read from the code itself.
@@ -57,14 +58,6 @@ export interface ProjectReach {
   unpointed: string[];
   /** By system: whether its language's reach can be read at all. */
   systemsRead: Record<string, boolean>;
-}
-
-/** The deepest block holding all of these, or "" when they are in different systems. */
-function holding(blockPaths: string[]): string {
-  const segments = blockPaths.map((each) => each.split("/"));
-  const first = segments[0]!;
-  const differs = first.findIndex((segment, i) => segments.some((other) => other[i] !== segment));
-  return first.slice(0, differs === -1 ? first.length : differs).join("/");
 }
 
 /** A block's pointer, as the owner of the code it covers. */

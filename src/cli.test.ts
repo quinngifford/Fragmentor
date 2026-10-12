@@ -566,3 +566,51 @@ describe.skipIf(!hasGit)("what changed since the last commit", () => {
     expect(given.output).toContain("fragmentor diff takes nothing but --project, and was given HEAD~1.");
   }, 30_000);
 });
+
+describe("fragmentor analytics", () => {
+  it("lists Messenger's weak spot first with its evidence, then the measurements, each with what it is counted from", async () => {
+    await cp(path.join(repo, "examples", "messenger"), dir, { recursive: true });
+    const result = fragmentor(["analytics"], dir);
+    expect(result.status).toBe(0);
+    const lines = result.output.split("\n");
+    expect(lines.indexOf("Weak spots")).toBeLessThan(lines.indexOf("Coupling"));
+    expect(result.output).toContain("  Parts that use each other in a circle: 1\n    State and UI, on Client (app/client)\n");
+    expect(result.output).toContain("in the code: State → UI, showMessage from src/client/ui/chatView.ts");
+    expect(result.output).toContain("in the code: UI → State, dispatch from src/client/state.ts");
+    expect(result.output).toContain("  Functions with more than 10 ways through: not built yet");
+    expect(result.output).toContain("  Used by: most: Database (6) · min 0, median 1, max 6 over 22 blocks");
+    expect(result.output).toContain("    State (outward share 0.4) → Router (outward share 0.83)");
+    expect(result.output).toContain("    UI: its 3 parts form 3 groups: Chat View · Login Form · Send Button");
+    expect(result.output).toContain("\nRuntime performance\n  Runtime performance: not built yet");
+    expect(result.output).toContain("\nNot measured: none");
+    // Every number's sentence is on the line after it.
+    expect(result.output).toContain("  Used by: most: Database (6)");
+    expect(result.output.split("Used by: most: Database (6)")[1]!.split("\n")[1]).toContain("Counted from");
+
+    const check = fragmentor(["check"], dir);
+    expect(check.output).toContain("\nWeak spots: 1, which is not a problem. `fragmentor analytics` lists them with their evidence; weigh them when the person asks for a review, and change nothing for them otherwise.\n");
+    expect(check.output).toContain("Result: no errors.");
+  }, 60_000);
+
+  it("finds no weak spot on Tickets, says what it looked for, and measures one block on its own", async () => {
+    await cp(tickets, dir, { recursive: true });
+    const whole = fragmentor(["analytics"], dir);
+    expect(whole.status).toBe(0);
+    expect(whole.output).toContain("  Parts that use each other in a circle: none\n");
+    expect(whole.output).toContain("  No weak spots found. A weak spot is a finding worth asking your agent about, never a problem.");
+    expect(whole.output).toContain("    Tickets Database (tickets/tickets-db): 5\n");
+    expect(whole.output).toContain("    Pricing: its 2 parts form 2 groups: Price Seat · Refund For\n");
+    expect(whole.output).toContain("  Held to a contract: 6 of 6 function blocks");
+
+    const one = fragmentor(["analytics", "tickets/tickets-db"], dir);
+    expect(one.status).toBe(0);
+    expect(one.output).toContain("Tickets Database (tickets/tickets-db)\n\nNo weak spot is on this block.");
+    expect(one.output).toContain("  Used by: 5 — 1st of 2 stores\n");
+    expect(one.output).toContain("    Reminders (tickets/reminders): on the diagram: reads bookings (planned)");
+    expect(one.output).toContain("  Outward share: 0 (everything leans on it)");
+
+    expect(fragmentor(["analytics", "tickets/nowhere"], dir).output).toContain("There is no block at tickets/nowhere.");
+    expect(fragmentor(["analytics", "a", "b"], dir).output).toContain("fragmentor analytics takes one block path at most, and was given 2.");
+    expect(fragmentor(["check"], dir).output).not.toContain("Weak spots");
+  }, 60_000);
+});

@@ -214,7 +214,7 @@ describe("the guide", () => {
 
   it("gives the person no phrase that is word for word a command of the program, but the notes one", () => {
     // The `fragmentor` program's own commands, as cli.ts takes them.
-    const program = ["init", "check", "test", "notes", "working", "reply", "note", "diff", "help"];
+    const program = ["init", "check", "test", "notes", "working", "reply", "note", "diff", "analytics", "help"];
     expect(COMMANDS.map((command) => command.name).filter((name) => program.includes(name))).toEqual(["notes"]);
   });
 

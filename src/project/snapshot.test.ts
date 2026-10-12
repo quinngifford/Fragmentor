@@ -319,7 +319,7 @@ describe("a snapshot of code Fragmentor only draws", () => {
       const snapshot = await projectSnapshot(other);
       expect(snapshot.language).toBe("Go");
       // Nothing is generated or run in a language there is no pack for.
-      expect(snapshot.systems).toEqual([{ rootBlock: "serve", language: "Go", displayName: "Go", known: false, reachRead: false }]);
+      expect(snapshot.systems).toEqual([{ rootBlock: "serve", language: "Go", displayName: "Go", known: false, reachRead: false, reachNotReadBecause: "Go code is not read yet" }]);
 
       const serve = snapshot.blocks.serve!;
       expect(serve.code).toMatchObject({ pointer: "main.go#main", file: "main.go", line: 3, excerptStart: 1 });
@@ -364,9 +364,23 @@ describe("what the code reaches, in a snapshot", () => {
       expect((await projectSnapshot(copy)).diagnostics).toEqual(snapshot.diagnostics);
       expect(Object.values(snapshot.blocks).filter((each) => each.reachNotChecked.length > 0)).toEqual([]);
       expect(snapshot.reachUnpointed).toEqual([]);
+      // Everything known about who reaches whom is on the snapshot, each way said.
+      expect(snapshot.systems.map((system) => system.reachNotReadBecause)).toEqual([null]);
+      expect(snapshot.reachSeen.filter((each) => each.on === "code")).toHaveLength(18);
+      expect(snapshot.reachSeen.filter((each) => each.on === "diagram")).toHaveLength(14);
+      expect(snapshot.reachSeen.find((each) => each.on === "diagram" && each.from === "app/api/auth/log-in")).toMatchObject({
+        to: "app/infrastructure/database",
+        verb: "reads",
+        entry: "users",
+        exact: true,
+        planned: false,
+      });
 
       // Read as it was at a commit, the code's reach is left alone.
-      expect((await projectSnapshot(copy, { atCommit: true })).diagnostics).toEqual([]);
+      const then = await projectSnapshot(copy, { atCommit: true });
+      expect(then.diagnostics).toEqual([]);
+      expect(then.reachSeen).toEqual([]);
+      expect(then.systems.map((system) => system.reachNotReadBecause)).toEqual(["the code is not read as it was at a commit"]);
     } finally {
       await rm(copy, { recursive: true, force: true });
     }

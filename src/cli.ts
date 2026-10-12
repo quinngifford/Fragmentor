@@ -11,6 +11,8 @@ import { loadExecutions } from "./project/executions.js";
 import type { Execution } from "./project/executions.js";
 import { changesBetween, changesText } from "./project/changes.js";
 import { changePoints, commitTouchesBlock, headCommit, projectAt } from "./project/history.js";
+import { analyticsOf, NOT_BUILT_YET, ordinal } from "./project/analytics.js";
+import type { Analytics, Measure } from "./project/analytics.js";
 import { projectSnapshot } from "./project/snapshot.js";
 import type { ProjectSnapshot } from "./project/snapshot.js";
 import { NOTES_DIR, addNote, describeRun, isNoteWithin, loadNotes, markWorking, noteById, replyToNote, waitingOn } from "./project/notes.js";
@@ -60,6 +62,11 @@ Commands:
                          Leave a note on a block for the person to read in Fragmentor.
   diff                   Say what changed since the last commit, in Fragmentor's words: which blocks are new,
                          built, moved, changed or removed, and which executions changed.
+  analytics [block-path] Measure the architecture as the person sees it under View › Architecture Analytics:
+                         who reaches whom, what each block is used by, which parts use each other in a circle,
+                         and the rest, each number with what it is counted from; or one block's own numbers.
+                         A measurement is never a problem. The few worth asking about come first, as weak
+                         spots; the person flags one as a note when they want it looked at.
 
 init uses the current folder; the others use the nearest folder, from here upwards, that holds fragmentor.json.
 --project names a folder instead. Everything after a note's block path or id is its text, but for --no-commit
@@ -244,6 +251,16 @@ function formatReport(report: CheckReport): string {
       const state = rule.problem ?? (broken !== "" ? broken : rule.declaredOnly ? "kept, from what the diagram declares" : "kept");
       lines.push(`  ${rule.rule}: ${indent(state, "         ")}`);
     }
+  }
+
+  // Weak spots are findings, never problems: the agent is told they exist
+  // and where to read them, and told to change nothing for them unasked.
+  if (report.weakSpots > 0) {
+    const which = report.weakSpots === 1 ? "which is not a problem" : "which are not problems";
+    lines.push(
+      "",
+      `Weak spots: ${report.weakSpots}, ${which}. \`fragmentor analytics\` lists them with their evidence; weigh them when the person asks for a review, and change nothing for them otherwise.`,
+    );
   }
 
   // Neither a plan nor a piece of the architecture is unfinished work, so
@@ -858,6 +875,111 @@ async function diff(dir: string): Promise<number> {
   return 0;
 }
 
+
+/* -------------------------------------------------------------------------- */
+/* Analytics                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** One measure as lines: its headline, its sentence, and the rows behind it. */
+function measureLines(measure: Measure, lead: string, withRows: boolean): string[] {
+  const lines: string[] = [];
+  if (measure.unavailable !== null) {
+    lines.push(`${lead}${measure.label}: ${measure.unavailable}`);
+    return lines;
+  }
+  const rank = measure.rank === null ? "" : ` — ${ordinal(measure.rank.place)} of ${measure.rank.of} ${measure.rank.kind}`;
+  const spread = measure.spread === null ? "" : ` · min ${measure.spread.min}, median ${measure.spread.median}, max ${measure.spread.max} over ${measure.spread.n} ${measure.spread.kind}`;
+  lines.push(`${lead}${measure.label}: ${measure.text}${rank}${spread}`);
+  if (measure.of !== "") lines.push(`${lead}  ${measure.of}`);
+  if (!withRows) return lines;
+  for (const row of measure.rows) {
+    const planned = row.planned ? " (planned)" : "";
+    const line = row.text.startsWith(row.name) ? row.text : `${row.name} (${row.path}): ${row.text}`;
+    lines.push(`${lead}  ${line}${planned}`);
+    if (row.detail !== null && row.detail !== row.text && !row.text.includes(row.detail)) {
+      for (const part of row.detail.split("\n")) lines.push(`${lead}    ${part}`);
+    }
+  }
+  return lines;
+}
+
+/** The measurements as text, in the window's order and words: weak spots first, then each dimension, then what was not measured. */
+function formatAnalytics(analytics: Analytics, snapshot: ProjectSnapshot, within: string | undefined): string {
+  const lines: string[] = [];
+  const blockName = (blockPath: string) => snapshot.blocks[blockPath]?.name ?? blockPath;
+
+  if (within !== undefined) {
+    const block = snapshot.blocks[within]!;
+    lines.push(`${block.name} (${within})`, "");
+    const spots = analytics.weakSpots.flatMap((kind) => kind.spots.filter((spot) => spot.block === within));
+    lines.push(spots.length === 0 ? "No weak spot is on this block." : "Weak spots on this block");
+    for (const spot of spots) {
+      lines.push(`  ${spot.headline}`);
+      for (const evidence of spot.evidence) lines.push(`    ${evidence}`);
+    }
+    for (const dimension of analytics.dimensions) {
+      const own = dimension.blocks[within];
+      if (own === undefined) continue;
+      lines.push("", dimension.name);
+      for (const measure of own) lines.push(...measureLines(measure, "  ", true));
+    }
+    return lines.join("\n");
+  }
+
+  lines.push(`${snapshot.name}  ${snapshot.dir}`, "");
+  lines.push("Weak spots");
+  for (const kind of analytics.weakSpots) {
+    if (!kind.measured && kind.spots.length === 0) {
+      lines.push(`  ${kind.title}: ${kind.reason === NOT_BUILT_YET ? NOT_BUILT_YET : `not measured: ${kind.reason}`}`);
+      continue;
+    }
+    lines.push(`  ${kind.title}: ${kind.spots.length === 0 ? "none" : kind.spots.length}${kind.measured ? "" : ` (${kind.reason})`}`);
+    for (const spot of kind.spots) {
+      const where = spot.block === null ? "under no block" : `on ${spot.blockName} (${spot.block})`;
+      lines.push(`    ${spot.headline.slice(kind.title.length + 2)}, ${where}`);
+      for (const evidence of spot.evidence) lines.push(`      ${evidence}`);
+    }
+  }
+  if (analytics.weakSpots.every((kind) => kind.spots.length === 0)) {
+    lines.push("  No weak spots found. A weak spot is a finding worth asking your agent about, never a problem.");
+  }
+
+  for (const dimension of analytics.dimensions) {
+    lines.push("", dimension.name);
+    for (const system of analytics.systems) {
+      const measures = dimension.system[system.root] ?? [];
+      if (analytics.systems.length > 1) lines.push(`  ${system.name} (${system.root}): ${plural(system.blocks, "block")}, ${plural(system.dependencies, "dependency").replace("dependencys", "dependencies")}`);
+      const lead = analytics.systems.length > 1 ? "    " : "  ";
+      for (const measure of measures) lines.push(...measureLines(measure, lead, true));
+    }
+  }
+
+  lines.push("");
+  if (analytics.notMeasured.length === 0) lines.push("Not measured: none");
+  else {
+    lines.push("Not measured");
+    for (const each of analytics.notMeasured) lines.push(`  ${blockName(each.system)} (${each.system}): ${each.reasons.join("; ")}`);
+  }
+  return lines.join("\n");
+}
+
+async function analytics(dir: string, within: string | undefined): Promise<number> {
+  let snapshot: ProjectSnapshot;
+  try {
+    snapshot = await projectSnapshot(dir);
+  } catch (error) {
+    console.log(`The project in ${dir} could not be read.\n\n${messageOf(error)}\n\nRun \`fragmentor check\` for details.`);
+    return 1;
+  }
+  if (within !== undefined && snapshot.blocks[within] === undefined) {
+    const example = Object.keys(snapshot.blocks).at(-1) ?? "";
+    console.log(`There is no block at ${within}. A block path looks like ${example}.`);
+    return 1;
+  }
+  console.log(formatAnalytics(analyticsOf(snapshot), snapshot, within));
+  return 0;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Entry                                                                       */
 /* -------------------------------------------------------------------------- */
@@ -904,7 +1026,7 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === "init") return init(path.resolve(project ?? process.cwd()), options);
 
-  if (["check", "test", "notes", "working", "reply", "note", "diff"].includes(command ?? "")) {
+  if (["check", "test", "notes", "working", "reply", "note", "diff", "analytics"].includes(command ?? "")) {
     const dir = project ? path.resolve(project) : await findProject(process.cwd());
     if (!dir || !(await exists(manifestPath(dir)))) {
       console.log(
@@ -929,6 +1051,7 @@ async function main(argv: string[]): Promise<number> {
       console.log(`fragmentor ${command} takes one ${command === "working" ? "note's id" : "block path at most"}, and was given ${rest.length}.`);
       return 1;
     }
+    if (command === "analytics") return analytics(dir, rest[0] === undefined ? undefined : asPath(rest[0]));
     if (command === "working") return working(dir, rest[0]);
     return notes(dir, rest[0] === undefined ? undefined : asPath(rest[0]));
   }

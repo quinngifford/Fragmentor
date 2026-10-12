@@ -1,5 +1,6 @@
 import type { Address, Effect, Interaction, Return, Trace } from "../model/trace.js";
 import type { Granularity } from "./project.js";
+import type { ReachSeen } from "./rules.js";
 import type {
   ProjectSnapshot,
   SnapshotAccess,
@@ -84,6 +85,9 @@ export const projectFields = {
   diagnostics: ignoredPrivate,
   // What the code reaches is not read at a commit, and the files are the codebase's.
   reachUnpointed: ignoredPrivate,
+  // Follows from each block's access and code, which are compared; the page
+  // keeps it so that Used by and the measurements are the same there.
+  reachSeen: ignored,
 } satisfies FieldTable<ProjectSnapshot>;
 
 export const blockFields = {
@@ -189,7 +193,20 @@ export const systemFields = {
   displayName: kept,
   known: kept,
   reachRead: kept,
+  reachNotReadBecause: kept,
 } satisfies ExportTable<SnapshotSystem>;
+
+/** Who reaches whom, as the page's Used by and measurements need it. The evidence names files of the codebase, which the page already does. */
+export const reachSeenFields = {
+  from: kept,
+  to: kept,
+  evidence: kept,
+  exact: kept,
+  on: kept,
+  entry: kept,
+  verb: kept,
+  planned: kept,
+} satisfies ExportTable<ReachSeen>;
 
 export const granularityFields = {
   level: kept,

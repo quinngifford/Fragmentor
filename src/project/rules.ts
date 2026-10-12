@@ -2,6 +2,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod/v4";
 import { formatAccess } from "../model/block.js";
+import type { AccessVerb } from "../model/block.js";
 import { RULES_FILE, formatRule, parseRule, refuseRule } from "../model/rules.js";
 import type { RuleKind } from "../model/rules.js";
 import { ignoreAllButShared, under } from "./history.js";
@@ -138,12 +139,59 @@ export async function removeRule(projectDir: string, text: string): Promise<void
 }
 
 /** One way a block was seen to reach another: what the diagram declares, or what the code was read to do. */
-interface ReachSeen {
+export interface ReachSeen {
   from: string;
   to: string;
   evidence: string;
   /** True when Fragmentor read it exactly, rather than counting a file whole. */
   exact: boolean;
+  /** Whether the diagram declares it, or the code was read to do it. */
+  on: "diagram" | "code";
+  /** For a declared one: the table, channel or operation named, if any. */
+  entry: string | null;
+  /** For a declared one: what it does there. */
+  verb: AccessVerb | null;
+  /** True when the reaching block is planned, so its access is a plan's guess. */
+  planned: boolean;
+}
+
+/**
+ * Everything known about who reaches whom: the access each block declares,
+ * resolved as the diagram resolves it, and the edges read from the code.
+ * Rules, the measurements and every Used by list count from this one list,
+ * so none of them can disagree.
+ */
+export function reachSeen(project: Project, reach: ProjectReach | null): ReachSeen[] {
+  const seen: ReachSeen[] = [];
+  for (const [blockPath, node] of project.byPath) {
+    for (const entry of node.block.access) {
+      const target = resolveAccess(project, blockPath, entry.resource)?.path;
+      if (target === undefined) continue;
+      seen.push({
+        from: blockPath,
+        to: target,
+        evidence: `declares "${formatAccess(entry)}"`,
+        exact: true,
+        on: "diagram",
+        entry: entry.entry,
+        verb: entry.verb,
+        planned: node.block.planned,
+      });
+    }
+  }
+  for (const edge of reach?.edges ?? []) {
+    seen.push({
+      from: edge.from,
+      to: edge.to,
+      evidence: edge.evidence,
+      exact: !edge.approximate,
+      on: "code",
+      entry: null,
+      verb: null,
+      planned: project.byPath.get(edge.from)?.block.planned ?? false,
+    });
+  }
+  return seen;
 }
 
 /**
@@ -153,14 +201,7 @@ interface ReachSeen {
  * the same words, and a diagnostic the person flagged is recognised again.
  */
 export function evaluateRules(project: Project, reach: ProjectReach | null, rules: Rule[]): { rules: SnapshotRule[]; diagnostics: ProjectDiagnostic[] } {
-  const seen: ReachSeen[] = [];
-  for (const [blockPath, node] of project.byPath) {
-    for (const entry of node.block.access) {
-      const target = resolveAccess(project, blockPath, entry.resource)?.path;
-      if (target !== undefined) seen.push({ from: blockPath, to: target, evidence: `declares "${formatAccess(entry)}"`, exact: true });
-    }
-  }
-  for (const edge of reach?.edges ?? []) seen.push({ from: edge.from, to: edge.to, evidence: edge.evidence, exact: !edge.approximate });
+  const seen = reachSeen(project, reach);
 
   const evaluated: SnapshotRule[] = [];
   const diagnostics: ProjectDiagnostic[] = [];

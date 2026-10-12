@@ -1,4 +1,5 @@
 import { emitProject } from "../codegen/emit.js";
+import { analyticsOf } from "../project/analytics.js";
 import type { EmitResult } from "../codegen/emit.js";
 import type { NoteAuthor } from "../project/notes.js";
 import { loadProject } from "../project/project.js";
@@ -91,6 +92,11 @@ export interface CheckReport {
    * because it says what someone wants done rather than what is wrong.
    */
   notes: Record<NoteAuthor, string[]>;
+  /**
+   * How many weak spots the measurements found: findings with evidence,
+   * never problems, which `fragmentor analytics` lists.
+   */
+  weakSpots: number;
   /** Errors of every kind. Warnings and unfinished work are not errors. */
   errorCount: number;
 }
@@ -155,6 +161,7 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
       agent: snapshot.notes.filter((note) => note.waiting === "agent").map((note) => note.block),
       person: snapshot.notes.filter((note) => note.waiting === "person").map((note) => note.block),
     },
+    weakSpots: analyticsOf(snapshot).weakSpots.reduce((count, kind) => count + kind.spots.length, 0),
     errorCount,
   };
 }

@@ -22,7 +22,8 @@ import { boundStores, storeEntries } from "./stores.js";
 import { NOTES_DIR, loadNotes, waitingOn } from "./notes.js";
 import { readProjectReach, undeclaredReach } from "./reach.js";
 import type { ProjectReach } from "./reach.js";
-import { RULES_FILE, evaluateRules, loadRules } from "./rules.js";
+import { RULES_FILE, evaluateRules, loadRules, reachSeen } from "./rules.js";
+import type { ReachSeen } from "./rules.js";
 import type { SnapshotRule } from "./rules.js";
 import type { Note, NoteAuthor } from "./notes.js";
 import { readCases, storeKeyProblems } from "../run/cases.js";
@@ -122,6 +123,8 @@ export interface SnapshotSystem {
   known: boolean;
   /** Whether what its code reaches is read, so reach the diagram leaves out is found. */
   reachRead: boolean;
+  /** Why it was not, in the words the measurements show; null when it was. */
+  reachNotReadBecause: string | null;
 }
 
 /** The code a block points at, as much of it as the inspector shows. */
@@ -254,6 +257,13 @@ export interface ProjectSnapshot {
   notes: SnapshotNote[];
   /** The person's rules over the architecture, each already held to the diagram and the code. */
   rules: SnapshotRule[];
+  /**
+   * Everything known about who reaches whom, exact or not: what the diagram
+   * declares and what the code was read to do. Empty at a commit, where the
+   * code is not read for it. Rules, the measurements and Used by all count
+   * from this one list.
+   */
+  reachSeen: ReachSeen[];
   diagnostics: ProjectDiagnostic[];
   /** Files whose code reaches something but lies under no block's pointer, so nothing accounts for it. */
   reachUnpointed: string[];
@@ -397,12 +407,14 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
   // could not be read still opens, and says so instead.
   let reach: ProjectReach | null = null;
   let reachProblems: ProjectDiagnostic[] = [];
+  let reachFailed = false;
   if (!atCommit) {
     try {
       reach = await readProjectReach(project, code);
       reachProblems = undeclaredReach(project, reach);
     } catch (error) {
       reach = null;
+      reachFailed = true;
       reachProblems = project.systems.map((system): ProjectDiagnostic => ({
         severity: "warning",
         blockPath: system.rootBlock,
@@ -560,18 +572,24 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
     granularity: project.manifest.granularity,
     systems: project.systems.map((system) => {
       const known = isKnownLanguage(system.language);
-      return {
-        rootBlock: system.rootBlock,
-        language: system.language,
-        displayName: known ? getPack(system.language).displayName : system.language,
-        known,
-        reachRead: reach?.systemsRead[system.rootBlock] ?? false,
-      };
+      const displayName = known ? getPack(system.language).displayName : system.language;
+      const reachRead = reach?.systemsRead[system.rootBlock] ?? false;
+      // Why its code was not read for what it reaches, said once here in the
+      // words the measurements print, so nothing unmeasured can pass for healthy.
+      const reachNotReadBecause = reachRead
+        ? null
+        : atCommit
+          ? "the code is not read as it was at a commit"
+          : reachFailed
+            ? "the code could not be read"
+            : `${displayName} code is not read yet`;
+      return { rootBlock: system.rootBlock, language: system.language, displayName, known, reachRead, reachNotReadBecause };
     }),
     blocks,
     executions,
     notes,
     rules,
+    reachSeen: atCommit ? [] : reachSeen(project, reach),
     diagnostics: [...validateProject(project), ...fileProblems, ...reachProblems],
     reachUnpointed: reach?.unpointed ?? [],
   };

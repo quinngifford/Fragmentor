@@ -18,6 +18,7 @@ import {
   interactionFields,
   portFields,
   projectFields,
+  reachSeenFields,
   returnFields,
   routeStepFields,
   systemFields,
@@ -169,6 +170,7 @@ function project(value: ProjectSnapshot, pointer: Pointer): ProjectSnapshot {
       systems: (systems) => systems.map((system) => copy(system, systemFields, { dropped: {}, nested: {} })),
       blocks: (blocks) => Object.fromEntries(Object.entries(blocks).map(([path, each]) => [path, block(each, pointer)])),
       executions: (executions) => executions.map((each) => execution(each, pointer)),
+      reachSeen: (all) => all.map((each) => copy(each, reachSeenFields, { dropped: {}, nested: {} })),
     },
   });
 }
