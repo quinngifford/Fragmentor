@@ -1,4 +1,5 @@
 import type { Role } from "../model/roles.js";
+import type { BlockFunctions, NamedFunction } from "./reach.js";
 import type { ReachSeen } from "./rules.js";
 import type { ProjectSnapshot, SnapshotBlock } from "./snapshot.js";
 
@@ -379,8 +380,8 @@ export function analyticsOf(snapshot: ProjectSnapshot, extra: AnalyticsExtra = {
     coupling(snapshot, systems),
     modularity(snapshot, systems),
     cohesion(snapshot, systems),
-    unbuilt("complexity", "Complexity", systems),
-    unbuilt("maintainability", "Maintainability", systems),
+    complexity(snapshot, systems),
+    maintainability(snapshot, systems),
     unbuilt("runtime", "Runtime performance", systems),
     reliability(snapshot, systems),
     scalability(snapshot, systems),
@@ -395,7 +396,7 @@ export function analyticsOf(snapshot: ProjectSnapshot, extra: AnalyticsExtra = {
     .filter((each) => each.reasons.length > 0);
 
   return {
-    weakSpots: [cycleSpots(snapshot, systems), unbuiltKind("complexity"), unbuiltKind("hotspot")],
+    weakSpots: [cycleSpots(snapshot, systems), complexitySpots(snapshot, systems), unbuiltKind("hotspot")],
     dimensions,
     notMeasured,
     systems: systems.map((system) => ({
@@ -786,6 +787,173 @@ function scalability(snapshot: ProjectSnapshot, systems: SystemView[]): Dimensio
 }
 
 /* -------------------------------------------------------------------------- */
+/* The code's shape                                                            */
+/* -------------------------------------------------------------------------- */
+
+const WAYS_OF =
+  "Ways through a function: 1 plus each if, ?:, loop, case with a test, catch and short-circuit (&&, ||, ??), a nested function counted on its own. Cyclomatic complexity (McCabe 1976), counted when the code is read for what it reaches. The limit of 10 is a published guideline, not a rule of this project.";
+const statementsWord = (n: number): string => `${n} ${n === 1 ? "statement" : "statements"}`;
+const SIZE_OF =
+  "Statements inside each function, counted when the code is read for what it reaches. A block's are its functions' added up; its share is of every statement in its system's code.";
+
+/** The functions credited to one system's blocks, by block; code under no block goes with the first system. */
+function functionsOf(snapshot: ProjectSnapshot, system: SystemView, first: boolean): Map<string, BlockFunctions> {
+  const byBlock = new Map<string, BlockFunctions>();
+  for (const [owner, credited] of Object.entries(snapshot.functions ?? {})) {
+    if (owner === "" ? first : systemOf(owner) === system.root) byBlock.set(owner, credited);
+  }
+  return byBlock;
+}
+
+/** The words beside a function over the listed limit, from Decision 2. */
+export function waysWords(paths: number): string {
+  return paths > WAYS_LIMIT ? WAYS_WORDS.over15 : WAYS_WORDS.over10;
+}
+
+function namedRow(snapshot: ProjectSnapshot, owner: string, fn: NamedFunction): Row {
+  return {
+    path: owner,
+    name: owner === "" ? "under no block" : (snapshot.blocks[owner]?.name ?? owner),
+    value: fn.paths,
+    text: `${fn.name}: ${fn.paths} ways through — ${waysWords(fn.paths)}`,
+    detail: `${fn.file}:${fn.line}`,
+    planned: false,
+    band: fn.paths > WAYS_LISTED_OVER ? "warn" : null,
+  };
+}
+
+/** How many ways there are through each function, and which are over the listed limit. */
+function complexity(snapshot: ProjectSnapshot, systems: SystemView[]): Dimension {
+  const system: Dimension["system"] = {};
+  const blocks: Dimension["blocks"] = {};
+  systems.forEach((each, index) => {
+    const reason = snapshot.systems.find((candidate) => candidate.rootBlock === each.root)?.reachNotReadBecause ?? null;
+    const credited = functionsOf(snapshot, each, index === 0);
+    const allPaths = [...credited.values()].flatMap((fn) => fn.paths);
+    if (reason !== null || allPaths.length === 0) {
+      const unavailable = reason !== null ? `not measured: ${reason}` : "no code yet";
+      system[each.root] = [measure({ id: "ways", label: "Ways through", text: unavailable, of: "", unavailable })];
+      for (const block of each.blocks) if (block.role === "function") blocks[block.path] = [measure({ id: "ways", label: "Ways through its code", text: unavailable, of: "", unavailable })];
+      return;
+    }
+    const named = [...credited.entries()].flatMap(([owner, fn]) => fn.named.map((named) => ({ owner, named })));
+    const longest = [...named].sort((a, b) => b.named.paths - a.named.paths || a.named.file.localeCompare(b.named.file) || a.named.line - b.named.line)[0]!;
+    const over = named.filter(({ named: fn }) => fn.paths > WAYS_LISTED_OVER).sort((a, b) => b.named.paths - a.named.paths || a.named.file.localeCompare(b.named.file));
+    const overLimit = allPaths.filter((paths) => paths > WAYS_LIMIT).length;
+    system[each.root] = [
+      measure({
+        id: "ways",
+        label: "Ways through",
+        text: `most: ${longest.named.name}, ${longest.named.paths}`,
+        value: longest.named.paths,
+        of: WAYS_OF,
+        spread: { min: Math.min(...allPaths), median: median(allPaths), max: Math.max(...allPaths), n: allPaths.length, kind: "functions in the code" },
+      }),
+      measure({
+        id: "over",
+        label: `Over ${WAYS_LISTED_OVER}`,
+        text: over.length === 0 ? "none" : `${over.length} (${overLimit} over ${WAYS_LIMIT})`,
+        value: over.length,
+        of: `Functions with more than ${WAYS_LISTED_OVER} ways through, as the weak spots list them; ${WAYS_LIMIT} is the most NIST's guideline allows, with a reason.`,
+        rows: over.map(({ owner, named: fn }) => namedRow(snapshot, owner, fn)),
+      }),
+    ];
+    const most = new Map<string, number>();
+    for (const [owner, fn] of credited) if (owner !== "") most.set(owner, fn.paths[fn.paths.length - 1] ?? 0);
+    for (const block of each.blocks) {
+      const fn = credited.get(block.path);
+      if (fn === undefined) {
+        if (block.role === "function" && !block.planned) blocks[block.path] = [measure({ id: "ways", label: "Ways through its code", text: "no code read", of: "", unavailable: "no code read" })];
+        continue;
+      }
+      const top = fn.named[0]!;
+      const count = fn.paths.length;
+      blocks[block.path] = [
+        measure({
+          id: "ways",
+          label: "Ways through its code",
+          text: count === 1 ? `${top.paths} (${top.name})` : `most ${top.paths}, in ${top.name} · ${count} functions`,
+          value: top.paths,
+          of: WAYS_OF,
+          rows: fn.named.filter((named) => named.paths > WAYS_LISTED_OVER).map((named) => namedRow(snapshot, block.path, named)),
+          rank: rankOf(most, each.blocks, block),
+          band: top.paths > WAYS_LISTED_OVER ? "warn" : null,
+        }),
+      ];
+    }
+  });
+  return { id: "complexity", name: "Complexity", system, blocks };
+}
+
+/** How much code there is, where, as facts: statements per function and per block, and code under no block. */
+function maintainability(snapshot: ProjectSnapshot, systems: SystemView[]): Dimension {
+  const system: Dimension["system"] = {};
+  const blocks: Dimension["blocks"] = {};
+  const changes = measure({ id: "changes", label: "Changes", text: NOT_BUILT_YET, of: "", unavailable: NOT_BUILT_YET });
+  systems.forEach((each, index) => {
+    const reason = snapshot.systems.find((candidate) => candidate.rootBlock === each.root)?.reachNotReadBecause ?? null;
+    const credited = functionsOf(snapshot, each, index === 0);
+    const total = [...credited.values()].reduce((sum, fn) => sum + fn.statements, 0);
+    const sizes = [...credited.values()].flatMap((fn) => fn.sizes);
+    if (reason !== null || sizes.length === 0) {
+      const unavailable = reason !== null ? `not measured: ${reason}` : "no code yet";
+      system[each.root] = [measure({ id: "size", label: "Size", text: unavailable, of: "", unavailable }), changes];
+      for (const block of each.blocks) if (block.role === "function") blocks[block.path] = [measure({ id: "size", label: "Size", text: unavailable, of: "", unavailable }), changes];
+      return;
+    }
+    const share = (statements: number) => (total === 0 ? 0 : Math.round((100 * statements) / total));
+    const named = [...credited.entries()].flatMap(([owner, fn]) => fn.named.map((named) => ({ owner, named })));
+    const biggest = [...named].sort((a, b) => b.named.statements - a.named.statements || a.named.file.localeCompare(b.named.file) || a.named.line - b.named.line)[0]!;
+    const perBlock = new Map<string, number>();
+    for (const [owner, fn] of credited) if (owner !== "") perBlock.set(owner, fn.statements);
+    const rows = each.blocks
+      .filter((block) => perBlock.has(block.path))
+      .map((block) => row(snapshot, block.path, perBlock.get(block.path)!, `${statementsWord(perBlock.get(block.path)!)} (${share(perBlock.get(block.path)!)}%)`))
+      .sort((a, b) => b.value - a.value || a.path.localeCompare(b.path));
+    const nobodys = credited.get("");
+    system[each.root] = [
+      measure({
+        id: "size",
+        label: "Size",
+        text: `${statementsWord(total)} in ${sizes.length} ${sizes.length === 1 ? "function" : "functions"} in the code · most: ${biggest.named.name}, ${biggest.named.statements} (${share(biggest.named.statements)}%)`,
+        value: total,
+        of: SIZE_OF,
+        rows,
+        spread: { min: Math.min(...sizes), median: median(sizes), max: Math.max(...sizes), n: sizes.length, kind: "functions in the code" },
+      }),
+      measure({
+        id: "unowned",
+        label: "Code under no block",
+        text: nobodys === undefined ? "none" : `${statementsWord(nobodys.statements)} (${share(nobodys.statements)}%) in ${nobodys.files.join(", ")}`,
+        value: nobodys?.statements ?? 0,
+        of: "Statements in functions of files that no block's pointer covers and no block's code followed as its own: code the drawing does not account for.",
+      }),
+      changes,
+    ];
+    for (const block of each.blocks) {
+      const statements = perBlock.get(block.path);
+      if (statements === undefined) {
+        if (block.role === "function" && !block.planned) blocks[block.path] = [measure({ id: "size", label: "Size", text: "no code read", of: "", unavailable: "no code read" }), changes];
+        continue;
+      }
+      blocks[block.path] = [
+        measure({
+          id: "size",
+          label: "Size",
+          text: `${statementsWord(statements)} (${share(statements)}% of ${each.name})`,
+          value: statements,
+          of: SIZE_OF,
+          rank: rankOf(perBlock, each.blocks, block),
+          share: total === 0 ? null : round2(statements / total),
+        }),
+        changes,
+      ];
+    }
+  });
+  return { id: "maintainability", name: "Maintainability", system, blocks };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Weak spots                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -831,6 +999,34 @@ function cycleSpots(snapshot: ProjectSnapshot, systems: SystemView[]): WeakSpotK
     title: WEAK_SPOT_TITLES.cycle,
     measured: unread.length === 0,
     reason: unread.length === 0 ? null : `only the diagram's arrows were followed in ${unread.map((system) => system.name).join(", ")}`,
+    spots,
+  };
+}
+
+function complexitySpots(snapshot: ProjectSnapshot, systems: SystemView[]): WeakSpotKind {
+  const spots: WeakSpot[] = [];
+  systems.forEach((each, index) => {
+    for (const [owner, fn] of functionsOf(snapshot, each, index === 0)) {
+      for (const named of fn.named) {
+        if (named.paths <= WAYS_LISTED_OVER) continue;
+        spots.push({
+          kind: "complexity",
+          headline: `${WEAK_SPOT_TITLES.complexity}: ${named.name} in ${named.file}`,
+          block: owner === "" ? null : owner,
+          blockName: owner === "" ? "no block" : (snapshot.blocks[owner]?.name ?? owner),
+          evidence: [`${named.paths} ways through — ${waysWords(named.paths)}`, `${named.file}:${named.line}`],
+          band: "warn",
+        });
+      }
+    }
+  });
+  spots.sort((a, b) => Number(b.evidence[0]!.split(" ")[0]) - Number(a.evidence[0]!.split(" ")[0]) || a.headline.localeCompare(b.headline));
+  const unread = systems.filter((system) => !system.reachRead);
+  return {
+    kind: "complexity",
+    title: WEAK_SPOT_TITLES.complexity,
+    measured: unread.length === 0,
+    reason: unread.length === 0 ? null : unread.map((system) => snapshot.systems.find((candidate) => candidate.rootBlock === system.root)?.reachNotReadBecause ?? "the code is not read").join("; "),
     spots,
   };
 }

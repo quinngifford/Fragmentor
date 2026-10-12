@@ -376,10 +376,15 @@ describe("what the code reaches, in a snapshot", () => {
         planned: false,
       });
 
+      // Every function read is credited to a block, with the few worth naming.
+      expect(snapshot.functions["app/client/state"]).toMatchObject({ paths: [7], statements: 14 });
+      expect(snapshot.functions["app/client/state"]!.named.map((each) => each.name)).toEqual(["dispatch"]);
+
       // Read as it was at a commit, the code's reach is left alone.
       const then = await projectSnapshot(copy, { atCommit: true });
       expect(then.diagnostics).toEqual([]);
       expect(then.reachSeen).toEqual([]);
+      expect(then.functions).toEqual({});
       expect(then.systems.map((system) => system.reachNotReadBecause)).toEqual(["the code is not read as it was at a commit"]);
     } finally {
       await rm(copy, { recursive: true, force: true });

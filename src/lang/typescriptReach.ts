@@ -2,7 +2,7 @@ import { realpathSync, statSync } from "node:fs";
 import { builtinModules } from "node:module";
 import path from "node:path";
 import ts from "typescript";
-import type { FileReach, ReachReader, Target, Uses } from "./pack.js";
+import type { FileReach, FunctionShape, ReachReader, Target, Uses } from "./pack.js";
 
 /**
  * Reading TypeScript for what it declares and what it reaches.
@@ -62,6 +62,143 @@ interface Parsed {
   exports: Map<string, { local: string } | { specifier: string; name: string }>;
   exportsAll: string[];
   values: Set<string>;
+  functions: FunctionShape[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* The shape of each function                                                  */
+/* -------------------------------------------------------------------------- */
+
+const BRANCHING_OPERATORS = new Set([
+  ts.SyntaxKind.AmpersandAmpersandToken,
+  ts.SyntaxKind.BarBarToken,
+  ts.SyntaxKind.QuestionQuestionToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+]);
+
+/** One more way through: a branch, a loop, a case with a test, a catch, or a short-circuit. `?.` and a default value add nothing. */
+function branches(node: ts.Node): number {
+  if (
+    ts.isIfStatement(node) ||
+    ts.isConditionalExpression(node) ||
+    ts.isForStatement(node) ||
+    ts.isForInStatement(node) ||
+    ts.isForOfStatement(node) ||
+    ts.isWhileStatement(node) ||
+    ts.isDoStatement(node) ||
+    ts.isCatchClause(node) ||
+    ts.isCaseClause(node)
+  ) {
+    return 1;
+  }
+  return ts.isBinaryExpression(node) && BRANCHING_OPERATORS.has(node.operatorToken.kind) ? 1 : 0;
+}
+
+/** A statement that is a piece of code, not a container or a declaration of a type or another function. */
+function isCounted(node: ts.Node): boolean {
+  return (
+    ts.isStatement(node) &&
+    !ts.isBlock(node) &&
+    !ts.isEmptyStatement(node) &&
+    !ts.isImportDeclaration(node) &&
+    !ts.isFunctionDeclaration(node) &&
+    !ts.isClassDeclaration(node) &&
+    !ts.isInterfaceDeclaration(node) &&
+    !ts.isTypeAliasDeclaration(node)
+  );
+}
+
+const ordinalOf = (n: number): string => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10 > 3 ? 0 : n % 10]}`;
+
+type FunctionNode = ts.FunctionLikeDeclaration & { body: ts.Node };
+
+const isFunctionNode = (node: ts.Node): node is FunctionNode => ts.isFunctionLike(node) && (node as ts.FunctionLikeDeclaration).body !== undefined;
+
+/** The name a declaration's left side gives whatever it is assigned, or null. */
+function assignedName(node: ts.Node): string | null {
+  const parent = node.parent;
+  if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) return parent.name.text;
+  if (ts.isPropertyAssignment(parent) && (ts.isIdentifier(parent.name) || ts.isStringLiteral(parent.name))) return parent.name.text;
+  if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken && parent.right === node) return parent.left.getText();
+  if (ts.isPropertyDeclaration(parent) && (ts.isIdentifier(parent.name) || ts.isStringLiteral(parent.name))) return parent.name.text;
+  return null;
+}
+
+/** What holds a class or object literal, by the name it is declared under. */
+function holderName(node: ts.Node): string | null {
+  if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) return node.name?.text ?? assignedName(node) ?? "default";
+  if (ts.isObjectLiteralExpression(node)) return assignedName(node);
+  return null;
+}
+
+/** Every function in a file, nested ones on their own, named as the measurements name them. */
+function shapesOf(source: ts.SourceFile): FunctionShape[] {
+  const shapes: FunctionShape[] = [];
+  const lineOf = (node: ts.Node) => source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+
+  /** The top-level declaration a node is in: the name a block's pointer could use. */
+  const topOf = (node: ts.Node): string | null => {
+    let statement: ts.Node = node;
+    while (statement.parent && !ts.isSourceFile(statement.parent)) statement = statement.parent;
+    if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) return statement.name?.text ?? "default";
+    if (ts.isVariableStatement(statement)) {
+      const declaration = statement.declarationList.declarations.find((each) => each.pos <= node.pos && node.end <= each.end);
+      return declaration && ts.isIdentifier(declaration.name) ? declaration.name.text : null;
+    }
+    return null;
+  };
+
+  const nameOf = (node: FunctionNode, enclosing: string | null, nth: number): string => {
+    if (ts.isFunctionDeclaration(node)) return node.name?.text ?? "default";
+    if (ts.isConstructorDeclaration(node)) return `${holderName(node.parent) ?? "default"}.constructor`;
+    if (ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) {
+      const own = ts.isIdentifier(node.name) || ts.isStringLiteral(node.name) ? node.name.text : node.name.getText(source);
+      const holder = holderName(node.parent);
+      return holder === null ? own : `${holder}.${own}`;
+    }
+    if (ts.isFunctionExpression(node) && node.name) return node.name.text;
+    const assigned = assignedName(node);
+    if (assigned !== null) {
+      const holder = ts.isPropertyAssignment(node.parent) ? holderName(node.parent.parent) : null;
+      return holder === null ? assigned : `${holder}.${assigned}`;
+    }
+    return `${ordinalOf(nth)} function ${enclosing === null ? "in the file" : `inside ${enclosing}`}`;
+  };
+
+  const visit = (node: ts.Node, enclosing: string | null, counter: { n: number }): void => {
+    if (isFunctionNode(node)) {
+      counter.n += 1;
+      const name = nameOf(node, enclosing, counter.n);
+      let paths = 1;
+      let statements = 0;
+      const inner = { n: 0 };
+      const body = node.body;
+      const walk = (child: ts.Node): void => {
+        if (isFunctionNode(child)) {
+          visit(child, name, inner);
+          return;
+        }
+        paths += branches(child);
+        if (isCounted(child)) statements += 1;
+        ts.forEachChild(child, walk);
+      };
+      // An arrow function with an expression for a body is one statement's worth of code.
+      if (ts.isBlock(body)) ts.forEachChild(body, walk);
+      else {
+        statements = 1;
+        walk(body);
+      }
+      // Default values and parameter patterns can hold functions of their own.
+      for (const parameter of node.parameters) ts.forEachChild(parameter, walk);
+      shapes.push({ name, top: topOf(node), line: lineOf(node), paths, statements });
+      return;
+    }
+    ts.forEachChild(node, (child) => visit(child, enclosing, counter));
+  };
+  visit(source, null, { n: 0 });
+  return shapes.sort((a, b) => a.line - b.line || a.name.localeCompare(b.name));
 }
 
 const BUILTINS = new Set(builtinModules);
@@ -295,6 +432,7 @@ function parseText(fileName: string, text: string): Parsed {
   }
 
   for (const each of outlined.declarations) if (exportedNames.has(each.name)) each.exported = true;
+  const functions = shapesOf(source);
 
   // An export of a name the file imported rather than declared passes that import on.
   for (const [name, entry] of exports) {
@@ -351,7 +489,7 @@ function parseText(fileName: string, text: string): Parsed {
   const rest = usesOf(restNodes);
   rest.imports.push(...sideEffects.map((specifier) => ({ specifier, name: null })));
 
-  return { outline: outlined, declarations, rest, exports, exportsAll, values };
+  return { outline: outlined, declarations, rest, exports, exportsAll, values, functions };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -541,7 +679,7 @@ function reading(projectDir: string): (file: string, text: string) => FileReach 
       else if (found !== "missing") exportsAll.push(found.file);
     }
 
-    return { declarations, values: parsed.values, rest: resolveUses(parsed.rest, file, resolve), exports, exportsAll };
+    return { declarations, values: parsed.values, rest: resolveUses(parsed.rest, file, resolve), exports, exportsAll, functions: parsed.functions };
   };
 }
 

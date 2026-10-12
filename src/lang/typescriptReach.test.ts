@@ -186,3 +186,46 @@ describe("the outline", () => {
     expect(read(text).declarations.get("a")?.targets).toEqual([{ file: "lib/db.ts", name: "db" }]);
   });
 });
+
+describe("the shape of each function", () => {
+  const shapes = (text: string) => read(text).functions!;
+
+  it("counts one more way through for each branch, loop, case with a test, catch and short-circuit, and nothing for ?. or a default", () => {
+    const text =
+      "export function a(x: number, y = 1) { if (x) { return 1; } return 2; }\n" +
+      "export function b(x: number) { return x ? 1 : 2; }\n" +
+      "export function c(xs: number[]) { for (const x of xs) {} for (let i = 0; i < 1; i++) {} while (false) {} do {} while (false); for (const k in {}) {} return 0; }\n" +
+      "export function d(x: number) { switch (x) { case 1: return 1; case 2: return 2; default: return 3; } }\n" +
+      "export function e() { try { return 1; } catch { return 2; } }\n" +
+      'export function f(a: boolean, b: boolean, c?: number) { let d = c ?? 0; d ||= 1; d &&= 2; return (a && b) || c?.toFixed(); }\n';
+    expect(Object.fromEntries(shapes(text).map((each) => [each.name, each.paths]))).toEqual({ a: 2, b: 2, c: 6, d: 3, e: 2, f: 6 });
+    expect(Object.fromEntries(shapes(text).map((each) => [each.name, each.statements]))).toMatchObject({ a: 3, b: 1, d: 4, e: 3, f: 4 });
+  });
+
+  it("counts a nested function on its own, named by what it is assigned to or by its place, and a method by its class", () => {
+    const text =
+      "export function send(items: number[]) {\n" +
+      "  const onDone = () => { if (items.length) { return 1; } return 0; };\n" +
+      "  items.forEach((item) => { if (item) { return; } });\n" +
+      "  return function named() { return 1; };\n" +
+      "}\n" +
+      "export class Cart { total(a: number) { return a || 0; } static of() { return new Cart(); } }\n" +
+      'export const api = { list() { return []; }, get: (id: string) => id || "" };\n';
+    const found = shapes(text);
+    expect(Object.fromEntries(found.map((each) => [each.name, each.paths]))).toEqual({
+      send: 1,
+      onDone: 2,
+      "2nd function inside send": 2,
+      named: 1,
+      "Cart.total": 2,
+      "Cart.of": 1,
+      "api.list": 1,
+      "api.get": 2,
+    });
+    const top = (name: string) => found.find((each) => each.name === name)!.top;
+    expect([top("onDone"), top("2nd function inside send"), top("Cart.total"), top("api.get")]).toEqual(["send", "send", "Cart", "api"]);
+    // An arrow with an expression for a body is one statement's worth of code.
+    expect(found.find((each) => each.name === "api.get")!.statements).toBe(1);
+    expect(found.map((each) => each.line)).toEqual([1, 2, 3, 4, 6, 6, 7, 7]);
+  });
+});

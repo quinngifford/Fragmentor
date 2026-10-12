@@ -226,6 +226,76 @@ describe("weak spots", () => {
   });
 });
 
+describe("the code's shape", () => {
+  it("counts the ways through every function and names the most, per system and per block", () => {
+    const analytics = analyticsOf(tickets);
+    expect(measureOf(analytics, "complexity", "tickets", "ways")).toMatchObject({
+      text: "most: bookSeats, 5",
+      spread: { min: 1, median: 1, max: 5, n: 18, kind: "functions in the code" },
+    });
+    expect(measureOf(analytics, "complexity", "tickets", "over").text).toBe("none");
+    expect(blockMeasure(analytics, "complexity", "tickets/booking-api/book-seats", "ways").text).toMatch(/^most 5, in bookSeats · \d+ functions$/);
+    expect(blockMeasure(analytics, "complexity", "tickets/booking-api/find-event", "ways").text).toBe("1 (findEvent)");
+    expect(blockMeasure(analytics, "complexity", "tickets/booking-api/book-seats", "ways").rank).toEqual({ place: 1, of: 6, kind: "function blocks" });
+    expect(measureOf(analyticsOf(messenger), "complexity", "app", "ways").text).toBe("most: dispatch, 7");
+  });
+
+  it("measures size as facts: statements per block with their share, and code under no block", () => {
+    const analytics = analyticsOf(tickets);
+    const size = measureOf(analytics, "maintainability", "tickets", "size");
+    expect(size.text).toBe("48 statements in 18 functions in the code · most: bookSeats, 12 (25%)");
+    expect(size.rows[0]).toMatchObject({ name: "Book Seats", value: 14, text: "14 statements (29%)" });
+    expect(measureOf(analytics, "maintainability", "tickets", "unowned").text).toBe("10 statements (21%) in src/server.ts");
+    expect(blockMeasure(analytics, "maintainability", "tickets/booking-api/book-seats", "size")).toMatchObject({ text: "14 statements (29% of Tickets)", share: 0.29 });
+    expect(blockMeasure(analytics, "maintainability", "tickets/booking-api/find-event", "size").text).toBe("1 statement (2% of Tickets)");
+    expect(measureOf(analyticsOf(messenger), "maintainability", "app", "unowned").text).toBe("none");
+  });
+
+  it("lists a function over the limit as a weak spot, with the words of the band it is in", () => {
+    const over: ProjectSnapshot = {
+      ...tickets,
+      functions: {
+        ...tickets.functions,
+        "tickets/booking-api/book-seats": {
+          paths: [1, 12, 17],
+          sizes: [1, 20, 30],
+          statements: 51,
+          files: ["src/booking/book-seats.ts"],
+          named: [
+            { name: "settle", file: "src/booking/book-seats.ts", line: 40, paths: 17, statements: 30 },
+            { name: "price", file: "src/booking/book-seats.ts", line: 20, paths: 12, statements: 20 },
+          ],
+        },
+      },
+    };
+    const analytics = analyticsOf(over);
+    const kind = analytics.weakSpots.find((each) => each.kind === "complexity")!;
+    expect(kind.measured).toBe(true);
+    expect(kind.spots.map((spot) => [spot.headline, spot.block, spot.evidence[0], spot.band])).toEqual([
+      ["Functions with more than 10 ways through: settle in src/booking/book-seats.ts", "tickets/booking-api/book-seats", "17 ways through — past 15, the most that guideline allows", "warn"],
+      ["Functions with more than 10 ways through: price in src/booking/book-seats.ts", "tickets/booking-api/book-seats", "12 ways through — past 10; a published guideline (NIST) allows up to 15 with a reason", "warn"],
+    ]);
+    const overMeasure = measureOf(analytics, "complexity", "tickets", "over");
+    expect(overMeasure.text).toBe("2 (1 over 15)");
+    expect(overMeasure.rows.map((row) => [row.band, row.detail])).toEqual([["warn", "src/booking/book-seats.ts:40"], ["warn", "src/booking/book-seats.ts:20"]]);
+    expect(blockMeasure(analytics, "complexity", "tickets/booking-api/book-seats", "ways").band).toBe("warn");
+    expect(weakSpotNote(kind.spots[0]!)).toContain("The limit is provisional: a published guideline, not a rule of this project.");
+  });
+
+  it("says the shape was not measured where the code was not read, instead of none", () => {
+    const unread: ProjectSnapshot = {
+      ...tickets,
+      functions: {},
+      systems: tickets.systems.map((system) => ({ ...system, reachRead: false, reachNotReadBecause: "Python code is not read yet" })),
+    };
+    const analytics = analyticsOf(unread);
+    expect(measureOf(analytics, "complexity", "tickets", "ways").unavailable).toBe("not measured: Python code is not read yet");
+    expect(analytics.weakSpots.find((kind) => kind.kind === "complexity")).toMatchObject({ measured: false, reason: "Python code is not read yet", spots: [] });
+    expect(measureOf(analytics, "maintainability", "tickets", "size").unavailable).toBe("not measured: Python code is not read yet");
+    expect(blockMeasure(analytics, "complexity", "tickets/booking-api/book-seats", "ways").unavailable).toBe("not measured: Python code is not read yet");
+  });
+});
+
 describe("the rest", () => {
   it("counts what is held to a contract and what has saved tests, and says what cannot be measured", () => {
     const analytics = analyticsOf(tickets);
@@ -248,10 +318,9 @@ describe("the rest", () => {
 
   it("prints exactly 'not built yet' for what later phases fill in", () => {
     const analytics = analyticsOf(tickets);
-    for (const id of ["complexity", "maintainability", "runtime"]) {
-      expect(measureOf(analytics, id, "tickets", id).unavailable).toBe("not built yet");
-    }
-    expect(analytics.weakSpots.filter((kind) => kind.kind !== "cycle").map((kind) => kind.reason)).toEqual(["not built yet", "not built yet"]);
+    expect(measureOf(analytics, "runtime", "tickets", "runtime").unavailable).toBe("not built yet");
+    expect(measureOf(analytics, "maintainability", "tickets", "changes").unavailable).toBe("not built yet");
+    expect(analytics.weakSpots.find((kind) => kind.kind === "hotspot")).toMatchObject({ measured: false, reason: "not built yet", spots: [] });
   });
 
   it("gives the same answer whatever order the entries come in, and copes with a page from before this work", () => {
@@ -259,6 +328,7 @@ describe("the rest", () => {
     expect(JSON.stringify(analyticsOf(shuffled))).toBe(JSON.stringify(analyticsOf(messenger)));
     const old = { ...tickets } as Partial<ProjectSnapshot>;
     delete old.reachSeen;
+    delete old.functions;
     const analytics = analyticsOf(old as ProjectSnapshot);
     expect(measureOf(analytics, "coupling", "tickets", "used-by").rows).toEqual([]);
   });

@@ -9,7 +9,7 @@ import { fold, under } from "./history.js";
 import { LARGEST_SHOWN, resolveAccess } from "./project.js";
 import type { Project, ProjectDiagnostic } from "./project.js";
 import { isArchitecture } from "../model/roles.js";
-import { holding } from "./analytics.js";
+import { WAYS_LISTED_OVER, holding } from "./analytics.js";
 
 /**
  * Which blocks each block's code reaches, read from the code itself.
@@ -49,9 +49,33 @@ export interface ReachEdge {
   approximate: boolean;
 }
 
+/** One function the measurements name: over the listed limit, or a block's largest. */
+export interface NamedFunction {
+  name: string;
+  file: string;
+  line: number;
+  paths: number;
+  statements: number;
+}
+
+/** The functions credited to one block, or to none under the key "". */
+export interface BlockFunctions {
+  /** How many ways through each function, one number per function, so a distribution can be drawn without naming them all. */
+  paths: number[];
+  /** How many statements in each function, one number per function. */
+  sizes: number[];
+  statements: number;
+  /** The files these functions are in, each once. */
+  files: string[];
+  /** The functions over the listed limit, and the one with the most ways through. */
+  named: NamedFunction[];
+}
+
 export interface ProjectReach {
   /** Sorted, with each (from, to, evidence) once. */
   edges: ReachEdge[];
+  /** Every function read, credited to the block whose code it is, or to "" for code under no block. */
+  functions: Record<string, BlockFunctions>;
   /** By block path: what that block's code does that could not be followed. */
   notChecked: Record<string, string[]>;
   /** Files whose code reaches something but lies under no block's pointer, so nothing accounts for it. */
@@ -95,8 +119,10 @@ export async function readProjectReach(project: Project, code: Map<string, Block
   const edges = new Map<string, ReachEdge>();
   const notChecked = new Map<string, Set<string>>();
   const note = (blockPath: string, line: string) => notChecked.set(blockPath, (notChecked.get(blockPath) ?? new Set()).add(line));
+  const functions: Record<string, BlockFunctions> = {};
   const result = (unpointed: string[]): ProjectReach => ({
     edges: [...edges.values()].sort((a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to) || a.evidence.localeCompare(b.evidence)),
+    functions,
     notChecked: Object.fromEntries([...notChecked].sort(([a], [b]) => a.localeCompare(b)).map(([blockPath, lines]) => [blockPath, [...lines].sort()])),
     unpointed: unpointed.sort(),
     systemsRead,
@@ -254,6 +280,8 @@ export async function readProjectReach(project: Project, code: Map<string, Block
 
   /** Every name any block's code was followed into, to tell what nothing accounts for. */
   const followed = new Set<string>();
+  /** The helpers a function block's code followed in its own file, by `file#name`, which are that block's. */
+  const helpers = new Map<string, string>();
 
   /** Follows everything one block's code uses, recording what it reaches; `ownFile` is a function block's file. */
   const reaching = (reacher: string, reader: ReachReader, ownFile?: string) => {
@@ -286,6 +314,7 @@ export async function readProjectReach(project: Project, code: Map<string, Block
       if (read === null) return;
       // A function block's helpers in its own file are its own, whoever holds the rest of the file.
       const helper = ownFile !== undefined && at.name !== null && at.name !== "*" && fold(at.file) === fold(ownFile) && !bySymbol.has(key);
+      if (helper && !helpers.has(key)) helpers.set(key, reacher);
       let owner = helper ? undefined : ownerOf(at.file, at.name === "*" ? null : at.name);
       if (!helper && (owner === undefined || under(owner.path, reacher))) {
         // A name declared where no other block's pointer reaches, but passed on
@@ -414,6 +443,47 @@ export async function readProjectReach(project: Project, code: Map<string, Block
         if (!bySymbol.has(`${fold(file)}#${name}`)) from.follow({ file, name }, false);
       }
     });
+  }
+
+  /* Every function, credited once: by the name a pointer names, then as a helper its block followed, then by the file's owner. */
+
+  for (const file of files) {
+    const reader = readers.find((each) => each.fileKind(file) === "code");
+    if (reader === undefined) continue;
+    let read: FileReach | string | null = null;
+    try {
+      read = source(file, reader);
+    } catch {
+      continue;
+    }
+    if (read === null || typeof read === "string" || read.functions === undefined) continue;
+    for (const shape of read.functions) {
+      const key = `${fold(file)}#${shape.name}`;
+      const owner =
+        bySymbol.get(key)?.path ??
+        (shape.top === null ? undefined : bySymbol.get(`${fold(file)}#${shape.top}`)?.path) ??
+        helpers.get(key) ??
+        restOwner(file)?.path ??
+        "";
+      const credited = (functions[owner] ??= { paths: [], sizes: [], statements: 0, files: [], named: [] });
+      credited.paths.push(shape.paths);
+      credited.sizes.push(shape.statements);
+      credited.statements += shape.statements;
+      if (!credited.files.includes(file)) credited.files.push(file);
+      credited.named.push({ name: shape.name, file, line: shape.line, paths: shape.paths, statements: shape.statements });
+    }
+  }
+  // A distribution needs every count, but the page holds no code, so only
+  // the functions worth naming are named: those over the limit, the one with
+  // the most ways through, and the one with the most in it.
+  for (const credited of Object.values(functions)) {
+    credited.paths.sort((a, b) => a - b);
+    credited.sizes.sort((a, b) => a - b);
+    credited.files.sort();
+    const byPaths = (a: NamedFunction, b: NamedFunction) => b.paths - a.paths || a.file.localeCompare(b.file) || a.line - b.line;
+    const longest = [...credited.named].sort(byPaths)[0];
+    const biggest = [...credited.named].sort((a, b) => b.statements - a.statements || a.file.localeCompare(b.file) || a.line - b.line)[0];
+    credited.named = credited.named.filter((each) => each.paths > WAYS_LISTED_OVER || each === longest || each === biggest).sort(byPaths);
   }
 
   /* Code under no pointer that reaches something, and that no block's code led into. */

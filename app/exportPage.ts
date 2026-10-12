@@ -17,6 +17,8 @@ import {
   granularityFields,
   interactionFields,
   portFields,
+  blockFunctionsFields,
+  namedFunctionFields,
   projectFields,
   reachSeenFields,
   returnFields,
@@ -171,6 +173,13 @@ function project(value: ProjectSnapshot, pointer: Pointer): ProjectSnapshot {
       blocks: (blocks) => Object.fromEntries(Object.entries(blocks).map(([path, each]) => [path, block(each, pointer)])),
       executions: (executions) => executions.map((each) => execution(each, pointer)),
       reachSeen: (all) => all.map((each) => copy(each, reachSeenFields, { dropped: {}, nested: {} })),
+      functions: (all) =>
+        Object.fromEntries(
+          Object.entries(all).map(([owner, credited]) => [
+            owner,
+            copy(credited, blockFunctionsFields, { dropped: {}, nested: { named: (list) => list.map((each) => copy(each, namedFunctionFields, { dropped: {}, nested: {} })) } }),
+          ]),
+        ),
     },
   });
 }

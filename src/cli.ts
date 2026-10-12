@@ -67,6 +67,11 @@ Commands:
                          and the rest, each number with what it is counted from; or one block's own numbers.
                          A measurement is never a problem. The few worth asking about come first, as weak
                          spots; the person flags one as a note when they want it looked at.
+                         Ways through a function (cyclomatic complexity, McCabe 1976) count 1 plus each if,
+                         ?:, loop, case with a test, catch, &&, ||, ??, &&=, ||= and ??=; ?. and default
+                         values add nothing; a nested function is counted on its own. Functions over 10 are
+                         listed, since NIST's guideline allows up to 15 with a reason and no more; the limit
+                         is provisional, not a rule of the project. Statements are counted inside functions.
 
 init uses the current folder; the others use the nearest folder, from here upwards, that holds fragmentor.json.
 --project names a folder instead. Everything after a note's block path or id is its text, but for --no-commit

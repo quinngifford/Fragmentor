@@ -577,7 +577,8 @@ describe("fragmentor analytics", () => {
     expect(result.output).toContain("  Parts that use each other in a circle: 1\n    State and UI, on Client (app/client)\n");
     expect(result.output).toContain("in the code: State → UI, showMessage from src/client/ui/chatView.ts");
     expect(result.output).toContain("in the code: UI → State, dispatch from src/client/state.ts");
-    expect(result.output).toContain("  Functions with more than 10 ways through: not built yet");
+    expect(result.output).toContain("  Functions with more than 10 ways through: none");
+    expect(result.output).toContain("  Ways through: most: dispatch, 7 · min 1, median 1, max 7 over 18 functions in the code");
     expect(result.output).toContain("  Used by: most: Database (6) · min 0, median 1, max 6 over 22 blocks");
     expect(result.output).toContain("    State (outward share 0.4) → Router (outward share 0.83)");
     expect(result.output).toContain("    UI: its 3 parts form 3 groups: Chat View · Login Form · Send Button");
@@ -601,6 +602,9 @@ describe("fragmentor analytics", () => {
     expect(whole.output).toContain("    Tickets Database (tickets/tickets-db): 5\n");
     expect(whole.output).toContain("    Pricing: its 2 parts form 2 groups: Price Seat · Refund For\n");
     expect(whole.output).toContain("  Held to a contract: 6 of 6 function blocks");
+    expect(whole.output).toContain("  Ways through: most: bookSeats, 5 ·");
+    expect(whole.output).toContain("  Size: 48 statements in 18 functions in the code · most: bookSeats, 12 (25%)");
+    expect(whole.output).toContain("  Code under no block: 10 statements (21%) in src/server.ts");
 
     const one = fragmentor(["analytics", "tickets/tickets-db"], dir);
     expect(one.status).toBe(0);

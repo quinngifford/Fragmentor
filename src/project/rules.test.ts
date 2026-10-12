@@ -47,7 +47,7 @@ const seen = (...edges: { from: string; to: string; evidence?: string; approxima
   edges: edges.map((edge) => ({ from: edge.from, to: edge.to, evidence: edge.evidence ?? "open from src/db.ts", approximate: edge.approximate ?? false })),
   notChecked: {},
   unpointed: [],
-  systemsRead: { app: true },
+  systemsRead: { app: true }, functions: {},
 });
 
 async function evaluated(reach: ProjectReach | null, ...rules: { rule: string; why?: string }[]) {

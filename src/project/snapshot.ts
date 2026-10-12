@@ -21,7 +21,7 @@ import { getPack, isKnownLanguage } from "../lang/index.js";
 import { boundStores, storeEntries } from "./stores.js";
 import { NOTES_DIR, loadNotes, waitingOn } from "./notes.js";
 import { readProjectReach, undeclaredReach } from "./reach.js";
-import type { ProjectReach } from "./reach.js";
+import type { ProjectReach, BlockFunctions } from "./reach.js";
 import { RULES_FILE, evaluateRules, loadRules, reachSeen } from "./rules.js";
 import type { ReachSeen } from "./rules.js";
 import type { SnapshotRule } from "./rules.js";
@@ -264,6 +264,12 @@ export interface ProjectSnapshot {
    * from this one list.
    */
   reachSeen: ReachSeen[];
+  /**
+   * Every function read, by the block whose code it is, or "" for code under
+   * no block: how many ways through each, how much is in them, and the few
+   * worth naming. Empty at a commit, and for a system whose code is not read.
+   */
+  functions: Record<string, BlockFunctions>;
   diagnostics: ProjectDiagnostic[];
   /** Files whose code reaches something but lies under no block's pointer, so nothing accounts for it. */
   reachUnpointed: string[];
@@ -590,6 +596,7 @@ export async function projectSnapshot(projectDir: string, { atCommit = false }: 
     notes,
     rules,
     reachSeen: atCommit ? [] : reachSeen(project, reach),
+    functions: reach?.functions ?? {},
     diagnostics: [...validateProject(project), ...fileProblems, ...reachProblems],
     reachUnpointed: reach?.unpointed ?? [],
   };

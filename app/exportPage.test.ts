@@ -82,6 +82,7 @@ describe("what an exported page carries", () => {
       expect(shared.reachUnpointed).toEqual([]);
       // Who reaches whom travels, so Used by and the measurements are the same on the page.
       expect(shared.reachSeen).toHaveLength(snapshot.reachSeen.length);
+      expect(Object.keys(shared.functions)).toEqual(Object.keys(snapshot.functions));
       expect(shared.systems.map((system) => system.reachNotReadBecause)).toEqual([null]);
       expect(Object.keys(shared.blocks).sort()).toEqual(Object.keys(snapshot.blocks).sort());
       for (const block of Object.values(shared.blocks)) {
@@ -110,6 +111,7 @@ describe("what an exported page carries", () => {
   it("still makes a page of a snapshot from before who-reaches-whom was on it", () => {
     const before = { ...tickets } as Partial<ProjectSnapshot>;
     delete before.reachSeen;
+    delete before.functions;
     const { snapshot: shared } = carried(pageOf(before as ProjectSnapshot));
     expect(shared.reachSeen).toBeUndefined();
   });

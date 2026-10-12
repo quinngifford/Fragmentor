@@ -552,6 +552,7 @@ describe("the fields a change is made of", () => {
     diagnostics: (then) => (then.diagnostics = [{ severity: "error", blockPath: findEvent, message: "Wrong." }]),
     reachUnpointed: (then) => (then.reachUnpointed = ["src/cron.ts"]),
     reachSeen: (then) => (then.reachSeen = []),
+    functions: (then) => (then.functions = {}),
   };
 
   /** Edits to one part of the older side, made to whichever snapshot they are given. */

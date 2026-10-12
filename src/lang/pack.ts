@@ -76,6 +76,24 @@ export interface FileReach {
   exports: Map<string, { local: string } | Target | null>;
   /** Files every export of which is passed on, as `export * from` does. Null for a package's. */
   exportsAll: (string | null)[];
+  /** Every function in the file, nested ones on their own, with how many ways through it and how much is in it. */
+  functions?: FunctionShape[];
+}
+
+/**
+ * One function's shape, for the measurements: how many independent ways
+ * there are through it (cyclomatic complexity, counted as the USAGE of the
+ * `fragmentor` command says) and how many statements it holds, a nested
+ * function's being its own.
+ */
+export interface FunctionShape {
+  /** As the measurements name it: `bookSeats`, `Cart.total`, `send.onDone`, `2nd function inside send`. */
+  name: string;
+  /** The top-level declaration it is in, which is what a block's pointer names; null for top-level code outside any. */
+  top: string | null;
+  line: number;
+  paths: number;
+  statements: number;
 }
 
 /** How a pack reads what code reaches, for comparing it with what the diagram says. */

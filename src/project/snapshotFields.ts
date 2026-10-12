@@ -1,6 +1,7 @@
 import type { Address, Effect, Interaction, Return, Trace } from "../model/trace.js";
 import type { Granularity } from "./project.js";
 import type { ReachSeen } from "./rules.js";
+import type { BlockFunctions, NamedFunction } from "./reach.js";
 import type {
   ProjectSnapshot,
   SnapshotAccess,
@@ -88,7 +89,26 @@ export const projectFields = {
   // Follows from each block's access and code, which are compared; the page
   // keeps it so that Used by and the measurements are the same there.
   reachSeen: ignored,
+  // Follows from the code, whose hash is compared; the page keeps the counts and the few named functions, which are not code.
+  functions: ignored,
 } satisfies FieldTable<ProjectSnapshot>;
+
+/** The functions credited to a block: counts, the files they are in, and the few named. */
+export const blockFunctionsFields = {
+  paths: kept,
+  sizes: kept,
+  statements: kept,
+  files: kept,
+  named: kept,
+} satisfies ExportTable<BlockFunctions>;
+
+export const namedFunctionFields = {
+  name: kept,
+  file: kept,
+  line: kept,
+  paths: kept,
+  statements: kept,
+} satisfies ExportTable<NamedFunction>;
 
 export const blockFields = {
   path: compared,
