@@ -1,27 +1,5 @@
 # Architecture Analytics, with Weak Spots inside it: plan
 
-## Where this stands (handoff written 2026-10-12, for the next session)
-
-Read this first, then the phases below. The work is on branch `architecture-analytics`, off `block-notes` (the trunk); it merges back into `block-notes` at the end of Phase 6. Delete this section when it does.
-
-**Committed and verified** (vitest, `npm run typecheck`, `npx tsc -p tsconfig.app.json --noEmit` and `npm run check:app` all clean): the plan (61fec13), Phase 1a dependencies (50f9050), Phase 1b code shape (6391e52), and Phases 2–4 together (the commit after those: every block's Used by, Reaches in the code and Measurements; View › Architecture Analytics with Weak spots and Flag; `fragmentor analytics`; runtime and reliability from the session's recordings, `took` on every recorded Return, and `fragmentor test`'s time line).
-
-**Where to look:** `src/project/analytics.ts` is the one pure module every reader uses (`analyticsOf(snapshot, extra)`); `app/renderer/analytics.ts` is the window; `app/renderer/detail.ts` has `usedBySection`, `reachesSection`, `measurementsSection` and `analyticsExtra`, which decides what a reader adds (recordings in the application, nothing on the exported page); `weakSpotFlag` in `notes.ts` writes the note; `formatAnalytics` in `src/cli.ts` prints it. Self-check steps, all in `app/main.ts` and searchable by name: `measurementsListed`, `usedByInCode`, `analyticsNone`, `analyticsClosed`, `analyticsCycle`, `analyticsFlagged`, `weakSpotNoteOnDisk`, `analyticsRecorded`, and the export page's `pageUsedBy`/`pageMeasures`.
-
-**Left to do, in order:**
-1. **Phase 5** (its section below): `codeChanges(projectDir, files)` in `src/project/history.ts`, IPC beside `changePoints`, `extra.changes` into `analyticsOf` → Changes rows under Maintainability (today they read "not built yet") and the `hotspot` weak-spot kind (Decision 12a: top quarter by commits and top quarter by ways through, at least 3 commits); self-check step `analyticsHistory` on the Tickets copy; tests in `history.test.ts` and `analytics.test.ts`.
-2. **Phase 6**: the website band "Measure what it built" after Commands in `site/index.html`, drawn like the four command panels, with Tickets' Coupling rows exactly as `npm run fragmentor -- analytics --project examples/tickets` prints them (Tickets Database 5, Outbox 3, Find Event 2) and the words "a number is a measurement, not a problem"; check it at desktop and 375 px in the Browser pane (serve with `preview_start` name from `.claude/launch.json`).
-3. Docs ("Docs to update" below): a PROJECT.md paragraph, STATUS.md (Working, Known problems, Human verification), one README sentence. Then `verify-feature`, the `reviewer` subagent on `git diff block-notes...architecture-analytics`, `project-status`, merge into `block-notes`.
-4. **Tell the person:** Decision 9 (eight sections, as built, or ten) was left open and the plan recommends eight; the site's Download button points at the repository zip, which gives 404 while the repository is private.
-
-**Things learned the hard way, all still true:**
-- One heavy job at a time: never run vitest and `check:app` together, nor either beside a subagent that builds; the machine crashed once. The self-check's "blocks the agent writes arrive animated" check can fail on timing alone when the machine is busy; a clean re-run passes.
-- The Bash tool truncates long heredocs silently. Make edits with a Python script written to the scratchpad and run with `python script.py`; verify with `grep` after.
-- Inside the self-check's template literals in `app/main.ts`, a regex `\s` must be written `\\s`, or every "s" vanishes from the text; and `textContent` joins spans without spaces, so collect leaf texts and join with " " (see the `clean` and `rowText` helpers in the existing steps).
-- The export page has no hierarchy rail: select a block with `dispatchEvent(new PointerEvent("pointerdown", {bubbles: true}))` on `.block-box[data-id=…]`.
-- Workflow subagents share the Browser pane: never measure or screenshot there while one may be driving it.
-- Measurement numbers to check against, already verified: Messenger has a UI↔State cycle (the weak spot the self-check flags, "on Client"), Database used by 6, State outward share 0.4 and Router 0.83; Tickets Database used by 5 (Reminders planned), Find Event 2 in the code, Booking API kept inside 0.31, `bookSeats` 5 ways / 12 statements, `dispatch` 7 / 14.
-
 ## What the person asked for
 The earlier plan (plans/weak-spots.md) built a findings window: cycles, functions with too many ways through them, Used by, and a Flag that hands a finding to the agent. The person now wants something broader, and this plan replaces that one where they differ. Everything in weak-spots.md that still holds is referred to, not repeated: "as weak-spots.md Approach N".
 

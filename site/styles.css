@@ -278,6 +278,21 @@ h2 { font-size: clamp(1.9rem, 3.8vw, 3.1rem); margin-bottom: 14px; }
 .hint-line { margin-top: 18px; font-family: var(--mono); font-size: 12px; color: var(--ink-faint); line-height: 1.7; }
 .hint-line b { color: var(--ink-dim); font-weight: 500; }
 
+/* ---- the measurements: the window, drawn, and the agent's print of it ---- */
+.sv-measure .h { font: 500 6.3px var(--mono); letter-spacing: 0.1em; fill: var(--ink-faint); }
+.sv-measure .good { font: 500 7.2px var(--mono); fill: var(--signal); }
+.sv-measure .of { font: 400 6.4px var(--sans); fill: var(--ink-dim); }
+.sv-measure .rule { stroke: var(--rule); stroke-width: 1; }
+.sv-measure .row-name { font: 500 8.5px var(--sans); fill: var(--ink); }
+.sv-measure .row-n { font: 500 8.5px var(--mono); fill: var(--ink); text-anchor: end; }
+.sv-measure .meter { fill: var(--rule); }
+/* A bar is never coloured, so it is not read as a grade; it grows into place as the window scrolls in. */
+.sv-measure .fill { fill: var(--ink-faint); transform: scaleX(0); transform-origin: 140px 0; transition: transform 700ms cubic-bezier(0.2, 0.8, 0.2, 1); transition-delay: var(--d); }
+.is-in .sv-measure .fill { transform: none; }
+.t-tall { border-bottom: 0; height: 100%; }
+.cmd:has(.t-tall) { display: flex; flex-direction: column; }
+.cmd:has(.t-tall) .t { flex: 1; }
+
 /* ---- footer and status bar ---- */
 
 .foot { border-top: 1px solid var(--rule); padding: 40px 0 48px; background: radial-gradient(ellipse 60% 90% at 50% 100%, rgba(79, 227, 143, 0.07), transparent); }
@@ -327,6 +342,6 @@ h2 { font-size: clamp(1.9rem, 3.8vw, 3.1rem); margin-bottom: 14px; }
   html { scroll-behavior: auto; }
   .word, .btn { transition: none; }
   .sv * { transition: none !important; animation: none !important; }
-  .sv-plan .b, .sv-build .chip-ok, .sv-check .tag, .sv-notes .note { opacity: 1; transform: none; }
+  .sv-plan .b, .sv-build .chip-ok, .sv-check .tag, .sv-notes .note, .sv-measure .fill { opacity: 1; transform: none; }
   .sv-build .b.turns { color: var(--ink); } .sv-build .b.turns .kind { fill: var(--k); } .sv-build .b.turns .solid { opacity: 1; } .sv-build .b.turns .ghost { opacity: 0; }
 }

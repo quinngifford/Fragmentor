@@ -33,7 +33,7 @@ The agent also writes down what happens: for each thing that sets the system goi
 
 If you asked to plan first, the agent draws the whole architecture before building any of it. Blocks that are only planned appear greyed out, with nothing generated, checked or run for them; they turn into ordinary blocks as the agent builds them.
 
-The diagram updates as the agent works. When the agent's work changes the architecture, a bar above the drawing says what changed since you last looked. Fragmentor warns where TypeScript code reaches a database, service, queue or client the diagram does not say it reaches, and you can add rules of your own by selecting two blocks together: one must never reach the other, or only one may reach it. **File › Export…** saves the drawing and the executions written down as one read-only page that opens in any browser, with no code in it.
+The diagram updates as the agent works. When the agent's work changes the architecture, a bar above the drawing says what changed since you last looked. Fragmentor warns where TypeScript code reaches a database, service, queue or client the diagram does not say it reaches, and you can add rules of your own by selecting two blocks together: one must never reach the other, or only one may reach it. **File › Export…** saves the drawing and the executions written down as one read-only page that opens in any browser, with no code in it. **View › Architecture Analytics** measures the system and lists its weak spots with their evidence, every block's panel says what uses it and shows its own numbers, and `fragmentor analytics` shows the agent the same.
 
 ## Website
 

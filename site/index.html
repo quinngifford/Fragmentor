@@ -21,6 +21,7 @@
     <a class="mark" href="#top"><strong>Fragmentor</strong></a>
     <nav class="topnav" aria-label="Page">
       <a href="#commands">Commands</a>
+      <a href="#measure">Measure</a>
       <a class="chip" href="https://github.com/quinngifford/Fragmentor/archive/refs/heads/main.zip">Download</a>
     </nav>
   </header>
@@ -165,6 +166,57 @@
         </div>
 
         <p class="hint-line">Also <b>fragmentor make</b>, to build straight away · <b>fragmentor rebuild</b>, to draw code you already have · <b>review</b> · <b>explain</b> · <b>cover</b></p>
+      </div>
+    </section>
+
+    <section class="band" id="measure">
+      <div class="wrap">
+        <h2>Measure what it built.</h2>
+        <p class="sub">View › Architecture Analytics measures the system Fragmentor draws: what uses each block, what reaches what, the ways through each function, size, tests, and what recordings showed. Every number is compared within the system and followed by the sentence saying how it was counted. The agent reads the same numbers.</p>
+
+        <div class="cmds">
+
+          <!-- the window: weak spots first, then one measure with its rows -->
+          <figure class="cmd" data-reveal>
+            <div class="t">
+              <p class="c">View › Architecture Analytics</p>
+              <p class="o">Tickets: 13 blocks, 12 dependencies</p>
+              <p class="o">A number is a measurement, <b>not a problem</b>.</p>
+            </div>
+            <svg class="sv sv-measure" viewBox="0 0 440 180" role="img" aria-label="The Architecture Analytics window: under Weak spots, three kinds each reading none; under Coupling, Used by, counted from the code that was read and the access the diagram declares, with a row and a thin bar for each block: Tickets Database 5, Outbox 3, Find Event 2, Booking API 1">
+              <text class="h" x="10" y="14">WEAK SPOTS</text>
+              <text class="good" x="10" y="28">Parts that use each other in a circle: none</text>
+              <text class="good" x="10" y="39">Changes often and is hard to follow: none</text>
+              <text class="good" x="10" y="50">Functions with more than 10 ways through: none</text>
+              <path class="rule" d="M10 60H430"/>
+              <text class="h" x="10" y="74">COUPLING · USED BY</text>
+              <text class="of" x="10" y="86">Counted from the code that was read to reach it, and the access the diagram declares: each block that reaches this one, once.</text>
+              <g class="row" style="--d:0s"><text class="row-name" x="10" y="104">Tickets Database</text><text class="row-n" x="128" y="104">5</text><rect class="meter" x="140" y="100" width="290" height="3" rx="1.5"/><rect class="fill" x="140" y="100" width="290" height="3" rx="1.5"/></g>
+              <g class="row" style="--d:.15s"><text class="row-name" x="10" y="124">Outbox</text><text class="row-n" x="128" y="124">3</text><rect class="meter" x="140" y="120" width="290" height="3" rx="1.5"/><rect class="fill" x="140" y="120" width="174" height="3" rx="1.5"/></g>
+              <g class="row" style="--d:.3s"><text class="row-name" x="10" y="144">Find Event</text><text class="row-n" x="128" y="144">2</text><rect class="meter" x="140" y="140" width="290" height="3" rx="1.5"/><rect class="fill" x="140" y="140" width="116" height="3" rx="1.5"/></g>
+              <g class="row" style="--d:.45s"><text class="row-name" x="10" y="164">Booking API</text><text class="row-n" x="128" y="164">1</text><rect class="meter" x="140" y="160" width="290" height="3" rx="1.5"/><rect class="fill" x="140" y="160" width="58" height="3" rx="1.5"/></g>
+            </svg>
+            <figcaption>Eight sections, from coupling to what the recordings showed, each with the system's numbers and a row per block. Colour appears only against a published limit; what is not measured says so.</figcaption>
+          </figure>
+
+          <!-- the agent's view: the same numbers, printed -->
+          <figure class="cmd" data-reveal>
+            <div class="t t-tall">
+              <p class="c">fragmentor analytics</p>
+              <p class="o">Weak spots</p>
+              <p class="o">  Parts that use each other in a circle: <b>none</b></p>
+              <p class="o">  Functions with more than 10 ways through: <b>none</b></p>
+              <p class="o">Coupling</p>
+              <p class="o">  Used by: most: <b>Tickets Database (5)</b> · min 0, median 1, max 5 over 13 blocks</p>
+              <p class="o">    Counted from the code that was read to reach it, and the access the diagram declares.</p>
+              <p class="o">    Tickets Database: 5</p>
+              <p class="o">    Outbox: 3</p>
+              <p class="o">    Find Event: 2</p>
+            </div>
+            <figcaption>The agent gets the same through <b>fragmentor analytics</b>, each number under its sentence. A weak spot is a finding worth asking about, with its evidence; <b>Flag</b> hands it over as a note, and the agent fixes it or says why it should stay.</figcaption>
+          </figure>
+
+        </div>
       </div>
     </section>
 

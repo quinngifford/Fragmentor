@@ -132,6 +132,8 @@ The diagram is the specification of what exists. The agent writes every function
 
 Conditions, loops and error handling are the code's. The diagram does not describe control flow; an execution shows the path one run took.
 
+Fragmentor measures the architecture it draws: what uses each block and what each reaches, parts that use each other in a circle, how much stays inside a block, the ways through each function and its size, how often each block's code was committed, what is held to a contract and tested, and how long recorded runs took. Every number is a measurement compared within its own system, followed by the sentence saying how it was counted, and never a score. The few worth asking the agent about are weak spots, each with its evidence, and a weak spot is never a problem: the person flags it, and the agent fixes it or says why it should stay. Colour appears only against a published limit, and what is not measured says so.
+
 ## Versions
 
 A version is a block with all its parts — their folders, saved tests and the code they point at — as they stood at one moment, because a block without its parts or its code is not the block as it was. What it uses beside it is not part of it: a version is put back into today's system, and runs against today's versions of whatever it calls.
