@@ -712,11 +712,18 @@ export function keepInView(paths: string[]): void {
  */
 let drawnBefore: Set<string> | null = null;
 let everythingArrives = false;
+/**
+ * When each block's arrival began, so a redraw inside the animation, such as
+ * the Changes bar's after git answers, carries it on from where it was
+ * instead of cutting it short: a negative delay starts an animation part-way through.
+ */
+const arrivals = new Map<string, number>();
 
 /** Called when a project is opened. In one the agent has not started on, each block arrives as it is written. */
 export function resetArrivals(projectIsEmpty: boolean): void {
   drawnBefore = null;
   everythingArrives = projectIsEmpty;
+  arrivals.clear();
 }
 
 export function clearCanvas(): void {
@@ -760,6 +767,23 @@ export function showCanvasMessage(message: string | HTMLElement): void {
 
 /** Blocks arriving together come in one after another, the way they were written. */
 const ARRIVAL_STAGGER_MS = 70;
+/** The longest an arrival takes once begun: the plate's light, after the longest stagger. */
+const ARRIVAL_MS = 1800 + 12 * ARRIVAL_STAGGER_MS;
+
+/**
+ * How long until this block's arrival begins, negative once it has: null for
+ * a block that is simply there. Begun now for a block arriving in this draw.
+ */
+export function arrivalDelayOf(arrivals: Map<string, number>, path: string, arriving: number, now: number): number | null {
+  if (arriving !== -1) arrivals.set(path, now + Math.min(arriving, 12) * ARRIVAL_STAGGER_MS);
+  const began = arrivals.get(path);
+  if (began === undefined) return null;
+  if (began - now < -ARRIVAL_MS) {
+    arrivals.delete(path);
+    return null;
+  }
+  return began - now;
+}
 
 export function renderCanvas(): void {
   clearCanvas();
@@ -785,9 +809,9 @@ export function renderCanvas(): void {
   const nodeLayer = element("node-layer");
   const marks = noteMarks(tree);
   const changed = changeDots(tree);
+  const now = performance.now();
   for (const node of tree.nodes.values()) {
-    const arrival = arriving.indexOf(node.path);
-    drawNode(node, nodeLayer, arrival === -1 ? null : Math.min(arrival, 12) * ARRIVAL_STAGGER_MS, marks.get(node.path), changed.get(node.path));
+    drawNode(node, nodeLayer, arrivalDelayOf(arrivals, node.path, arriving.indexOf(node.path), now), marks.get(node.path), changed.get(node.path));
   }
 
   renderLegend(true);

@@ -5178,8 +5178,11 @@ function attachSelfCheck(
         await capture(window, "self-check-note-committed");
 
         await run("comparedFromNote", `${notesSection}
-          const card = cards().find((each) => each.querySelector(".note-commit"));
-          const compare = card && button(card.querySelector(".note-commit"), "Compare with before");
+          // The block's versions are read again after the commit, and the offer waits on them: "Finding the version before it…" meanwhile.
+          const compare = await until(() => {
+            const card = cards().find((each) => each.querySelector(".note-commit"));
+            return card ? button(card.querySelector(".note-commit"), "Compare with before") : null;
+          }, 15000);
           if (!compare) return { compared: false };
           compare.click();
           const shown = await until(() => document.querySelector("#inspector [data-versions-of] .version-compare"), 60000);

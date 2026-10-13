@@ -26,6 +26,7 @@ import {
   showCanvasMessage,
   treeInView,
   watchCanvasSize,
+  arrivalDelayOf,
 } from "./canvas.js";
 import { openAnalyticsWindow } from "./analytics.js";
 import { onInspectorChange, renderInspector } from "./inspector.js";
@@ -49,6 +50,8 @@ import { el, element } from "./dom.js";
  * screen is new to the person.
  */
 let treeBefore: Set<string> | null = null;
+/** When each rail entry's arrival began, carried through a redraw the way the drawing's are. */
+const treeArrivals = new Map<string, number>();
 
 /* -------------------------------------------------------------------------- */
 /* Opening projects                                                            */
@@ -106,6 +109,7 @@ function show(load: ProjectLoad, opening: boolean): void {
     const empty = load.snapshot === null || load.snapshot.systems.length === 0;
     resetArrivals(empty);
     treeBefore = empty ? new Set() : null;
+    treeArrivals.clear();
   }
 
   if (!load.snapshot) {
@@ -416,6 +420,7 @@ function renderTree(): void {
   const snapshot = requireSnapshot();
   const before = treeBefore;
   const shown = new Set<string>();
+  const now = performance.now();
 
   const walk = (path: string, depth: number) => {
     const block = snapshot.blocks[path];
@@ -436,7 +441,11 @@ function renderTree(): void {
       button.dataset.architecture = "true";
       button.dataset.role = block.role;
     }
-    if (before && !before.has(path)) button.classList.add("appearing");
+    const delay = arrivalDelayOf(treeArrivals, path, before && !before.has(path) ? 0 : -1, now);
+    if (delay !== null) {
+      button.classList.add("appearing");
+      button.style.animationDelay = `${delay}ms`;
+    }
     shown.add(path);
 
     // A system root says what language it is, since that is what differs.
