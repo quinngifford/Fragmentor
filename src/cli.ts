@@ -12,6 +12,7 @@ import type { Execution } from "./project/executions.js";
 import { changesBetween, changesText } from "./project/changes.js";
 import { changePoints, codeChanges, commitTouchesBlock, headCommit, projectAt } from "./project/history.js";
 import { analyticsOf, codeFilesOf, msWords, ordinal, runTimes } from "./project/analytics.js";
+import { BAND_WORDS, ratingsOf } from "./project/ratings.js";
 import type { Analytics, Measure } from "./project/analytics.js";
 import { projectSnapshot } from "./project/snapshot.js";
 import type { ProjectSnapshot } from "./project/snapshot.js";
@@ -929,6 +930,13 @@ function formatAnalytics(analytics: Analytics, snapshot: ProjectSnapshot, within
       lines.push(`  ${spot.headline}`);
       for (const evidence of spot.evidence) lines.push(`    ${evidence}`);
     }
+    lines.push("", "Ratings on this block: rules of thumb, 0 to 100, 70 and over good, under 40 poor");
+    const own = ratingsOf(analytics, snapshot)
+      .systems.flatMap((system) => system.categories)
+      .map((category) => ({ category, rated: category.blocks.find((rated) => rated.path === within) }))
+      .filter((each) => each.rated !== undefined);
+    if (own.length === 0) lines.push("  none: nothing on this block is rated");
+    for (const { category, rated } of own) lines.push(`  ${category.name}: ${rated!.score} ${BAND_WORDS[rated!.band]} (${rated!.why})`);
     for (const dimension of analytics.dimensions) {
       const own = dimension.blocks[within];
       if (own === undefined) continue;
@@ -954,6 +962,24 @@ function formatAnalytics(analytics: Analytics, snapshot: ProjectSnapshot, within
   }
   if (analytics.weakSpots.every((kind) => kind.spots.length === 0)) {
     lines.push("  No weak spots found. A weak spot is a finding worth asking your agent about, never a problem.");
+  }
+
+  // Ratings: rules of thumb, stated, resting on the measurements printed after them.
+  const ratings = ratingsOf(analytics, snapshot);
+  lines.push("", "Ratings: rules of thumb, 0 to 100, 70 and over good, under 40 poor; each rests on the measurements below");
+  for (const system of ratings.systems) {
+    if (ratings.systems.length > 1) lines.push(`  ${system.name}`);
+    for (const category of system.categories) {
+      if (category.score === null) {
+        lines.push(`  ${category.name}: not rated: ${category.unrated}`);
+        continue;
+      }
+      const best = category.blocks[0]!;
+      const worst = category.blocks[category.blocks.length - 1]!;
+      const spread = best.score === worst.score ? `every block ${best.score}` : `best ${best.name} ${best.score} · worst ${worst.name} ${worst.score}`;
+      lines.push(`  ${category.name}: ${category.score} ${BAND_WORDS[category.band!]} · ${spread}`);
+      lines.push(`    ${category.rule}`);
+    }
   }
 
   for (const dimension of analytics.dimensions) {

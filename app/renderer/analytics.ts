@@ -1,5 +1,7 @@
 import { analyticsOf, codeFilesOf, ordinal, READING_HISTORY } from "../../src/project/analytics.js";
 import type { Analytics, Dimension, Measure, Row, WeakSpot, WeakSpotKind } from "../../src/project/analytics.js";
+import { BAND_WORDS, ratingsOf } from "../../src/project/ratings.js";
+import type { Band, BlockRating, CategoryRating } from "../../src/project/ratings.js";
 import type { ProjectSnapshot } from "../../src/project/snapshot.js";
 import { revealBlock } from "./canvas.js";
 import { analyticsExtra } from "./detail.js";
@@ -9,22 +11,25 @@ import { closeWindow, openWindow } from "./popup.js";
 import { requireSnapshot, ui } from "./state.js";
 
 /**
- * View › Architecture Analytics: every measurement of the open project, in
- * one window, with the weak spots first.
+ * View › Architecture Analytics: the weak spots, then a rating for each of
+ * the eight categories, and behind each the measurements it rests on.
  *
- * Every section has one shape, so a reader who has read one can read the
- * rest: the heading; one sentence in body size saying what is measured and
- * from what; the system's numbers; then rows per block, highest first, each
- * a button that shows the block on the drawing, with a thin bar against the
- * largest. Colour appears in two places only: a weak-spot heading at none,
- * where that kind was measured, and a function over the published limit.
- * Everything else is ink, compared in words.
+ * A rating is a rule of thumb the person chose, 0 to 100, coloured by band;
+ * a card opens the category's blocks ranked best first, each with the
+ * measurement that rated it, and "Show the measurements" reveals the
+ * category's section: one sentence saying what is measured and from what,
+ * the system's numbers, then rows per block, highest first, each a button
+ * that shows the block on the drawing. In that section colour appears in
+ * two places only, a weak-spot heading at none and a function over the
+ * published limit, because a measurement is never a problem.
  *
  * The window is drawn once, from the snapshot as it is when it opens;
  * reopening it reads the current one.
  */
 
 const ROWS_SHOWN = 8;
+/** A ranking shows this many of the best and of the worst before "Show all". */
+const RANKED_SHOWN = 5;
 
 /** The rows of a measure, or the spots of a kind: the first few shown and the rest behind "Show all". */
 function rowsOf<T>(rows: T[], draw: (row: T) => HTMLElement): HTMLElement {
@@ -102,6 +107,7 @@ function measurePart(measure: Measure): HTMLElement {
   return part;
 }
 
+/** A category's measurements: the section a rating rests on. */
 function dimensionSection(analytics: Analytics, dimension: Dimension): HTMLElement {
   const node = section(dimension.name);
   node.dataset.dimension = dimension.id;
@@ -110,6 +116,109 @@ function dimensionSection(analytics: Analytics, dimension: Dimension): HTMLEleme
     // Systems are separate programs, so each is measured on its own and never summed.
     const holder = analytics.systems.length > 1 ? subsection(`${system.name} · ${system.blocks} blocks, ${system.dependencies} dependencies`) : node;
     for (const measure of measures) holder.append(measurePart(measure));
+    if (holder !== node) node.append(holder);
+  }
+  return node;
+}
+
+/** A score as a pill in its band's colour. */
+export function scorePill(score: number, band: Band, word = false): HTMLElement {
+  return el("span", `score ${band}`, word ? `${score} ${BAND_WORDS[band]}` : String(score));
+}
+
+/** One block in a ranking: its name, its score, and the measurement that rated it. */
+function ratedRow(block: BlockRating, place: number): HTMLElement {
+  const row = el("button", "measure-row rated");
+  row.type = "button";
+  row.dataset.rank = String(place);
+  row.title = `Show ${block.name} on the drawing`;
+  row.addEventListener("click", () => showBlock(block.path));
+  const head = el("div", "measure-head");
+  head.append(el("span", "measure-name", block.name), scorePill(block.score, block.band));
+  row.append(head, el("div", "measure-detail", block.why));
+  return row;
+}
+
+/** A category's blocks best first: all of them when few, else the best and the worst with the rest behind "Show all". */
+function ranking(blocks: BlockRating[]): HTMLElement {
+  const list = el("div", "measure-rows");
+  if (blocks.length <= RANKED_SHOWN * 2) {
+    blocks.forEach((block, index) => list.append(ratedRow(block, index + 1)));
+    return list;
+  }
+  blocks.slice(0, RANKED_SHOWN).forEach((block, index) => list.append(ratedRow(block, index + 1)));
+  const more = el("button", "btn quiet tiny", `Show all (${blocks.length})`);
+  more.type = "button";
+  const worst = el("div", "measure-rows");
+  blocks.slice(-RANKED_SHOWN).forEach((block, index) => worst.append(ratedRow(block, blocks.length - RANKED_SHOWN + index + 1)));
+  more.addEventListener("click", () => {
+    const middle = el("div", "measure-rows");
+    blocks.slice(RANKED_SHOWN, -RANKED_SHOWN).forEach((block, index) => middle.append(ratedRow(block, RANKED_SHOWN + index + 1)));
+    more.replaceWith(middle);
+  });
+  list.append(more, worst);
+  return list;
+}
+
+/** One category opened: its score, its rule, its blocks ranked, and the measurements behind one more click. */
+function ratingPanel(analytics: Analytics, category: CategoryRating): HTMLElement {
+  const panel = el("div", "rating-panel");
+  panel.dataset.rating = category.id;
+  const head = el("div", "measure-head");
+  head.append(el("span", "measure-label", category.name));
+  head.append(category.score === null ? el("span", "measure measure-none", `not rated: ${category.unrated}`) : scorePill(category.score, category.band!, true));
+  panel.append(head);
+  panel.append(el("p", "measure-of", category.rule));
+  if (category.blocks.length > 0) panel.append(ranking(category.blocks));
+  const show = el("button", "btn quiet tiny", "Show the measurements");
+  show.type = "button";
+  show.addEventListener("click", () => show.replaceWith(dimensionSection(analytics, analytics.dimensions.find((each) => each.id === category.id)!)));
+  panel.append(show);
+  return panel;
+}
+
+/** The eight cards, each opening its category under the grid, one at a time. */
+function ratingsSection(analytics: Analytics, snapshot: ProjectSnapshot): HTMLElement {
+  const node = section("Ratings");
+  node.dataset.ratings = "true";
+  node.append(
+    el(
+      "p",
+      "measure-of",
+      "A rule of thumb for each category, 0 to 100: 70 and over is good, under 40 poor. Open one for its blocks ranked best first and the rule it uses; the measurements it rests on are one click further, and a measurement is never a problem.",
+    ),
+  );
+  const ratings = ratingsOf(analytics, snapshot);
+  for (const system of ratings.systems) {
+    const holder = ratings.systems.length > 1 ? subsection(system.name) : node;
+    const grid = el("div", "rating-grid");
+    const opened = el("div", "rating-opened");
+    const panels = new Map<string, HTMLElement>();
+    const cards: HTMLButtonElement[] = [];
+    for (const category of system.categories) {
+      const card = el("button", `rating-card${category.band === null ? " unrated" : ` ${category.band}`}`);
+      card.type = "button";
+      card.dataset.category = category.id;
+      card.setAttribute("aria-expanded", "false");
+      card.append(
+        el("span", "rating-name", category.name),
+        el("span", `rating-score${category.score === null ? " none" : ""}`, category.score === null ? "—" : String(category.score)),
+        el("span", "rating-word", category.band === null ? "not rated" : BAND_WORDS[category.band]),
+        el("span", "rating-count", category.score === null ? category.unrated! : `${category.blocks.length} ${category.blocks.length === 1 ? "block" : "blocks"} rated`),
+      );
+      const panel = ratingPanel(analytics, category);
+      panel.hidden = true;
+      panels.set(category.id, panel);
+      opened.append(panel);
+      card.addEventListener("click", () => {
+        const open = panel.hidden;
+        for (const [id, each] of panels) each.hidden = !(open && id === category.id);
+        for (const each of cards) each.setAttribute("aria-expanded", String(open && each === card));
+      });
+      cards.push(card);
+      grid.append(card);
+    }
+    holder.append(grid, opened);
     if (holder !== node) node.append(holder);
   }
   return node;
@@ -189,7 +298,7 @@ function analyticsBody(snapshot: ProjectSnapshot): HTMLElement {
     ),
   );
   body.append(weakSpotsSection(analytics));
-  for (const dimension of analytics.dimensions) body.append(dimensionSection(analytics, dimension));
+  body.append(ratingsSection(analytics, snapshot));
   body.append(notMeasuredSection(analytics));
   return body;
 }
@@ -200,7 +309,7 @@ export function openAnalyticsWindow(): void {
   const body = analyticsBody(snapshot);
   openWindow(
     "Architecture Analytics",
-    "Measured from the diagram, the code, the project's history and what was recorded here. A number is a measurement, not a problem; weak spots are the few worth asking about.",
+    "Rated by rules of thumb from the diagram, the code, the project's history and what was recorded here. Weak spots are the few worth asking about.",
     body,
   );
   if (ui.dir === null) return;

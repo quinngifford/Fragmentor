@@ -997,6 +997,18 @@ function registerHandlers(): void {
  * watching it.
  */
 
+// The measurements sit behind each rating card: open every card and reveal them, so a step can read any section.
+const revealMeasurements = `
+  const revealAll = async (w) => {
+    for (const card of [...w.querySelectorAll(".rating-card")]) {
+      card.click();
+      const panel = w.querySelector('.rating-panel[data-rating="' + card.dataset.category + '"]');
+      const show = panel && [...panel.querySelectorAll("button")].find((b) => b.textContent === "Show the measurements");
+      if (show) show.click();
+    }
+  };
+`;
+
 const STEP_HELPERS = `
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const until = async (test, ms = 8000) => {
@@ -1847,6 +1859,26 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
           sections.every((s) => (s.available === 0 || s.sentences >= 1) && s.notes === 0) &&
           Number(none.ms) < 2000 &&
           value("analyticsClosed", "closed") === true
+        );
+      })(),
+    ],
+    [
+      "the window opens on eight ratings, each a rule of thumb with its blocks ranked best first and the measurements one click away",
+      (() => {
+        const ratings = report.analyticsRatings ?? {};
+        const cards = (ratings.cards ?? []) as { id: string; score: string; word: string; band: string | null }[];
+        const scores = (ratings.scores ?? []) as number[];
+        return (
+          ratings.opened === true &&
+          cards.length === 8 &&
+          cards.every((card) => (card.band === null && card.word === "not rated" && card.score === "—") || (/^\d+$/.test(card.score) && ["good", "fair", "poor"].includes(String(card.band)))) &&
+          cards.find((card) => card.id === "complexity")?.band === "good" &&
+          cards.find((card) => card.id === "runtime")?.band === null &&
+          ratings.onlyOneOpen === 1 &&
+          /^100 at five ways through/.test(String(ratings.rule)) &&
+          scores.length >= 2 &&
+          scores.every((score, index) => index === 0 || scores[index - 1]! >= score) &&
+          ratings.measurementsShown === true
         );
       })(),
     ],
@@ -3870,6 +3902,8 @@ function attachSelfCheck(
           };
           const w = await until(win, 5000);
           if (!w) return { opened: false };
+          ${revealMeasurements}
+          await revealAll(w);
           const rows = [...w.querySelectorAll('[data-dimension="runtime"] .measure-row')].map(clean);
           const showed = [...w.querySelectorAll('[data-dimension="reliability"] .measure-part')].map(clean).find((t) => t.startsWith("What the recordings showed")) || "";
           document.querySelector("#overlay .window-close").click();
@@ -4847,6 +4881,8 @@ function attachSelfCheck(
 
           const w = await until(win, 5000);
           if (!w) return { opened: false };
+          ${revealMeasurements}
+          await revealAll(w);
           // Git is asked as the project loads and again as the window opens; nothing is read until it has answered.
           const changesPart = () => [...w.querySelectorAll('[data-dimension="maintainability"] .measure-part')].find((p) => clean(p).startsWith("Changes"));
           await until(() => { const p = changesPart(); return p && !clean(p).includes("Reading history") ? true : null; }, 15000);
@@ -4876,6 +4912,37 @@ function attachSelfCheck(
           };
         `);
         report.analyticsNone = { ...(report.analyticsNone ?? {}), ms: Date.now() - analyticsAskedAt };
+        // The ratings: eight cards, one opened to its blocks ranked best first, the measurements behind one more click.
+        await run("analyticsRatings", `
+          const win = () => { const h = document.querySelector("#overlay .window h2"); return h && h.textContent === "Architecture Analytics" ? document.querySelector("#overlay .window") : null; };
+          const clean = (node) => {
+            if (!node) return "";
+            const leaves = [...node.querySelectorAll("*")].filter((x) => x.children.length === 0);
+            return (leaves.length === 0 ? node.textContent : leaves.map((x) => x.textContent).join(" ")).replace(/\\s+/g, " ").trim();
+          };
+          const w = win();
+          if (!w) return { opened: false };
+          const cards = [...w.querySelectorAll("[data-ratings] .rating-card")].map((c) => ({
+            id: c.dataset.category,
+            score: c.querySelector(".rating-score").textContent,
+            word: c.querySelector(".rating-word").textContent,
+            band: ["good", "fair", "poor"].find((b) => c.classList.contains(b)) || null,
+          }));
+          const card = w.querySelector('.rating-card[data-category="complexity"]');
+          const panel = w.querySelector('.rating-panel[data-rating="complexity"]');
+          if (!panel.hidden) card.click();
+          card.click();
+          const scores = [...panel.querySelectorAll(".measure-row.rated .score")].map((s) => Number(s.textContent));
+          return {
+            opened: true,
+            cards,
+            onlyOneOpen: [...w.querySelectorAll(".rating-panel")].filter((p) => !p.hidden).length,
+            rule: clean(panel.querySelector(".measure-of")),
+            rows: [...panel.querySelectorAll(".measure-row.rated")].map(clean),
+            scores,
+            measurementsShown: Boolean(panel.querySelector('[data-dimension="complexity"] .measure-of')),
+          };
+        `);
         // The top Changes row's count, held to git's own answer for the same files.
         report.analyticsHistory = await (async () => {
           const rows = (report.analyticsNone?.changesRows ?? []) as string[];
@@ -6063,6 +6130,8 @@ function attachSelfCheck(
 
           const w = await until(win, 5000);
           if (!w) return { opened: false };
+          ${revealMeasurements}
+          await revealAll(w);
           const found = kinds(w);
           const circle = w.querySelector('[data-weak-spots] [data-kind="cycle"] .measure-row');
           const out = {
@@ -6094,6 +6163,8 @@ function attachSelfCheck(
 
           const w = await until(win, 5000);
           if (!w) return { opened: false };
+          ${revealMeasurements}
+          await revealAll(w);
           const line = w.querySelector('[data-weak-spots] [data-kind="cycle"] .spot-line');
           const flag = line && [...line.querySelectorAll("button")].find((b) => b.textContent === "Flag");
           if (!flag) return { opened: true, flagOffered: false };

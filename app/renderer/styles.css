@@ -653,6 +653,33 @@ button.measure-row:hover .measure-name { color: var(--signal); }
 .spot-line { display: flex; align-items: flex-start; gap: 10px; }
 .spot-line .measure-row { flex: 1; }
 
+/* ---- ratings: a rule of thumb per category, coloured by band ---- */
+.rating-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 4px 0 8px; }
+.rating-card {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 9px 12px 10px;
+  border: 1px solid var(--rule-bright); border-left: 3px solid var(--rating, var(--ink-faint)); border-radius: var(--radius);
+  background: var(--panel-high); color: var(--ink); font: inherit; text-align: left; cursor: pointer;
+}
+.rating-card.good, .score.good { --rating: var(--signal); }
+.rating-card.fair, .score.fair { --rating: var(--effect); }
+.rating-card.poor, .score.poor { --rating: var(--bad); }
+.rating-card[aria-expanded="true"] { background: var(--panel); border-color: var(--rating, var(--rule-bright)); }
+.rating-card:hover .rating-name { color: var(--signal); }
+.rating-name { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-dim); }
+.rating-score { font-family: var(--mono); font-size: 24px; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--rating, var(--ink)); }
+.rating-score.none { color: var(--ink-faint); }
+.rating-word { font-size: 12px; color: var(--rating, var(--ink-dim)); }
+.rating-count { font-size: 11px; color: var(--ink-dim); }
+.rating-panel { display: flex; flex-direction: column; gap: 6px; padding: 8px 0 4px; border-top: 1px solid var(--rule); }
+.rating-panel .section { padding-top: 6px; border-top: 1px dashed var(--rule); }
+.score {
+  font-family: var(--mono); font-size: 11.5px; font-variant-numeric: tabular-nums;
+  padding: 1px 8px; border-radius: 9px;
+  border: 1px solid var(--rating, var(--rule-bright)); color: var(--rating, var(--ink));
+}
+.rating-pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
+
 /* A shape, with the word that says which way it goes kept out of its light. */
 .pshape { display: flex; align-items: baseline; gap: 6px; }
 /* Without this a long shape refuses to shrink and runs off the panel. */

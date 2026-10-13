@@ -799,7 +799,8 @@ function runtime(snapshot: ProjectSnapshot, systems: SystemView[], extra: Analyt
           id: "runtime",
           label: "Calls in recordings",
           text: calls === 0 ? "none" : `${calls} ${calls === 1 ? "call" : "calls"} · ${timed}`,
-          value: calls,
+          // Its slowest call, in milliseconds: what a rating reads; null when nothing was timed.
+          value: tooks.length === 0 ? null : Math.max(...tooks),
           of: RUNTIME_OF,
         }),
       ];

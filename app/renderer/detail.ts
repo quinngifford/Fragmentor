@@ -1,5 +1,6 @@
 import type { ProjectSnapshot, SnapshotBlock } from "../../src/project/snapshot.js";
 import { analyticsOf, ordinal, reachesOf, READING_HISTORY, usersOf } from "../../src/project/analytics.js";
+import { ratingsOf } from "../../src/project/ratings.js";
 import type { AnalyticsExtra, Measure, RecordingFacts } from "../../src/project/analytics.js";
 import { checkRecording } from "../../src/model/recorded.js";
 import { ROLES } from "../../src/model/roles.js";
@@ -300,15 +301,26 @@ export function analyticsExtra(snapshot: ProjectSnapshot): AnalyticsExtra {
 }
 
 /**
- * This block's own numbers, each followed by the sentence saying what it is
- * computed from, as the Architecture Analytics window shows them. Null for a
- * page or a past snapshot that carries nothing to measure from.
+ * This block's ratings, as pills in their bands' colours, and behind "Show
+ * the measurements" its own numbers, each followed by the sentence saying
+ * what it is computed from, as the Architecture Analytics window shows them.
+ * Null for a page or a past snapshot that carries nothing to measure from.
  */
 export function measurementsSection(block: SnapshotBlock, snapshot: ProjectSnapshot): HTMLElement | null {
   if ((snapshot.reachSeen ?? []).length === 0) return null;
   const analytics = analyticsOf(snapshot, analyticsExtra(snapshot));
   const node = section("Measurements");
-  let any = false;
+  const pills = el("div", "rating-pills");
+  for (const system of ratingsOf(analytics, snapshot).systems) {
+    for (const category of system.categories) {
+      const own = category.blocks.find((each) => each.path === block.path);
+      if (own === undefined) continue;
+      const pill = el("span", `score ${own.band}`, `${category.name} ${own.score}`);
+      pill.title = `${category.rule} Here: ${own.why}.`;
+      pills.append(pill);
+    }
+  }
+  const lists = el("div", "measure-lists");
   for (const dimension of analytics.dimensions) {
     const own = dimension.blocks[block.path];
     if (own === undefined || own.length === 0) continue;
@@ -316,11 +328,19 @@ export function measurementsSection(block: SnapshotBlock, snapshot: ProjectSnaps
     const list = el("div", "ports");
     for (const measure of own) list.append(measureRows(measure));
     part.append(list);
-    node.append(part);
-    any = true;
+    lists.append(part);
   }
-  if (!any) return null;
-  node.append(el("p", "bench-note", "A measurement is a number compared within this system, never a problem. View › Architecture Analytics shows every block's."));
+  if (pills.childElementCount === 0 && lists.childElementCount === 0) return null;
+  if (pills.childElementCount > 0) node.append(pills);
+  lists.append(el("p", "bench-note", "A measurement is a number compared within this system, never a problem. View › Architecture Analytics shows every block's."));
+  lists.hidden = true;
+  const show = el("button", "btn quiet tiny", "Show the measurements");
+  show.type = "button";
+  show.addEventListener("click", () => {
+    lists.hidden = false;
+    show.remove();
+  });
+  node.append(show, lists);
   return node;
 }
 

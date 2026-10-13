@@ -172,48 +172,53 @@
     <section class="band" id="measure">
       <div class="wrap">
         <h2>Measure what it built.</h2>
-        <p class="sub">View › Architecture Analytics measures the system Fragmentor draws: what uses each block, what reaches what, the ways through each function, size, tests, and what recordings showed. Every number is compared within the system and followed by the sentence saying how it was counted. The agent reads the same numbers.</p>
+        <p class="sub">View › Architecture Analytics rates the system Fragmentor draws: coupling, modularity, cohesion, complexity, maintainability, runtime performance, reliability and scalability, each 0 to 100 by a stated rule of thumb. Open a rating for its blocks ranked best first, and one click further for the measurements it rests on, each with the sentence saying how it was counted. The agent reads the same.</p>
 
         <div class="cmds">
 
-          <!-- the window: weak spots first, then one measure with its rows -->
+          <!-- the window: weak spots, then the eight ratings, one opened -->
           <figure class="cmd" data-reveal>
             <div class="t">
               <p class="c">View › Architecture Analytics</p>
               <p class="o">Tickets: 13 blocks, 12 dependencies</p>
-              <p class="o">A number is a measurement, <b>not a problem</b>.</p>
+              <p class="o">Weak spots: <b>none</b> · rated by rules of thumb, stated</p>
             </div>
-            <svg class="sv sv-measure" viewBox="0 0 440 180" role="img" aria-label="The Architecture Analytics window: under Weak spots, three kinds each reading none; under Coupling, Used by, counted from the code that was read and the access the diagram declares, with a row and a thin bar for each block: Tickets Database 5, Outbox 3, Find Event 2, Booking API 1">
-              <text class="h" x="10" y="14">WEAK SPOTS</text>
-              <text class="good" x="10" y="28">Parts that use each other in a circle: none</text>
-              <text class="good" x="10" y="39">Changes often and is hard to follow: none</text>
-              <text class="good" x="10" y="50">Functions with more than 10 ways through: none</text>
-              <path class="rule" d="M10 60H430"/>
-              <text class="h" x="10" y="74">COUPLING · USED BY</text>
-              <text class="of" x="10" y="86">Counted from the code that was read to reach it, and the access the diagram declares: each block that reaches this one, once.</text>
-              <g class="row" style="--d:0s"><text class="row-name" x="10" y="104">Tickets Database</text><text class="row-n" x="128" y="104">5</text><rect class="meter" x="140" y="100" width="290" height="3" rx="1.5"/><rect class="fill" x="140" y="100" width="290" height="3" rx="1.5"/></g>
-              <g class="row" style="--d:.15s"><text class="row-name" x="10" y="124">Outbox</text><text class="row-n" x="128" y="124">3</text><rect class="meter" x="140" y="120" width="290" height="3" rx="1.5"/><rect class="fill" x="140" y="120" width="174" height="3" rx="1.5"/></g>
-              <g class="row" style="--d:.3s"><text class="row-name" x="10" y="144">Find Event</text><text class="row-n" x="128" y="144">2</text><rect class="meter" x="140" y="140" width="290" height="3" rx="1.5"/><rect class="fill" x="140" y="140" width="116" height="3" rx="1.5"/></g>
-              <g class="row" style="--d:.45s"><text class="row-name" x="10" y="164">Booking API</text><text class="row-n" x="128" y="164">1</text><rect class="meter" x="140" y="160" width="290" height="3" rx="1.5"/><rect class="fill" x="140" y="160" width="58" height="3" rx="1.5"/></g>
+            <svg class="sv sv-measure" viewBox="0 0 440 180" role="img" aria-label="The Architecture Analytics window: eight rating cards, Coupling 90 good, Modularity 44 fair, Cohesion 83 good, Complexity 100 good, Maintainability 100 good, Runtime performance not rated, Reliability 83 good and Scalability 50 fair; under them Coupling opened, with its rule and its blocks ranked best first: Booking API 100, Find Event 100, Reserve 86, Box Office 71, Book Seats 57">
+              <g class="card good" style="--d:0s"><rect x="4" y="4" width="104" height="38" rx="3"/><text class="card-name" x="12" y="15">COUPLING</text><text class="card-score" x="12" y="34">90</text><text class="card-word" x="40" y="34">Good</text></g>
+              <g class="card fair" style="--d:.08s"><rect x="112" y="4" width="104" height="38" rx="3"/><text class="card-name" x="120" y="15">MODULARITY</text><text class="card-score" x="120" y="34">44</text><text class="card-word" x="148" y="34">Fair</text></g>
+              <g class="card good" style="--d:.16s"><rect x="220" y="4" width="104" height="38" rx="3"/><text class="card-name" x="228" y="15">COHESION</text><text class="card-score" x="228" y="34">83</text><text class="card-word" x="256" y="34">Good</text></g>
+              <g class="card good open" style="--d:.24s"><rect x="328" y="4" width="108" height="38" rx="3"/><text class="card-name" x="336" y="15">COMPLEXITY</text><text class="card-score" x="336" y="34">100</text><text class="card-word" x="372" y="34">Good</text></g>
+              <g class="card good" style="--d:.32s"><rect x="4" y="46" width="104" height="38" rx="3"/><text class="card-name" x="12" y="57">MAINTAINABILITY</text><text class="card-score" x="12" y="76">100</text><text class="card-word" x="48" y="76">Good</text></g>
+              <g class="card none" style="--d:.4s"><rect x="112" y="46" width="104" height="38" rx="3"/><text class="card-name" x="120" y="57">RUNTIME</text><text class="card-score" x="120" y="76">—</text><text class="card-word" x="136" y="76">not rated</text></g>
+              <g class="card good" style="--d:.48s"><rect x="220" y="46" width="104" height="38" rx="3"/><text class="card-name" x="228" y="57">RELIABILITY</text><text class="card-score" x="228" y="76">83</text><text class="card-word" x="256" y="76">Good</text></g>
+              <g class="card fair" style="--d:.56s"><rect x="328" y="46" width="108" height="38" rx="3"/><text class="card-name" x="336" y="57">SCALABILITY</text><text class="card-score" x="336" y="76">50</text><text class="card-word" x="364" y="76">Fair</text></g>
+              <path class="rule" d="M4 94H436"/>
+              <text class="h" x="10" y="106">COUPLING · 90 GOOD</text>
+              <text class="of" x="10" y="117">100 for a block that reaches one other block or none, 0 at eight or more, a straight line between.</text>
+              <g class="row" style="--d:.5s"><text class="row-name" x="10" y="132">Booking API</text><text class="row-why" x="100" y="132">reaches 0</text><rect class="pill good" x="402" y="124" width="30" height="11" rx="5.5"/><text class="pill-n good" x="417" y="132.5">100</text></g>
+              <g class="row" style="--d:.6s"><text class="row-name" x="10" y="146">Find Event</text><text class="row-why" x="100" y="146">reaches 1</text><rect class="pill good" x="402" y="138" width="30" height="11" rx="5.5"/><text class="pill-n good" x="417" y="146.5">100</text></g>
+              <g class="row" style="--d:.7s"><text class="row-name" x="10" y="160">Box Office</text><text class="row-why" x="100" y="160">reaches 3</text><rect class="pill good" x="402" y="152" width="30" height="11" rx="5.5"/><text class="pill-n good" x="417" y="160.5">71</text></g>
+              <g class="row" style="--d:.8s"><text class="row-name" x="10" y="174">Book Seats</text><text class="row-why" x="100" y="174">reaches 4 · the worst of 12</text><rect class="pill fair" x="402" y="166" width="30" height="11" rx="5.5"/><text class="pill-n fair" x="417" y="174.5">57</text></g>
             </svg>
-            <figcaption>Eight sections, from coupling to what the recordings showed, each with the system's numbers and a row per block. Colour appears only against a published limit; what is not measured says so.</figcaption>
+            <figcaption>Green is good, amber fair, red poor, by rules you can read in one sentence under each ranking. Behind every rating, the measurements: numbers compared within the system, never problems.</figcaption>
           </figure>
 
-          <!-- the agent's view: the same numbers, printed -->
+          <!-- the agent's view: the same ratings, printed -->
           <figure class="cmd" data-reveal>
             <div class="t t-tall">
               <p class="c">fragmentor analytics</p>
               <p class="o">Weak spots</p>
-              <p class="o">  Parts that use each other in a circle: <b>none</b></p>
-              <p class="o">  Functions with more than 10 ways through: <b>none</b></p>
+              <p class="o">  No weak spots found.</p>
+              <p class="o">Ratings: rules of thumb, 0 to 100</p>
+              <p class="o">  Coupling: <b>90 Good</b> · best Booking API 100 · worst Book Seats 57</p>
+              <p class="o">  Modularity: <b>44 Fair</b> · best Tickets 100 · worst Pricing 0</p>
+              <p class="o">  Complexity: <b>100 Good</b> · every block 100</p>
+              <p class="o">  Reliability: <b>83 Good</b> · best Book Seats 100 · worst Reserve 67</p>
+              <p class="o">  Scalability: <b>50 Fair</b> · every block 50</p>
               <p class="o">Coupling</p>
-              <p class="o">  Used by: most: <b>Tickets Database (5)</b> · min 0, median 1, max 5 over 13 blocks</p>
-              <p class="o">    Counted from the code that was read to reach it, and the access the diagram declares.</p>
-              <p class="o">    Tickets Database: 5</p>
-              <p class="o">    Outbox: 3</p>
-              <p class="o">    Find Event: 2</p>
+              <p class="o">  Used by: most: Tickets Database (5) · …</p>
             </div>
-            <figcaption>The agent gets the same through <b>fragmentor analytics</b>, each number under its sentence. A weak spot is a finding worth asking about, with its evidence; <b>Flag</b> hands it over as a note, and the agent fixes it or says why it should stay.</figcaption>
+            <figcaption>The agent gets the same through <b>fragmentor analytics</b>: the ratings, then every measurement under its sentence. A weak spot is a finding worth asking about, with its evidence; <b>Flag</b> hands it over as a note, and the agent fixes it or says why it should stay.</figcaption>
           </figure>
 
         </div>

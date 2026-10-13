@@ -621,6 +621,12 @@ describe("fragmentor analytics", () => {
     expect(whole.output).toContain("  Size: 48 statements in 18 functions in the code · most: bookSeats, 12 (25%)");
     expect(whole.output).toContain("  Code under no block: 10 statements (21%) in src/server.ts");
 
+    // Ratings: a rule of thumb per category, after the weak spots and before the measurements they rest on.
+    expect(whole.output).toContain("\nRatings: rules of thumb, 0 to 100, 70 and over good, under 40 poor; each rests on the measurements below\n");
+    expect(whole.output).toContain("  Coupling: 90 Good · best Booking API 100 · worst Book Seats 57\n    100 for a block that reaches one other block or none");
+    expect(whole.output).toContain("  Complexity: 100 Good · every block 100\n");
+    expect(whole.output).toContain("  Runtime performance: not rated: not recorded by this command");
+    expect(whole.output.indexOf("Ratings:")).toBeLessThan(whole.output.indexOf("\nCoupling\n"));
     const one = fragmentor(["analytics", "tickets/tickets-db"], dir);
     expect(one.status).toBe(0);
     expect(one.output).toContain("Tickets Database (tickets/tickets-db)\n\nNo weak spot is on this block.");
@@ -628,6 +634,7 @@ describe("fragmentor analytics", () => {
     expect(one.output).toContain("    Reminders (tickets/reminders): on the diagram: reads bookings (planned)");
     expect(one.output).toContain("  Outward share: 0 (everything leans on it)");
 
+    expect(one.output).toContain("Ratings on this block: rules of thumb, 0 to 100, 70 and over good, under 40 poor\n  Coupling: 100 Good (reaches 0)\n  Scalability: 50 Fair (shared by 5 blocks that cannot scale apart from it)\n");
     expect(fragmentor(["analytics", "tickets/nowhere"], dir).output).toContain("There is no block at tickets/nowhere.");
     expect(fragmentor(["analytics", "a", "b"], dir).output).toContain("fragmentor analytics takes one block path at most, and was given 2.");
     expect(fragmentor(["check"], dir).output).not.toContain("Weak spots");
