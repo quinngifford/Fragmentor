@@ -1,16 +1,18 @@
 import { appendFile, chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   applyPlan,
   blockVersions,
   changePoints,
+  codeChanges,
   commitTouchesBlock,
   deleteSavedVersion,
   editSavedVersion,
   headCommit,
+  IGNORES_CASE,
   projectAt,
   saveVersion,
   swapToVersion,
@@ -1351,6 +1353,50 @@ describe("the project as it was at a commit", () => {
       }
     }
     expect(await readdir(own)).toEqual([]);
+  }, 30_000);
+});
+
+describe("which commits touched the code", () => {
+  it("lists each commit's files among those asked for, newest first, from the last year, spelled as asked", async () => {
+    const { dir, git } = await ticketsHistory();
+    await put(dir, "src/booking/find-event.ts", `${await text(dir, "src/booking/find-event.ts")}\n// touched\n`);
+    await git("add", "-A");
+    await git("commit", "--quiet", "-m", "Touch find-event");
+
+    const found = await codeChanges(dir, ["src/booking/price-seat.ts", "src/booking/find-event.ts", "src/booking/seat-discount.ts", "src/nowhere.ts"]);
+    expect(found).toEqual({
+      unavailable: null,
+      shallow: false,
+      commits: [
+        ["src/booking/find-event.ts"],
+        ["src/booking/price-seat.ts", "src/booking/seat-discount.ts"],
+        ["src/booking/find-event.ts", "src/booking/price-seat.ts", "src/booking/seat-discount.ts"],
+      ],
+    });
+    // A file spelled in another case is the same file where the file system says so, and given back as spelled.
+    const spelled = await codeChanges(dir, ["SRC/Booking/price-seat.ts"]);
+    expect(spelled).toMatchObject({ commits: IGNORES_CASE ? [["SRC/Booking/price-seat.ts"], ["SRC/Booking/price-seat.ts"]] : [] });
+    expect(await codeChanges(dir, [])).toEqual({ unavailable: null, commits: [], shallow: false });
+    // A folder is credited for every file beneath it, and spelled as asked.
+    expect(await codeChanges(dir, ["src/booking", "src/booking/find-event.ts"])).toMatchObject({
+      commits: [["src/booking", "src/booking/find-event.ts"], ["src/booking"], ["src/booking", "src/booking/find-event.ts"]],
+    });
+  }, 30_000);
+
+  it("says when the clone is shallow, so the counts are of what it holds", async () => {
+    const { repo } = await ticketsHistory();
+    const into = await scratch();
+    await gitIn(into)("clone", "--quiet", "--depth", "1", pathToFileURL(repo).href, "shallow");
+    const found = await codeChanges(path.join(into, "shallow", "tickets app"), ["src/booking/price-seat.ts", "src/booking/find-event.ts"]);
+    // The one commit the clone holds has no parent there, so every file counts as changed by it: counts of what the clone holds, and said so.
+    expect(found).toEqual({ unavailable: null, shallow: true, commits: [["src/booking/find-event.ts", "src/booking/price-seat.ts"]] });
+  }, 30_000);
+
+  it("says when nothing has been committed yet, and when there is no repository", async () => {
+    const empty = await scratch();
+    expect(await codeChanges(empty, ["a.ts"])).toEqual({ unavailable: expect.stringMatching(/^Changes come from .* not in a git repository yet/) });
+    await gitIn(empty)("init", "--quiet");
+    expect(await codeChanges(empty, ["a.ts"])).toEqual({ unavailable: "Changes come from the project's git history, and nothing has been committed yet. Ask your agent to commit." });
   }, 30_000);
 });
 

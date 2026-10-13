@@ -3,6 +3,7 @@ import type { CaseResult, RunEvent, RunOutcome, StoreSeeds } from "../../src/run
 import type { Role } from "../../src/model/roles.js";
 import type { Trace } from "../../src/model/trace.js";
 import type { RecordingScope } from "../../src/model/recorded.js";
+import type { CodeChanges } from "../../src/project/analytics.js";
 
 /**
  * What the interface is currently showing. Kernel types are imported here for
@@ -96,6 +97,8 @@ export interface UiState {
   execution: { id: string; at: number; trace: "declared" | "recorded" } | null;
   /** The last recording of each execution, by id. */
   recordings: Map<string, Recording>;
+  /** What git said about the commits that touched the code, asked for the snapshot on screen; "Reading history…" until it answers. */
+  codeChanges: { snapshot: ProjectSnapshot; result: CodeChanges | { unavailable: string }; landed: Promise<void> } | null;
   /** The blocks picked out on the tree, by path. */
   selection: Set<string>;
   /** The line picked out on the diagram: an access reaching a database, a queue or a service. */
@@ -250,6 +253,7 @@ export const ui: UiState = {
   },
   execution: null,
   recordings: new Map(),
+  codeChanges: null,
   selection: new Set(),
   selectedLink: null,
   zoom: 1,

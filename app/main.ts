@@ -31,6 +31,7 @@ import { saveCases } from "../src/run/cases.js";
 import {
   blockVersions,
   changePoints,
+  codeChanges,
   deleteSavedVersion,
   editSavedVersion,
   noise,
@@ -41,6 +42,7 @@ import {
   undoLastSwap,
 } from "../src/project/history.js";
 import type { BlockVersions, ChangePoints, ProjectAt, SavedVersion, SwapDone, VersionRef } from "../src/project/history.js";
+import type { CodeChanges } from "../src/project/analytics.js";
 import { MOST_NOTE_TEXT, addNote, deleteNote, flaggedRunOf, isNotePath, markWorking, noteById, replyToNote, resolveNote } from "../src/project/notes.js";
 import { addRule, isRulesPath, removeRule } from "../src/project/rules.js";
 import type { FlaggedRun, Note, NoteAnchor } from "../src/project/notes.js";
@@ -663,6 +665,15 @@ function registerHandlers(): void {
   ipcMain.handle(CHANNELS.changePoints, async (_event, dir: unknown, base: unknown): Promise<Result<{ unavailable: string } | ChangePoints>> => {
     try {
       return ok(await changePoints(sent(dir), (base ?? null) as string | null));
+    } catch (error) {
+      return failed(error);
+    }
+  });
+
+  ipcMain.handle(CHANNELS.codeChanges, async (_event, dir: unknown, files: unknown): Promise<Result<{ unavailable: string } | CodeChanges>> => {
+    try {
+      if (!Array.isArray(files)) throw new Error("What the window sent must be a list of files.");
+      return ok(await codeChanges(sent(dir), files.map((file) => sent(file, "A file", 4096))));
     } catch (error) {
       return failed(error);
     }
@@ -1818,24 +1829,32 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         const sections = (none.sections ?? []) as { title: string; parts: number; available: number; sentences: number; notes: number }[];
         const cycle = kinds.find((k) => k.kind === "cycle");
         const complexity = kinds.find((k) => k.kind === "complexity");
+        const hotspot = kinds.find((k) => k.kind === "hotspot");
         return (
           none.opened === true &&
           none.openedByItself === false &&
           cycle?.good === true && cycle.rows.length === 0 &&
           complexity?.good === true && complexity.rows.length === 0 &&
+          hotspot?.good === true && hotspot.rows.length === 0 &&
           /^Tickets Database 5$/.test(String(none.firstCoupling)) &&
           none.firstBar === "100%" &&
           (none.groups as string[] | undefined)?.some((row) => row === "Pricing: its 2 parts form 2 groups: Price Seat · Refund For") === true &&
           /^most: bookSeats, 5/.test(String(none.complexity)) &&
           none.warnRows === 0 &&
           none.runtime === "nothing has been recorded in this session: pick an execution above the drawing and press Record" &&
-          /^Changes not built yet$/.test(String(none.changes)) &&
+          /^Changes \d+ commits? touched its code in the last 12 months · most: Price Seat, 2 /.test(String(none.changes)) &&
           /every system's code was read/.test(String(none.notMeasured)) &&
           sections.every((s) => (s.available === 0 || s.sentences >= 1) && s.notes === 0) &&
           Number(none.ms) < 2000 &&
           value("analyticsClosed", "closed") === true
         );
       })(),
+    ],
+    [
+      "Changes counts a block's commits the way git does, from the project's own history",
+      typeof value("analyticsHistory", "expected") === "number" &&
+        Number(value("analyticsHistory", "expected")) > 0 &&
+        value("analyticsHistory", "counted") === value("analyticsHistory", "expected"),
     ],
     [
       "a recording made here shows in the window as one timed run, held to what was written down",
@@ -1852,7 +1871,8 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         const complexity = kinds.find((k) => k.kind === "complexity");
         return (
           cycle.opened === true &&
-          cycle.kindsInOrder === "cycle complexity hotspot" &&
+          cycle.kindsInOrder === "cycle hotspot complexity" &&
+          /nothing has been committed yet/.test(String(cycle.changes)) &&
           circle?.title === "Parts that use each other in a circle: 1" &&
           circle.good === false &&
           circle.rows.length === 1 &&
@@ -4827,6 +4847,9 @@ function attachSelfCheck(
 
           const w = await until(win, 5000);
           if (!w) return { opened: false };
+          // Git is asked as the project loads and again as the window opens; nothing is read until it has answered.
+          const changesPart = () => [...w.querySelectorAll('[data-dimension="maintainability"] .measure-part')].find((p) => clean(p).startsWith("Changes"));
+          await until(() => { const p = changesPart(); return p && !clean(p).includes("Reading history") ? true : null; }, 15000);
           const sections = [...w.querySelectorAll(".section")].map((s) => ({
             title: s.querySelector("h4").textContent,
             parts: s.querySelectorAll(".measure-part").length,
@@ -4846,12 +4869,21 @@ function attachSelfCheck(
             complexity: clean(w.querySelector('[data-dimension="complexity"] .measure')),
             warnRows: w.querySelectorAll(".measure-row.warn").length,
             runtime: clean(w.querySelector('[data-dimension="runtime"] .measure-none')),
-            changes: [...w.querySelectorAll('[data-dimension="maintainability"] .measure-part')].map(clean).find((t) => t.startsWith("Changes")) || "",
+            changes: changesPart() ? clean(changesPart()) : "",
+            changesRows: changesPart() ? [...changesPart().querySelectorAll(".measure-row")].map(clean) : [],
             notMeasured: clean([...w.querySelectorAll(".section")].find((s) => s.querySelector("h4").textContent === "Not measured")),
             sections,
           };
         `);
         report.analyticsNone = { ...(report.analyticsNone ?? {}), ms: Date.now() - analyticsAskedAt };
+        // The top Changes row's count, held to git's own answer for the same files.
+        report.analyticsHistory = await (async () => {
+          const rows = (report.analyticsNone?.changesRows ?? []) as string[];
+          const top = /^(.+?) (\d+) commits? \(\d+%\) in (.+)$/.exec(rows[0] ?? "");
+          if (!top) return { row: rows[0] ?? "", counted: null, expected: null };
+          const log = await gitIn(check.application)("log", "--oneline", "--no-merges", "--since=12.months", "--", ...top[3]!.split(", "));
+          return { row: rows[0], counted: Number(top[2]), expected: log.split("\n").filter(Boolean).length };
+        })();
         await run("analyticsClosed", `
           const close = document.querySelector("#overlay .window-close");
           if (close) close.click();
@@ -6039,6 +6071,7 @@ function attachSelfCheck(
             kindsInOrder: found.map((k) => k.kind).join(" "),
             settled: [...w.querySelectorAll('[data-dimension="coupling"] .measure-part')].map(clean).find((t) => t.startsWith("Pointing at a less settled part")) || "",
             groups: [...w.querySelectorAll('[data-dimension="cohesion"] .measure-row')].map(clean),
+            changes: await until(() => { const t = [...w.querySelectorAll('[data-dimension="maintainability"] .measure-part')].map(clean).find((t) => t.startsWith("Changes")) || ""; return t && !t.includes("Reading history") ? t : null; }, 15000) || "",
           };
           if (!circle) return { ...out, stage: "no circle row" };
           circle.click();

@@ -585,6 +585,8 @@ describe("fragmentor analytics", () => {
     expect(result.output).toContain("    State (outward share 0.4) → Router (outward share 0.83)");
     expect(result.output).toContain("    UI: its 3 parts form 3 groups: Chat View · Login Form · Send Button");
     expect(result.output).toContain("\nRuntime performance\n  Recorded runs: not recorded by this command; `fragmentor test` records every execution and prints its time");
+    expect(result.output).toContain("  Changes: Changes come from the project's git history, and this folder is not in a git repository yet. Ask your agent to put it under git and commit.");
+    expect(result.output).toContain("  Changes often and is hard to follow: not measured: Changes come from the project's git history");
     expect(result.output).toContain("\nNot measured: none");
     // Every number's sentence is on the line after it.
     expect(result.output).toContain("  Used by: most: Database (6)");
@@ -593,6 +595,17 @@ describe("fragmentor analytics", () => {
     const check = fragmentor(["check"], dir);
     expect(check.output).toContain("\nWeak spots: 1, which is not a problem. `fragmentor analytics` lists them with their evidence; weigh them when the person asks for a review, and change nothing for them otherwise.\n");
     expect(check.output).toContain("Result: no errors.");
+  }, 60_000);
+
+  it("counts the commits that touched each block once the project is under git", async () => {
+    await cp(tickets, dir, { recursive: true });
+    const git = gitIn(dir);
+    await git("init", "--quiet");
+    await git("add", "-A");
+    await git("commit", "--quiet", "-m", "Start");
+    const output = fragmentor(["analytics", "tickets/booking-api/find-event"], dir).output;
+    expect(output).toContain("  Changes: 1 commit in the last 12 months (100% of Tickets)");
+    expect(output).toContain("Commits of the last 12 months that touched a block's code files");
   }, 60_000);
 
   it("finds no weak spot on Tickets, says what it looked for, and measures one block on its own", async () => {

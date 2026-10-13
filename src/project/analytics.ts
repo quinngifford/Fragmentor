@@ -116,12 +116,37 @@ export interface RecordingFacts {
   check: { agreed: boolean; notSeen: number; failures: number } | null;
 }
 
-/** What a reader may add that the snapshot does not hold: the recordings it has, and git history later. */
+/** The commits that touched the code, as git gave them: one list of files per commit, newest first, each file spelled as the reader asked for it. */
+export interface CodeChanges {
+  unavailable: null;
+  commits: string[][];
+  /** The clone holds only part of the history, so the counts are of what it holds. */
+  shallow: boolean;
+}
+
+/** What a reader may add that the snapshot does not hold: the recordings it has, and what git said about the code. */
 export interface AnalyticsExtra {
   /** The recordings made this session; none given means this reader has none to give, and says so in `recordingsUnavailable`. */
   recordings?: RecordingFacts[];
   recordingsUnavailable?: string;
-  changes?: Record<string, number> | null;
+  /** The commits that touched the code, where a reader has git; none given means this reader does not read git, and says so in `changesUnavailable`. */
+  changes?: CodeChanges | { unavailable: string };
+  changesUnavailable?: string;
+}
+
+/** The code files of each block, what its pointer names and what its functions were read from, and every one once, for one question to git. */
+export function codeFilesOf(snapshot: ProjectSnapshot): { byBlock: Record<string, string[]>; all: string[] } {
+  const byBlock: Record<string, string[]> = {};
+  const all = new Set<string>();
+  for (const block of Object.values(snapshot.blocks)) {
+    const files = new Set<string>();
+    if (block.code !== null && !block.planned) files.add(block.code.file);
+    for (const file of (snapshot.functions ?? {})[block.path]?.files ?? []) files.add(file);
+    if (files.size === 0) continue;
+    byBlock[block.path] = [...files].sort();
+    for (const file of files) all.add(file);
+  }
+  return { byBlock, all: [...all].sort() };
 }
 
 /** A time as the measurements print it. */
@@ -154,7 +179,10 @@ export function runTimes(trace: Trace): { total: number | null; timed: boolean; 
 /* -------------------------------------------------------------------------- */
 
 /** The one wording for what is not there, printed the same by the window, the page and the command. */
-export const NOT_BUILT_YET = "not built yet";
+/** What a reader that gives neither recordings nor commits, nor a reason, reads for them. */
+const NOT_READ = "not read here";
+/** What Changes reads while git is being asked. */
+export const READING_HISTORY = "Reading history…";
 
 /** The provisional limits for ways through a function (cyclomatic complexity), with the words of Decision 2. */
 export const WAYS_LISTED_OVER = 10;
@@ -419,7 +447,7 @@ export function analyticsOf(snapshot: ProjectSnapshot, extra: AnalyticsExtra = {
     modularity(snapshot, systems),
     cohesion(snapshot, systems),
     complexity(snapshot, systems),
-    maintainability(snapshot, systems),
+    maintainability(snapshot, systems, extra),
     runtime(snapshot, systems, extra),
     reliability(snapshot, systems, extra),
     scalability(snapshot, systems),
@@ -434,7 +462,7 @@ export function analyticsOf(snapshot: ProjectSnapshot, extra: AnalyticsExtra = {
     .filter((each) => each.reasons.length > 0);
 
   return {
-    weakSpots: [cycleSpots(snapshot, systems), complexitySpots(snapshot, systems), unbuiltKind("hotspot")],
+    weakSpots: [cycleSpots(snapshot, systems), hotspotSpots(snapshot, systems, extra), complexitySpots(snapshot, systems)],
     dimensions,
     notMeasured,
     systems: systems.map((system) => ({
@@ -446,20 +474,7 @@ export function analyticsOf(snapshot: ProjectSnapshot, extra: AnalyticsExtra = {
   };
 }
 
-/** A whole dimension that a later phase fills in, saying so in the one wording. */
-function unbuilt(id: string, name: string, systems: SystemView[]): Dimension {
-  const system: Dimension["system"] = {};
-  const blocks: Dimension["blocks"] = {};
-  for (const each of systems) {
-    system[each.root] = [measure({ id, label: name, text: NOT_BUILT_YET, of: "", unavailable: NOT_BUILT_YET })];
-    for (const block of each.blocks) blocks[block.path] = [measure({ id, label: name, text: NOT_BUILT_YET, of: "", unavailable: NOT_BUILT_YET })];
-  }
-  return { id, name, system, blocks };
-}
 
-function unbuiltKind(kind: WeakSpot["kind"]): WeakSpotKind {
-  return { kind, title: WEAK_SPOT_TITLES[kind], measured: false, reason: NOT_BUILT_YET, spots: [] };
-}
 
 const fromWhere = (reachRead: boolean): string =>
   reachRead ? "the code that was read to reach it, and the access the diagram declares" : "the access the diagram declares only, since its code is not read";
@@ -721,7 +736,7 @@ function recordingsIn(system: SystemView, extra: AnalyticsExtra): RecordingFacts
 
 /** The words for runtime and the recordings when a reader has none: why, in the reader's own terms. */
 function recordingsUnavailable(snapshot: ProjectSnapshot, system: SystemView, extra: AnalyticsExtra): string | null {
-  if (extra.recordings === undefined) return extra.recordingsUnavailable ?? NOT_BUILT_YET;
+  if (extra.recordings === undefined) return extra.recordingsUnavailable ?? NOT_READ;
   if (recordingsIn(system, extra).length > 0) return null;
   const executions = snapshot.executions.filter((execution) => systemOf(execution.trigger.at) === system.root);
   if (executions.length === 0) return "no execution to record: the agent writes one down for each thing that sets the system going";
@@ -1054,12 +1069,79 @@ function complexity(snapshot: ProjectSnapshot, systems: SystemView[]): Dimension
   return { id: "complexity", name: "Complexity", system, blocks };
 }
 
-/** How much code there is, where, as facts: statements per function and per block, and code under no block. */
-function maintainability(snapshot: ProjectSnapshot, systems: SystemView[]): Dimension {
+const CHANGES_OF =
+  "Commits of the last 12 months that touched a block's code files, merges left out, each commit counted once for every block whose code it touched, so the blocks' shares can add to more than 100%; from git, the newest 1000 at most.";
+
+const commitsWord = (n: number): string => `${n} ${n === 1 ? "commit" : "commits"}`;
+
+/** Why Changes has nothing to count, or null when the reader gave commits. */
+function changesUnavailable(extra: AnalyticsExtra): string | null {
+  if (extra.changes === undefined) return extra.changesUnavailable ?? NOT_READ;
+  return extra.changes.unavailable;
+}
+
+/** How many of the commits touched any of these files. */
+function commitsTouching(commits: string[][], files: string[]): number {
+  const mine = new Set(files);
+  return commits.filter((commit) => commit.some((file) => mine.has(file))).length;
+}
+
+/** The Changes measure of one system and of each of its blocks with code, from the commits the reader got from git. */
+function changesOf(snapshot: ProjectSnapshot, system: SystemView, extra: AnalyticsExtra): { system: Measure; blocks: Map<string, Measure> } {
+  const blocks = new Map<string, Measure>();
+  const unavailable = changesUnavailable(extra);
+  if (unavailable !== null) {
+    const none = measure({ id: "changes", label: "Changes", text: unavailable, of: "", unavailable });
+    for (const block of system.blocks) if (block.role === "function" && !block.planned) blocks.set(block.path, none);
+    return { system: none, blocks };
+  }
+  const { commits, shallow } = extra.changes as CodeChanges;
+  const of = shallow ? `${CHANGES_OF} This clone is shallow, so only the commits it holds are counted.` : CHANGES_OF;
+  const files = codeFilesOf(snapshot).byBlock;
+  const withCode = system.blocks.filter((block) => files[block.path] !== undefined);
+  if (withCode.length === 0) return { system: measure({ id: "changes", label: "Changes", text: "no code yet", of: "", unavailable: "no code yet" }), blocks };
+  const perBlock = new Map(withCode.map((block) => [block.path, commitsTouching(commits, files[block.path]!)]));
+  const total = commitsTouching(commits, withCode.flatMap((block) => files[block.path]!));
+  const share = (n: number) => (total === 0 ? 0 : Math.round((100 * n) / total));
+  const rows = withCode
+    .map((block) => row(snapshot, block.path, perBlock.get(block.path)!, `${commitsWord(perBlock.get(block.path)!)} (${share(perBlock.get(block.path)!)}%)`, `in ${files[block.path]!.join(", ")}`))
+    .sort((a, b) => b.value - a.value || a.path.localeCompare(b.path));
+  const most = rows[0];
+  const own = measure({
+    id: "changes",
+    label: "Changes",
+    text: most === undefined || total === 0 ? "none in the last 12 months" : `${commitsWord(total)} touched its code in the last 12 months · most: ${most.name}, ${most.value}`,
+    value: total,
+    of,
+    rows,
+    spread: spreadOf(perBlock, withCode, "blocks with code"),
+  });
+  for (const block of withCode) {
+    const n = perBlock.get(block.path)!;
+    blocks.set(
+      block.path,
+      measure({
+        id: "changes",
+        label: "Changes",
+        text: `${commitsWord(n)} in the last 12 months (${share(n)}% of ${system.name})`,
+        value: n,
+        of,
+        rank: rankOf(perBlock, system.blocks, block),
+        share: total === 0 ? null : round2(n / total),
+      }),
+    );
+  }
+  return { system: own, blocks };
+}
+
+/** How much code there is, where, as facts: statements per function and per block, code under no block, and how often each block's code changed. */
+function maintainability(snapshot: ProjectSnapshot, systems: SystemView[], extra: AnalyticsExtra): Dimension {
   const system: Dimension["system"] = {};
   const blocks: Dimension["blocks"] = {};
-  const changes = measure({ id: "changes", label: "Changes", text: NOT_BUILT_YET, of: "", unavailable: NOT_BUILT_YET });
   systems.forEach((each, index) => {
+    const changed = changesOf(snapshot, each, extra);
+    const changes = changed.system;
+    const changesFor = (path: string): Measure[] => (changed.blocks.has(path) ? [changed.blocks.get(path)!] : []);
     const reason = snapshot.systems.find((candidate) => candidate.rootBlock === each.root)?.reachNotReadBecause ?? null;
     const credited = functionsOf(snapshot, each, index === 0);
     const total = [...credited.values()].reduce((sum, fn) => sum + fn.statements, 0);
@@ -1067,7 +1149,7 @@ function maintainability(snapshot: ProjectSnapshot, systems: SystemView[]): Dime
     if (reason !== null || sizes.length === 0) {
       const unavailable = reason !== null ? `not measured: ${reason}` : "no code yet";
       system[each.root] = [measure({ id: "size", label: "Size", text: unavailable, of: "", unavailable }), changes];
-      for (const block of each.blocks) if (block.role === "function") blocks[block.path] = [measure({ id: "size", label: "Size", text: unavailable, of: "", unavailable }), changes];
+      for (const block of each.blocks) if (block.role === "function") blocks[block.path] = [measure({ id: "size", label: "Size", text: unavailable, of: "", unavailable }), ...changesFor(block.path)];
       return;
     }
     const share = (statements: number) => (total === 0 ? 0 : Math.round((100 * statements) / total));
@@ -1102,7 +1184,7 @@ function maintainability(snapshot: ProjectSnapshot, systems: SystemView[]): Dime
     for (const block of each.blocks) {
       const statements = perBlock.get(block.path);
       if (statements === undefined) {
-        if (block.role === "function" && !block.planned) blocks[block.path] = [measure({ id: "size", label: "Size", text: "no code read", of: "", unavailable: "no code read" }), changes];
+        if (block.role === "function" && !block.planned) blocks[block.path] = [measure({ id: "size", label: "Size", text: "no code read", of: "", unavailable: "no code read" }), ...changesFor(block.path)];
         continue;
       }
       blocks[block.path] = [
@@ -1115,7 +1197,7 @@ function maintainability(snapshot: ProjectSnapshot, systems: SystemView[]): Dime
           rank: rankOf(perBlock, each.blocks, block),
           share: total === 0 ? null : round2(statements / total),
         }),
-        changes,
+        ...changesFor(block.path),
       ];
     }
   });
@@ -1125,6 +1207,66 @@ function maintainability(snapshot: ProjectSnapshot, systems: SystemView[]): Dime
 /* -------------------------------------------------------------------------- */
 /* Weak spots                                                                  */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * A block in the top quarter of its system by commits and by ways through,
+ * above the median in both and with at least 3 commits: change goes often
+ * where the code is hardest to follow. A relative rule, so it names the few
+ * worth a look in any system and nothing in a system of equals. Not measured
+ * for a system whose code was not read, since the ways through it are unknown.
+ */
+function hotspotSpots(snapshot: ProjectSnapshot, systems: SystemView[], extra: AnalyticsExtra): WeakSpotKind {
+  const kind = "hotspot" as const;
+  const unavailable = changesUnavailable(extra);
+  if (unavailable !== null) return { kind, title: WEAK_SPOT_TITLES[kind], measured: false, reason: unavailable, spots: [] };
+  const { commits } = extra.changes as CodeChanges;
+  const files = codeFilesOf(snapshot).byBlock;
+  const functions = snapshot.functions ?? {};
+  const found: (WeakSpot & { commits: number })[] = [];
+  for (const system of systems) {
+    const candidates = system.blocks.filter(
+      (block) => block.role === "function" && !block.planned && files[block.path] !== undefined && (functions[block.path]?.paths.length ?? 0) > 0,
+    );
+    if (candidates.length === 0) continue;
+    const commitsOf = new Map(candidates.map((block) => [block.path, commitsTouching(commits, files[block.path]!)]));
+    const waysOf = new Map(candidates.map((block) => [block.path, Math.max(...functions[block.path]!.paths)]));
+    // The top quarter, ties included: the value at that place.
+    const quarter = Math.ceil(candidates.length / 4);
+    const floorOf = (values: Map<string, number>) => [...values.values()].sort((a, b) => b - a)[quarter - 1]!;
+    const aboveMedian = (values: Map<string, number>) => Math.floor(median([...values.values()])) + 1;
+    const commitFloor = Math.max(3, floorOf(commitsOf), aboveMedian(commitsOf));
+    const wayFloor = Math.max(floorOf(waysOf), aboveMedian(waysOf));
+    const n = candidates.length;
+    for (const block of candidates) {
+      const changed = commitsOf.get(block.path)!;
+      const ways = waysOf.get(block.path)!;
+      if (changed < commitFloor || ways < wayFloor) continue;
+      const most = [...functions[block.path]!.named].sort((a, b) => b.paths - a.paths)[0];
+      found.push({
+        kind,
+        headline: `${WEAK_SPOT_TITLES[kind]}: ${block.name}`,
+        block: block.path,
+        blockName: block.name,
+        band: null,
+        commits: changed,
+        evidence: [
+          `${commitsWord(changed)} in the last 12 months, ${ordinal(rankOf(commitsOf, candidates, block)?.place ?? 1)} of ${n} ${n === 1 ? "function block" : "function blocks"} with code read`,
+          `${most === undefined ? "its code" : most.name} has ${ways} ${ways === 1 ? "way" : "ways"} through, ${ordinal(rankOf(waysOf, candidates, block)?.place ?? 1)} of ${n}`,
+          "A relative rule: the top quarter of this system by both, above the median in both, with at least 3 commits. It says where a change is likeliest to go wrong, not that anything is wrong.",
+        ],
+      });
+    }
+  }
+  found.sort((a, b) => b.commits - a.commits || a.blockName.localeCompare(b.blockName));
+  const unread = systems.filter((system) => !system.reachRead);
+  return {
+    kind,
+    title: WEAK_SPOT_TITLES[kind],
+    measured: unread.length === 0,
+    reason: unread.length === 0 ? null : unread.map((system) => snapshot.systems.find((candidate) => candidate.rootBlock === system.root)?.reachNotReadBecause ?? "the code is not read").join("; "),
+    spots: found.map(({ commits: _, ...spot }) => spot),
+  };
+}
 
 function cycleSpots(snapshot: ProjectSnapshot, systems: SystemView[]): WeakSpotKind {
   const spots: WeakSpot[] = [];

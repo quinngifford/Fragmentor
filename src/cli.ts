@@ -10,8 +10,8 @@ import { readAllCode } from "./project/code.js";
 import { loadExecutions } from "./project/executions.js";
 import type { Execution } from "./project/executions.js";
 import { changesBetween, changesText } from "./project/changes.js";
-import { changePoints, commitTouchesBlock, headCommit, projectAt } from "./project/history.js";
-import { analyticsOf, msWords, NOT_BUILT_YET, ordinal, runTimes } from "./project/analytics.js";
+import { changePoints, codeChanges, commitTouchesBlock, headCommit, projectAt } from "./project/history.js";
+import { analyticsOf, codeFilesOf, msWords, ordinal, runTimes } from "./project/analytics.js";
 import type { Analytics, Measure } from "./project/analytics.js";
 import { projectSnapshot } from "./project/snapshot.js";
 import type { ProjectSnapshot } from "./project/snapshot.js";
@@ -942,7 +942,7 @@ function formatAnalytics(analytics: Analytics, snapshot: ProjectSnapshot, within
   lines.push("Weak spots");
   for (const kind of analytics.weakSpots) {
     if (!kind.measured && kind.spots.length === 0) {
-      lines.push(`  ${kind.title}: ${kind.reason === NOT_BUILT_YET ? NOT_BUILT_YET : `not measured: ${kind.reason}`}`);
+      lines.push(`  ${kind.title}: not measured: ${kind.reason}`);
       continue;
     }
     lines.push(`  ${kind.title}: ${kind.spots.length === 0 ? "none" : kind.spots.length}${kind.measured ? "" : ` (${kind.reason})`}`);
@@ -989,7 +989,8 @@ async function analytics(dir: string, within: string | undefined): Promise<numbe
     return 1;
   }
   const recordingsUnavailable = "not recorded by this command; `fragmentor test` records every execution and prints its time";
-  console.log(formatAnalytics(analyticsOf(snapshot, { recordingsUnavailable }), snapshot, within));
+  const changes = await codeChanges(dir, codeFilesOf(snapshot).all);
+  console.log(formatAnalytics(analyticsOf(snapshot, { recordingsUnavailable, changes }), snapshot, within));
   return 0;
 }
 

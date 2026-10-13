@@ -12,6 +12,7 @@ import type { LoadedBlock, Project } from "./project.js";
 import { resolveInside } from "./safePath.js";
 import { projectSnapshot } from "./snapshot.js";
 import type { ProjectSnapshot } from "./snapshot.js";
+import type { CodeChanges } from "./analytics.js";
 
 /**
  * A block's earlier versions, and putting one back.
@@ -1645,6 +1646,49 @@ async function unreadableAt(folder: string, why: string): Promise<string> {
   return retired
     ? "The project as it was then was written for an older Fragmentor, which this one no longer reads."
     : `The project as it was then cannot be read: ${why}`;
+}
+
+/**
+ * The commits of the last twelve months that changed any of `files`, merges
+ * left out, the newest 1000 of them: one question to git, answered commit by
+ * commit, so a reader can count a block's commits once however many of its
+ * files each touched. A file is matched as this computer's file system
+ * matches it, case folded where it folds case, and given back spelled as it
+ * was asked for; a folder is credited for every file beneath it.
+ */
+export async function codeChanges(projectDir: string, files: string[]): Promise<{ unavailable: string } | CodeChanges> {
+  const state = await gitState(projectDir, "Changes");
+  if (state.unavailable !== null) return { unavailable: state.unavailable };
+  if (!state.hasCommits) return { unavailable: "Changes come from the project's git history, and nothing has been committed yet. Ask your agent to commit." };
+  const spelled = new Map(files.map((file) => [fold(file), file]));
+  if (spelled.size === 0) return { unavailable: null, commits: [], shallow: false };
+  // Git names files from the repository's root, which may be above the project.
+  const [prefix = "", shallow = ""] = outputOf(await git(projectDir, ["rev-parse", "--show-prefix", "--is-shallow-repository"]))
+    .toString("utf8")
+    .split(/\r?\n/);
+  const root = fold(prefix);
+  // Each path literal, as git is told for everything else, and matched without regard to case where the file system is; names printed whole.
+  const env = { GIT_LITERAL_PATHSPECS: "0", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.quotePath", GIT_CONFIG_VALUE_0: "false" };
+  const pathspecs = [...spelled.values()].map((file) => `:(literal${IGNORES_CASE ? ",icase" : ""})${file}`);
+  const log = outputOf(await git(projectDir, ["log", "--no-merges", "--since=12.months", "-n", "1000", "--format=%x1e%H", "--name-only", "--", ...pathspecs], env)).toString("utf8");
+  // Git prints the files a commit touched, so a folder asked about is credited for every file beneath it.
+  const asked = [...spelled.keys()];
+  const askedFor = (name: string): string[] => {
+    const exact = spelled.get(name);
+    return [...(exact === undefined ? [] : [exact]), ...asked.filter((key) => name.startsWith(`${key}/`)).map((key) => spelled.get(key)!)];
+  };
+  const commits: string[][] = [];
+  for (const record of log.split("\x1e").slice(1)) {
+    const names = record
+      .split(/\r?\n/)
+      .slice(1)
+      .map((name) => fold(name))
+      .filter((name) => name.startsWith(root))
+      .map((name) => name.slice(root.length));
+    const touched = unique(names.flatMap(askedFor)).sort();
+    if (touched.length > 0) commits.push(touched);
+  }
+  return { unavailable: null, commits, shallow: shallow.trim() === "true" };
 }
 
 /** What git says about the points a project can be compared with, where git can say anything. */

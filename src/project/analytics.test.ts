@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { recordedTrace } from "../model/recorded.js";
 import type { HeardEvent, RecordingScope } from "../model/recorded.js";
-import { analyticsOf, holding, isWeakSpotNote, kindOf, msWords, ordinal, reachesOf, runTimes, usersOf, weakSpotNote } from "./analytics.js";
+import { analyticsOf, codeFilesOf, holding, isWeakSpotNote, kindOf, msWords, ordinal, reachesOf, runTimes, usersOf, weakSpotNote } from "./analytics.js";
 import type { Analytics, Measure, RecordingFacts } from "./analytics.js";
 import type { ReachSeen } from "./rules.js";
 import { projectSnapshot } from "./snapshot.js";
@@ -363,7 +363,86 @@ describe("what the recordings showed", () => {
     expect(measureOf(analyticsOf(messenger, { recordings: [] }), "runtime", "app", "runtime").unavailable).toBe(messenger.executions[0]!.unrecordable);
     expect(measureOf(analyticsOf(tickets, { recordingsUnavailable: "not here" }), "runtime", "tickets", "runtime").unavailable).toBe("not here");
     expect(measureOf(analyticsOf(tickets, { recordingsUnavailable: "not here" }), "reliability", "tickets", "showed").unavailable).toBe("not here");
-    expect(measureOf(analyticsOf(tickets), "runtime", "tickets", "runtime").unavailable).toBe("not built yet");
+    expect(measureOf(analyticsOf(tickets), "runtime", "tickets", "runtime").unavailable).toBe("not read here");
+  });
+});
+
+describe("changes from git", () => {
+  const BOOK = "tickets/booking-api/book-seats";
+  const FIND = "tickets/booking-api/find-event";
+  // The example is read in beforeAll, so everything from it is read inside each test.
+  let files: Record<string, string[]>;
+  let functionBlocks: number;
+  let withCode: number;
+  beforeAll(() => {
+    files = codeFilesOf(tickets).byBlock;
+    functionBlocks = Object.values(tickets.blocks).filter((block) => kindOf(block.role) === "function blocks").length;
+    withCode = Object.values(tickets.blocks).filter((block) => block.role === "function" && !block.planned && files[block.path] !== undefined && (tickets.functions[block.path]?.paths.length ?? 0) > 0).length;
+  });
+  const given = (commits: string[][], shallow = false) => analyticsOf(tickets, { changes: { unavailable: null, commits, shallow } });
+  const hotspots = (analytics: Analytics) => analytics.weakSpots.find((kind) => kind.kind === "hotspot")!;
+
+  it("lists each block's code files once, for one question to git, and none for a planned block", () => {
+    expect(files[BOOK]).toContain("src/booking/book-seats.ts");
+    expect(codeFilesOf(tickets).all).toContain("src/booking/find-event.ts");
+    expect(Object.keys(files).every((path) => !tickets.blocks[path]!.planned)).toBe(true);
+  });
+
+  it("counts a block's commits once however many of its files one touched, shares them out, and ranks", () => {
+    const commits = [[...files[BOOK]!, ...files[FIND]!], files[BOOK]!, files[BOOK]!, files[FIND]!];
+    const analytics = given(commits);
+    const changes = measureOf(analytics, "maintainability", "tickets", "changes");
+    expect(changes.text).toBe("4 commits touched its code in the last 12 months · most: Book Seats, 3");
+    expect(changes.rows.slice(0, 2).map((row) => [row.name, row.text, row.detail])).toEqual([
+      ["Book Seats", "3 commits (75%)", `in ${files[BOOK]!.join(", ")}`],
+      ["Find Event", "2 commits (50%)", `in ${files[FIND]!.join(", ")}`],
+    ]);
+    expect(changes.of).toContain("each commit counted once for every block whose code it touched, so the blocks' shares can add to more than 100%");
+    expect(changes.of).not.toContain("shallow");
+    const own = blockMeasure(analytics, "maintainability", BOOK, "changes");
+    expect(own.text).toBe("3 commits in the last 12 months (75% of Tickets)");
+    expect(own.rank).toEqual({ place: 1, of: functionBlocks, kind: "function blocks" });
+    expect(own.share).toBe(0.75);
+    expect(measureOf(given(commits, true), "maintainability", "tickets", "changes").of).toContain("This clone is shallow");
+    expect(measureOf(given([]), "maintainability", "tickets", "changes").text).toBe("none in the last 12 months");
+  });
+
+  it("finds a hotspot in the top quarter by commits and by ways through, with at least 3 commits, and nothing in a system of equals", () => {
+    const found = hotspots(given([files[BOOK]!, files[BOOK]!, files[BOOK]!]));
+    expect(found.measured).toBe(true);
+    expect(found.spots.map((spot) => [spot.headline, spot.block, spot.band, ...spot.evidence.slice(0, 2)])).toEqual([
+      [
+        "Changes often and is hard to follow: Book Seats",
+        BOOK,
+        null,
+        `3 commits in the last 12 months, 1st of ${withCode} function blocks with code read`,
+        `bookSeats has 5 ways through, 1st of ${withCode}`,
+      ],
+    ]);
+    expect(found.spots[0]!.evidence[2]).toContain("not that anything is wrong");
+    // Two commits are not often; many commits to code with one way through are not hard to follow;
+    // and a system whose blocks all changed alike has no block that changes often.
+    expect(hotspots(given([files[BOOK]!, files[BOOK]!])).spots).toEqual([]);
+    expect(hotspots(given([files[FIND]!, files[FIND]!, files[FIND]!, files[FIND]!])).spots).toEqual([]);
+    const everything = Object.values(files).flat();
+    expect(hotspots(given([everything, everything, everything])).spots).toEqual([]);
+    expect(hotspots(given([]))).toMatchObject({ measured: true, reason: null, spots: [] });
+    expect(analyticsOf(tickets).weakSpots.map((kind) => kind.kind)).toEqual(["cycle", "hotspot", "complexity"]);
+  });
+
+  it("says why there is nothing: git's own reason, or that this reader does not read git", () => {
+    const noGit = analyticsOf(tickets, { changes: { unavailable: "no git" } });
+    expect(measureOf(noGit, "maintainability", "tickets", "changes").unavailable).toBe("no git");
+    expect(hotspots(noGit)).toMatchObject({ measured: false, reason: "no git", spots: [] });
+    expect(measureOf(analyticsOf(tickets, { changesUnavailable: "not here" }), "maintainability", "tickets", "changes").unavailable).toBe("not here");
+    expect(blockMeasure(analyticsOf(tickets), "maintainability", BOOK, "changes").unavailable).toBe("not read here");
+    expect(hotspots(analyticsOf(tickets))).toMatchObject({ measured: false, reason: "not read here" });
+    // A system whose code was not read has unknown ways through, so the kind was not looked for there.
+    const unread = { ...tickets, systems: tickets.systems.map((system) => ({ ...system, reachRead: false, reachNotReadBecause: "Python code is not read yet" })) };
+    expect(hotspots(analyticsOf(unread, { changes: { unavailable: null, commits: [], shallow: false } }))).toMatchObject({ measured: false, reason: "Python code is not read yet", spots: [] });
+    // Nothing with code yet: said so, as Size says it.
+    const bare = { ...tickets, functions: {}, blocks: Object.fromEntries(Object.entries(tickets.blocks).map(([path, block]) => [path, { ...block, code: null }])) };
+    expect(measureOf(analyticsOf(bare, { changes: { unavailable: null, commits: [], shallow: false } }), "maintainability", "tickets", "changes").unavailable).toBe("no code yet");
   });
 });
 
@@ -387,11 +466,6 @@ describe("the rest", () => {
     expect(measureOf(analytics, "scalability", "tickets", "load").unavailable).toBe("not measurable here; needs load or production data");
   });
 
-  it("prints exactly 'not built yet' for what later phases fill in", () => {
-    const analytics = analyticsOf(tickets);
-    expect(measureOf(analytics, "maintainability", "tickets", "changes").unavailable).toBe("not built yet");
-    expect(analytics.weakSpots.find((kind) => kind.kind === "hotspot")).toMatchObject({ measured: false, reason: "not built yet", spots: [] });
-  });
 
   it("gives the same answer whatever order the entries come in, and copes with a page from before this work", () => {
     const shuffled = { ...messenger, reachSeen: [...messenger.reachSeen].reverse() };

@@ -1,5 +1,5 @@
 import type { ProjectSnapshot, SnapshotBlock } from "../../src/project/snapshot.js";
-import { analyticsOf, ordinal, reachesOf, usersOf } from "../../src/project/analytics.js";
+import { analyticsOf, ordinal, reachesOf, READING_HISTORY, usersOf } from "../../src/project/analytics.js";
 import type { AnalyticsExtra, Measure, RecordingFacts } from "../../src/project/analytics.js";
 import { checkRecording } from "../../src/model/recorded.js";
 import { ROLES } from "../../src/model/roles.js";
@@ -288,10 +288,15 @@ function recordingsForAnalytics(snapshot: ProjectSnapshot): RecordingFacts[] {
   return facts;
 }
 
-/** What this reader adds to the snapshot's measurements: its recordings in the application, nothing on the exported page. */
+/** What this reader adds to the snapshot's measurements: its recordings and what git said, in the application; nothing on the exported page. */
 export function analyticsExtra(snapshot: ProjectSnapshot): AnalyticsExtra {
-  if (document.body.dataset.export !== undefined) return { recordingsUnavailable: "not on this page: recordings are made in Fragmentor itself" };
-  return { recordings: recordingsForAnalytics(snapshot) };
+  if (document.body.dataset.export !== undefined) {
+    return { recordingsUnavailable: "not on this page: recordings are made in Fragmentor itself", changesUnavailable: "not on this page: git is read in Fragmentor itself" };
+  }
+  return {
+    recordings: recordingsForAnalytics(snapshot),
+    changes: ui.codeChanges?.snapshot === snapshot ? ui.codeChanges.result : { unavailable: READING_HISTORY },
+  };
 }
 
 /**

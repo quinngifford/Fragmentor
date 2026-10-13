@@ -1,5 +1,6 @@
 import { emitProject } from "../codegen/emit.js";
-import { analyticsOf } from "../project/analytics.js";
+import { analyticsOf, codeFilesOf } from "../project/analytics.js";
+import { codeChanges } from "../project/history.js";
 import type { EmitResult } from "../codegen/emit.js";
 import type { NoteAuthor } from "../project/notes.js";
 import { loadProject } from "../project/project.js";
@@ -161,7 +162,7 @@ export async function checkProject(projectDir: string): Promise<CheckReport> {
       agent: snapshot.notes.filter((note) => note.waiting === "agent").map((note) => note.block),
       person: snapshot.notes.filter((note) => note.waiting === "person").map((note) => note.block),
     },
-    weakSpots: analyticsOf(snapshot).weakSpots.reduce((count, kind) => count + kind.spots.length, 0),
+    weakSpots: analyticsOf(snapshot, { changes: await codeChanges(projectDir, codeFilesOf(snapshot).all) }).weakSpots.reduce((count, kind) => count + kind.spots.length, 0),
     errorCount,
   };
 }

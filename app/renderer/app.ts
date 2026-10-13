@@ -28,7 +28,7 @@ import {
   watchCanvasSize,
   arrivalDelayOf,
 } from "./canvas.js";
-import { openAnalyticsWindow } from "./analytics.js";
+import { openAnalyticsWindow, readCodeChanges } from "./analytics.js";
 import { onInspectorChange, renderInspector } from "./inspector.js";
 import { onBenchChange } from "./bench.js";
 import { askForProjectSettings, firstStepsSections, showFirstSteps } from "./newproject.js";
@@ -70,6 +70,7 @@ function forgetProject(): void {
   ui.status = null;
   ui.selection.clear();
   ui.selectedLink = null;
+  ui.codeChanges = null;
   // A run, and the places runs pause, belong to the project they were set in.
   resetWatching();
   // So does the execution being stepped through, and anything folded away.
@@ -152,8 +153,10 @@ function show(load: ProjectLoad, opening: boolean): void {
     if (firstSight) fitWhenReady(20);
     else fitToView(true);
   }
-  // What changed since the person last looked follows every read of the project.
+  // What changed since the person last looked follows every read of the project,
+  // and so does how often each block's code changed; the panel is drawn again when git answers.
   void refreshChanges();
+  void readCodeChanges(load.dir, load.snapshot).then(() => renderInspector());
 }
 
 async function chooseProject(): Promise<void> {

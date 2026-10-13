@@ -1,11 +1,12 @@
-import { analyticsOf, ordinal } from "../../src/project/analytics.js";
+import { analyticsOf, codeFilesOf, ordinal, READING_HISTORY } from "../../src/project/analytics.js";
 import type { Analytics, Dimension, Measure, Row, WeakSpot, WeakSpotKind } from "../../src/project/analytics.js";
+import type { ProjectSnapshot } from "../../src/project/snapshot.js";
 import { revealBlock } from "./canvas.js";
 import { analyticsExtra } from "./detail.js";
 import { el, section, subsection } from "./dom.js";
 import { weakSpotFlag } from "./notes.js";
 import { closeWindow, openWindow } from "./popup.js";
-import { requireSnapshot } from "./state.js";
+import { requireSnapshot, ui } from "./state.js";
 
 /**
  * View › Architecture Analytics: every measurement of the open project, in
@@ -140,7 +141,7 @@ function weakSpotsSection(analytics: Analytics): HTMLElement {
   node.append(el("p", "measure-of", "The few findings worth asking your agent about, with their evidence. Flag one to hand it to the agent as a note; it fixes it, or replies saying why it should stay. A weak spot is never a problem."));
   for (const kind of analytics.weakSpots) {
     const count = kind.spots.length;
-    const title = !kind.measured && count === 0 ? `${kind.title}: ${kind.reason === "not built yet" ? "not built yet" : `not measured: ${kind.reason}`}` : `${kind.title}: ${count === 0 ? "none" : count}`;
+    const title = !kind.measured && count === 0 ? `${kind.title}: not measured: ${kind.reason}` : `${kind.title}: ${count === 0 ? "none" : count}`;
     // Green only where the kind was measured and found nothing.
     const part = subsection(title, kind.measured && count === 0 ? "good" : undefined);
     part.dataset.kind = kind.kind;
@@ -160,9 +161,24 @@ function notMeasuredSection(analytics: Analytics): HTMLElement {
   return node;
 }
 
-/** Opens the window over the drawing, measured from the snapshot as it is now and the recordings made so far. */
-export function openAnalyticsWindow(): void {
-  const snapshot = requireSnapshot();
+/**
+ * Asks git which commits touched the code, for the snapshot on screen, and
+ * keeps the answer in the state for every reader of the measurements: the
+ * panel and this window. Asked as a project loads and again when this window
+ * opens, since a commit changes no file the project is read from. While an
+ * answer is on its way the last one stands, or "Reading history…" before the first.
+ */
+export function readCodeChanges(dir: string, snapshot: ProjectSnapshot): Promise<void> {
+  const standing = ui.codeChanges?.snapshot === snapshot ? ui.codeChanges.result : { unavailable: READING_HISTORY };
+  const read: NonNullable<typeof ui.codeChanges> = { snapshot, result: standing, landed: Promise.resolve() };
+  read.landed = window.fragmentor.codeChanges(dir, codeFilesOf(snapshot).all).then((result) => {
+    read.result = result.ok ? result.value : { unavailable: `Changes could not be read: ${result.error}` };
+  });
+  ui.codeChanges = read;
+  return read.landed;
+}
+
+function analyticsBody(snapshot: ProjectSnapshot): HTMLElement {
   const analytics = analyticsOf(snapshot, analyticsExtra(snapshot));
   const body = el("div", "window-sections analytics");
   body.append(
@@ -175,9 +191,22 @@ export function openAnalyticsWindow(): void {
   body.append(weakSpotsSection(analytics));
   for (const dimension of analytics.dimensions) body.append(dimensionSection(analytics, dimension));
   body.append(notMeasuredSection(analytics));
+  return body;
+}
+
+/** Opens the window over the drawing, measured from the snapshot as it is now, the recordings made so far, and what git says now. */
+export function openAnalyticsWindow(): void {
+  const snapshot = requireSnapshot();
+  const body = analyticsBody(snapshot);
   openWindow(
     "Architecture Analytics",
-    "Measured from the diagram, the code and what was recorded here. A number is a measurement, not a problem; weak spots are the few worth asking about.",
+    "Measured from the diagram, the code, the project's history and what was recorded here. A number is a measurement, not a problem; weak spots are the few worth asking about.",
     body,
   );
+  if (ui.dir === null) return;
+  // Drawn again, in place, only if git's answer differs from the one it was drawn with.
+  const drawnWith = JSON.stringify(ui.codeChanges?.snapshot === snapshot ? ui.codeChanges.result : null);
+  void readCodeChanges(ui.dir, snapshot).then(() => {
+    if (body.isConnected && JSON.stringify(ui.codeChanges?.result ?? null) !== drawnWith) body.replaceWith(analyticsBody(snapshot));
+  });
 }
