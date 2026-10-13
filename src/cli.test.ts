@@ -237,6 +237,8 @@ describe("executions, held to what their code does", () => {
       "(#9): A write from tickets/booking-api/book-seats/reserve to tickets/tickets-db.bookings happened, but not as expected: payload.total was 122.5, expected 125.",
     );
     expect(result.output).toContain("  MET    cancel-booking");
+    // How long each recorded run took, under its verdict, from the harness's own clock.
+    expect(result.output).toMatch(/  MET    cancel-booking[^\n]*\n {11}took (under 1 ms|\d+ ms); slowest: tickets\/booking-api\/[a-z-]+(\/[a-z-]+)?, (under 1 ms|\d+ ms)\n/);
     expect(result.output).toContain("1 of 4 executions failed.");
   }, 60_000);
 
@@ -582,7 +584,7 @@ describe("fragmentor analytics", () => {
     expect(result.output).toContain("  Used by: most: Database (6) · min 0, median 1, max 6 over 22 blocks");
     expect(result.output).toContain("    State (outward share 0.4) → Router (outward share 0.83)");
     expect(result.output).toContain("    UI: its 3 parts form 3 groups: Chat View · Login Form · Send Button");
-    expect(result.output).toContain("\nRuntime performance\n  Runtime performance: not built yet");
+    expect(result.output).toContain("\nRuntime performance\n  Recorded runs: not recorded by this command; `fragmentor test` records every execution and prints its time");
     expect(result.output).toContain("\nNot measured: none");
     // Every number's sentence is on the line after it.
     expect(result.output).toContain("  Used by: most: Database (6)");

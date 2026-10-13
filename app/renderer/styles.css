@@ -607,6 +607,51 @@ body[data-export] :is(#agent-commands, #toggle-rail, #toggle-inspector, .toolbar
 
 .port-row { display: flex; flex-direction: column; gap: 2px; padding-left: 10px; border-left: 2px solid var(--signal-deep); }
 .port-row.cap { border-left-color: var(--effect); }
+/* A block reached or reaching, and a measurement: quiet rows, lit only where a published limit allows. */
+.port-row.reach { border-left-color: var(--rule-bright); }
+.port-row.measure { border-left-color: var(--ink-faint); }
+.port-row.measure.warn { border-left-color: var(--pending); }
+.reach-name { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+.reach-way { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); word-break: break-word; }
+.port-row .measure-label { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+.port-row .measure-value { font-family: var(--mono); font-size: 11px; color: var(--ink); word-break: break-word; }
+.port-row .measure-none { color: var(--ink-dim); }
+.measure-over { font-family: var(--mono); font-size: 11px; color: var(--pending); }
+
+/* ---- the Architecture Analytics window ---- */
+
+/* One shape for every section: the sentence in body size under the heading,
+   then the numbers, then rows that are buttons, each with a thin bar. The
+   only tones are a measured kind's green at none and a function over the
+   published limit; a bar is never coloured, so it is not read as a grade. */
+.analytics .measure-scope { margin: 0 0 4px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim); }
+.analytics .measure-of { margin: 2px 0 6px; font-size: 12px; color: var(--ink); line-height: 1.45; }
+.measure-part { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 8px; }
+.measure-part + .measure-part { border-top: 1px solid var(--rule); padding-top: 8px; }
+.measure-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.measure-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-dim); }
+.measure { font-family: var(--mono); font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.measure.warn { color: var(--pending); }
+.measure-none { color: var(--ink-dim); }
+.measure-spread { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
+.measure-rows { display: flex; flex-direction: column; gap: 6px; }
+.measure-row {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 0 0 0 10px;
+  border: 0; border-left: 2px solid var(--ink-faint);
+  background: none; font: inherit; text-align: left; color: var(--ink);
+}
+.measure-row.warn { border-left-color: var(--pending); }
+.measure-row.warn .measure { color: var(--pending); }
+button.measure-row { cursor: pointer; }
+button.measure-row:hover .measure-name { color: var(--signal); }
+.measure-name { font-size: 12.5px; }
+.measure-where { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+.measure-detail { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); word-break: break-word; }
+.meter { height: 3px; width: 100%; max-width: 320px; background: var(--rule); border-radius: 2px; overflow: hidden; }
+.meter-fill { height: 100%; background: var(--ink-faint); }
+.spot-line { display: flex; align-items: flex-start; gap: 10px; }
+.spot-line .measure-row { flex: 1; }
 
 /* A shape, with the word that says which way it goes kept out of its light. */
 .pshape { display: flex; align-items: baseline; gap: 6px; }

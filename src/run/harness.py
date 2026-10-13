@@ -228,7 +228,8 @@ originals = {}  # index -> (block path, the function as it was)
 
 
 def at():
-    return int((time.monotonic() - started) * 1000)
+    # Fractions of a millisecond kept: whole ones would round most calls to nothing.
+    return (time.monotonic() - started) * 1000
 
 
 def report_store(target, op, key, value):

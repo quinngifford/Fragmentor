@@ -1,6 +1,7 @@
 import { addressesOf, nextStep, placeEvent, travelOf } from "../../src/model/trace.js";
 import type { Address, InteractionKind, Trace, TraceEvent, View } from "../../src/model/trace.js";
 import { addressOf, checkRecording } from "../../src/model/recorded.js";
+import { msWords } from "../../src/project/analytics.js";
 import type { StepVerdict } from "../../src/model/recorded.js";
 import type { SnapshotExecution } from "../../src/project/snapshot.js";
 import type { TriggerKind } from "../../src/project/executions.js";
@@ -776,6 +777,11 @@ export function stepPage(
     const kind = el("div", "port-row");
     kind.append(el("div", "pname", "kind"), el("div", "ptype", event.type === "return" ? "gives back" : event.kind));
     list.append(kind);
+    if (event.type === "return" && event.took !== undefined) {
+      const took = el("div", "port-row");
+      took.append(el("div", "pname", "took"), el("div", "ptype", msWords(event.took)));
+      list.append(took);
+    }
   }
   where.append(list);
   panel.append(where);

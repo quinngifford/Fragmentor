@@ -109,6 +109,12 @@ export interface Return {
    * Only a recorded trace knows: a trace written down says what came back.
    */
   error?: string;
+  /**
+   * How long the call took, in milliseconds from the harness's own clock,
+   * from the call to this return. Only a recording knows, and only one made
+   * without a pause, since a pause would be counted as the code's time.
+   */
+  took?: number;
 }
 
 /**

@@ -1,8 +1,10 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
-import { analyticsOf, holding, isWeakSpotNote, kindOf, ordinal, reachesOf, usersOf, weakSpotNote } from "./analytics.js";
-import type { Analytics, Measure } from "./analytics.js";
+import { recordedTrace } from "../model/recorded.js";
+import type { HeardEvent, RecordingScope } from "../model/recorded.js";
+import { analyticsOf, holding, isWeakSpotNote, kindOf, msWords, ordinal, reachesOf, runTimes, usersOf, weakSpotNote } from "./analytics.js";
+import type { Analytics, Measure, RecordingFacts } from "./analytics.js";
 import type { ReachSeen } from "./rules.js";
 import { projectSnapshot } from "./snapshot.js";
 import type { ProjectSnapshot } from "./snapshot.js";
@@ -296,6 +298,75 @@ describe("the code's shape", () => {
   });
 });
 
+describe("what the recordings showed", () => {
+  const BOOK = "tickets/booking-api/book-seats";
+  const FIND = "tickets/booking-api/find-event";
+  const scope: RecordingScope = {
+    runs: BOOK,
+    blocks: { [BOOK]: "src/booking/book-seats.ts#bookSeats", [FIND]: "src/booking/find-event.ts#findEvent" },
+    stores: ["tickets/tickets-db.events"],
+    answers: ["tickets/booking-api.bookSeats"],
+    unseen: [],
+  };
+  const heard: HeardEvent[] = [
+    { type: "call", id: 1, parent: null, block: BOOK, input: {}, at: 0 },
+    { type: "call", id: 2, parent: 1, block: FIND, input: { id: "gig" }, at: 1.5 },
+    { type: "store", id: 3, parent: 2, target: "tickets/tickets-db.events", op: "read", key: "gig", value: null, at: 2 },
+    { type: "return", id: 2, output: { event: null }, at: 3.25 },
+    { type: "return", id: 1, output: { booked: false }, at: 10 },
+  ];
+  const recording = (check: RecordingFacts["check"], extra: HeardEvent[] = []): RecordingFacts => ({
+    execution: "book-seats",
+    name: "Book seats",
+    trace: recordedTrace("book-seats", scope, [...heard.slice(0, 4), ...extra, heard[4]!], { stores: {} }),
+    complete: true,
+    truncated: false,
+    check,
+  });
+
+  it("reads a recording's total, its slowest calls and its work, in the sandbox's own words", () => {
+    const times = runTimes(recording({ agreed: true, notSeen: 0, failures: 0 }).trace);
+    expect(times).toEqual({ total: 10, timed: true, slowest: [{ path: FIND, took: 1.75 }], calls: 2, storeUses: 1 });
+    const analytics = analyticsOf(tickets, { recordings: [recording({ agreed: true, notSeen: 0, failures: 0 })] });
+    const runs = measureOf(analytics, "runtime", "tickets", "runtime");
+    expect(runs.text).toBe("1 this session");
+    expect(runs.rows.map((row) => [row.text, row.detail])).toEqual([["Book seats: 10 ms · 2 calls, 1 store use", "Find Event took 2 ms"]]);
+    expect(runs.of).toContain("One sample each, never a statistic");
+    expect(blockMeasure(analytics, "runtime", FIND, "runtime").text).toBe("1 call · most 2 ms · median 2 ms");
+    expect(blockMeasure(analytics, "runtime", "tickets/booking-api/cancel-booking", "runtime").text).toBe("none");
+    const showed = measureOf(analytics, "reliability", "tickets", "showed");
+    expect(showed.text).toBe("1 agreed, 0 contradicted, 0 ended by throwing");
+    expect(showed.rows.map((row) => row.text)).toEqual(["Book seats: agrees with what was written down"]);
+    expect(blockMeasure(analytics, "reliability", FIND, "threw").text).toBe("never");
+  });
+
+  it("says when a recording contradicted what was written down, or threw, and when a run was not timed", () => {
+    const contradicted = recording({ agreed: false, notSeen: 2, failures: 1 });
+    const threw = recording(null, [{ type: "call", id: 4, parent: 1, block: FIND, input: {}, at: 5 }, { type: "throw", id: 4, error: "boom", at: 6 }]);
+    const analytics = analyticsOf(tickets, { recordings: [contradicted, threw] });
+    expect(measureOf(analytics, "reliability", "tickets", "showed").rows.map((row) => row.text)).toEqual([
+      "Book seats: ended by throwing",
+      "Book seats: contradicted — 2 steps not seen, 1 expectation failed",
+    ]);
+    expect(blockMeasure(analytics, "reliability", FIND, "threw").text).toBe("1 time");
+    const paused = recording({ agreed: true, notSeen: 0, failures: 0 }, [{ type: "paused", id: 2 }, { type: "resumed", id: 2 }]);
+    expect(measureOf(analyticsOf(tickets, { recordings: [paused] }), "runtime", "tickets", "runtime").rows[0]!.text).toBe(
+      "Book seats: not timed: the run was paused, or the clock gave nothing · 2 calls, 1 store use",
+    );
+    expect([msWords(0.4), msWords(1.4), msWords(12.6)]).toEqual(["under 1 ms", "1 ms", "13 ms"]);
+  });
+
+  it("says why there is nothing, in the reader's own words: none made yet, the code only drawn, or not this command", () => {
+    expect(measureOf(analyticsOf(tickets, { recordings: [] }), "runtime", "tickets", "runtime").unavailable).toBe(
+      "nothing has been recorded in this session: pick an execution above the drawing and press Record",
+    );
+    expect(measureOf(analyticsOf(messenger, { recordings: [] }), "runtime", "app", "runtime").unavailable).toBe(messenger.executions[0]!.unrecordable);
+    expect(measureOf(analyticsOf(tickets, { recordingsUnavailable: "not here" }), "runtime", "tickets", "runtime").unavailable).toBe("not here");
+    expect(measureOf(analyticsOf(tickets, { recordingsUnavailable: "not here" }), "reliability", "tickets", "showed").unavailable).toBe("not here");
+    expect(measureOf(analyticsOf(tickets), "runtime", "tickets", "runtime").unavailable).toBe("not built yet");
+  });
+});
+
 describe("the rest", () => {
   it("counts what is held to a contract and what has saved tests, and says what cannot be measured", () => {
     const analytics = analyticsOf(tickets);
@@ -318,7 +389,6 @@ describe("the rest", () => {
 
   it("prints exactly 'not built yet' for what later phases fill in", () => {
     const analytics = analyticsOf(tickets);
-    expect(measureOf(analytics, "runtime", "tickets", "runtime").unavailable).toBe("not built yet");
     expect(measureOf(analytics, "maintainability", "tickets", "changes").unavailable).toBe("not built yet");
     expect(analytics.weakSpots.find((kind) => kind.kind === "hotspot")).toMatchObject({ measured: false, reason: "not built yet", spots: [] });
   });

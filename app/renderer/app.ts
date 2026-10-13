@@ -27,6 +27,7 @@ import {
   treeInView,
   watchCanvasSize,
 } from "./canvas.js";
+import { openAnalyticsWindow } from "./analytics.js";
 import { onInspectorChange, renderInspector } from "./inspector.js";
 import { onBenchChange } from "./bench.js";
 import { askForProjectSettings, firstStepsSections, showFirstSteps } from "./newproject.js";
@@ -581,6 +582,11 @@ async function showCommands(): Promise<void> {
   openCommandsWindow(selectedBlock()?.path ?? null);
 }
 
+/** Every measurement of the open project, with the weak spots first. */
+async function showAnalytics(): Promise<void> {
+  if (ui.snapshot) openAnalyticsWindow();
+}
+
 /** Makes the project into one page anyone can open, drawn as it looks now, and says what went into it. */
 async function exportProject(): Promise<void> {
   if (!ui.dir) return;
@@ -605,6 +611,7 @@ function wireMenu(): void {
     "close-project": closeProject,
     "reload-project": reloadByHand,
     "show-commands": showCommands,
+    "show-analytics": showAnalytics,
     "export-project": exportProject,
   };
   window.fragmentor.onMenuCommand((command) => {

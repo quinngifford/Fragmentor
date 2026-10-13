@@ -1,18 +1,7 @@
 import type { SnapshotBlock, SnapshotCode } from "../../src/project/snapshot.js";
 import type { ProjectDiagnostic } from "../../src/project/project.js";
 import { blockColours, requireSnapshot, selectedBlock, ui, viewSettings } from "./state.js";
-import {
-  accessPanel,
-  blockAbout,
-  blockHead,
-  entryLeads,
-  interfaceSection,
-  multiPanel,
-  projectHead,
-  reachesSection,
-  routesOf,
-  systemsSection,
-} from "./detail.js";
+import { accessPanel, blockAbout, blockHead, entryLeads, interfaceSection, measurementsSection, multiPanel, projectHead, reachesSection, routesOf, systemsSection, usedBySection } from "./detail.js";
 import type { Leads } from "./detail.js";
 import { accessArrows, blockColour, hasCode, hasDetails, revealBlock, treeInView } from "./canvas.js";
 import { openBlockWindow, openCodeAt } from "./popup.js";
@@ -351,8 +340,13 @@ function blockPanel(panel: HTMLElement, block: SnapshotBlock): void {
   const leads = entryLeads(block);
   panel.append(interfaceSection(block, routesOf(leads)));
 
-  const reaches = reachesSection(block);
+  const snapshot = requireSnapshot();
+  const reaches = reachesSection(block, snapshot);
   if (reaches) panel.append(reaches);
+  const usedBy = usedBySection(block, snapshot);
+  if (usedBy) panel.append(usedBy);
+  const measurements = measurementsSection(block, snapshot);
+  if (measurements) panel.append(measurements);
 
   if (block.architecture) {
     // A block that is not called can still point at the module standing for

@@ -34,7 +34,7 @@ console.log(`Copied ${assets.length} assets into dist.`);
  * is a part of it a page that only reads has no use for. A page holding one
  * would be the beginning of a web version of the application, which there is not.
  */
-const APP_ONLY = ["app", "inspector", "notes", "versions", "bench", "benchpanel", "watch", "newproject", "changes", "rules"].map(
+const APP_ONLY = ["app", "inspector", "notes", "versions", "bench", "benchpanel", "watch", "newproject", "changes", "rules", "analytics"].map(
   (name) => `app/renderer/${name}.ts`,
 );
 

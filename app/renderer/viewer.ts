@@ -18,18 +18,7 @@ import {
 } from "./canvas.js";
 import { STEP_LINK, keepStepInView, onExecutionChange, paintExecution, setUpExecutions, showStep, stepPage } from "./execution.js";
 import { openDetailsWindow, openWindow, setUpWindows } from "./popup.js";
-import {
-  accessPanel,
-  blockAbout,
-  blockHead,
-  entryLeads,
-  interfaceSection,
-  multiPanel,
-  projectHead,
-  reachesSection,
-  routesOf,
-  systemsSection,
-} from "./detail.js";
+import { accessPanel, blockAbout, blockHead, entryLeads, interfaceSection, measurementsSection, multiPanel, projectHead, reachesSection, routesOf, systemsSection, usedBySection } from "./detail.js";
 import { el, element, section } from "./dom.js";
 
 /**
@@ -88,8 +77,13 @@ function blockPage(panel: HTMLElement, block: SnapshotBlock): void {
   panel.append(head, ...blockAbout(block));
 
   panel.append(interfaceSection(block, routesOf(entryLeads(block))));
-  const reaches = reachesSection(block);
+  const snapshot = requireSnapshot();
+  const reaches = reachesSection(block, snapshot);
   if (reaches) panel.append(reaches);
+  const usedBy = usedBySection(block, snapshot);
+  if (usedBy) panel.append(usedBy);
+  const measurements = measurementsSection(block, snapshot);
+  if (measurements) panel.append(measurements);
   const code = codeSection(block);
   if (code) panel.append(code);
 }

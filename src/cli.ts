@@ -11,7 +11,7 @@ import { loadExecutions } from "./project/executions.js";
 import type { Execution } from "./project/executions.js";
 import { changesBetween, changesText } from "./project/changes.js";
 import { changePoints, commitTouchesBlock, headCommit, projectAt } from "./project/history.js";
-import { analyticsOf, NOT_BUILT_YET, ordinal } from "./project/analytics.js";
+import { analyticsOf, msWords, NOT_BUILT_YET, ordinal, runTimes } from "./project/analytics.js";
 import type { Analytics, Measure } from "./project/analytics.js";
 import { projectSnapshot } from "./project/snapshot.js";
 import type { ProjectSnapshot } from "./project/snapshot.js";
@@ -563,6 +563,12 @@ function recordingResult(recorded: Recorded): { failed: boolean; lines: string[]
     complete ? "" : "it made more calls than Fragmentor records, so not all of it was heard",
   ].filter(Boolean);
   const head = `  ${failed ? "FAILED" : "MET   "} ${execution.id}${notes.length > 0 ? `  (${notes.join("; ")})` : ""}`;
+  // How long the run took, on a line of its own under the verdict, as the Analytics window shows it.
+  const times = runTimes(recorded.trace);
+  const timeLine =
+    times.total === null
+      ? []
+      : [`           took ${msWords(times.total)}${times.slowest[0] ? `; slowest: ${times.slowest[0].path}, ${msWords(times.slowest[0].took)}` : ""}`];
 
   const described = new Map((execution.declared?.events ?? []).map((event) => [event.id, event.type === "return" ? undefined : event.description]));
   const stepName = (id: string) => (described.get(id) ? `The step "${described.get(id)}" (${id})` : `Step ${id}`);
@@ -579,12 +585,13 @@ function recordingResult(recorded: Recorded): { failed: boolean; lines: string[]
   ];
   // A run that threw is worth knowing about even when nothing written down says otherwise.
   const error = recorded.outcome.error ? [`The run ended in an error: ${recorded.outcome.error}`] : [];
-  if (!failed) return { failed, lines: [head, ...details([...notChecked, ...error])] };
+  if (!failed) return { failed, lines: [head, ...timeLine, ...details([...notChecked, ...error])] };
 
   return {
     failed,
     lines: [
       head,
+      ...timeLine,
       ...details([
         ...found.expectations.failures,
         ...notSeen.map((step) => `${stepName(step.id)}: ${step.reason}`),
@@ -981,7 +988,8 @@ async function analytics(dir: string, within: string | undefined): Promise<numbe
     console.log(`There is no block at ${within}. A block path looks like ${example}.`);
     return 1;
   }
-  console.log(formatAnalytics(analyticsOf(snapshot), snapshot, within));
+  const recordingsUnavailable = "not recorded by this command; `fragmentor test` records every execution and prints its time";
+  console.log(formatAnalytics(analyticsOf(snapshot, { recordingsUnavailable }), snapshot, within));
   return 0;
 }
 

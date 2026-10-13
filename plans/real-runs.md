@@ -66,7 +66,7 @@ Rejected: `fragmentor track <command>` (PROJECT.md:200: the person types no Frag
   - It also returns the function blocks it cannot follow, with why: a whole-file pointer, a method, a `const`, or a non-JS/TS file. When there are no TypeScript or JavaScript function blocks, it says that instead.
   - `listRuns` prunes, then reads line 1 of each file: kept runs first, then newest first.
   - `readRun` uses `resolveInside` (src/project/safePath.ts:11) and checks the file against a zod schema.
-- **`src/model/recorded.ts`:** `return` and `throw` gain an optional `took`. New pure `capturedRun(file, blocks)` builds a `RecordingScope`: `runs` is the first call's block, `blocks` maps each path to its pointer, and the rest is empty. It returns `{trace, took}`, with `took` keyed by answer step id and `trace.execution` set to the run id (trace.ts:150).
+- **`src/model/recorded.ts`:** `return` and `throw` carry `at` (since the analytics work, 2026-10-12), and a `Return` built from them carries `took`, the one field for how long a call took (src/model/trace.ts). New pure `capturedRun(file, blocks)` builds a `RecordingScope`: `runs` is the first call's block, `blocks` maps each path to its pointer, and the rest is empty. It returns `{trace, took}`, with `took` keyed by answer step id and `trace.execution` set to the run id (trace.ts:150).
 - **`src/model/trace.ts:137-145`:** add `"captured"`, with its meaning in the comment.
 - **`src/cli.ts`:** add `runs [id]` to `USAGE` (38-67) and to the project commands (907).
   - `runs` writes the tracker, then prints this platform's line, the blocks not followed, and the newest 20 runs with their ids.

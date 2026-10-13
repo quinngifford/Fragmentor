@@ -1,3 +1,5 @@
+import { isWeakSpotNote, weakSpotNote } from "../../src/project/analytics.js";
+import type { WeakSpot } from "../../src/project/analytics.js";
 import { COMMANDS, NOTES_COMMAND, phraseFor, usageOf } from "../../src/codegen/commands.js";
 import type { FlaggedRun, NoteAnchor, NoteMessage } from "../../src/project/notes.js";
 import type { SnapshotBlock, SnapshotNote } from "../../src/project/snapshot.js";
@@ -382,6 +384,36 @@ export function problemFlag(blockPath: string, problem: string): HTMLElement | n
       key(blockPath, "problem"),
       (dir) => window.fragmentor.addNote(dir, blockPath, FLAG_WORDS.problem, { problem }),
       () => `Flagged the problem on ${block.name} for your agent. Tell it “${NOTES_PHRASE}” when you are ready.`,
+    );
+  });
+  return flag;
+}
+
+/**
+ * Flag beside a weak spot in the Architecture Analytics window: the note
+ * that hands it to the agent, which the window recognises again by its
+ * first line, so a spot is flagged once. A plain note, never a red error,
+ * because a weak spot is a finding and not a problem.
+ */
+export function weakSpotFlag(spot: WeakSpot): HTMLElement | null {
+  const blockPath = spot.block;
+  const block = blockPath === null ? undefined : ui.snapshot?.blocks[blockPath];
+  if (blockPath === null || !block) return null;
+  const already = allNotes().some(
+    (note) => note.block === blockPath && note.status === "open" && note.messages.some((message) => isWeakSpotNote(message.text, spot)),
+  );
+  if (already) return el("span", "problem-flagged", "flagged");
+  const flag = el("button", "run-btn problem-flag", "Flag");
+  flag.type = "button";
+  flag.disabled = busy;
+  flag.title = `Flag this for your coding agent, as a note on ${block.name}.`;
+  flag.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void write(
+      key(blockPath, `weak-spot:${spot.headline}`),
+      (dir) => window.fragmentor.addNote(dir, blockPath, weakSpotNote(spot)),
+      () => `Flagged the weak spot on ${block.name} for your agent. Tell it “${NOTES_PHRASE}” when you are ready.`,
+      () => flag.replaceWith(el("span", "problem-flagged", "flagged")),
     );
   });
   return flag;

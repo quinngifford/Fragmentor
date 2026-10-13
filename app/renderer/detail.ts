@@ -1,4 +1,7 @@
 import type { ProjectSnapshot, SnapshotBlock } from "../../src/project/snapshot.js";
+import { analyticsOf, ordinal, reachesOf, usersOf } from "../../src/project/analytics.js";
+import type { AnalyticsExtra, Measure, RecordingFacts } from "../../src/project/analytics.js";
+import { checkRecording } from "../../src/model/recorded.js";
 import { ROLES } from "../../src/model/roles.js";
 import { accessArrows, revealBlock, treeInView } from "./canvas.js";
 import type { AccessArrow } from "./canvas.js";
@@ -178,9 +181,25 @@ function exposedGroup(block: SnapshotBlock, routes: EntryRoute[] = []): HTMLElem
   return node;
 }
 
-/** What this block reaches, with each resource named as it was found. */
-export function reachesSection(block: SnapshotBlock): HTMLElement | null {
-  if (block.access.length === 0 && block.reachNotChecked.length === 0) return null;
+/** A row of a block another block reaches, or is reached by, with the ways it does and Show. */
+function reachRow(snapshot: ProjectSnapshot, other: { path: string; planned: boolean; detail: string }): HTMLElement {
+  const line = el("div", "port-row reach");
+  const name = snapshot.blocks[other.path]?.name ?? other.path;
+  const where = el("div", "pwhere");
+  where.append(el("span", "reach-name", other.planned ? `${name} · planned` : name));
+  const open = el("button", "btn quiet tiny", "Show");
+  open.type = "button";
+  open.addEventListener("click", () => revealBlock(other.path));
+  where.append(open);
+  line.append(where, el("div", "reach-way", other.detail));
+  return line;
+}
+
+/** What this block reaches, with each resource named as it was found, and what its code was read to reach. */
+export function reachesSection(block: SnapshotBlock, snapshot?: ProjectSnapshot): HTMLElement | null {
+  // Reached in the code but not declared: only where the snapshot carries what was read.
+  const inCode = snapshot === undefined ? [] : reachesOf(snapshot, block.path).filter((other) => other.detail.includes("in the code:"));
+  if (block.access.length === 0 && block.reachNotChecked.length === 0 && inCode.length === 0) return null;
 
   const node = section("Reaches");
   const list = el("div", "ports");
@@ -206,6 +225,12 @@ export function reachesSection(block: SnapshotBlock): HTMLElement | null {
 
     list.append(line);
   }
+  // Then what its code was read to reach, its own parts left out: the declared
+  // ways are rows of their own above, so these rows say only the code's ways.
+  for (const other of inCode) {
+    const ways = other.detail.split("; ").filter((way) => way.startsWith("in the code:")).join("; ");
+    list.append(reachRow(snapshot!, { ...other, detail: ways }));
+  }
 
   node.append(list);
   // What its code reaches is checked against these, so what could not be
@@ -213,6 +238,84 @@ export function reachesSection(block: SnapshotBlock): HTMLElement | null {
   if (block.reachNotChecked.length > 0) {
     node.append(el("p", "bench-note", `Not checked in the code: ${block.reachNotChecked.join("; ")}.`));
   }
+  return node;
+}
+
+/** The blocks that reach this one, each once, with the ways they do. Null when nobody does, or the snapshot does not say. */
+export function usedBySection(block: SnapshotBlock, snapshot: ProjectSnapshot): HTMLElement | null {
+  if ((snapshot.reachSeen ?? []).length === 0) return null;
+  const users = usersOf(snapshot, block.path);
+  if (users.length === 0) return null;
+  const node = section("Used by");
+  const list = el("div", "ports");
+  for (const user of users) list.append(reachRow(snapshot, user));
+  node.append(list);
+  return node;
+}
+
+/** One measure as the panel shows it: the number with its words, then the sentence saying what it is computed from. */
+function measureRows(measure: Measure): HTMLElement {
+  const line = el("div", `port-row measure${measure.band === "warn" ? " warn" : ""}`);
+  const head = el("div", "pwhere");
+  head.append(el("span", "measure-label", measure.label));
+  if (measure.unavailable !== null) {
+    head.append(el("span", "measure-value measure-none", measure.unavailable));
+    line.append(head);
+    return line;
+  }
+  const rank = measure.rank === null ? "" : ` — ${ordinal(measure.rank.place)} of ${measure.rank.of} ${measure.rank.kind}`;
+  head.append(el("span", "measure-value", `${measure.text}${rank}`));
+  line.append(head);
+  for (const row of measure.rows) if (row.band === "warn") line.append(el("div", "measure-over", row.text));
+  if (measure.of !== "") line.append(el("div", "pdesc", measure.of));
+  return line;
+}
+
+/** The recordings made this session, each held to what was written down the way the execution bar holds it. */
+function recordingsForAnalytics(snapshot: ProjectSnapshot): RecordingFacts[] {
+  const facts: RecordingFacts[] = [];
+  for (const [id, recording] of ui.recordings) {
+    const execution = snapshot.executions.find((each) => each.id === id);
+    if (!execution) continue;
+    let check: RecordingFacts["check"] = null;
+    if (execution.declared !== null || execution.expect !== null) {
+      const found = checkRecording(execution, recording.trace, recording.scope, recording.complete);
+      const notSeen = recording.complete ? found.steps.filter((step) => step.verdict === "not-seen").length : 0;
+      check = { agreed: found.expectations.failures.length === 0 && notSeen === 0, notSeen, failures: found.expectations.failures.length };
+    }
+    facts.push({ execution: id, name: execution.name, trace: recording.trace, complete: recording.complete, truncated: recording.truncated, check });
+  }
+  return facts;
+}
+
+/** What this reader adds to the snapshot's measurements: its recordings in the application, nothing on the exported page. */
+export function analyticsExtra(snapshot: ProjectSnapshot): AnalyticsExtra {
+  if (document.body.dataset.export !== undefined) return { recordingsUnavailable: "not on this page: recordings are made in Fragmentor itself" };
+  return { recordings: recordingsForAnalytics(snapshot) };
+}
+
+/**
+ * This block's own numbers, each followed by the sentence saying what it is
+ * computed from, as the Architecture Analytics window shows them. Null for a
+ * page or a past snapshot that carries nothing to measure from.
+ */
+export function measurementsSection(block: SnapshotBlock, snapshot: ProjectSnapshot): HTMLElement | null {
+  if ((snapshot.reachSeen ?? []).length === 0) return null;
+  const analytics = analyticsOf(snapshot, analyticsExtra(snapshot));
+  const node = section("Measurements");
+  let any = false;
+  for (const dimension of analytics.dimensions) {
+    const own = dimension.blocks[block.path];
+    if (own === undefined || own.length === 0) continue;
+    const part = subsection(dimension.name);
+    const list = el("div", "ports");
+    for (const measure of own) list.append(measureRows(measure));
+    part.append(list);
+    node.append(part);
+    any = true;
+  }
+  if (!any) return null;
+  node.append(el("p", "bench-note", "A measurement is a number compared within this system, never a problem. View › Architecture Analytics shows every block's."));
   return node;
 }
 

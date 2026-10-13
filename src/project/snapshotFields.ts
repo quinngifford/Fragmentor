@@ -307,6 +307,8 @@ export const returnFields = {
   to: kept,
   response: kept,
   error: kept,
+  // A written trace never has one; a recorded one is never exported.
+  took: kept,
 } satisfies ExportTable<Return>;
 
 export const effectFields = {

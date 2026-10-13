@@ -22,9 +22,9 @@ import type { EffectExpectation, Expectations, InteractionExpectation } from "..
 
 /** One report from the harness about a watched run, as a recording reads it. `src/run/harness.cjs` and `harness.py` send them. */
 export type HeardEvent =
-  | { type: "call"; id: number; parent: number | null; block: string; input: unknown }
-  | { type: "return"; id: number; output: unknown }
-  | { type: "throw"; id: number; error: string }
+  | { type: "call"; id: number; parent: number | null; block: string; input: unknown; at?: number }
+  | { type: "return"; id: number; output: unknown; at?: number }
+  | { type: "throw"; id: number; error: string; at?: number }
   | {
       type: "store";
       id: number;
@@ -33,6 +33,8 @@ export type HeardEvent =
       op: "read" | "list" | "write" | "remove" | "send";
       key?: string;
       value: unknown;
+      /** Milliseconds since the run started, by the harness's clock. */
+      at?: number;
     }
   | { type: "paused" | "resumed"; id: number };
 
@@ -100,6 +102,14 @@ export function recordedTrace(execution: string, scope: RecordingScope, heard: r
   const calls = new Map<number, Interaction>();
   const codeOf = (path: string) => (scope.blocks[path] === undefined ? {} : { code: scope.blocks[path] });
   let triggered = false;
+  // A pause is time the person took, not the code, and it is subtracted only
+  // from the run's total, so a run with any pause times none of its calls.
+  const paused = heard.some((event) => event.type === "paused");
+  const startedAt = new Map<number, number>();
+  const took = (id: number, at: number | undefined): { took?: number } => {
+    const from = startedAt.get(id);
+    return paused || from === undefined || at === undefined ? {} : { took: Math.max(0, at - from) };
+  };
 
   for (const event of heard) {
     if (event.type === "call") {
@@ -120,6 +130,7 @@ export function recordedTrace(execution: string, scope: RecordingScope, heard: r
         ...(event.input === undefined ? {} : { payload: event.input }),
       };
       calls.set(event.id, interaction);
+      if (event.at !== undefined) startedAt.set(event.id, event.at);
       events.push(interaction);
     } else if (event.type === "return" || event.type === "throw") {
       const call = calls.get(event.id);
@@ -131,6 +142,7 @@ export function recordedTrace(execution: string, scope: RecordingScope, heard: r
         from: call.from,
         to: call.to,
         ...(event.type === "throw" ? { error: event.error } : event.output === undefined ? {} : { response: event.output }),
+        ...took(event.id, event.at),
       });
       if (call.id === TRIGGER && event.type === "return") {
         events.push({

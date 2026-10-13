@@ -472,3 +472,36 @@ describe("blocks whose code shares a file", () => {
     });
   });
 });
+
+describe("how long each recorded call took", () => {
+  const outcome: HeardOutcome = { stores: {} };
+  const heard = (extra: HeardEvent[] = [], stamped = true): HeardEvent[] => {
+    const at = (ms: number) => (stamped ? { at: ms } : {});
+    return [
+      { type: "call", id: 1, parent: null, block: BOOK, input: {}, ...at(0) },
+      { type: "call", id: 2, parent: 1, block: FIND, input: { id: "gig" }, ...at(1.5) },
+      ...extra,
+      { type: "return", id: 2, output: { event: null }, ...at(3.25) },
+      { type: "return", id: 1, output: { booked: false }, ...at(10) },
+    ];
+  };
+  const tooks = (trace: Trace) => Object.fromEntries(trace.events.filter((event) => event.type === "return").map((event) => [event.id, (event as { took?: number }).took]));
+
+  it("times a call from the harness's stamps, the trigger's being the whole run", () => {
+    expect(tooks(recordedTrace("book-seats", scope, heard(), outcome))).toEqual({ "@2.returned": 1.75, "trigger.returned": 10 });
+  });
+
+  it("times nothing when the run was paused, since a pause is the person's time, and nothing without stamps", () => {
+    const paused = heard([{ type: "paused", id: 2 }, { type: "resumed", id: 2 }]);
+    expect(tooks(recordedTrace("book-seats", scope, paused, outcome))).toEqual({ "@2.returned": undefined, "trigger.returned": undefined });
+    expect(tooks(recordedTrace("book-seats", scope, heard([], false), outcome))).toEqual({ "@2.returned": undefined, "trigger.returned": undefined });
+  });
+
+  it("times a call that threw too", () => {
+    const threw: HeardEvent[] = [
+      { type: "call", id: 1, parent: null, block: BOOK, input: {}, at: 0 },
+      { type: "throw", id: 1, error: "boom", at: 4 },
+    ];
+    expect(tooks(recordedTrace("book-seats", scope, threw, outcome))).toEqual({ "trigger.returned": 4 });
+  });
+});

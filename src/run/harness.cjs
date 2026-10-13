@@ -188,7 +188,9 @@ function recordable(value) {
 
 /** The call the code running now belongs to, carried across awaits. */
 const within = new AsyncLocalStorage();
-const started = Date.now();
+/** The finest clock there is: whole milliseconds would round most calls here to nothing. */
+const now = () => (typeof performance === "undefined" ? Date.now() : performance.now());
+const started = now();
 /** Block calls and store uses so far, counted together, so each has an id of its own. */
 let calls = 0;
 /** Whether anyone is watching: set once the run starts. */
@@ -212,7 +214,7 @@ function reportStore(target, op, key, value) {
     op,
     ...(key === undefined ? {} : { key }),
     value: recordable(value),
-    at: Date.now() - started,
+    at: now() - started,
   });
 }
 
@@ -276,7 +278,7 @@ function traced(blockPath, fn) {
   return async function tracedBlock(input, caps) {
     const id = ++calls;
     const recorded = id <= MOST_CALLS_RECORDED;
-    const at = () => Date.now() - started;
+    const at = () => now() - started;
 
     if (recorded) {
       send({ type: "call", id, parent: within.getStore() ?? null, block: blockPath, input: recordable(input), at: at() });

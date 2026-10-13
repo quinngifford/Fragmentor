@@ -1,7 +1,7 @@
 import type { NoteAnchor } from "../../src/project/notes.js";
 import type { SnapshotBlock } from "../../src/project/snapshot.js";
 import { ROLES } from "../../src/model/roles.js";
-import { interfaceSection, reachesSection } from "./detail.js";
+import { interfaceSection, measurementsSection, reachesSection, usedBySection } from "./detail.js";
 import { requireSnapshot, ui } from "./state.js";
 import { el, section } from "./dom.js";
 import { codeLines, languageOf } from "./highlight.js";
@@ -256,8 +256,13 @@ export function openDetailsWindow(block: SnapshotBlock): void {
 
   body.append(interfaceSection(block));
 
-  const reaches = reachesSection(block);
+  const snapshot = requireSnapshot();
+  const reaches = reachesSection(block, snapshot);
   if (reaches) body.append(reaches);
+  const usedBy = usedBySection(block, snapshot);
+  if (usedBy) body.append(usedBy);
+  const measurements = measurementsSection(block, snapshot);
+  if (measurements) body.append(measurements);
 
   const parts = requireSnapshot().blocks[block.path]?.children ?? [];
   if (parts.length > 0) {

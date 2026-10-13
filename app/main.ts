@@ -1780,6 +1780,102 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         /nothing has been committed yet\. Ask your agent to commit\./.test(String(value("noCommitsYet", "said"))),
     ],
     [
+      "every block's panel says what uses it, what its code reaches and its own numbers, each number with the sentence saying how it was counted",
+      (() => {
+        const rows = (step: string, key: string) => (value(step, key) ?? null) as string[] | null;
+        const has = (list: string[] | null, pattern: RegExp) => list !== null && list.some((row) => pattern.test(row));
+        const findEventUsedBy = rows("measurementsListed", "findEventUsedBy");
+        const dbUsedBy = rows("measurementsListed", "dbUsedBy");
+        return (
+          findEventUsedBy?.length === 2 &&
+          has(findEventUsedBy, /^Book Seats Show in the code: findEvent$/) &&
+          has(findEventUsedBy, /^Cancel Booking Show in the code: findEvent$/) &&
+          has(rows("measurementsListed", "findEventMeasures"), /^Used by 2 — 1st of 6 function blocks Counted from/) &&
+          has(rows("measurementsListed", "findEventMeasures"), /^Outward share 0\.33 \(1 of 3 go out\)/) &&
+          has(rows("measurementsListed", "findEventMeasures"), /^Ways through its code 1 \(findEvent\)/) &&
+          has(rows("measurementsListed", "findEventMeasures"), /^Size 1 statement \(2% of Tickets\)/) &&
+          value("measurementsListed", "findEventSentences") === true &&
+          has(rows("measurementsListed", "bookSeatsReaches"), /^Find Event Show in the code: findEvent$/) &&
+          !has(rows("measurementsListed", "bookSeatsReaches"), /Reserve/) &&
+          dbUsedBy?.length === 5 &&
+          dbUsedBy.every((row) => row.includes("on the diagram:")) &&
+          has(dbUsedBy, /^Reminders · planned Show on the diagram: reads bookings$/) &&
+          has(rows("measurementsListed", "dbMeasures"), /^Used by 5 — 1st of 2 stores/) &&
+          has(rows("measurementsListed", "dbMeasures"), /^Outward share 0 \(everything leans on it\)/) &&
+          rows("measurementsListed", "boxOfficeUsedBy") === null &&
+          has(rows("measurementsListed", "pricingMeasures"), /^Groups among its parts Pricing: its 2 parts form 2 groups: Price Seat · Refund For/) &&
+          value("measurementsListed", "shown") === "Book Seats" &&
+          JSON.stringify(rows("usedByInCode", "usedBy")) === JSON.stringify(["State Show in the code: showMessage"]) &&
+          has(rows("usedByInCode", "measures"), /^Used by 1/)
+        );
+      })(),
+    ],
+    [
+      "View › Architecture Analytics opens one window with the weak spots first, every number under its sentence, green only for a measured kind at none, and nothing by itself",
+      (() => {
+        const none = report.analyticsNone ?? {};
+        const kinds = (none.kinds ?? []) as { kind: string; good: boolean; rows: string[] }[];
+        const sections = (none.sections ?? []) as { title: string; parts: number; available: number; sentences: number; notes: number }[];
+        const cycle = kinds.find((k) => k.kind === "cycle");
+        const complexity = kinds.find((k) => k.kind === "complexity");
+        return (
+          none.opened === true &&
+          none.openedByItself === false &&
+          cycle?.good === true && cycle.rows.length === 0 &&
+          complexity?.good === true && complexity.rows.length === 0 &&
+          /^Tickets Database 5$/.test(String(none.firstCoupling)) &&
+          none.firstBar === "100%" &&
+          (none.groups as string[] | undefined)?.some((row) => row === "Pricing: its 2 parts form 2 groups: Price Seat · Refund For") === true &&
+          /^most: bookSeats, 5/.test(String(none.complexity)) &&
+          none.warnRows === 0 &&
+          none.runtime === "nothing has been recorded in this session: pick an execution above the drawing and press Record" &&
+          /^Changes not built yet$/.test(String(none.changes)) &&
+          /every system's code was read/.test(String(none.notMeasured)) &&
+          sections.every((s) => (s.available === 0 || s.sentences >= 1) && s.notes === 0) &&
+          Number(none.ms) < 2000 &&
+          value("analyticsClosed", "closed") === true
+        );
+      })(),
+    ],
+    [
+      "a recording made here shows in the window as one timed run, held to what was written down",
+      value("analyticsRecorded", "opened") === true &&
+        /^Book seats: (under 1 ms|\d+ ms) · \d+ calls, \d+ store uses( \(at least\))?( [A-Z][\w ]+ took (under 1 ms|\d+ ms))+$/.test(String((value("analyticsRecorded", "rows") as string[] | undefined)?.[0])) &&
+        /^What the recordings showed 1 agreed, 0 contradicted, 0 ended by throwing/.test(String(value("analyticsRecorded", "showed"))),
+    ],
+    [
+      "a weak spot is shown first with its evidence, clicking it shows its block, and Flag hands it to the agent as a plain note, once",
+      (() => {
+        const cycle = report.analyticsCycle ?? {};
+        const kinds = (cycle.kinds ?? []) as { kind: string; title: string; good: boolean; rows: string[] }[];
+        const circle = kinds.find((k) => k.kind === "cycle");
+        const complexity = kinds.find((k) => k.kind === "complexity");
+        return (
+          cycle.opened === true &&
+          cycle.kindsInOrder === "cycle complexity hotspot" &&
+          circle?.title === "Parts that use each other in a circle: 1" &&
+          circle.good === false &&
+          circle.rows.length === 1 &&
+          /^State and UI on Client in the code: State → UI, showMessage from src\/client\/ui\/chatView\.ts in the code: UI → State, dispatch from src\/client\/state\.ts$/.test(circle.rows[0]!) &&
+          complexity?.title === "Functions with more than 10 ways through: 2" &&
+          complexity.rows.length === 2 &&
+          /^seventeenWays in src\/client\/ui\/loginForm\.ts on UI 17 ways through — past 15, the most that guideline allows/.test(complexity.rows[0]!) &&
+          /^twelveWays in src\/client\/ui\/loginForm\.ts on UI 12 ways through — past 10; a published guideline \(NIST\) allows up to 15 with a reason/.test(complexity.rows[1]!) &&
+          /State \(outward share 0\.4\) → Router \(outward share 0\.83\)/.test(String(cycle.settled)) &&
+          (cycle.groups as string[] | undefined)?.some((row) => row === "UI: its 3 parts form 3 groups: Chat View · Login Form · Send Button") === true &&
+          cycle.closedOnShow === true &&
+          cycle.selected === "Client" &&
+          value("analyticsFlagged", "flagOffered") === true &&
+          value("analyticsFlagged", "flagged") === "flagged" &&
+          String(value("analyticsFlagged", "status")).endsWith("Flagged the weak spot on Client for your agent. Tell it “fragmentor notes” when you are ready.") &&
+          value("analyticsFlagged", "noteShown") === true &&
+          value("analyticsFlagged", "notAnError") === true &&
+          value("weakSpotNoteOnDisk", "found") === true &&
+          value("weakSpotNoteOnDisk", "firstLine") === "Weak spot: Parts that use each other in a circle: State and UI"
+        );
+      })(),
+    ],
+    [
       "a block's panel offers to leave a note, before anything else about the block, while none is open",
       value("notesOffered", "opened") === true &&
         value("notesOffered", "of") === "tickets/booking-api/pricing/price-seat" &&
@@ -2320,6 +2416,9 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
           page.blocks === value("exportArranged", "blocks") &&
           page.folded === true &&
           page.functionColour === "#12ab34" &&
+          JSON.stringify(page.pageUsedBy) === JSON.stringify(["State Show in the code: showMessage"]) &&
+          Array.isArray(page.pageMeasures) &&
+          (page.pageMeasures as string[]).some((row) => /^Used by 1/.test(row)) &&
           page.colourBy === "Colour: by kind" &&
           page.dependencies === "shown" &&
           opened?.count === value("exportArranged", "count") &&
@@ -2460,7 +2559,7 @@ function attachSelfCheck(
           // Reloading the page would put the open project away, so it is not offered.
           noPageReload: !(Menu.getApplicationMenu()?.items ?? []).some((top) => (top.submenu?.items ?? []).some((item) => item.role === "reload" || item.role === "forceReload")),
           closedWithNothingOpen:
-            !menuItem("close-project").enabled && !menuItem("reload-project").enabled && !menuItem("show-commands").enabled && !menuItem("export-project").enabled,
+            !menuItem("close-project").enabled && !menuItem("reload-project").enabled && !menuItem("show-commands").enabled && !menuItem("show-analytics").enabled && !menuItem("export-project").enabled,
           toolbar: (await window.webContents.executeJavaScript(
             `[...document.querySelectorAll(".toolbar button")].map((b) => b.id).join(" ")`,
           )) as string,
@@ -3740,6 +3839,23 @@ function attachSelfCheck(
         await capture(window, "self-check-recorded-flow");
 
         // Back to the steps the agent wrote down, and the run taken off the diagram.
+        // The recording just made shows in the window: how long the run took, and that it agrees with what was written down.
+        pick("show-analytics");
+        await run("analyticsRecorded", `
+          const win = () => { const h = document.querySelector("#overlay .window h2"); return h && h.textContent === "Architecture Analytics" ? document.querySelector("#overlay .window") : null; };
+          const clean = (node) => {
+            if (!node) return "";
+            const leaves = [...node.querySelectorAll("*")].filter((x) => x.children.length === 0);
+            return (leaves.length === 0 ? node.textContent : leaves.map((x) => x.textContent).join(" ")).replace(/\\s+/g, " ").trim();
+          };
+          const w = await until(win, 5000);
+          if (!w) return { opened: false };
+          const rows = [...w.querySelectorAll('[data-dimension="runtime"] .measure-row')].map(clean);
+          const showed = [...w.querySelectorAll('[data-dimension="reliability"] .measure-part')].map(clean).find((t) => t.startsWith("What the recordings showed")) || "";
+          document.querySelector("#overlay .window-close").click();
+          return { opened: true, rows, showed };
+        `);
+
         await run("recordedBack", `
           const chip = (label) => [...document.querySelectorAll("#exec-bar .chip")].find((c) => c.textContent === label);
           const pressed = (label) => chip(label)?.getAttribute("aria-pressed") === "true";
@@ -4652,6 +4768,95 @@ function attachSelfCheck(
             box.dispatchEvent(new Event("input", { bubbles: true }));
           };
         `;
+        await run("measurementsListed", `${notesSection}
+          // The bench left open by the steps before would cover the blocks.
+          const closeBench = [...document.querySelectorAll(".bench-window .window-close")].find((each) => each.textContent === "✕");
+          if (closeBench) closeBench.click();
+          const sectionOf = (title) => [...document.querySelectorAll("#inspector .section")].find((s) => s.querySelector("h4") && s.querySelector("h4").textContent === title) || null;
+          const rowText = (r) => [...r.querySelectorAll(".pname, .reach-name, .reach-way, .measure-label, .measure-value, .measure-over, .ptype, .pdesc, .btn")].map((x) => x.textContent.trim()).join(" ").replace(/\\s+/g, " ").trim();
+          const rowsOf = (title) => { const s = sectionOf(title); return s ? [...s.querySelectorAll(".port-row")].map(rowText) : null; };
+          const open = async (id, name) => { node(id).click(); return await heading(name); };
+          const measured = () => until(() => sectionOf("Measurements"), 5000);
+
+          const out = {};
+          if (!(await open("find-event", "Find Event"))) return { stage: "no find-event" };
+          await measured();
+          out.findEventUsedBy = rowsOf("Used by");
+          out.findEventMeasures = rowsOf("Measurements");
+          // Every number is followed by the sentence saying what it is computed from, unless it says it is not there.
+          out.findEventSentences = [...sectionOf("Measurements").querySelectorAll(".port-row.measure")].every(
+            (r) => r.querySelector(".pdesc") || r.querySelector(".measure-none"),
+          );
+          if (!(await open("book-seats", "Book Seats"))) return { stage: "no book-seats", ...out };
+          await measured();
+          out.bookSeatsReaches = rowsOf("Reaches");
+          if (!(await open("tickets-db", "Tickets Database"))) return { stage: "no tickets-db", ...out };
+          await measured();
+          out.dbUsedBy = rowsOf("Used by");
+          out.dbMeasures = rowsOf("Measurements");
+          if (!(await open("box-office", "Box Office"))) return { stage: "no box-office", ...out };
+          await measured();
+          out.boxOfficeUsedBy = rowsOf("Used by");
+          if (!(await open("pricing", "Pricing"))) return { stage: "no pricing", ...out };
+          await measured();
+          out.pricingMeasures = rowsOf("Measurements");
+          // Show on a Used by row selects that block.
+          if (!(await open("find-event", "Find Event"))) return { stage: "no find-event again", ...out };
+          await until(() => sectionOf("Used by"), 5000);
+          const show = sectionOf("Used by") && sectionOf("Used by").querySelector(".port-row .btn");
+          if (show) show.click();
+          out.shown = (await heading("Book Seats")) ? text("#inspector h2") : "";
+          return out;
+        `);
+
+
+        // Every measurement, in one window from View, with the weak spots first: on Tickets there are none.
+        const analyticsOpenedByItself = await window.webContents.executeJavaScript(`!document.getElementById("overlay").hidden`);
+        const analyticsAskedAt = Date.now();
+        pick("show-analytics");
+        await run("analyticsNone", `
+          const win = () => { const h = document.querySelector("#overlay .window h2"); return h && h.textContent === "Architecture Analytics" ? document.querySelector("#overlay .window") : null; };
+          const clean = (node) => {
+            if (!node) return "";
+            const leaves = [...node.querySelectorAll("*")].filter((x) => x.children.length === 0);
+            return (leaves.length === 0 ? node.textContent : leaves.map((x) => x.textContent).join(" ")).replace(/\\s+/g, " ").trim();
+          };
+          const kinds = (w) => [...w.querySelectorAll("[data-weak-spots] .subsection")].map((s) => ({
+            kind: s.dataset.kind, title: s.querySelector("h5").textContent, good: s.querySelector("h5").classList.contains("good"), rows: [...s.querySelectorAll(".measure-row")].map(clean),
+          }));
+
+          const w = await until(win, 5000);
+          if (!w) return { opened: false };
+          const sections = [...w.querySelectorAll(".section")].map((s) => ({
+            title: s.querySelector("h4").textContent,
+            parts: s.querySelectorAll(".measure-part").length,
+            available: s.querySelectorAll(".measure-part .measure:not(.measure-none)").length,
+            sentences: s.querySelectorAll(".measure-part > .measure-of").length,
+            notes: s.querySelectorAll(".bench-note").length,
+          }));
+          const coupling = w.querySelector('[data-dimension="coupling"]');
+          const first = coupling.querySelector(".measure-row");
+          return {
+            opened: true,
+            openedByItself: ${analyticsOpenedByItself},
+            kinds: kinds(w),
+            firstCoupling: clean(first),
+            firstBar: first && first.querySelector(".meter-fill") ? first.querySelector(".meter-fill").style.width : "",
+            groups: [...w.querySelectorAll('[data-dimension="cohesion"] .measure-row')].map(clean),
+            complexity: clean(w.querySelector('[data-dimension="complexity"] .measure')),
+            warnRows: w.querySelectorAll(".measure-row.warn").length,
+            runtime: clean(w.querySelector('[data-dimension="runtime"] .measure-none')),
+            changes: [...w.querySelectorAll('[data-dimension="maintainability"] .measure-part')].map(clean).find((t) => t.startsWith("Changes")) || "",
+            notMeasured: clean([...w.querySelectorAll(".section")].find((s) => s.querySelector("h4").textContent === "Not measured")),
+            sections,
+          };
+        `);
+        report.analyticsNone = { ...(report.analyticsNone ?? {}), ms: Date.now() - analyticsAskedAt };
+        await run("analyticsClosed", `
+          const close = document.querySelector("#overlay .window-close");
+          if (close) close.click();
+          return { closed: document.getElementById("overlay").hidden };
+        `);
         await run("notesOffered", `${notesSection}
           // The bench left open by the steps before would cover the blocks and the bar.
           const close = [...document.querySelectorAll(".bench-window .window-close")].find((each) => each.textContent === "✕");
@@ -5519,7 +5724,7 @@ function attachSelfCheck(
               if (stepOffered) step.click();
               await wait(500);
               const panel = document.getElementById("inspector");
-              return {
+              const seenNow = {
                 bridge: typeof window.fragmentor,
                 blocks: document.querySelectorAll("#node-layer .block-box").length,
                 folded: !document.querySelector('.block-box[data-id="deliver-notification"]'),
@@ -5540,6 +5745,16 @@ function attachSelfCheck(
                 swatchesLocked: [...document.querySelectorAll("#legend .legend-row input")].every((input) => input.disabled),
                 footer: text("#status"),
               };
+              // The page shows what reaches a block, and its numbers, as the window does.
+              // The page has no hierarchy rail, so the block is picked on the drawing, as a reader would.
+              const chatView = document.querySelector('.block-box[data-id="chat-view"]');
+              if (chatView) chatView.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+              await until(() => text("#inspector h2") === "Chat View", 5000);
+              const sectionOf = (title) => [...document.querySelectorAll("#inspector .section")].find((s) => s.querySelector("h4") && s.querySelector("h4").textContent === title) || null;
+              const rowText = (r) => [...r.querySelectorAll(".pname, .reach-name, .reach-way, .measure-label, .measure-value, .measure-over, .ptype, .pdesc, .btn")].map((x) => x.textContent.trim()).join(" ").replace(/\\s+/g, " ").trim();
+              const rowsOf = (title) => { const s = sectionOf(title); return s ? [...s.querySelectorAll(".port-row")].map(rowText) : null; };
+              await until(() => sectionOf("Measurements"), 5000);
+              return { ...seenNow, pageUsedBy: rowsOf("Used by"), pageMeasures: rowsOf("Measurements") };
             })()`)) as Record<string, unknown>;
             await capture(reader, "self-check-export");
             return {
@@ -5777,6 +5992,102 @@ function attachSelfCheck(
           };
         `);
 
+        // What the code was read to reach is on the block it reaches, in the code's own words.
+        await run("usedByInCode", `${versionsSection}${clearSelection}
+          const sectionOf = (title) => [...document.querySelectorAll("#inspector .section")].find((s) => s.querySelector("h4") && s.querySelector("h4").textContent === title) || null;
+          const rowText = (r) => [...r.querySelectorAll(".pname, .reach-name, .reach-way, .measure-label, .measure-value, .measure-over, .ptype, .pdesc, .btn")].map((x) => x.textContent.trim()).join(" ").replace(/\\s+/g, " ").trim();
+          const rowsOf = (title) => { const s = sectionOf(title); return s ? [...s.querySelectorAll(".port-row")].map(rowText) : null; };
+          const open = async (id, name) => { node(id).click(); return await heading(name); };
+          const measured = () => until(() => sectionOf("Measurements"), 5000);
+
+          if (!(await open("chat-view", "Chat View"))) return { stage: "no chat-view" };
+          await measured();
+          return { usedBy: rowsOf("Used by"), measures: rowsOf("Measurements") };
+        `);
+
+        // Messenger's circle is the bundled weak spot, and two functions written over the limit join it here.
+        await appendFile(
+          path.join(check.messenger, "src", "client", "ui", "loginForm.ts"),
+          "\n\nexport function twelveWays(a: number): number {\n" + "  if (a === 1) return 1;\n".repeat(11) + "  return 0;\n}\n" +
+            "\nexport function seventeenWays(a: number): number {\n" + "  if (a === 1) return 1;\n".repeat(16) + "  return 0;\n}\n",
+          "utf8",
+        );
+        // The watcher hears the file and the window reads the project again.
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        pick("show-analytics");
+        await run("analyticsCycle", `
+          const win = () => { const h = document.querySelector("#overlay .window h2"); return h && h.textContent === "Architecture Analytics" ? document.querySelector("#overlay .window") : null; };
+          const clean = (node) => {
+            if (!node) return "";
+            const leaves = [...node.querySelectorAll("*")].filter((x) => x.children.length === 0);
+            return (leaves.length === 0 ? node.textContent : leaves.map((x) => x.textContent).join(" ")).replace(/\\s+/g, " ").trim();
+          };
+          const kinds = (w) => [...w.querySelectorAll("[data-weak-spots] .subsection")].map((s) => ({
+            kind: s.dataset.kind, title: s.querySelector("h5").textContent, good: s.querySelector("h5").classList.contains("good"), rows: [...s.querySelectorAll(".measure-row")].map(clean),
+          }));
+
+          const w = await until(win, 5000);
+          if (!w) return { opened: false };
+          const found = kinds(w);
+          const circle = w.querySelector('[data-weak-spots] [data-kind="cycle"] .measure-row');
+          const out = {
+            opened: true,
+            kinds: found,
+            kindsInOrder: found.map((k) => k.kind).join(" "),
+            settled: [...w.querySelectorAll('[data-dimension="coupling"] .measure-part')].map(clean).find((t) => t.startsWith("Pointing at a less settled part")) || "",
+            groups: [...w.querySelectorAll('[data-dimension="cohesion"] .measure-row')].map(clean),
+          };
+          if (!circle) return { ...out, stage: "no circle row" };
+          circle.click();
+          await wait(300);
+          out.closedOnShow = document.getElementById("overlay").hidden;
+          out.selected = await until(() => (text("#inspector h2") === "Client" ? "Client" : null), 5000) || text("#inspector h2");
+          return out;
+        `);
+        pick("show-analytics");
+        await run("analyticsFlagged", `
+          const win = () => { const h = document.querySelector("#overlay .window h2"); return h && h.textContent === "Architecture Analytics" ? document.querySelector("#overlay .window") : null; };
+          const clean = (node) => {
+            if (!node) return "";
+            const leaves = [...node.querySelectorAll("*")].filter((x) => x.children.length === 0);
+            return (leaves.length === 0 ? node.textContent : leaves.map((x) => x.textContent).join(" ")).replace(/\\s+/g, " ").trim();
+          };
+          const kinds = (w) => [...w.querySelectorAll("[data-weak-spots] .subsection")].map((s) => ({
+            kind: s.dataset.kind, title: s.querySelector("h5").textContent, good: s.querySelector("h5").classList.contains("good"), rows: [...s.querySelectorAll(".measure-row")].map(clean),
+          }));
+
+          const w = await until(win, 5000);
+          if (!w) return { opened: false };
+          const line = w.querySelector('[data-weak-spots] [data-kind="cycle"] .spot-line');
+          const flag = line && [...line.querySelectorAll("button")].find((b) => b.textContent === "Flag");
+          if (!flag) return { opened: true, flagOffered: false };
+          flag.click();
+          const flagged = await until(() => (line.querySelector(".problem-flagged") ? line.querySelector(".problem-flagged").textContent : null), 8000);
+          await wait(1200);
+          const status = text("#status");
+          document.querySelector("#overlay .window-close").click();
+          const client = [...document.querySelectorAll(".tree .node")].find((n) => (n.querySelector(".label") || {}).textContent === "client");
+          if (client) client.click();
+          await until(() => text("#inspector h2") === "Client", 5000);
+          const card = await until(() => document.querySelector("#inspector [data-notes-of] .note-card"), 5000);
+          return {
+            opened: true,
+            flagOffered: true,
+            flagged: flagged || "",
+            status,
+            noteShown: Boolean(card),
+            notAnError: card ? !card.querySelector(".note-error") : false,
+            firstLine: card ? (card.textContent.split("\\n").map((l) => l.trim()).filter(Boolean).find((l) => l.startsWith("Weak spot")) || "") : "",
+          };
+        `);
+        report.weakSpotNoteOnDisk = await (async () => {
+          const dir = path.join(check.messenger, ".fragmentor", "notes");
+          const files = (await readdir(dir).catch(() => [])).filter((name) => name.endsWith(".json"));
+          const notes = await Promise.all(files.map(async (name) => JSON.parse(await readFile(path.join(dir, name), "utf8")) as { block?: string; messages?: { text?: string }[] }));
+          const mine = notes.find((note) => note.block === "app/client" && (note.messages ?? []).some((m) => (m.text ?? "").startsWith("Weak spot: ")));
+          return { files: files.length, found: Boolean(mine), firstLine: mine ? (mine.messages![0]!.text ?? "").split("\n")[0] : "" };
+        })();
+
         // A system bigger than the window opens with its names readable and
         // its top in view, the rest a drag away. Fit then shows all of it.
         pick("close-project");
@@ -5974,6 +6285,7 @@ function setUpMenu(): void {
       label: "View",
       submenu: [
         { id: "show-commands", label: "Commands", enabled: false, click: send("show-commands") },
+        { id: "show-analytics", label: "Architecture Analytics", enabled: false, click: send("show-analytics") },
         { id: "reload-project", label: "Reload Project", accelerator: "CmdOrCtrl+R", enabled: false, click: send("reload-project") },
         { type: "separator" },
         { role: "toggleDevTools" },
@@ -5992,7 +6304,7 @@ function setUpMenu(): void {
 
 /** Closing, reloading or exporting a project, and the commands for its agent, are only offered while one is open. */
 function offerProjectMenu(open: boolean): void {
-  for (const id of ["close-project", "reload-project", "show-commands", "export-project"]) {
+  for (const id of ["close-project", "reload-project", "show-commands", "show-analytics", "export-project"]) {
     const item = Menu.getApplicationMenu()?.getMenuItemById(id);
     if (item) item.enabled = open;
   }

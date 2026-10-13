@@ -1,4 +1,5 @@
 import type { Role } from "../model/roles.js";
+import type { Trace, TraceEvent } from "../model/trace.js";
 import type { BlockFunctions, NamedFunction } from "./reach.js";
 import type { ReachSeen } from "./rules.js";
 import type { ProjectSnapshot, SnapshotBlock } from "./snapshot.js";
@@ -104,10 +105,48 @@ export interface Analytics {
   systems: { root: string; name: string; blocks: number; dependencies: number }[];
 }
 
-/** What a renderer may add that the snapshot does not hold. Empty until recordings and git history land. */
+/** One recording made this session, as the measurements read it. */
+export interface RecordingFacts {
+  execution: string;
+  name: string;
+  trace: Trace;
+  complete: boolean;
+  truncated: boolean;
+  /** Held to what was written down, where the execution says anything; null when it says nothing to hold it to. */
+  check: { agreed: boolean; notSeen: number; failures: number } | null;
+}
+
+/** What a reader may add that the snapshot does not hold: the recordings it has, and git history later. */
 export interface AnalyticsExtra {
-  recordings?: unknown[];
+  /** The recordings made this session; none given means this reader has none to give, and says so in `recordingsUnavailable`. */
+  recordings?: RecordingFacts[];
+  recordingsUnavailable?: string;
   changes?: Record<string, number> | null;
+}
+
+/** A time as the measurements print it. */
+export function msWords(ms: number): string {
+  return ms < 1 ? "under 1 ms" : `${Math.round(ms)} ms`;
+}
+
+/** What one recording's trace says about time and work: the run's total, its slowest calls, and how much it did. */
+export function runTimes(trace: Trace): { total: number | null; timed: boolean; slowest: { path: string; took: number }[]; calls: number; storeUses: number } {
+  const returns = trace.events.filter((event): event is Extract<TraceEvent, { type: "return" }> => event.type === "return");
+  const timedCalls = returns.filter((event) => event.took !== undefined && event.to.entry === null);
+  const total = returns.find((event) => event.of === "trigger")?.took ?? null;
+  const interactions = trace.events.filter((event): event is Extract<TraceEvent, { type: "interaction" }> => event.type === "interaction");
+  return {
+    total,
+    // Whether anything was timed at all: a run with a pause, or from a clock that gave nothing, times no call.
+    timed: timedCalls.length > 0,
+    slowest: timedCalls
+      .filter((event) => event.of !== "trigger")
+      .sort((a, b) => b.took! - a.took!)
+      .slice(0, 5)
+      .map((event) => ({ path: event.to.path, took: event.took! })),
+    calls: interactions.filter((event) => event.kind === "call" || event.kind === "trigger").length,
+    storeUses: interactions.filter((event) => event.kind !== "call" && event.kind !== "trigger").length,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -365,7 +404,6 @@ interface SystemView {
  * entries come in.
  */
 export function analyticsOf(snapshot: ProjectSnapshot, extra: AnalyticsExtra = {}): Analytics {
-  void extra;
   const all = Object.values(snapshot.blocks).sort((a, b) => a.path.localeCompare(b.path));
   const entries = direct(snapshot);
   const systems: SystemView[] = snapshot.systems.map((system) => ({
@@ -382,8 +420,8 @@ export function analyticsOf(snapshot: ProjectSnapshot, extra: AnalyticsExtra = {
     cohesion(snapshot, systems),
     complexity(snapshot, systems),
     maintainability(snapshot, systems),
-    unbuilt("runtime", "Runtime performance", systems),
-    reliability(snapshot, systems),
+    runtime(snapshot, systems, extra),
+    reliability(snapshot, systems, extra),
     scalability(snapshot, systems),
   ];
 
@@ -671,8 +709,92 @@ function cohesion(snapshot: ProjectSnapshot, systems: SystemView[]): Dimension {
   return { id: "cohesion", name: "Cohesion", system, blocks };
 }
 
-/** What Fragmentor can say about trust from the snapshot: what it can run, and what has tests. */
-function reliability(snapshot: ProjectSnapshot, systems: SystemView[]): Dimension {
+/** The block a recording's trigger led to: its first interaction's target. */
+function answeringOf(recording: RecordingFacts): string {
+  return recording.trace.events.find((event) => event.type === "interaction")?.to.path ?? "";
+}
+
+/** The recordings made of one system. */
+function recordingsIn(system: SystemView, extra: AnalyticsExtra): RecordingFacts[] {
+  return (extra.recordings ?? []).filter((recording) => systemOf(answeringOf(recording)) === system.root);
+}
+
+/** The words for runtime and the recordings when a reader has none: why, in the reader's own terms. */
+function recordingsUnavailable(snapshot: ProjectSnapshot, system: SystemView, extra: AnalyticsExtra): string | null {
+  if (extra.recordings === undefined) return extra.recordingsUnavailable ?? NOT_BUILT_YET;
+  if (recordingsIn(system, extra).length > 0) return null;
+  const executions = snapshot.executions.filter((execution) => systemOf(execution.trigger.at) === system.root);
+  if (executions.length === 0) return "no execution to record: the agent writes one down for each thing that sets the system going";
+  const recordable = executions.find((execution) => execution.unrecordable === null);
+  if (recordable !== undefined) return "nothing has been recorded in this session: pick an execution above the drawing and press Record";
+  return executions[0]!.unrecordable ?? "this code is not held to its contract, so Fragmentor cannot run it; runs of your own application would show it";
+}
+
+const RUNTIME_OF =
+  "From each recording made in this session: one run, in Fragmentor's sandbox with stand-in stores, timed by the harness's own clock from a call to its return. One sample each, never a statistic; a store use is counted, not timed.";
+
+/** How long recorded calls took, and how much work each recording did. */
+function runtime(snapshot: ProjectSnapshot, systems: SystemView[], extra: AnalyticsExtra): Dimension {
+  const system: Dimension["system"] = {};
+  const blocks: Dimension["blocks"] = {};
+  for (const each of systems) {
+    const unavailable = recordingsUnavailable(snapshot, each, extra);
+    if (unavailable !== null) {
+      system[each.root] = [measure({ id: "runtime", label: "Recorded runs", text: unavailable, of: "", unavailable })];
+      for (const block of each.blocks) if (block.role === "function" && !block.planned) blocks[block.path] = [measure({ id: "runtime", label: "Calls in recordings", text: unavailable, of: "", unavailable })];
+      continue;
+    }
+    const recordings = recordingsIn(each, extra);
+    const rows: Row[] = recordings.map((recording) => {
+      const times = runTimes(recording.trace);
+      const total = times.total === null ? (times.timed ? "total not timed" : "not timed: the run was paused, or the clock gave nothing") : msWords(times.total);
+      const atLeast = recording.truncated ? " (at least)" : "";
+      const text = `${recording.name}: ${total} · ${times.calls} ${times.calls === 1 ? "call" : "calls"}, ${times.storeUses} store ${times.storeUses === 1 ? "use" : "uses"}${atLeast}`;
+      const detail = times.slowest.map((step) => `${snapshot.blocks[step.path]?.name ?? step.path} took ${msWords(step.took)}`).join("\n") || null;
+      return { ...row(snapshot, answeringOf(recording), times.total ?? 0, text, detail), name: recording.name };
+    });
+    rows.sort((a, b) => b.value - a.value || a.text.localeCompare(b.text));
+    system[each.root] = [
+      measure({
+        id: "runtime",
+        label: "Recorded runs",
+        text: `${recordings.length} this session`,
+        value: recordings.length,
+        of: RUNTIME_OF,
+        rows,
+      }),
+    ];
+    for (const block of each.blocks) {
+      if (block.role !== "function" || block.planned) continue;
+      const tooks: number[] = [];
+      let calls = 0;
+      for (const recording of recordings) {
+        const ids = new Set<string>();
+        for (const event of recording.trace.events) {
+          if (event.type === "interaction" && (event.kind === "call" || event.kind === "trigger") && event.to.path === block.path) {
+            calls += 1;
+            ids.add(event.id);
+          }
+          if (event.type === "return" && ids.has(event.of) && event.took !== undefined) tooks.push(event.took);
+        }
+      }
+      const timed = tooks.length === 0 ? "not timed" : `most ${msWords(Math.max(...tooks))} · median ${msWords(median(tooks))}`;
+      blocks[block.path] = [
+        measure({
+          id: "runtime",
+          label: "Calls in recordings",
+          text: calls === 0 ? "none" : `${calls} ${calls === 1 ? "call" : "calls"} · ${timed}`,
+          value: calls,
+          of: RUNTIME_OF,
+        }),
+      ];
+    }
+  }
+  return { id: "runtime", name: "Runtime performance", system, blocks };
+}
+
+/** What Fragmentor can say about trust from the snapshot: what it can run, and what has tests; and what the recordings showed. */
+function reliability(snapshot: ProjectSnapshot, systems: SystemView[], extra: AnalyticsExtra): Dimension {
   const system: Dimension["system"] = {};
   const blocks: Dimension["blocks"] = {};
   const heldOf = "Code that imports its contract can be run here with substitutes for what it reaches; code that does not is only drawn. Counted over the blocks that point at code.";
@@ -706,6 +828,7 @@ function reliability(snapshot: ProjectSnapshot, systems: SystemView[]): Dimensio
           .sort((a, b) => b.value - a.value || a.path.localeCompare(b.path)),
         spread: held.length > 0 ? spreadOf(tests, held, "held blocks") : null,
       }),
+      showed(snapshot, each, extra),
       measure({
         id: "failure",
         label: "Failure in use",
@@ -716,7 +839,14 @@ function reliability(snapshot: ProjectSnapshot, systems: SystemView[]): Dimensio
     ];
     for (const block of each.blocks) {
       if (block.role !== "function" || block.planned) continue;
+      const threw = (extra.recordings ?? []).reduce(
+        (count, recording) => count + recording.trace.events.filter((event) => event.type === "return" && event.error !== undefined && event.to.path === block.path).length,
+        0,
+      );
       blocks[block.path] = [
+        ...(extra.recordings === undefined || extra.recordings.length === 0
+          ? []
+          : [measure({ id: "threw", label: "Threw in recordings", text: threw === 0 ? "never" : `${threw} ${threw === 1 ? "time" : "times"}`, value: threw, of: "Calls to this block that ended by throwing, in the recordings made this session." })]),
         measure({
           id: "held",
           label: "Held to a contract",
@@ -736,6 +866,45 @@ function reliability(snapshot: ProjectSnapshot, systems: SystemView[]): Dimensio
     }
   }
   return { id: "reliability", name: "Reliability", system, blocks };
+}
+
+/** What the recordings made this session showed: agreement with what was written down, contradiction, or a throw. */
+function showed(snapshot: ProjectSnapshot, system: SystemView, extra: AnalyticsExtra): Measure {
+  const unavailable = recordingsUnavailable(snapshot, system, extra);
+  if (unavailable !== null) return measure({ id: "showed", label: "What the recordings showed", text: unavailable, of: "", unavailable });
+  const recordings = recordingsIn(system, extra);
+  let agreed = 0;
+  let contradicted = 0;
+  let threw = 0;
+  const rows = recordings.map((recording) => {
+    const thrown = recording.trace.events.some((event) => event.type === "return" && event.error !== undefined);
+    let text: string;
+    let value = 0;
+    if (thrown) {
+      threw += 1;
+      value = 2;
+      text = `${recording.name}: ended by throwing`;
+    } else if (recording.check === null) {
+      text = `${recording.name}: nothing written down to hold it to`;
+    } else if (recording.check.agreed) {
+      agreed += 1;
+      text = `${recording.name}: agrees with what was written down`;
+    } else {
+      contradicted += 1;
+      value = 1;
+      text = `${recording.name}: contradicted — ${recording.check.notSeen} ${recording.check.notSeen === 1 ? "step" : "steps"} not seen, ${recording.check.failures} ${recording.check.failures === 1 ? "expectation" : "expectations"} failed`;
+    }
+    return { ...row(snapshot, answeringOf(recording), value, text), name: recording.name };
+  });
+  rows.sort((a, b) => b.value - a.value || a.text.localeCompare(b.text));
+  return measure({
+    id: "showed",
+    label: "What the recordings showed",
+    text: `${agreed} agreed, ${contradicted} contradicted, ${threw} ended by throwing`,
+    value: recordings.length,
+    of: "Each recording made this session held to what the agent wrote down for its execution, as the execution bar holds it: agreed when every step was seen and every expectation met, contradicted otherwise. A recording that threw is counted as that.",
+    rows,
+  });
 }
 
 /** Statically, who shares a store: blocks that use the same database cannot scale apart from it. */
