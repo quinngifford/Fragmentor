@@ -1858,7 +1858,10 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
           /every system's code was read/.test(String(none.notMeasured)) &&
           sections.every((s) => (s.available === 0 || s.sentences >= 1) && s.notes === 0) &&
           Number(none.ms) < 2000 &&
-          value("analyticsClosed", "closed") === true
+          value("analyticsClosed", "closed") === true &&
+          value("analyticsClosed", "reopened") === true &&
+          JSON.stringify((value("analyticsClosed", "sections") as string[] | undefined)?.slice(0, 2)) === JSON.stringify(["Ratings", "Weak spots"]) &&
+          value("analyticsClosed", "closedAgain") === true
         );
       })(),
     ],
@@ -2312,7 +2315,7 @@ function selfCheckFailures(report: Record<string, StepResult>): string[] {
         value("menu", "reloadIsTheProject") === true &&
         value("menu", "noPageReload") === true &&
         value("menu", "closedWithNothingOpen") === true &&
-        value("menu", "toolbar") === "agent-commands toggle-rail toggle-inspector" &&
+        value("menu", "toolbar") === "agent-commands show-analytics toggle-rail toggle-inspector" &&
         value("menu", "startBare") === true &&
         value("waiting", "closeOffered") === true &&
         value("waiting", "reloadOffered") === true &&
@@ -4954,7 +4957,15 @@ function attachSelfCheck(
         await run("analyticsClosed", `
           const close = document.querySelector("#overlay .window-close");
           if (close) close.click();
-          return { closed: document.getElementById("overlay").hidden };
+          const closed = document.getElementById("overlay").hidden;
+          // The toolbar's Analytics button opens the same window, for whoever does not look under View.
+          document.getElementById("show-analytics").click();
+          const win = () => { const h = document.querySelector("#overlay .window h2"); return h && h.textContent === "Architecture Analytics" ? document.querySelector("#overlay .window") : null; };
+          const reopened = Boolean(await until(win, 5000));
+          const sections = [...document.querySelectorAll("#overlay .window .section > h4")].map((h) => h.textContent);
+          const again = document.querySelector("#overlay .window-close");
+          if (again) again.click();
+          return { closed, reopened, sections, closedAgain: document.getElementById("overlay").hidden };
         `);
         await run("notesOffered", `${notesSection}
           // The bench left open by the steps before would cover the blocks and the bar.

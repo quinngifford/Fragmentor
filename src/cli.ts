@@ -916,7 +916,7 @@ function measureLines(measure: Measure, lead: string, withRows: boolean): string
   return lines;
 }
 
-/** The measurements as text, in the window's order and words: weak spots first, then each dimension, then what was not measured. */
+/** The measurements as text, in the window's order and words: ratings, weak spots, then each dimension, then what was not measured. */
 function formatAnalytics(analytics: Analytics, snapshot: ProjectSnapshot, within: string | undefined): string {
   const lines: string[] = [];
   const blockName = (blockPath: string) => snapshot.blocks[blockPath]?.name ?? blockPath;
@@ -925,18 +925,18 @@ function formatAnalytics(analytics: Analytics, snapshot: ProjectSnapshot, within
     const block = snapshot.blocks[within]!;
     lines.push(`${block.name} (${within})`, "");
     const spots = analytics.weakSpots.flatMap((kind) => kind.spots.filter((spot) => spot.block === within));
-    lines.push(spots.length === 0 ? "No weak spot is on this block." : "Weak spots on this block");
-    for (const spot of spots) {
-      lines.push(`  ${spot.headline}`);
-      for (const evidence of spot.evidence) lines.push(`    ${evidence}`);
-    }
-    lines.push("", "Ratings on this block: rules of thumb, 0 to 100, 70 and over good, under 40 poor");
+    lines.push("Ratings on this block: rules of thumb, 0 to 100, 70 and over good, under 40 poor");
     const own = ratingsOf(analytics, snapshot)
       .systems.flatMap((system) => system.categories)
       .map((category) => ({ category, rated: category.blocks.find((rated) => rated.path === within) }))
       .filter((each) => each.rated !== undefined);
     if (own.length === 0) lines.push("  none: nothing on this block is rated");
     for (const { category, rated } of own) lines.push(`  ${category.name}: ${rated!.score} ${BAND_WORDS[rated!.band]} (${rated!.why})`);
+    lines.push("", spots.length === 0 ? "No weak spot is on this block." : "Weak spots on this block");
+    for (const spot of spots) {
+      lines.push(`  ${spot.headline}`);
+      for (const evidence of spot.evidence) lines.push(`    ${evidence}`);
+    }
     for (const dimension of analytics.dimensions) {
       const own = dimension.blocks[within];
       if (own === undefined) continue;
@@ -947,7 +947,25 @@ function formatAnalytics(analytics: Analytics, snapshot: ProjectSnapshot, within
   }
 
   lines.push(`${snapshot.name}  ${snapshot.dir}`, "");
-  lines.push("Weak spots");
+  // Ratings: rules of thumb, stated, resting on the measurements printed after the weak spots.
+  const ratings = ratingsOf(analytics, snapshot);
+  lines.push("Ratings: rules of thumb, 0 to 100, 70 and over good, under 40 poor; each rests on the measurements below");
+  for (const system of ratings.systems) {
+    if (ratings.systems.length > 1) lines.push(`  ${system.name}`);
+    for (const category of system.categories) {
+      if (category.score === null) {
+        lines.push(`  ${category.name}: not rated: ${category.unrated}`);
+        continue;
+      }
+      const best = category.blocks[0]!;
+      const worst = category.blocks[category.blocks.length - 1]!;
+      const spread = best.score === worst.score ? `every block ${best.score}` : `best ${best.name} ${best.score} · worst ${worst.name} ${worst.score}`;
+      lines.push(`  ${category.name}: ${category.score} ${BAND_WORDS[category.band!]} · ${spread}`);
+      lines.push(`    ${category.rule}`);
+    }
+  }
+
+  lines.push("", "Weak spots");
   for (const kind of analytics.weakSpots) {
     if (!kind.measured && kind.spots.length === 0) {
       lines.push(`  ${kind.title}: not measured: ${kind.reason}`);
@@ -962,24 +980,6 @@ function formatAnalytics(analytics: Analytics, snapshot: ProjectSnapshot, within
   }
   if (analytics.weakSpots.every((kind) => kind.spots.length === 0)) {
     lines.push("  No weak spots found. A weak spot is a finding worth asking your agent about, never a problem.");
-  }
-
-  // Ratings: rules of thumb, stated, resting on the measurements printed after them.
-  const ratings = ratingsOf(analytics, snapshot);
-  lines.push("", "Ratings: rules of thumb, 0 to 100, 70 and over good, under 40 poor; each rests on the measurements below");
-  for (const system of ratings.systems) {
-    if (ratings.systems.length > 1) lines.push(`  ${system.name}`);
-    for (const category of system.categories) {
-      if (category.score === null) {
-        lines.push(`  ${category.name}: not rated: ${category.unrated}`);
-        continue;
-      }
-      const best = category.blocks[0]!;
-      const worst = category.blocks[category.blocks.length - 1]!;
-      const spread = best.score === worst.score ? `every block ${best.score}` : `best ${best.name} ${best.score} · worst ${worst.name} ${worst.score}`;
-      lines.push(`  ${category.name}: ${category.score} ${BAND_WORDS[category.band!]} · ${spread}`);
-      lines.push(`    ${category.rule}`);
-    }
   }
 
   for (const dimension of analytics.dimensions) {

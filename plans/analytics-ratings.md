@@ -15,7 +15,7 @@ The measurements and their sentences are right but are not the first thing to se
   - Reliability: 50 for code held to its contract, up to 50 more for three saved tests, 25 off for each recorded call that threw.
   - Scalability: for a store, 100 when two blocks or fewer use it, 0 at eight or more.
   Straight lines between the ends. All arbitrary, on purpose, and said so.
-- **The window** opens on Weak spots, then eight rating cards. A card opens its ranked list under the grid, with the rule in one sentence and **Show the measurements**, which reveals today's section for that category. Not measured stays at the bottom when there is anything in it.
+- **The window** opens on eight rating cards, with Weak spots under them (moved above them at the person's request, with an **Analytics** button on the toolbar beside Commands). A card opens its ranked list under the grid, with the rule in one sentence and **Show the measurements**, which reveals today's section for that category. Not measured stays at the bottom when there is anything in it.
 - **Each block's panel** shows the block's ratings as coloured pills, with **Show the measurements** revealing the lists it shows today. The exported page shows the same.
 - **`fragmentor analytics`** prints Ratings after the weak spots: each category's score, band, best and worst block; a block's own view prints its ratings with the measurement behind each.
 - **The website band** draws the dashboard instead of one measure's rows, with Tickets' real ratings.

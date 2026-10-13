@@ -114,7 +114,7 @@ body {
 
 /* With no project open, Commands is hidden, and the line after it would
    divide nothing from the panel switches. */
-#agent-commands[hidden] + .toolbar-sep { display: none; }
+#show-analytics[hidden] + .toolbar-sep { display: none; }
 .chip[aria-pressed="true"] { color: var(--signal); border-color: var(--signal-dim); background: var(--signal-deep); }
 
 /* ---- panes ---- */
@@ -361,7 +361,7 @@ body[data-project="open"] .welcome { display: none; }
 
 /* An exported page: the drawing and the panel beside it, and nothing that
    edits, runs or asks the application for anything. */
-body[data-export] :is(#agent-commands, #toggle-rail, #toggle-inspector, .toolbar-sep, #rail, #inspector-splitter,
+body[data-export] :is(#agent-commands, #show-analytics, #toggle-rail, #toggle-inspector, .toolbar-sep, #rail, #inspector-splitter,
   #crumbs, #run-bar, #notes-bar, #changes-bar, #panels, .breakpoint) { display: none; }
 
 .welcome h1 {

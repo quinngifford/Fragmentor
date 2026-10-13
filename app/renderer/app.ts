@@ -340,6 +340,7 @@ function renderPanes(): void {
 
   // Only worth offering with a project open to ask an agent about.
   element("agent-commands").hidden = !open;
+  element("show-analytics").hidden = !open;
 }
 
 /** Dragging the edge between the diagram and the inspector, or nudging it with the arrow keys. */
@@ -644,6 +645,7 @@ function wireToolbar(): void {
     renderPanes();
   });
   element("agent-commands").addEventListener("click", () => void showCommands());
+  element("show-analytics").addEventListener("click", () => void showAnalytics());
 
   // The chosen colours go onto the document itself, so every block, line,
   // badge and swatch of a kind follows from one place.

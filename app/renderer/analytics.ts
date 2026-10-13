@@ -11,8 +11,9 @@ import { closeWindow, openWindow } from "./popup.js";
 import { requireSnapshot, ui } from "./state.js";
 
 /**
- * View › Architecture Analytics: the weak spots, then a rating for each of
- * the eight categories, and behind each the measurements it rests on.
+ * View › Architecture Analytics, or Analytics on the toolbar: a rating for
+ * each of the eight categories, the weak spots under them, and behind each
+ * rating the measurements it rests on.
  *
  * A rating is a rule of thumb the person chose, 0 to 100, coloured by band;
  * a card opens the category's blocks ranked best first, each with the
@@ -297,8 +298,8 @@ function analyticsBody(snapshot: ProjectSnapshot): HTMLElement {
       analytics.systems.map((system) => `${system.name}: ${system.blocks} blocks, ${system.dependencies} dependencies`).join(" · "),
     ),
   );
-  body.append(weakSpotsSection(analytics));
   body.append(ratingsSection(analytics, snapshot));
+  body.append(weakSpotsSection(analytics));
   body.append(notMeasuredSection(analytics));
   return body;
 }
